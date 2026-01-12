@@ -1,0 +1,396 @@
+
+import React, { useState, useMemo } from 'react';
+import { useApp } from '../App';
+import { Demand } from '../types';
+import { 
+  Search, 
+  Filter, 
+  Calendar, 
+  CheckCircle2, 
+  AlertCircle, 
+  Building2, 
+  GraduationCap, 
+  Hotel, 
+  Car, 
+  Package, 
+  FileCheck, 
+  Clock,
+  RotateCcw,
+  ChevronLeft,
+  ChevronRight,
+  CalendarDays
+} from 'lucide-react';
+import { calculateDemandStatus } from '../domain/demandStatus';
+
+type ViewMode = 'WEEK' | 'MONTH';
+
+const LogisticsControl: React.FC = () => {
+  const { demands, companies, trainings, updateDemand } = useApp();
+  
+  const [filterText, setFilterText] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>('WEEK');
+  const [referenceDate, setReferenceDate] = useState<Date>(new Date());
+
+  // Helpers de Nomes
+  const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
+  const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
+
+  // Lógica de Período (Segunda a Domingo)
+  const periodBounds = useMemo(() => {
+    const start = new Date(referenceDate);
+    const end = new Date(referenceDate);
+
+    if (viewMode === 'WEEK') {
+      const day = start.getDay();
+      const diff = start.getDate() - day + (day === 0 ? -6 : 1);
+      start.setDate(diff);
+      start.setHours(0, 0, 0, 0);
+      
+      end.setTime(start.getTime());
+      end.setDate(start.getDate() + 6);
+      end.setHours(23, 59, 59, 999);
+    } else {
+      start.setDate(1);
+      start.setHours(0, 0, 0, 0);
+      
+      end.setFullYear(start.getFullYear(), start.getMonth() + 1, 0);
+      end.setHours(23, 59, 59, 999);
+    }
+
+    return { start, end };
+  }, [viewMode, referenceDate]);
+
+  // Texto de exibição do período
+  const periodLabel = useMemo(() => {
+    const monthName = referenceDate.toLocaleDateString('pt-BR', { month: 'long' });
+    const year = referenceDate.getFullYear();
+
+    if (viewMode === 'WEEK') {
+      // Cálculo do número da semana no mês
+      const firstDayOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1);
+      const pastDaysOfMonth = (periodBounds.start.getDate() + (firstDayOfMonth.getDay() === 0 ? 6 : firstDayOfMonth.getDay() - 1)) / 7;
+      const weekNum = Math.ceil(pastDaysOfMonth + 0.1);
+
+      const startStr = periodBounds.start.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      const endStr = periodBounds.end.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+
+      return (
+        <span className="flex items-center gap-2">
+          <span className="text-blue-600">Semana {weekNum}</span>
+          <span className="text-slate-300">•</span>
+          <span className="capitalize">{monthName}</span>
+          <span className="text-slate-300">•</span>
+          <span>{year}</span>
+          <span className="ml-2 text-[10px] bg-slate-100 px-2 py-0.5 rounded-full text-slate-500 font-mono">
+            ({startStr} – {endStr})
+          </span>
+        </span>
+      );
+    }
+
+    return (
+      <span className="flex items-center gap-2">
+        <span className="capitalize">{monthName}</span>
+        <span className="text-slate-300">•</span>
+        <span>{year}</span>
+      </span>
+    );
+  }, [viewMode, referenceDate, periodBounds]);
+
+  // Navegação
+  const handlePrev = () => {
+    const next = new Date(referenceDate);
+    if (viewMode === 'WEEK') next.setDate(next.getDate() - 7);
+    else next.setMonth(next.getMonth() - 1);
+    setReferenceDate(next);
+  };
+
+  const handleNext = () => {
+    const next = new Date(referenceDate);
+    if (viewMode === 'WEEK') next.setDate(next.getDate() + 7);
+    else next.setMonth(next.getMonth() + 1);
+    setReferenceDate(next);
+  };
+
+  const handleToday = () => setReferenceDate(new Date());
+
+  // Filtragem das demandas ativas com base no período calculado
+const filteredDemands = useMemo(() => {
+  return demands
+    .filter(d => {
+      // ❌ Demandas canceladas não entram
+      if (d.status === 'CANCELADA') return false;
+
+      // ❌ Demandas ONLINE não entram no controle logístico
+      if (d.modality === 'ONLINE') return false;
+
+      // 🔎 Filtro de texto
+      const company = getCompanyName(d.companyId).toLowerCase();
+      const training = getTrainingName(d.trainingId).toLowerCase();
+
+      const matchesSearch =
+        !filterText ||
+        company.includes(filterText.toLowerCase()) ||
+        training.includes(filterText.toLowerCase()) ||
+        d.id.toLowerCase().includes(filterText.toLowerCase());
+
+      if (!matchesSearch) return false;
+
+      // 📅 Filtro de período
+      const dStart = new Date(d.startDate);
+      const dEnd = new Date(d.endDate);
+
+      return dStart <= periodBounds.end && dEnd >= periodBounds.start;
+    })
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+}, [demands, companies, trainings, filterText, periodBounds]);
+
+  // Handler para marcação manual de material
+  const toggleMaterial = (demand: Demand) => {
+    updateDemand({
+      ...demand,
+      materialReady: !demand.materialReady
+    });
+  };
+
+  const StatusIcon = ({ ok }: { ok?: boolean }) => {
+    if (ok) return <CheckCircle2 size={18} className="text-emerald-500" />;
+    return <AlertCircle size={18} className="text-slate-200" />;
+  };
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Controle Logístico</h1>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Checklist de Prontidão para Treinamentos</p>
+        </div>
+
+        <div className="flex items-center bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
+          <button 
+            onClick={() => setViewMode('WEEK')}
+            className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${viewMode === 'WEEK' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
+          >
+            Semana
+          </button>
+          <button 
+            onClick={() => setViewMode('MONTH')}
+            className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${viewMode === 'MONTH' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
+          >
+            Mês
+          </button>
+        </div>
+      </div>
+
+      {/* Navegação de Período */}
+      <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-200 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-2">
+          <button onClick={handlePrev} className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 transition-colors border border-slate-100 shadow-sm"><ChevronLeft size={20}/></button>
+          <button onClick={handleToday} className="px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-50 rounded-xl transition-colors border border-slate-100 shadow-sm">Hoje</button>
+          <button onClick={handleNext} className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 transition-colors border border-slate-100 shadow-sm"><ChevronRight size={20}/></button>
+        </div>
+
+        <div className="text-sm font-black text-slate-700 uppercase tracking-tight">
+          {periodLabel}
+        </div>
+
+        <div className="relative min-w-[300px]">
+          <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
+          <input 
+            type="text" 
+            placeholder="Buscar ID, Empresa ou Treinamento..."
+            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner"
+            value={filterText}
+            onChange={e => setFilterText(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Tabela de Controle */}
+      <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase tracking-wider font-black text-slate-500">
+                <th className="p-5">ID / Empresa</th>
+                <th className="p-5">Treinamento</th>
+                <th className="p-5 text-center">Período</th>
+                <th className="p-5 text-center"><span className="flex flex-col items-center gap-1"><Hotel size={14}/> Hotel</span></th>
+                <th className="p-5 text-center"><span className="flex flex-col items-center gap-1"><Car size={14}/> Carro</span></th>
+                <th className="p-5 text-center"><span className="flex flex-col items-center gap-1"><Package size={14}/> Material</span></th>
+                <th className="p-5 text-center"><span className="flex flex-col items-center gap-1"><FileCheck size={14}/> Liberação</span></th>
+                <th className="p-5 text-center"><span className="flex flex-col items-center gap-1"><FileCheck size={14}/> Lista</span></th>
+                <th className="p-5 text-center">Status Geral</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+            {filteredDemands
+              .filter(d => String(d.modality).toUpperCase() !== 'ONLINE') // 🚫 ONLINE fora do controle logístico
+              .length > 0 ? (
+              filteredDemands
+                .filter(d => String(d.modality).toUpperCase() !== 'ONLINE') // 🚫 ONLINE fora do controle logístico
+                .map(d => {
+                  const isHotelOk =
+                    d.logisticsHotel === 'CONFIRMADO' ||
+                    d.logisticsHotel === 'NAO_NECESSARIO';
+
+                  const isCarOk =
+                    d.logisticsTransport === 'CONFIRMADO' ||
+                    d.logisticsTransport === 'NAO_NECESSARIO';
+
+                  const isMaterialOk = d.materialReady === true;
+                  const isReleaseOk = !!d.attachments?.instructorReleasePdf;
+                  const isListOk = !!d.attachments?.classListPdf;
+
+                  const status = calculateDemandStatus(
+                    {
+                      startDate: d.startDate,
+                      endDate: d.endDate,
+                      instructorId: d.instructorId,
+                      cancelled: d.status === 'CANCELADA',
+                      trainingLocal: d.trainingLocal,
+                      modality: d.modality,
+                    } as any
+                  );
+
+                  const allReady =
+                    isHotelOk &&
+                    isCarOk &&
+                    isMaterialOk &&
+                    isReleaseOk &&
+                    isListOk;
+
+                  return (
+                    <tr
+                      key={d.id}
+                      className="hover:bg-slate-50/30 transition-colors text-xs font-medium text-slate-600"
+                    >
+                      {/* ID / EMPRESA */}
+                      <td className="p-5">
+                        <div className="flex flex-col">
+                          <span className="font-mono text-blue-600 font-bold">
+                            #{d.id}
+                          </span>
+                          <span className="text-[10px] font-black uppercase text-slate-400 mt-1 truncate max-w-[150px]">
+                            {getCompanyName(d.companyId)}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* TREINAMENTO */}
+                      <td className="p-5 max-w-[200px]">
+                        <div className="flex items-center gap-2">
+                          <GraduationCap
+                            size={14}
+                            className="text-slate-300 shrink-0"
+                          />
+                          <span className="truncate font-bold text-slate-700">
+                            {getTrainingName(d.trainingId)}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* PERÍODO */}
+                      <td className="p-5 text-center">
+                        <div className="flex flex-col items-center">
+                          <span className="text-[10px] font-black text-slate-700">
+                            {new Date(d.startDate).toLocaleDateString('pt-BR', {
+                              day: '2-digit',
+                              month: '2-digit',
+                            })}
+                          </span>
+                          <span className="text-[8px] text-slate-300 font-bold uppercase">
+                            Início
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* HOTEL */}
+                      <td className="p-5 text-center">
+                        <div className="flex justify-center">
+                          <StatusIcon ok={isHotelOk} />
+                        </div>
+                      </td>
+
+                      {/* CARRO */}
+                      <td className="p-5 text-center">
+                        <div className="flex justify-center">
+                          <StatusIcon ok={isCarOk} />
+                        </div>
+                      </td>
+
+                      {/* MATERIAL */}
+                      <td className="p-5 text-center">
+                        <div className="flex justify-center">
+                          <button
+                            onClick={() => toggleMaterial(d)}
+                            className={`p-1 rounded-md transition-all hover:bg-slate-100 ${
+                              isMaterialOk
+                                ? 'text-emerald-500'
+                                : 'text-slate-300'
+                            }`}
+                          >
+                            <Package
+                              size={20}
+                              fill={isMaterialOk ? 'currentColor' : 'none'}
+                              strokeWidth={isMaterialOk ? 1.5 : 2}
+                            />
+                          </button>
+                        </div>
+                      </td>
+
+                      {/* LIBERAÇÃO */}
+                      <td className="p-5 text-center">
+                        <div className="flex justify-center">
+                          <StatusIcon ok={isReleaseOk} />
+                        </div>
+                      </td>
+
+                      {/* LISTA */}
+                      <td className="p-5 text-center">
+                        <div className="flex justify-center">
+                          <StatusIcon ok={isListOk} />
+                        </div>
+                      </td>
+
+                      {/* STATUS GERAL */}
+                      <td className="p-5 text-center">
+                        <div className="flex flex-col items-center gap-1.5">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                              allReady
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : 'bg-amber-100 text-amber-700'
+                            }`}
+                          >
+                            {allReady ? 'Pronto' : 'Pendente'}
+                          </span>
+                          <span className="text-[8px] text-slate-300 font-bold uppercase">
+                            {status.replace('_', ' ')}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+            ) : (
+              <tr>
+                <td colSpan={9} className="p-20 text-center text-slate-400">
+                  <div className="flex flex-col items-center gap-4">
+                    <CalendarDays size={48} className="opacity-10" />
+                    <p className="font-bold text-sm italic">
+                      Nenhuma demanda ativa encontrada neste período.
+                    </p>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default LogisticsControl;

@@ -1,0 +1,1042 @@
+
+import React, { useState, useMemo } from 'react';
+import { useApp } from '../App';
+import { Measurement, Demand, MeasurementStatus, ExpenseCategory, Attachment, OtherExpenseItem } from '../types';
+import { 
+  Search, FileText, X, Filter, BarChart3, 
+  ChevronDown, ChevronUp, MapPin, Truck, Home, 
+  Calendar, Check, AlertCircle, Building, 
+  Tag, Info, BookOpen, Clock, Mail, MessageCircle, 
+  FileDown, Upload, Trash2, ExternalLink, User, Plus, Paperclip, DollarSign, Wallet, CheckSquare, Square
+} from 'lucide-react';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ImageRun } from 'docx';
+import { calculateDemandStatus } from '../domain/demandStatus';
+
+const STAGE_LABELS: Record<MeasurementStatus, string> = {
+  NAO_INICIADA: 'Não iniciada',
+  LANCAMENTO: 'Em lançamento de despesas',
+  CONFERENCIA: 'Em conferência',
+  PRONTA_FATURAMENTO: 'Pronta para faturamento',
+  FATURADA: 'Faturada'
+};
+
+const STAGE_OPTIONS = (Object.keys(STAGE_LABELS) as MeasurementStatus[]);
+
+const STATUS_STYLING: Record<string, string> = {
+  NOVA: 'bg-purple-100 text-purple-700',
+  PENDENTE: 'bg-orange-100 text-orange-700',
+  ALOCADA: 'bg-blue-100 text-blue-700',
+  EM_ANDAMENTO: 'bg-indigo-100 text-indigo-700',
+  CONCLUIDA: 'bg-green-100 text-green-700',
+  CANCELADA: 'bg-red-100 text-red-700'
+};
+
+const CategoryBlock = ({ 
+  category, 
+  label, 
+  icon: Icon,
+  colorClass,
+  otherId,
+  obs,
+  onObsChange,
+  attachments,
+  onUploadFile,
+  onUpdateValue,
+  onRemoveAttachment,
+  onAddManualValue
+}: { 
+  category: ExpenseCategory, 
+  label: string, 
+  icon: any,
+  colorClass: string,
+  otherId?: string,
+  obs?: string,
+  onObsChange?: (val: string) => void,
+  attachments: Attachment[],
+  onUploadFile: (cat: ExpenseCategory, oid?: string) => void,
+  onUpdateValue: (id: string, val: string) => void,
+  onRemoveAttachment: (id: string) => void,
+  onAddManualValue: (cat: ExpenseCategory, oid?: string) => void
+}) => {
+  const relevantAttachments = attachments.filter(a => 
+    a.category === category && (otherId ? a.otherId === otherId : !a.otherId)
+  ) || [];
+  
+  const formatCurrency = (val: number | string) => {
+    const num = typeof val === 'string' ? parseFloat(val.replace(',', '.')) : val;
+    if (isNaN(num)) return 'R$ 0,00';
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(num);
+  };
+
+  const catTotal = relevantAttachments.reduce((acc, curr) => acc + (Number(typeof curr.value === 'string' ? curr.value.replace(',', '.') : curr.value) || 0), 0);
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+          <Icon size={14} className={colorClass} /> {label}
+        </h3>
+        <span className={`text-xs font-bold ${catTotal > 0 ? 'text-green-600' : 'text-slate-400'}`}>
+          Total: {formatCurrency(catTotal)}
+        </span>
+      </div>
+
+      {onObsChange && (
+        <textarea 
+          className="w-full border border-gray-100 rounded-lg px-3 py-2 text-[11px] focus:ring-2 focus:ring-blue-500 resize-none h-12 bg-slate-50/50" 
+          placeholder={`Observações sobre ${label.toLowerCase()}...`}
+          value={obs}
+          onChange={e => onObsChange(e.target.value)}
+        />
+      )}
+
+      <div className="space-y-2">
+        {relevantAttachments.map(a => (
+          <div key={a.id} className="flex items-center gap-3 bg-slate-50 p-2 rounded-lg border border-slate-100 group">
+            <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-2">
+              <span className="text-slate-300"><Paperclip size={12}/></span>
+              <p className="text-[10px] text-slate-600 font-medium truncate" title={a.name}>{a.name}</p>
+            </div>
+            <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-md px-2 py-0.5 shadow-inner">
+              <span className="text-[9px] font-bold text-slate-400">R$</span>
+              <input 
+                type="text" 
+                className="w-20 bg-transparent text-[11px] font-black text-slate-700 outline-none text-right"
+                value={a.value}
+                placeholder="0,00"
+                onChange={e => onUpdateValue(a.id, e.target.value)}
+              />
+            </div>
+            <button onClick={() => onRemoveAttachment(a.id)} className="p-1 text-slate-300 hover:text-red-500 transition-colors">
+              <Trash2 size={14} />
+            </button>
+          </div>
+        ))}
+        
+        <div className="flex gap-2 mt-2">
+          <button 
+            onClick={() => onUploadFile(category, otherId)}
+            className="flex-1 py-2 border-2 border-dashed border-slate-100 rounded-xl flex items-center justify-center gap-2 text-slate-400 hover:text-blue-500 hover:border-blue-200 transition-all text-[9px] font-black uppercase tracking-widest"
+          >
+            <Upload size={14} /> Anexar Notinha
+          </button>
+          <button 
+            onClick={() => onAddManualValue(category, otherId)}
+            className="px-4 py-2 border-2 border-dashed border-slate-100 rounded-xl flex items-center justify-center gap-2 text-slate-400 hover:text-emerald-500 hover:border-emerald-200 transition-all text-[9px] font-black uppercase tracking-widest"
+            title="Adicionar valor sem arquivo"
+          >
+            <Plus size={14} /> Valor Avulso
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MeasurementView: React.FC = () => {
+  const { 
+    measurements, demands, companies, trainings, regions, instructors,
+    updateMeasurement, updateDemand
+  } = useApp();
+  
+  const [filter, setFilter] = useState('');
+  const [advancedFilters, setAdvancedFilters] = useState({
+    companyId: '',
+    status: '', 
+    startDate: '',
+    endDate: ''
+  });
+
+  const getCalculatedDemandStatus = (d: Demand) => calculateDemandStatus({
+    startDate: d.startDate,
+    endDate: d.endDate,
+    instructorId: d.instructorId,
+    cancelled: d.status === 'CANCELADA'
+  });
+
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedMeasurement, setSelectedMeasurement] = useState<Measurement | null>(null);
+
+  const [isExportSelectionOpen, setIsExportSelectionOpen] = useState(false);
+  const [exportFilters, setExportFilters] = useState({
+    startDate: '',
+    endDate: '',
+    companyId: '',
+    trainingId: '',
+    instructorId: '',
+    regionId: '',
+    status: '' 
+  });
+  const [selectedForExport, setSelectedForExport] = useState<Set<string>>(new Set());
+
+  const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
+  const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
+  const getRegionName = (id: string) => regions.find(r => r.id === id)?.name || 'N/A';
+  const getInstructorName = (id?: string) => instructors.find(i => i.id === id)?.name || 'Não Alocado';
+
+  const formatCurrency = (val: number | string) => {
+    const num = typeof val === 'string' ? parseFloat(val.replace(',', '.')) : val;
+    if (isNaN(num)) return 'R$ 0,00';
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(num);
+  };
+
+  const formatDateTime = (dateStr?: string) => {
+    if (!dateStr) return '---';
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+    return date.toLocaleDateString('pt-BR');
+  };
+
+  const filteredMeasurements = useMemo(() => {
+    return measurements.filter(m => {
+      const d = demands.find(demand => demand.id === m.demandId);
+      // FILTRO: Ignorar se a demanda não existe ou se está CANCELADA
+      if (!d || d.status === 'CANCELADA') return false;
+
+      const matchesText = 
+        d.id.toLowerCase().includes(filter.toLowerCase()) ||
+        getCompanyName(d.companyId).toLowerCase().includes(filter.toLowerCase()) ||
+        getTrainingName(d.trainingId).toLowerCase().includes(filter.toLowerCase());
+
+      if (!matchesText) return false;
+      if (advancedFilters.companyId && d.companyId !== advancedFilters.companyId) return false;
+      if (advancedFilters.status && m.status !== advancedFilters.status) return false;
+      if (advancedFilters.startDate && d.startDate < advancedFilters.startDate) return false;
+      if (advancedFilters.endDate && d.startDate > advancedFilters.endDate) return false;
+      return true;
+    }).sort((a, b) => {
+        const d1 = demands.find(dm => dm.id === a.demandId);
+        const d2 = demands.find(dm => dm.id === b.demandId);
+        return (d2?.startDate || '').localeCompare(d1?.startDate || '');
+    });
+  }, [measurements, demands, filter, advancedFilters, companies, trainings]);
+
+  const exportableList = useMemo(() => {
+    return measurements.filter(m => {
+      const d = demands.find(demand => demand.id === m.demandId);
+      // FILTRO: Ignorar se a demanda não existe ou se está CANCELADA na exportação
+      if (!d || d.status === 'CANCELADA') return false;
+
+      const currentDemandStatus = getCalculatedDemandStatus(d);
+
+      if (exportFilters.companyId && d.companyId !== exportFilters.companyId) return false;
+      if (exportFilters.trainingId && d.trainingId !== exportFilters.trainingId) return false;
+      if (exportFilters.instructorId && d.instructorId !== exportFilters.instructorId) return false;
+      if (exportFilters.regionId && d.regionId !== exportFilters.regionId) return false;
+      
+      if (exportFilters.status && currentDemandStatus !== exportFilters.status) return false;
+      
+      if (exportFilters.startDate && d.startDate < exportFilters.startDate) return false;
+      if (exportFilters.endDate && d.startDate > exportFilters.endDate) return false;
+
+      return true;
+    }).sort((a, b) => {
+      const d1 = demands.find(dm => dm.id === a.demandId);
+      const d2 = demands.find(dm => dm.id === b.demandId);
+      return (d2?.startDate || '').localeCompare(d1?.startDate || '');
+    });
+  }, [measurements, demands, exportFilters, companies, trainings, instructors, regions]);
+
+  const getMeasurementTotals = (m: Measurement) => {
+    const sum = (cat: ExpenseCategory, oid?: string) => m.attachments
+      .filter(a => a.category === cat && (oid ? a.otherId === oid : !a.otherId))
+      .reduce((acc, curr) => {
+        const val = typeof curr.value === 'string' ? parseFloat(curr.value.replace(',', '.')) : curr.value;
+        return acc + (val || 0);
+      }, 0);
+
+    const h = sum('HOSPEDAGEM');
+    const l = sum('LOCOMOCAO');
+    const c = sum('CAFE');
+    const alm = sum('ALMOCO');
+    const j = sum('JANTAR');
+    const o = m.otherExpenses.reduce((acc, curr) => acc + sum('OUTROS', curr.id), 0);
+
+    return {
+      hospedagem: h,
+      locomocao: l,
+      cafe: c,
+      almoco: alm,
+      jantar: j,
+      outros: o,
+      total: h + l + c + alm + j + o
+    };
+  };
+
+  const totals = useMemo(() => {
+    if (!selectedMeasurement) return { 
+      hospedagem: 0, locomocao: 0, cafe: 0, almoco: 0, jantar: 0, outros: 0, total: 0 
+    };
+    return getMeasurementTotals(selectedMeasurement);
+  }, [selectedMeasurement]);
+
+  const exportSummary = useMemo(() => {
+    const selectedMeasurements = measurements.filter(m => selectedForExport.has(m.id));
+    return selectedMeasurements.reduce((acc, m) => {
+      const mTotals = getMeasurementTotals(m);
+      return {
+        count: acc.count + 1,
+        hospedagem: acc.hospedagem + mTotals.hospedagem,
+        locomocao: acc.locomocao + mTotals.locomocao,
+        alimentacao: acc.alimentacao + (mTotals.cafe + mTotals.almoco + mTotals.jantar),
+        total: acc.total + mTotals.total
+      };
+    }, { count: 0, hospedagem: 0, locomocao: 0, alimentacao: 0, total: 0 });
+  }, [measurements, selectedForExport]);
+
+  const handleOpenDetail = (m: Measurement) => {
+    setSelectedMeasurement({ ...m });
+    setIsModalOpen(true);
+  };
+
+  const handleSaveMeasurement = () => {
+    if (selectedMeasurement) {
+      const cleaned = {
+        ...selectedMeasurement,
+        attachments: selectedMeasurement.attachments.map(a => ({
+          ...a,
+          value: typeof a.value === 'string' ? (parseFloat(a.value.replace(',', '.')) || 0) : a.value
+        }))
+      };
+      updateMeasurement(cleaned);
+
+      const demand = demands.find(d => d.id === selectedMeasurement.demandId);
+      if (demand) {
+        // A regra de negócio aqui permanece: salvando a medição, a demanda é considerada concluída
+        updateDemand({ ...demand, status: 'CONCLUIDA' });
+      }
+
+      setIsModalOpen(false);
+    }
+  };
+
+  const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
+    if (!selectedMeasurement) return;
+    
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*,application/pdf';
+    input.multiple = true;
+    input.onchange = (e: any) => {
+      const files = e.target.files;
+      if (!files) return;
+
+      Array.from(files).forEach((f: any) => {
+        const reader = new FileReader();
+        reader.onload = (event: any) => {
+          const newAttachment: Attachment = {
+            id: `FILE-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+            name: f.name,
+            url: '#',
+            data: event.target.result,
+            type: f.type,
+            date: new Date().toISOString(),
+            category,
+            value: '', 
+            otherId
+          };
+          setSelectedMeasurement(prev => prev ? {
+            ...prev,
+            attachments: [...prev.attachments, newAttachment]
+          } : null);
+        };
+        reader.readAsDataURL(f);
+      });
+    };
+    input.click();
+  };
+
+  const handleAddManualValue = (category: ExpenseCategory, otherId?: string) => {
+    if (!selectedMeasurement) return;
+    const newAttachment: Attachment = {
+      id: `VAL-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      name: 'Lançamento Avulso',
+      url: '#',
+      type: 'text/plain',
+      date: new Date().toISOString(),
+      category,
+      value: '', 
+      otherId
+    };
+    setSelectedMeasurement(prev => prev ? {
+      ...prev,
+      attachments: [...prev.attachments, newAttachment]
+    } : null);
+  };
+
+  const handleUpdateAttachmentValue = (id: string, value: string) => {
+    if (!selectedMeasurement) return;
+    setSelectedMeasurement({
+      ...selectedMeasurement,
+      attachments: selectedMeasurement.attachments.map(a => a.id === id ? { ...a, value: value } : a)
+    });
+  };
+
+  const handleRemoveAttachment = (id: string) => {
+    if (!selectedMeasurement) return;
+    setSelectedMeasurement({
+      ...selectedMeasurement,
+      attachments: selectedMeasurement.attachments.filter(a => a.id !== id)
+    });
+  };
+
+  const handleAddOtherExpense = () => {
+    if (!selectedMeasurement) return;
+    const newItem: OtherExpenseItem = {
+      id: `OTH-${Date.now()}`,
+      description: '',
+      value: '0'
+    };
+    setSelectedMeasurement({
+      ...selectedMeasurement,
+      otherExpenses: [...selectedMeasurement.otherExpenses, newItem]
+    });
+  };
+
+  const handleRemoveOtherExpense = (id: string) => {
+    if (!selectedMeasurement) return;
+    setSelectedMeasurement({
+      ...selectedMeasurement,
+      otherExpenses: selectedMeasurement.otherExpenses.filter(o => o.id !== id),
+      attachments: selectedMeasurement.attachments.filter(a => a.otherId !== id)
+    });
+  };
+
+  const handleUpdateOtherExpense = (id: string, field: 'description' | 'value', value: string) => {
+    if (!selectedMeasurement) return;
+    setSelectedMeasurement({
+      ...selectedMeasurement,
+      otherExpenses: selectedMeasurement.otherExpenses.map(o => o.id === id ? { ...o, [field]: value } : o)
+    });
+  };
+
+  const base64ToUint8Array = (base64String: string) => {
+    const base64Content = base64String.split(',')[1];
+    const binaryString = window.atob(base64Content);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+  };
+
+  const createDemandDocSection = (m: Measurement) => {
+    const d = demands.find(demand => demand.id === m.demandId);
+    if (!d) return [];
+
+    const demandTotals = getMeasurementTotals(m);
+    const companyName = getCompanyName(d.companyId);
+    const trainingName = getTrainingName(d.trainingId);
+    const instructorName = getInstructorName(d.instructorId);
+
+    const children: any[] = [
+      new Paragraph({
+        text: `DEMANDA: ${d.id} - ${companyName}`,
+        heading: HeadingLevel.HEADING_2,
+        border: { bottom: { color: "e2e8f0", space: 1, style: BorderStyle.SINGLE, size: 6 } },
+        spacing: { before: 400, after: 200 },
+      }),
+      new Paragraph({ children: [new TextRun({ text: "🎓 Treinamento: ", bold: true }), new TextRun(trainingName)] }),
+      new Paragraph({ children: [new TextRun({ text: "📅 Período: ", bold: true }), new TextRun(`${formatDateTime(d.startDate)} até ${formatDateTime(d.endDate)}`)] }),
+      new Paragraph({ children: [new TextRun({ text: "📍 Localidade: ", bold: true }), new TextRun(d.trainingLocal || 'N/A')] }),
+      new Paragraph({ children: [new TextRun({ text: "👨‍🏫 Instrutor: ", bold: true }), new TextRun(instructorName)] }),
+      new Paragraph({ spacing: { after: 200 } }),
+    ];
+
+    const categories: { key: ExpenseCategory; label: string; details?: string }[] = [
+      { key: 'HOSPEDAGEM', label: '🏨 HOSPEDAGEM', details: d.accommodationType === 'N/A' ? 'Sem hospedagem registrada' : `${d.hotelName} (${d.hotelCity})` },
+      { key: 'LOCOMOCAO', label: '🚗 LOCOMOÇÃO', details: d.transportType === 'N/A' ? 'Sem locomoção registrada' : `${d.transportType} (${d.rentalCompany})` },
+      { key: 'CAFE', label: '☕ CAFÉ DA MANHÃ' },
+      { key: 'ALMOCO', label: '🍛 ALMOÇO' },
+      { key: 'JANTAR', label: '🍽️ JANTAR' },
+    ];
+
+    categories.forEach(cat => {
+      const attachments = m.attachments.filter(a => a.category === cat.key && !a.otherId);
+      const totalCat = attachments.reduce((acc, curr) => acc + (Number(typeof curr.value === 'string' ? curr.value.replace(',', '.') : curr.value) || 0), 0);
+
+      children.push(new Paragraph({ text: cat.label, heading: HeadingLevel.HEADING_3, spacing: { before: 200 } }));
+      if (cat.details) {
+        children.push(new Paragraph({ children: [new TextRun({ text: "Info: ", italics: true }), new TextRun(cat.details)] }));
+      }
+
+      if (attachments.length > 0) {
+        attachments.forEach(a => {
+          children.push(new Paragraph({ children: [new TextRun({ text: `• ${a.name}: `, bold: true }), new TextRun(formatCurrency(a.value))] }));
+          if (a.data && a.type.startsWith('image/')) {
+            try {
+              children.push(new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [
+                  new ImageRun({
+                    data: base64ToUint8Array(a.data),
+                    transformation: { width: 400, height: 300 },
+                  } as any),
+                ],
+                spacing: { before: 100, after: 100 },
+              }));
+            } catch (err) {
+              children.push(new Paragraph({ children: [new TextRun({ text: "[Erro ao carregar imagem]", italics: true, color: "red" })] }));
+            }
+          } else if (a.type === 'application/pdf') {
+            children.push(new Paragraph({ children: [new TextRun({ text: "(Arquivo PDF anexado no sistema - Visualize online)", italics: true, color: "64748b" })] }));
+          }
+        });
+        children.push(new Paragraph({ children: [new TextRun({ text: `TOTAL ${cat.label.split(' ')[1]}: `, bold: true }), new TextRun(formatCurrency(totalCat))] }));
+      } else {
+        children.push(new Paragraph({ children: [new TextRun({ text: "Nenhuma despesa ou comprovante registrado nesta categoria.", italics: true, color: "94a3b8" })] }));
+      }
+    });
+
+    if (m.otherExpenses.length > 0) {
+      children.push(new Paragraph({ text: "➕ OUTRAS DESPESAS", heading: HeadingLevel.HEADING_3, spacing: { before: 200 } }));
+      m.otherExpenses.forEach(o => {
+        const atts = m.attachments.filter(a => a.otherId === o.id);
+        const totalOth = atts.reduce((acc, curr) => acc + (Number(typeof curr.value === 'string' ? curr.value.replace(',', '.') : curr.value) || 0), 0);
+        children.push(new Paragraph({ children: [new TextRun({ text: `${o.description || 'Despesa Extra'}: `, bold: true }), new TextRun(formatCurrency(totalOth))] }));
+        atts.forEach(a => {
+          if (a.data && a.type.startsWith('image/')) {
+            children.push(new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new ImageRun({ data: base64ToUint8Array(a.data), transformation: { width: 400, height: 300 } } as any),
+              ],
+            }));
+          }
+        });
+      });
+      children.push(new Paragraph({ children: [new TextRun({ text: "TOTAL OUTROS: ", bold: true }), new TextRun(formatCurrency(demandTotals.outros))] }));
+    }
+
+    children.push(new Paragraph({ 
+      alignment: AlignmentType.RIGHT,
+      spacing: { before: 300, after: 300 },
+      children: [
+        new TextRun({
+          text: `TOTAL GERAL DEMANDA ${d.id}: ${formatCurrency(demandTotals.total)}`, 
+          bold: true, 
+        })
+      ]
+    }));
+
+    return children;
+  };
+
+  const handleConfirmExport = async () => {
+    if (selectedForExport.size === 0) return alert('Selecione pelo menos uma demanda para exportar.');
+
+    const selectedMeasurements = measurements.filter(m => selectedForExport.has(m.id));
+
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: [
+          new Paragraph({
+            text: "📊 RELATÓRIO CONSOLIDADO DE MEDIÇÕES",
+            heading: HeadingLevel.HEADING_1,
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 200 },
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [
+              new TextRun({
+                text: `Gerado em: ${new Date().toLocaleString('pt-BR')} | Total de demandas exportadas: ${selectedMeasurements.length}`,
+                italics: true,
+                color: "64748b",
+                size: 20,
+              }),
+            ],
+            spacing: { after: 600 },
+          }),
+
+          ...selectedMeasurements.flatMap(m => createDemandDocSection(m))
+        ],
+      }],
+    });
+
+    const blob = await Packer.toBlob(doc);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Relatorio_Medicao_Consolidado_${new Date().toISOString().split('T')[0]}.docx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setIsExportSelectionOpen(false);
+  };
+
+  const toggleExportSelection = (id: string) => {
+    const next = new Set(selectedForExport);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedForExport(next);
+  };
+
+  const toggleSelectAllExport = () => {
+    if (selectedForExport.size === exportableList.length) {
+      setSelectedForExport(new Set());
+    } else {
+      setSelectedForExport(new Set(exportableList.map(m => m.id)));
+    }
+  };
+
+  const handleGenerateWord = async () => {
+    if (!selectedMeasurement) return;
+    const d = demands.find(dm => dm.id === selectedMeasurement.demandId);
+    
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: [
+          new Paragraph({
+            text: `RELATÓRIO DE MEDIÇÃO: DEMANDA #${d?.id}`,
+            heading: HeadingLevel.HEADING_1,
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 400 },
+          }),
+          ...createDemandDocSection(selectedMeasurement)
+        ]
+      }]
+    });
+
+    const blob = await Packer.toBlob(doc);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Medicao_${d?.id}.docx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleSendWhatsApp = () => {
+    if (!selectedMeasurement) return;
+    const d = demands.find(dm => dm.id === selectedMeasurement.demandId);
+    const text = encodeURIComponent(`Olá! Segue resumo da medição #${d?.id}:
+    
+🏨 Hospedagem: ${formatCurrency(totals.hospedagem)}
+🚗 Locomoção: ${formatCurrency(totals.locomocao)}
+🍽️ Alimentação: ${formatCurrency(totals.cafe + totals.almoco + totals.jantar)}
+➕ Outros: ${formatCurrency(totals.outros)}
+
+*TOTAL GERAL: ${formatCurrency(totals.total)}*
+
+Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`);
+    window.open(`https://wa.me/?text=${text}`, '_blank');
+  };
+
+  const statusColor = (status: MeasurementStatus) => {
+    switch(status) {
+      case 'NAO_INICIADA': return 'bg-slate-100 text-slate-600';
+      case 'LANCAMENTO': return 'bg-orange-100 text-orange-800';
+      case 'CONFERENCIA': return 'bg-blue-100 text-blue-800';
+      case 'PRONTA_FATURAMENTO': return 'bg-green-100 text-green-800';
+      case 'FATURADA': return 'bg-purple-100 text-purple-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800">Medição e Faturamento</h1>
+          <p className="text-sm text-slate-500">Gestão de comprovantes e valores de treinamentos realizados.</p>
+        </div>
+        <button 
+          onClick={() => setIsExportSelectionOpen(true)}
+          className="bg-gray-900 hover:bg-gray-800 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center space-x-2 shadow-md"
+        >
+          <FileDown size={18} /> <span>Exportar DOCX (Selecionar Demandas)</span>
+        </button>
+      </div>
+
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 grid grid-cols-1 md:grid-cols-12 gap-3">
+        <div className="relative col-span-1 md:col-span-4">
+          <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
+          <input 
+            type="text" 
+            placeholder="Buscar por ID ou Cliente..." 
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+        </div>
+        <div className="col-span-1 md:col-span-2">
+          <select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={advancedFilters.companyId} onChange={e => setAdvancedFilters({...advancedFilters, companyId: e.target.value})}>
+            <option value="">Todas Empresas</option>
+            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div className="col-span-1 md:col-span-2">
+          <select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={advancedFilters.status} onChange={e => setAdvancedFilters({...advancedFilters, status: e.target.value})}>
+            <option value="">Todas as Etapas</option>
+            {STAGE_OPTIONS.map(opt => (
+              <option key={opt} value={opt}>{STAGE_LABELS[opt]}</option>
+            ))}
+          </select>
+        </div>
+        <div className="col-span-1 md:col-span-4 flex gap-1">
+          <input type="date" className="w-full border border-gray-300 rounded-lg px-2 py-1 text-xs" value={advancedFilters.startDate} onChange={e => setAdvancedFilters({...advancedFilters, startDate: e.target.value})} />
+          <input type="date" className="w-full border border-gray-300 rounded-lg px-2 py-1 text-xs" value={advancedFilters.endDate} onChange={e => setAdvancedFilters({...advancedFilters, endDate: e.target.value})} />
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200 text-[10px] uppercase tracking-wider font-black text-slate-500">
+                <th className="p-4">Demanda</th>
+                <th className="p-4">Empresa</th>
+                <th className="p-4">Treinamento</th>
+                <th className="p-4">Início</th>
+                <th className="p-4 text-center">Etapa Medição</th>
+                <th className="p-4 text-right">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filteredMeasurements.map(m => {
+                const d = demands.find(demand => demand.id === m.demandId);
+                return (
+                  <tr key={m.id} className="hover:bg-gray-50 transition-colors text-sm text-gray-700">
+                    <td className="p-4 font-bold text-blue-600">{d?.id}</td>
+                    <td className="p-4 font-medium">{getCompanyName(d?.companyId || '')}</td>
+                    <td className="p-4">{getTrainingName(d?.trainingId || '')}</td>
+                    <td className="p-4 font-mono text-xs">{formatDateTime(d?.startDate)}</td>
+                    <td className="p-4 text-center">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor(m.status)}`}>
+                        {STAGE_LABELS[m.status]}
+                      </span>
+                    </td>
+                    <td className="p-4 text-right">
+                      <button onClick={() => handleOpenDetail(m)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-slate-100 transition shadow-sm">
+                        <ExternalLink size={16} />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {isExportSelectionOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/70 backdrop-blur-md p-4 animate-fade-in">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-6xl overflow-hidden flex flex-col max-h-[92vh] border border-white/20">
+            <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <div>
+                <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Exportação de Medições</h2>
+                <p className="text-sm text-slate-400 font-bold uppercase tracking-widest mt-1">Selecione as demandas para o fechamento .docx</p>
+              </div>
+              <button onClick={() => setIsExportSelectionOpen(false)} className="text-slate-400 hover:text-slate-600 p-2 hover:bg-white rounded-2xl transition shadow-sm"><X size={28} /></button>
+            </div>
+
+            <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
+              <div className="w-full lg:w-80 p-8 border-r border-slate-100 space-y-6 overflow-y-auto bg-slate-50/30">
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                  <Filter size={14} /> Filtros de Refinamento
+                </h3>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Período</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="date" className="w-full border border-slate-200 rounded-xl p-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500" value={exportFilters.startDate} onChange={e => setExportFilters({...exportFilters, startDate: e.target.value})} />
+                      <input type="date" className="w-full border border-slate-200 rounded-xl p-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500" value={exportFilters.endDate} onChange={e => setExportFilters({...exportFilters, endDate: e.target.value})} />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Cliente</label>
+                    <select className="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={exportFilters.companyId} onChange={e => setExportFilters({...exportFilters, companyId: e.target.value})}>
+                      <option value="">Todos</option>
+                      {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Status da Demanda (Real)</label>
+                    <select className="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={exportFilters.status} onChange={e => setExportFilters({...exportFilters, status: e.target.value})}>
+                      <option value="">Todos</option>
+                      <option value="NOVA">Nova</option>
+                      <option value="PENDENTE">Pendente</option>
+                      <option value="ALOCADA">Alocada</option>
+                      <option value="EM_ANDAMENTO">Em Andamento</option>
+                      <option value="CONCLUIDA">Concluída</option>
+                      <option value="CANCELADA">Cancelada</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-slate-100">
+                  <button 
+                    onClick={() => setExportFilters({ startDate: '', endDate: '', companyId: '', trainingId: '', instructorId: '', regionId: '', status: '' })}
+                    className="w-full py-2.5 text-[10px] font-black uppercase text-slate-400 hover:text-blue-600 transition tracking-widest"
+                  >
+                    Resetar Filtros
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 flex flex-col min-w-0 bg-white">
+                <div className="p-4 border-b border-slate-50 flex items-center justify-between">
+                  <button 
+                    onClick={toggleSelectAllExport}
+                    className="flex items-center gap-2 text-xs font-black text-blue-600 uppercase tracking-widest hover:bg-blue-50 px-4 py-2 rounded-xl transition"
+                  >
+                    {selectedForExport.size === exportableList.length && exportableList.length > 0 ? <CheckSquare size={18} /> : <Square size={18} />}
+                    Selecionar Todas ({exportableList.length})
+                  </button>
+                  <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">
+                    {selectedForExport.size} de {exportableList.length} marcadas
+                  </span>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  {exportableList.map(m => {
+                    const d = demands.find(demand => demand.id === m.demandId);
+                    const isSelected = selectedForExport.has(m.id);
+                    const mTotals = getMeasurementTotals(m);
+                    const cDemandStatus = d ? getCalculatedDemandStatus(d) : 'N/A';
+                    
+                    return (
+                      <div 
+                        key={m.id} 
+                        onClick={() => toggleExportSelection(m.id)}
+                        className={`p-4 rounded-[1.5rem] border-2 transition-all cursor-pointer group flex items-center gap-4 
+                          ${isSelected ? 'bg-blue-50/50 border-blue-200' : 'bg-white border-slate-50 hover:border-slate-100'}`}
+                      >
+                        <div className={`transition-colors ${isSelected ? 'text-blue-600' : 'text-slate-200 group-hover:text-slate-300'}`}>
+                          {isSelected ? <CheckSquare size={24} /> : <Square size={24} />}
+                        </div>
+                        
+                        <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                          <div className="md:col-span-5">
+                            <h4 className="text-sm font-black text-slate-800 truncate">{getTrainingName(d?.trainingId || '')}</h4>
+                            <div className="flex items-center gap-3 mt-1">
+                              <span className="text-[10px] font-bold text-blue-600 font-mono tracking-tighter">#{d?.id}</span>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase truncate">{getCompanyName(d?.companyId || '')}</span>
+                              <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded shadow-sm ${STATUS_STYLING[cDemandStatus] || 'bg-slate-200'}`}>
+                                {cDemandStatus.replace('_', ' ')}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="md:col-span-3">
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500">
+                               <Calendar size={12} /> {formatDateTime(d?.startDate)}
+                            </div>
+                          </div>
+
+                          <div className="md:col-span-4 flex items-center justify-end gap-2">
+                             {[
+                               { label: 'Hotel', present: d?.accommodationType === 'Hotel', icon: Home },
+                               { label: 'Carro', present: d?.transportType !== 'N/A', icon: Truck },
+                               { label: 'Comida', present: mTotals.cafe + mTotals.almoco + mTotals.jantar > 0, icon: Tag },
+                               { label: 'Anexos', present: m.attachments.length > 0, icon: Paperclip }
+                             ].map((indicator, idx) => (
+                               <div key={idx} className={`p-2 rounded-xl flex flex-col items-center justify-center min-w-[44px] transition-all border ${indicator.present ? 'bg-white border-slate-100 shadow-sm' : 'opacity-20 grayscale border-transparent'}`}>
+                                  <indicator.icon size={12} className={indicator.present ? 'text-blue-500' : 'text-slate-400'} />
+                               </div>
+                             ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-8 bg-slate-900 border-t border-white/10 flex flex-col md:flex-row justify-between items-center gap-6">
+               <div className="flex flex-wrap items-center gap-8">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1">Selecionadas</span>
+                    <span className="text-xl font-black text-white">{exportSummary.count} Demandas</span>
+                  </div>
+                  <div className="h-8 w-px bg-white/10 hidden md:block"></div>
+               </div>
+               
+               <div className="flex items-center gap-8 w-full md:w-auto">
+                 <div className="flex flex-col text-right">
+                    <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Total Consolidado</span>
+                    <span className="text-2xl font-black text-white leading-none">{formatCurrency(exportSummary.total)}</span>
+                 </div>
+                 <button 
+                  onClick={handleConfirmExport}
+                  disabled={selectedForExport.size === 0}
+                  className={`px-10 py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] flex items-center gap-3 transition-all active:scale-95 shadow-2xl
+                    ${selectedForExport.size > 0 ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/20' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
+                 >
+                   <FileText size={20} /> Gerar DOCX Único
+                 </button>
+               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isModalOpen && selectedMeasurement && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-slate-50 rounded-[2rem] shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[95vh] border border-white">
+            <div className="p-7 border-b border-slate-200 bg-white flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Painel de Medição</h2>
+                <div className="flex items-center gap-3 mt-1">
+                  <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">REF: {selectedMeasurement.demandId}</p>
+                  <div className="h-3 w-px bg-slate-200"></div>
+                  {(() => {
+                    const d = demands.find(dm => dm.id === selectedMeasurement.demandId);
+                    const cStatus = d ? getCalculatedDemandStatus(d) : 'N/A';
+                    return (
+                      <div className="flex items-center gap-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Status Demanda:</label>
+                        <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded shadow-sm ${STATUS_STYLING[cStatus] || 'bg-slate-200'}`}>
+                          {cStatus.replace('_', ' ')}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                  <div className="h-3 w-px bg-slate-200 ml-1"></div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Etapa Medição:</label>
+                    <select 
+                      className={`text-[10px] font-black uppercase px-2 py-1 rounded-lg border focus:ring-2 focus:ring-blue-500 outline-none transition-all ${statusColor(selectedMeasurement.status)} border-transparent`}
+                      value={selectedMeasurement.status}
+                      onChange={e => setSelectedMeasurement({...selectedMeasurement, status: e.target.value as MeasurementStatus})}
+                    >
+                      {STAGE_OPTIONS.map(opt => (
+                        <option key={opt} value={opt}>{STAGE_LABELS[opt]}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={handleGenerateWord} className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-xl hover:bg-blue-100 transition font-black text-[10px] uppercase border border-blue-200 shadow-sm">
+                  <FileText size={16} /> Exportar Word
+                </button>
+                <button onClick={handleSendWhatsApp} className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-xl hover:bg-green-100 transition font-black text-[10px] uppercase border border-green-200 shadow-sm">
+                  <MessageCircle size={16} /> WhatsApp
+                </button>
+                <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1.5 hover:bg-slate-100 rounded-xl transition ml-2"><X size={24} /></button>
+              </div>
+            </div>
+
+            <div className="p-7 overflow-y-auto flex-1 space-y-6">
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                 {[
+                   { label: 'Hospedagem', val: totals.hospedagem, color: 'text-green-600', icon: Home },
+                   { label: 'Locomoção', val: totals.locomocao, color: 'text-amber-600', icon: Truck },
+                   { label: 'Alimentação', val: totals.cafe + totals.almoco + totals.jantar, color: 'text-blue-600', icon: Tag },
+                   { label: 'Outros', val: totals.outros, color: 'text-purple-600', icon: Plus },
+                   { label: 'TOTAL GERAL', val: totals.total, color: 'text-slate-900 bg-slate-200/50', icon: Wallet, span: 'col-span-2' }
+                 ].map((item, idx) => (
+                   <div key={idx} className={`p-4 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-center ${item.span || ''}`}>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <item.icon size={12} className="text-slate-400" />
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{item.label}</span>
+                      </div>
+                      <span className={`text-sm font-black ${item.color}`}>{formatCurrency(item.val)}</span>
+                   </div>
+                 ))}
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <CategoryBlock 
+                  category="HOSPEDAGEM" label="Hospedagem" icon={Home} colorClass="text-green-500" 
+                  attachments={selectedMeasurement.attachments}
+                  onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
+                  onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                />
+                <CategoryBlock 
+                  category="LOCOMOCAO" label="Locomoção" icon={Truck} colorClass="text-amber-500" 
+                  attachments={selectedMeasurement.attachments}
+                  onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
+                  onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <CategoryBlock 
+                  category="CAFE" label="Café da Manhã" icon={Tag} colorClass="text-blue-400" 
+                  obs={selectedMeasurement.expenses.breakfast}
+                  onObsChange={val => setSelectedMeasurement({...selectedMeasurement, expenses: {...selectedMeasurement.expenses, breakfast: val}})}
+                  attachments={selectedMeasurement.attachments}
+                  onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
+                  onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                />
+                <CategoryBlock 
+                  category="ALMOCO" label="Almoço" icon={Tag} colorClass="text-blue-500" 
+                  obs={selectedMeasurement.expenses.lunch}
+                  onObsChange={val => setSelectedMeasurement({...selectedMeasurement, expenses: {...selectedMeasurement.expenses, lunch: val}})}
+                  attachments={selectedMeasurement.attachments}
+                  onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
+                  onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                />
+                <CategoryBlock 
+                  category="JANTAR" label="Jantar" icon={Tag} colorClass="text-blue-600" 
+                  obs={selectedMeasurement.expenses.dinner}
+                  onObsChange={val => setSelectedMeasurement({...selectedMeasurement, expenses: {...selectedMeasurement.expenses, dinner: val}})}
+                  attachments={selectedMeasurement.attachments}
+                  onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
+                  onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                />
+              </div>
+
+              <div className="bg-white rounded-[2rem] border border-slate-200 p-7 shadow-sm">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <Plus size={14} className="text-purple-500" /> Outras Despesas Adicionais
+                  </h3>
+                  <button onClick={handleAddOtherExpense} className="flex items-center gap-1.5 px-4 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-xl transition font-black text-[10px] uppercase border border-purple-100 shadow-sm">
+                    <Plus size={14} /> Novo Item
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {selectedMeasurement.otherExpenses.map((o) => (
+                    <div key={o.id} className="p-5 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col md:flex-row gap-6 relative group animate-fade-in">
+                      <button onClick={() => handleRemoveOtherExpense(o.id)} className="absolute top-4 right-4 text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                        <X size={18} />
+                      </button>
+                      <div className="flex-1 space-y-3">
+                         <div>
+                            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Descrição da Despesa</label>
+                            <input className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-purple-500" value={o.description} onChange={e => handleUpdateOtherExpense(o.id, 'description', e.target.value)} placeholder="Ex: Estacionamento Aeroporto, Uber, etc" />
+                         </div>
+                      </div>
+                      <div className="w-full md:w-80 bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                        <CategoryBlock 
+                          category="OUTROS" label="Comprovante / Valor" icon={Paperclip} colorClass="text-purple-400" otherId={o.id} 
+                          attachments={selectedMeasurement.attachments}
+                          onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
+                          onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-7 bg-white border-t border-slate-200 flex justify-end items-center gap-6">
+              <div className="flex flex-col text-right">
+                <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Subtotal Final</span>
+                <span className="text-2xl font-black text-slate-900 leading-tight">{formatCurrency(totals.total)}</span>
+              </div>
+              <button onClick={handleSaveMeasurement} className="px-10 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-2xl shadow-xl text-xs uppercase tracking-widest flex items-center gap-3 transition-all active:scale-95">
+                <Check size={20} /> Salvar e Finalizar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default MeasurementView;

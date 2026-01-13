@@ -49,9 +49,10 @@ import Logistics from './components/Logistics';
 import LogisticsControl from './components/LogisticsControl';
 import MeasurementView from './components/Measurement';
 import Evidences from './components/Evidences';
-import { AuthProvider } from './contexts/AuthContext';
-import { useAuth } from './contexts/useAuth';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import type { EvidenceData } from './types';
+import { fetchCompanies } from "./services/companies";
+
 
 /* ======================================================
    CONTEXT
@@ -148,7 +149,7 @@ export const useApp = () => {
 ====================================================== */
 
 const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [companies, setCompanies] = useState<Company[]>(MOCK_COMPANIES);
+  const [companies, setCompanies] = useState<any[]>([]);
   const [regions] = useState<Region[]>(MOCK_REGIONS);
   const [areas] = useState<Area[]>(MOCK_AREAS);
   const [trainings, setTrainings] = useState<Training[]>(MOCK_TRAININGS);
@@ -195,6 +196,23 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     }
   }, [notification]);
 
+    const { user } = useAuth();
+
+  useEffect(() => {
+    if (!user) return;
+
+    (async () => {
+      try {
+        const data = await fetchCompanies();
+        setCompanies(data);
+      } catch (e) {
+        console.error("Erro ao carregar companies:", e);
+        // fallback opcional só pra demo:
+        // setCompanies(MOCK_COMPANIES);
+      }
+    })();
+  }, [user]);
+  
   // Inicializar medições para mock legados
   useEffect(() => {
     if (measurements.length === 0 && demands.length > 0) {

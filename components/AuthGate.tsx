@@ -2,14 +2,13 @@ import { type ReactNode } from 'react';
 import { useAuth } from '../contexts/useAuth';
 import Login from './Login';
 
-type Props = {
-  children: ReactNode;
-};
+type Props = { children: ReactNode };
 
 export default function AuthGate({ children }: Props) {
-  const { user, loading } = useAuth();
+  const { user, initializing } = useAuth();
 
-  if (loading) {
+  // só bloqueia a tela na primeira inicialização
+  if (initializing) {
     return (
       <div className="flex items-center justify-center h-screen">
         <span>Carregando...</span>
@@ -17,9 +16,7 @@ export default function AuthGate({ children }: Props) {
     );
   }
 
-  if (!user) {
-    return <Login />;
-  }
+  if (!user) return <Login />;
 
   return <>{children}</>;
 }

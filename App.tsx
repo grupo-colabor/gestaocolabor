@@ -1,4 +1,11 @@
-import React, { useState, createContext, useContext, useEffect, useCallback, useMemo } from 'react';
+import React, {
+  useState,
+  createContext,
+  useContext,
+  useEffect,
+  useCallback,
+  useMemo
+} from 'react';
 import {
   LayoutDashboard,
   Briefcase,
@@ -15,7 +22,7 @@ import {
   FileSearch
 } from 'lucide-react';
 
-import {
+import type {
   Company,
   Region,
   Area,
@@ -28,11 +35,11 @@ import {
   OperationalBaseKey,
   Measurement,
   InstructorAllocation,
-  LogisticAllocation
+  LogisticAllocation,
+  EvidenceData
 } from './types';
 
 import {
-  MOCK_COMPANIES,
   MOCK_REGIONS,
   MOCK_AREAS,
   MOCK_TRAININGS,
@@ -49,10 +56,12 @@ import Logistics from './components/Logistics';
 import LogisticsControl from './components/LogisticsControl';
 import MeasurementView from './components/Measurement';
 import Evidences from './components/Evidences';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
-import type { EvidenceData } from './types';
-import { fetchCompanies } from "./services/companies";
+import AuthGate from './components/AuthGate';
 
+import { fetchTrainings } from './services/trainings';
+import { fetchCompanies } from './services/companies';
+
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 /* ======================================================
    CONTEXT
@@ -79,7 +88,10 @@ interface AppState {
   getEvidenceAutoStatus: (demandId: string) => 'COMPLETA' | 'PENDENTE';
 
   setNextDemandNumber: React.Dispatch<React.SetStateAction<number>>;
-  setNotification: React.Dispatch<React.SetStateAction<{ message: string; type: 'info' | 'success' | 'error' } | null>>;
+  setNotification: React.Dispatch<
+    React.SetStateAction<{ message: string; type: 'info' | 'success' | 'error' } | null>
+  >;
+
   addDemand: (d: Demand) => void;
   updateDemand: (d: Demand) => void;
   deleteDemand: (id: string) => void;
@@ -101,7 +113,6 @@ interface AppState {
 
   // Instructor Allocation Actions
   addInstructorAllocation: (a: InstructorAllocation) => void;
-  // ✅ NOVO (necessário para o drag & drop não "desalocar" a demanda)
   updateInstructorAllocation: (a: InstructorAllocation) => void;
   removeInstructorAllocation: (id: string) => void;
 
@@ -117,8 +128,14 @@ interface AppState {
     suggested: (Instructor & { score: number })[];
     exceptions: (Instructor & { score: number })[];
   };
-  allocateInstructor: (demandId: string, instructorId: string, startDate?: string, endDate?: string) => boolean;
+  allocateInstructor: (
+    demandId: string,
+    instructorId: string,
+    startDate?: string,
+    endDate?: string
+  ) => boolean;
   deallocateInstructor: (demandId: string) => void;
+
   hasScheduleConflict: (
     instructorId: string,
     startDate: string,
@@ -127,20 +144,29 @@ interface AppState {
     excludeAgendaItemId?: string,
     excludeAllocationId?: string
   ) => boolean;
-  hasResourceConflict: (startDate: string, endDate: string, excludeDemandId?: string, excludeAllocationId?: string) => boolean;
+
+  hasResourceConflict: (
+    startDate: string,
+    endDate: string,
+    excludeDemandId?: string,
+    excludeAllocationId?: string
+  ) => boolean;
+
   isCompanyFullLogistics: (companyId: string) => boolean;
 
   // HÍBRIDO (MVP): definir/validar período presencial (prática)
-  setHybridPracticePeriod: (demandId: string, practiceStartDate: string, practiceEndDate: string) => boolean;
+  setHybridPracticePeriod: (
+    demandId: string,
+    practiceStartDate: string,
+    practiceEndDate: string
+  ) => boolean;
 }
 
 const AppContext = createContext<AppState | null>(null);
 
 export const useApp = () => {
   const context = useContext(AppContext);
-  if (!context) {
-    throw new Error('useApp must be used within AppProvider');
-  }
+  if (!context) throw new Error('useApp must be used within AppProvider');
   return context;
 };
 
@@ -149,22 +175,34 @@ export const useApp = () => {
 ====================================================== */
 
 const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [companies, setCompanies] = useState<any[]>([]);
+  // ✅ tipagem (sem any) para não quebrar e melhorar segurança
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [regions] = useState<Region[]>(MOCK_REGIONS);
   const [areas] = useState<Area[]>(MOCK_AREAS);
-  const [trainings, setTrainings] = useState<Training[]>(MOCK_TRAININGS);
+
+  // ✅ Agora carrega do banco; fallback = mock caso dê erro
+  const [trainings, setTrainings] = useState<Training[]>([]);
   const [instructors, setInstructors] = useState<Instructor[]>(MOCK_INSTRUCTORS);
   const [demands, setDemands] = useState<Demand[]>(MOCK_DEMANDS);
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
   const [agendaItems, setAgendaItems] = useState<AgendaItem[]>([]);
   const [instructorAllocations, setInstructorAllocations] = useState<InstructorAllocation[]>([]);
   const [resourceAllocations, setResourceAllocations] = useState<LogisticAllocation[]>([]);
-  const [operationalBases, setOperationalBases] = useState<OperationalBases>(INITIAL_OPERATIONAL_BASES);
-  const [notification, setNotification] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null);
+  const [operationalBases, setOperationalBases] =
+    useState<OperationalBases>(INITIAL_OPERATIONAL_BASES);
+
+  const [notification, setNotification] = useState<{
+    message: string;
+    type: 'info' | 'success' | 'error';
+  } | null>(null);
+
   const [nextDemandNumber, setNextDemandNumber] = useState<number>(6301);
 
   // ✅ Evidências (GLOBAL)
   const [evidenceStore, setEvidenceStore] = useState<Record<string, EvidenceData>>({});
+
+  // ✅ reforço: respeitar loading para evitar chamadas no meio da troca de sessão/aba
+  const { user, loading } = useAuth();
 
   // ✅ Status automático de evidências (ONLINE não exige fotos)
   const getEvidenceAutoStatus = useCallback(
@@ -181,7 +219,9 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       const hasCertificates = (data.certificates || []).length > 0;
       const hasPhotos = (data.photos || []).length > 0;
 
-      const isComplete = isOnline ? hasAttendance && hasCertificates : hasAttendance && hasCertificates && hasPhotos;
+      const isComplete = isOnline
+        ? hasAttendance && hasCertificates
+        : hasAttendance && hasCertificates && hasPhotos;
 
       return isComplete ? 'COMPLETA' : 'PENDENTE';
     },
@@ -196,23 +236,38 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     }
   }, [notification]);
 
-    const { user } = useAuth();
-
+  // ✅ Carregar empresas do Supabase
   useEffect(() => {
+    if (loading) return;
     if (!user) return;
 
     (async () => {
       try {
         const data = await fetchCompanies();
-        setCompanies(data);
+        setCompanies(data as any);
       } catch (e) {
-        console.error("Erro ao carregar companies:", e);
-        // fallback opcional só pra demo:
-        // setCompanies(MOCK_COMPANIES);
+        console.error('Erro ao carregar companies:', e);
       }
     })();
-  }, [user]);
-  
+  }, [user, loading]);
+
+  // ✅ Carregar treinamentos do Supabase
+  useEffect(() => {
+    if (loading) return;
+    if (!user) return;
+
+    (async () => {
+      try {
+        const data = await fetchTrainings();
+        setTrainings(data as any);
+      } catch (e) {
+        console.error('Erro ao carregar trainings:', e);
+        // fallback (se quiser manter algo no app enquanto ajusta)
+        setTrainings(MOCK_TRAININGS as any);
+      }
+    })();
+  }, [user, loading]);
+
   // Inicializar medições para mock legados
   useEffect(() => {
     if (measurements.length === 0 && demands.length > 0) {
@@ -232,7 +287,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const normalizeDate = useCallback((dateStr?: string) => {
     if (!dateStr) return null;
-    // Aceita "YYYY-MM-DD" ou ISO completo; sempre compara no início do dia
     const base = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
     const d = new Date(base + 'T00:00:00');
     return isNaN(d.getTime()) ? null : d;
@@ -245,7 +299,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const ensureDateTime = useCallback(
     (s: string, kind: 'start' | 'end') => {
-      // Se vier "YYYY-MM-DD", injeta 08:00 / 18:00 para evitar bugs e manter padrão
       if (isDateOnly(s)) {
         return `${s}T${kind === 'start' ? '08:00' : '18:00'}`;
       }
@@ -256,7 +309,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const getEffectiveDemandRange = useCallback(
     (d: Demand) => {
-      // 🔑 Regra master: HÍBRIDO usa apenas o período de prática (se definido)
       if (d.modality === 'HIBRIDO' && d.practiceStartDate && d.practiceEndDate) {
         return {
           start: ensureDateTime(d.practiceStartDate, 'start'),
@@ -273,13 +325,11 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const sanitizeHybridPracticePeriod = useCallback(
     (d: Demand): Demand => {
-      // Se não for híbrido, nunca mantém período de prática
       if (d.modality !== 'HIBRIDO') {
-        const { practiceStartDate, practiceEndDate, ...rest } = d;
+        const { practiceStartDate, practiceEndDate, ...rest } = d as any;
         return rest as Demand;
       }
 
-      // Se for híbrido, mantém somente se estiver completo e dentro do range
       const totalStart = normalizeDate(d.startDate);
       const totalEnd = normalizeDate(d.endDate);
       const pStart = normalizeDate(d.practiceStartDate);
@@ -292,7 +342,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         return { ...d, practiceStartDate: undefined, practiceEndDate: undefined };
       }
 
-      const withinRange = pStart! >= totalStart! && pEnd! <= totalEnd! && pStart! <= pEnd!;
+      const withinRange =
+        pStart! >= totalStart! && pEnd! <= totalEnd! && pStart! <= pEnd!;
       if (!withinRange) {
         return { ...d, practiceStartDate: undefined, practiceEndDate: undefined };
       }
@@ -309,7 +360,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     (d: Demand) => {
       let seq = 0;
 
-      // Captura o número atual de forma atômica (sem risco de ID duplicado)
       setNextDemandNumber(prev => {
         seq = prev;
         return prev + 1;
@@ -342,7 +392,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       setDemands(prev => [...prev, newDemand]);
       setMeasurements(prev => [...prev, newMeasurement]);
 
-      // (Opcional) já inicia o store de evidências vazio, se você já faz isso hoje
       setEvidenceStore(prev => ({
         ...prev,
         [nextId]:
@@ -387,15 +436,24 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         return false;
       }
       if (!pStart || !pEnd) {
-        setNotification({ message: 'Selecione datas válidas para o período de prática.', type: 'error' });
+        setNotification({
+          message: 'Selecione datas válidas para o período de prática.',
+          type: 'error'
+        });
         return false;
       }
       if (pStart > pEnd) {
-        setNotification({ message: 'A data de início da prática não pode ser maior que a data de fim.', type: 'error' });
+        setNotification({
+          message: 'A data de início da prática não pode ser maior que a data de fim.',
+          type: 'error'
+        });
         return false;
       }
       if (pStart < totalStart || pEnd > totalEnd) {
-        setNotification({ message: 'O período de prática deve estar dentro do período total da demanda.', type: 'error' });
+        setNotification({
+          message: 'O período de prática deve estar dentro do período total da demanda.',
+          type: 'error'
+        });
         return false;
       }
 
@@ -404,7 +462,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       setNotification({ message: 'Período de prática salvo com sucesso.', type: 'success' });
       return true;
     },
-    [demands, normalizeDate, setNotification, updateDemand]
+    [demands, normalizeDate, updateDemand]
   );
 
   const deleteDemand = useCallback((id: string) => {
@@ -414,7 +472,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     setInstructorAllocations(prev => prev.filter(a => a.demandId !== id));
     setResourceAllocations(prev => prev.filter(a => a.demandId !== id));
 
-    // ✅ Remove evidências da demanda deletada
     setEvidenceStore(prev => {
       const next = { ...prev };
       delete next[id];
@@ -423,11 +480,17 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   }, []);
 
   const cancelDemand = useCallback((demandId: string) => {
-    setDemands(prev => prev.map(d => (d.id === demandId ? { ...d, status: 'CANCELADA' } : d)));
+    setDemands(prev =>
+      prev.map(d => (d.id === demandId ? { ...d, status: 'CANCELADA' } : d))
+    );
   }, []);
 
   const updateMeasurement = useCallback((m: Measurement) => {
-    setMeasurements(prev => prev.map(item => (item.id === m.id ? { ...m, updatedAt: new Date().toISOString() } : item)));
+    setMeasurements(prev =>
+      prev.map(item =>
+        item.id === m.id ? { ...m, updatedAt: new Date().toISOString() } : item
+      )
+    );
   }, []);
 
   const addInstructor = useCallback((i: Instructor) => {
@@ -473,7 +536,9 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     setInstructorAllocations(prev => {
       const fmt = (d: Date) => {
         const z = (n: number) => n.toString().padStart(2, '0');
-        return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`;
+        return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(
+          d.getHours()
+        )}:${z(d.getMinutes())}`;
       };
 
       const nStart = new Date(newAlloc.startDate);
@@ -550,17 +615,10 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     });
   }, []);
 
-  // ✅ NOVO: update (necessário para o drag & drop manter status e não "desalocar")
   const updateInstructorAllocation = useCallback((updated: InstructorAllocation) => {
     setInstructorAllocations(prev => prev.map(a => (a.id === updated.id ? updated : a)));
   }, []);
 
-  /**
-   * REMOVE INSTRUCTOR ALLOCATION
-   * ✅ Corrigido: HÍBRIDO expande/reconstrói SOMENTE no período da prática
-   * ✅ Corrigido: remove ranges inválidos (ex.: 18/01 até 17/01)
-   * ✅ Corrigido: TS (unknown -> string) via type guard
-   */
   const removeInstructorAllocation = useCallback(
     (id: string) => {
       setInstructorAllocations(prev => {
@@ -572,11 +630,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         if (!demand) return prev.filter(a => a.id !== id);
 
         const otherAllocations = prev.filter(a => a.demandId !== demandId);
-
-        // allocations restantes do MESMO demand (já removendo o id)
         const remainingForDemand = prev.filter(a => a.demandId === demandId && a.id !== id);
 
-        // 🔑 range efetivo (HIBRIDO => prática definida; senão total)
         const effective = getEffectiveDemandRange(demand);
 
         const isValidRange = (startStr: string, endStr: string) => {
@@ -585,19 +640,27 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           return !isNaN(s) && !isNaN(e) && s <= e;
         };
 
-        // Se não sobrou ninguém, limpa demanda
         if (remainingForDemand.length === 0) {
-          setDemands(dPrev => dPrev.map(d => (d.id === demandId ? { ...d, instructorId: undefined, status: 'PENDENTE' } : d)));
+          setDemands(dPrev =>
+            dPrev.map(d =>
+              d.id === demandId ? { ...d, instructorId: undefined, status: 'PENDENTE' } : d
+            )
+          );
           return otherAllocations;
         }
 
-        // ✅ Se só sobrou 1 instrutor único, MERGE tudo em um único allocation
         const uniqueInstructorIds: string[] = Array.from(
-          new Set<string>(remainingForDemand.map(a => a.instructorId).filter((x): x is string => typeof x === 'string' && x.length > 0))
+          new Set<string>(
+            remainingForDemand
+              .map(a => a.instructorId)
+              .filter((x): x is string => typeof x === 'string' && x.length > 0)
+          )
         );
+
         if (uniqueInstructorIds.length === 1) {
           const remainingInstructorId = uniqueInstructorIds[0];
-          const instName = instructors.find(i => i.id === remainingInstructorId)?.name || 'outro instrutor';
+          const instName =
+            instructors.find(i => i.id === remainingInstructorId)?.name || 'outro instrutor';
 
           const merged: InstructorAllocation = {
             id: `ALOC-MERGED-${Date.now()}`,
@@ -615,11 +678,15 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           return [...otherAllocations, merged];
         }
 
-        // Caso existam múltiplos instrutores, reconstrói mantendo o período completo (efetivo)
         const z = (n: number) => n.toString().padStart(2, '0');
-        const fmt = (d: Date) => `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`;
+        const fmt = (d: Date) =>
+          `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(
+            d.getHours()
+          )}:${z(d.getMinutes())}`;
 
-        const sorted = [...remainingForDemand].sort((a, b) => a.startDate.localeCompare(b.startDate));
+        const sorted = [...remainingForDemand].sort((a, b) =>
+          a.startDate.localeCompare(b.startDate)
+        );
 
         const rebuilt = sorted.map((alloc, idx) => {
           let s = alloc.startDate;
@@ -639,18 +706,18 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           return { ...alloc, startDate: s, endDate: e };
         });
 
-        // ✅ elimina qualquer allocation inválido (ex.: 18/01 até 17/01)
         const cleaned = rebuilt.filter(a => isValidRange(a.startDate, a.endDate));
 
         setNotification({
-          message: `O período removido foi automaticamente reassumido por outro instrutor para manter a demanda completa.`,
+          message:
+            'O período removido foi automaticamente reassumido por outro instrutor para manter a demanda completa.',
           type: 'info'
         });
 
         return [...otherAllocations, ...cleaned];
       });
     },
-    [setDemands, demands, instructors, getEffectiveDemandRange, setNotification]
+    [demands, instructors, getEffectiveDemandRange]
   );
 
   const addResourceAllocation = useCallback((a: LogisticAllocation) => {
@@ -691,18 +758,11 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       const start = new Date(startDate);
       const end = new Date(endDate);
 
-      // =====================================================
-      // 1) DEMANDAS (APENAS COMO FALLBACK – SEM ALOCAÇÃO)
-      //    ✅ HÍBRIDO: bloqueia SOMENTE período efetivo (prática) se existir
-      // =====================================================
       const demandConflict = demands.some(d => {
         if (excludeDemandId && d.id === excludeDemandId) return false;
         if (d.instructorId !== instructorId) return false;
         if (d.status === 'CANCELADA') return false;
 
-        // 🔑 REGRA PRINCIPAL:
-        // Se a demanda já possui alocação de instrutor,
-        // ela NÃO pode bloquear o período inteiro
         const hasExplicitAllocation = instructorAllocations.some(a => a.demandId === d.id);
         if (hasExplicitAllocation) return false;
 
@@ -714,9 +774,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
       if (demandConflict) return true;
 
-      // =====================================================
-      // 2) ALOCAÇÕES REAIS DE INSTRUTOR (REGRA PRINCIPAL)
-      // =====================================================
       const allocationConflict = instructorAllocations.some(a => {
         if (excludeAllocationId && a.id === excludeAllocationId) return false;
         if (a.instructorId !== instructorId) return false;
@@ -728,9 +785,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
       if (allocationConflict) return true;
 
-      // =====================================================
-      // 3) COMPROMISSOS MANUAIS DA AGENDA
-      // =====================================================
       const agendaConflict = agendaItems.some(item => {
         if (excludeAgendaItemId && item.id === excludeAgendaItemId) return false;
         if (item.instructorId !== instructorId) return false;
@@ -769,7 +823,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const recommendInstructors = useCallback(
     (demand: Demand) => {
-      // ✅ Sempre usa período efetivo (HIBRIDO => prática definida; senão total)
       const effective = getEffectiveDemandRange(demand);
 
       const activeCapableInstructors = instructors
@@ -789,7 +842,9 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         suggested: activeCapableInstructors.filter(
           i => !demand.regionId || demand.trainingLocal === 'N/A' || i.regionIds?.includes(demand.regionId)
         ),
-        exceptions: activeCapableInstructors.filter(i => demand.regionId && demand.trainingLocal !== 'N/A' && !i.regionIds?.includes(demand.regionId))
+        exceptions: activeCapableInstructors.filter(
+          i => demand.regionId && demand.trainingLocal !== 'N/A' && !i.regionIds?.includes(demand.regionId)
+        )
       };
     },
     [instructors, hasScheduleConflict, getEffectiveDemandRange]
@@ -800,19 +855,18 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       const demand = demands.find(d => d.id === demandId);
       if (!demand) return false;
 
-      // ✅ Regra master: HÍBRIDO exige prática definida para alocação (tela de demanda/exceções)
       if (demand.modality === 'HIBRIDO') {
         const hasPractice = !!demand.practiceStartDate && !!demand.practiceEndDate;
         if (!hasPractice) {
           setNotification({
-            message: 'Para demandas HÍBRIDAS, defina primeiro o período presencial (prática) antes de alocar o instrutor.',
+            message:
+              'Para demandas HÍBRIDAS, defina primeiro o período presencial (prática) antes de alocar o instrutor.',
             type: 'error'
           });
           return false;
         }
       }
 
-      // Se for híbrido, range efetivo é a prática; senão é o total
       const effective = getEffectiveDemandRange(demand);
 
       const finalStart = ensureDateTime(startDate || effective.start, 'start');
@@ -836,16 +890,17 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
       return true;
     },
-    [demands, updateDemand, addInstructorAllocation, setNotification, getEffectiveDemandRange, ensureDateTime]
+    [demands, updateDemand, addInstructorAllocation, getEffectiveDemandRange, ensureDateTime]
   );
 
-  const deallocateInstructor = useCallback(
-    (demandId: string) => {
-      setDemands(prev => prev.map(d => (d.id === demandId ? { ...d, instructorId: undefined, status: 'PENDENTE' } : d)));
-      setInstructorAllocations(prev => prev.filter(a => a.demandId !== demandId));
-    },
-    [setDemands, setInstructorAllocations]
-  );
+  const deallocateInstructor = useCallback((demandId: string) => {
+    setDemands(prev =>
+      prev.map(d =>
+        d.id === demandId ? { ...d, instructorId: undefined, status: 'PENDENTE' } : d
+      )
+    );
+    setInstructorAllocations(prev => prev.filter(a => a.demandId !== demandId));
+  }, []);
 
   const contextValue = useMemo(
     () => ({
@@ -886,7 +941,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       updateAgendaItem,
       removeAgendaItem,
       addInstructorAllocation,
-      // ✅ NOVO
       updateInstructorAllocation,
       removeInstructorAllocation,
       addResourceAllocation,
@@ -914,10 +968,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       operationalBases,
       notification,
       nextDemandNumber,
-
       evidenceStore,
       getEvidenceAutoStatus,
-
       addDemand,
       updateDemand,
       deleteDemand,
@@ -956,7 +1008,15 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
    APP LAYOUT
 ====================================================== */
 
-type View = 'dashboard' | 'demands' | 'calendar' | 'registrations' | 'logistics' | 'logistics-control' | 'measurement' | 'evidences';
+type View =
+  | 'dashboard'
+  | 'demands'
+  | 'calendar'
+  | 'registrations'
+  | 'logistics'
+  | 'logistics-control'
+  | 'measurement'
+  | 'evidences';
 
 type Action =
   | 'create_demand'
@@ -972,8 +1032,25 @@ type Action =
   | 'manage_measurement';
 
 const ROLE_PERMISSIONS: Record<string, View[]> = {
-  admin: ['dashboard', 'demands', 'calendar', 'registrations', 'logistics', 'logistics-control', 'measurement', 'evidences'],
-  analista: ['dashboard', 'demands', 'calendar', 'registrations', 'logistics', 'logistics-control', 'evidences'],
+  admin: [
+    'dashboard',
+    'demands',
+    'calendar',
+    'registrations',
+    'logistics',
+    'logistics-control',
+    'measurement',
+    'evidences'
+  ],
+  analista: [
+    'dashboard',
+    'demands',
+    'calendar',
+    'registrations',
+    'logistics',
+    'logistics-control',
+    'evidences'
+  ],
   coordenador: ['calendar'] // apenas visualização
 };
 
@@ -1002,11 +1079,8 @@ const ROLE_ACTIONS: Record<string, Action[]> = {
     'delete_agenda',
     'manage_registrations',
     'manage_logistics'
-    // ⚠️ sem manage_measurement (pois não entra em medição)
   ],
-  coordenador: [
-    // somente visualização → nenhuma ação
-  ]
+  coordenador: []
 };
 
 const canPerformAction = (role: string | undefined, action: Action): boolean => {
@@ -1028,17 +1102,9 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!profile?.role) return;
 
-    if (profile.role === 'coordenador') {
-      setCurrentView('calendar');
-    }
-
-    if (profile.role === 'analista') {
-      setCurrentView('dashboard');
-    }
-
-    if (profile.role === 'admin') {
-      setCurrentView('dashboard');
-    }
+    if (profile.role === 'coordenador') setCurrentView('calendar');
+    if (profile.role === 'analista') setCurrentView('dashboard');
+    if (profile.role === 'admin') setCurrentView('dashboard');
   }, [profile?.role]);
 
   const renderContent = () => {
@@ -1050,6 +1116,7 @@ const App: React.FC = () => {
         </div>
       );
     }
+
     switch (currentView) {
       case 'demands':
         return <Demands />;
@@ -1094,10 +1161,15 @@ const App: React.FC = () => {
               )}
             </div>
             <div className="flex-1">
-              <p className="text-xs font-black uppercase tracking-widest opacity-60 mb-0.5">Notificação do Sistema</p>
+              <p className="text-xs font-black uppercase tracking-widest opacity-60 mb-0.5">
+                Notificação do Sistema
+              </p>
               <p className="text-sm font-bold leading-tight">{notification.message}</p>
             </div>
-            <button onClick={() => setNotification(null)} className="p-1 hover:bg-white/10 rounded-lg transition-colors">
+            <button
+              onClick={() => setNotification(null)}
+              className="p-1 hover:bg-white/10 rounded-lg transition-colors"
+            >
               <X size={18} />
             </button>
           </div>
@@ -1119,15 +1191,30 @@ const App: React.FC = () => {
 
         <nav className="mt-6 space-y-1">
           {canAccessView(profile?.role, 'dashboard') && (
-            <SidebarButton icon={LayoutDashboard} label="Dashboard" active={currentView === 'dashboard'} onClick={() => setCurrentView('dashboard')} />
+            <SidebarButton
+              icon={LayoutDashboard}
+              label="Dashboard"
+              active={currentView === 'dashboard'}
+              onClick={() => setCurrentView('dashboard')}
+            />
           )}
 
           {canAccessView(profile?.role, 'demands') && (
-            <SidebarButton icon={Briefcase} label="Demandas" active={currentView === 'demands'} onClick={() => setCurrentView('demands')} />
+            <SidebarButton
+              icon={Briefcase}
+              label="Demandas"
+              active={currentView === 'demands'}
+              onClick={() => setCurrentView('demands')}
+            />
           )}
 
           {canAccessView(profile?.role, 'logistics') && (
-            <SidebarButton icon={Truck} label="Programação" active={currentView === 'logistics'} onClick={() => setCurrentView('logistics')} />
+            <SidebarButton
+              icon={Truck}
+              label="Programação"
+              active={currentView === 'logistics'}
+              onClick={() => setCurrentView('logistics')}
+            />
           )}
 
           {canAccessView(profile?.role, 'logistics-control') && (
@@ -1140,19 +1227,39 @@ const App: React.FC = () => {
           )}
 
           {canAccessView(profile?.role, 'measurement') && (
-            <SidebarButton icon={BarChart3} label="Medição" active={currentView === 'measurement'} onClick={() => setCurrentView('measurement')} />
+            <SidebarButton
+              icon={BarChart3}
+              label="Medição"
+              active={currentView === 'measurement'}
+              onClick={() => setCurrentView('measurement')}
+            />
           )}
 
           {canAccessView(profile?.role, 'evidences') && (
-            <SidebarButton icon={FileSearch} label="Evidências" active={currentView === 'evidences'} onClick={() => setCurrentView('evidences')} />
+            <SidebarButton
+              icon={FileSearch}
+              label="Evidências"
+              active={currentView === 'evidences'}
+              onClick={() => setCurrentView('evidences')}
+            />
           )}
 
           {canAccessView(profile?.role, 'calendar') && (
-            <SidebarButton icon={Calendar} label="Agenda" active={currentView === 'calendar'} onClick={() => setCurrentView('calendar')} />
+            <SidebarButton
+              icon={Calendar}
+              label="Agenda"
+              active={currentView === 'calendar'}
+              onClick={() => setCurrentView('calendar')}
+            />
           )}
 
           {canAccessView(profile?.role, 'registrations') && (
-            <SidebarButton icon={Settings} label="Cadastros" active={currentView === 'registrations'} onClick={() => setCurrentView('registrations')} />
+            <SidebarButton
+              icon={Settings}
+              label="Cadastros"
+              active={currentView === 'registrations'}
+              onClick={() => setCurrentView('registrations')}
+            />
           )}
         </nav>
       </aside>
@@ -1193,8 +1300,6 @@ const SidebarButton = ({
     <span className="font-medium">{label}</span>
   </button>
 );
-
-import AuthGate from './components/AuthGate';
 
 export default () => (
   <AuthProvider>

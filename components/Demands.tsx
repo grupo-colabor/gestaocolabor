@@ -16,7 +16,8 @@ import {
 } from '../constants';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } from 'docx';
 import { calculateDemandStatus } from '../domain/demandStatus';
-import { useAuth } from '../contexts/useAuth';
+import { useAuth } from "../contexts/AuthContext";
+
 
 type Action =
   | 'create_demand'

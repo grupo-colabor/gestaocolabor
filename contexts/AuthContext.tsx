@@ -64,24 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // ✅ garante que não dispare vários loads de profile ao mesmo tempo
   const profilePromiseRef = useRef<Promise<Profile | null> | null>(null);
 
-  /* =========================
-     MODO MOCK (DEV/TESTE)
-  ========================= */
-  useEffect(() => {
-    if (AUTH_MODE !== 'mock') return;
-
-    setUser({ id: 'dev-user', email: 'dev@local.test' });
-    setProfile({
-      id: 'dev-user',
-      email: 'dev@local.test',
-      role: 'admin',
-      full_name: 'Dev User',
-    });
-
-    setLoading(false);
-    setInitializing(false);
-  }, []);
-
+ 
   /* =========================
      Buscar perfil / Criar se não existir
      ✅ sem timeout custom aqui para não dar "Timeout fantasma"

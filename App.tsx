@@ -63,6 +63,9 @@ import { fetchCompanies } from './services/companies';
 
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
+// ✅ Supabase client (precisa existir em ./lib/supabase)
+import { supabase } from './lib/supabase';
+
 /* ======================================================
    CONTEXT
 ====================================================== */
@@ -175,12 +178,14 @@ export const useApp = () => {
 ====================================================== */
 
 const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // ✅ tipagem (sem any) para não quebrar e melhorar segurança
+  // ✅ Auth mode (não mistura mock + supabase)
+  const AUTH_MODE = (import.meta.env.VITE_AUTH_MODE || 'mock') as 'mock' | 'supabase';
+
   const [companies, setCompanies] = useState<Company[]>([]);
   const [regions] = useState<Region[]>(MOCK_REGIONS);
   const [areas] = useState<Area[]>(MOCK_AREAS);
 
-  // ✅ Agora carrega do banco; fallback = mock caso dê erro
+  // ✅ Agora carrega do banco; fallback = mock caso dê erro (somente se quiser)
   const [trainings, setTrainings] = useState<Training[]>([]);
   const [instructors, setInstructors] = useState<Instructor[]>(MOCK_INSTRUCTORS);
   const [demands, setDemands] = useState<Demand[]>(MOCK_DEMANDS);
@@ -201,8 +206,72 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // ✅ Evidências (GLOBAL)
   const [evidenceStore, setEvidenceStore] = useState<Record<string, EvidenceData>>({});
 
-  // ✅ reforço: respeitar loading para evitar chamadas no meio da troca de sessão/aba
+  // ✅ respeitar loading para evitar chamadas no meio da troca de sessão/aba
   const { user, loading } = useAuth();
+
+  /**
+   * ✅ Helpers de persistência (treinamentos) — ALINHADO AO SCHEMA ATUAL DO SUPABASE
+   * Tabela trainings (conforme services/trainings.ts):
+   * id(uuid), name, nr, category, area_id, hours, modality, status, created_at
+   *
+   * IMPORTANTE:
+   * - NO INSERT: NÃO enviar "id" (uuid é gerado no banco)
+   * - NO UPDATE: NÃO atualizar "id" (usa eq('id', t.id))
+   */
+  const mapTrainingToDb = useCallback((t: Training) => {
+    const cleanOrNull = (v?: string | null) => {
+      const s = (v ?? '').trim();
+      return s.length ? s : null;
+    };
+
+    return {
+      name: t.name,
+      nr: cleanOrNull(t.nr),
+      category: cleanOrNull(t.category),
+      area_id: null,
+      hours: t.hours ?? 0,
+      modality: cleanOrNull(t.modality),
+      status: cleanOrNull(t.status)
+    };
+  }, []);
+
+  // ✅ Mapper do formato do banco (TrainingRow) para o formato do app (Training)
+  // Campos extras ficam como defaults locais até o schema ser expandido.
+  const mapTrainingFromDb = useCallback((row: any): Training => {
+    return {
+      id: row.id,
+      name: row.name,
+      nr: row.nr ?? '',
+      category: row.category ?? '',
+      areaId: row.area_id ?? '',
+      hours: row.hours ?? 0,
+      modality: row.modality ?? 'PRESENCIAL',
+      status: row.status ?? 'ATIVO',
+
+      // Campos que NÃO existem hoje na tabela (defaults locais)
+      descriptionShort: '',
+      descriptionDetailed: '',
+      prerequisites: '',
+      targetAudience: '',
+      emitsCertificate: true,
+      validityMonths: null
+    };
+  }, []);
+
+  const syncTrainingsFromDb = useCallback(async () => {
+    try {
+      const rows = await fetchTrainings();
+      const mapped = rows.map(mapTrainingFromDb);
+      setTrainings(mapped);
+    } catch (e) {
+      console.error('Erro ao sincronizar trainings:', e);
+      setTrainings(MOCK_TRAININGS);
+      setNotification({
+        message: 'Falha ao sincronizar treinamentos do banco.',
+        type: 'error'
+      });
+    }
+  }, [mapTrainingFromDb]);
 
   // ✅ Status automático de evidências (ONLINE não exige fotos)
   const getEvidenceAutoStatus = useCallback(
@@ -238,8 +307,10 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   // ✅ Carregar empresas do Supabase
   useEffect(() => {
+    if (AUTH_MODE !== 'supabase') return;
     if (loading) return;
     if (!user) return;
+
 
     (async () => {
       try {
@@ -251,22 +322,12 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     })();
   }, [user, loading]);
 
-  // ✅ Carregar treinamentos do Supabase
+  // ✅ Carregar treinamentos do Supabase (fonte da verdade)
   useEffect(() => {
     if (loading) return;
     if (!user) return;
-
-    (async () => {
-      try {
-        const data = await fetchTrainings();
-        setTrainings(data as any);
-      } catch (e) {
-        console.error('Erro ao carregar trainings:', e);
-        // fallback (se quiser manter algo no app enquanto ajusta)
-        setTrainings(MOCK_TRAININGS as any);
-      }
-    })();
-  }, [user, loading]);
+    syncTrainingsFromDb();
+  }, [user, loading, syncTrainingsFromDb]);
 
   // Inicializar medições para mock legados
   useEffect(() => {
@@ -342,8 +403,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         return { ...d, practiceStartDate: undefined, practiceEndDate: undefined };
       }
 
-      const withinRange =
-        pStart! >= totalStart! && pEnd! <= totalEnd! && pStart! <= pEnd!;
+      const withinRange = pStart! >= totalStart! && pEnd! <= totalEnd! && pStart! <= pEnd!;
       if (!withinRange) {
         return { ...d, practiceStartDate: undefined, practiceEndDate: undefined };
       }
@@ -480,16 +540,12 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   }, []);
 
   const cancelDemand = useCallback((demandId: string) => {
-    setDemands(prev =>
-      prev.map(d => (d.id === demandId ? { ...d, status: 'CANCELADA' } : d))
-    );
+    setDemands(prev => prev.map(d => (d.id === demandId ? { ...d, status: 'CANCELADA' } : d)));
   }, []);
 
   const updateMeasurement = useCallback((m: Measurement) => {
     setMeasurements(prev =>
-      prev.map(item =>
-        item.id === m.id ? { ...m, updatedAt: new Date().toISOString() } : item
-      )
+      prev.map(item => (item.id === m.id ? { ...m, updatedAt: new Date().toISOString() } : item))
     );
   }, []);
 
@@ -509,13 +565,90 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     setCompanies(prev => prev.map(item => (item.id === c.id ? c : item)));
   }, []);
 
-  const addTraining = useCallback((t: Training) => {
-    setTrainings(prev => [...prev, t]);
-  }, []);
+  // ✅ Treinamentos (mock vs supabase)
+  const addTraining = useCallback(
+    (t: Training) => {
+      if (AUTH_MODE !== 'supabase') {
+        setTrainings(prev => [...prev, t]);
+        return;
+      }
 
-  const updateTraining = useCallback((t: Training) => {
-    setTrainings(prev => prev.map(item => (item.id === t.id ? t : item)));
-  }, []);
+      if (loading || !user) {
+        setNotification({
+          message: 'Aguarde a sessão carregar para salvar o treinamento.',
+          type: 'info'
+        });
+        return;
+      }
+
+      (async () => {
+        try {
+          // ✅ NÃO manda id (uuid é gerado no banco)
+          const payload = mapTrainingToDb(t);
+
+          const { error } = await supabase.from('trainings').insert(payload);
+
+          if (error) {
+            console.error('Erro insert trainings:', error);
+            setNotification({
+              message: `Erro ao criar treinamento: ${error.message}`,
+              type: 'error'
+            });
+            return;
+          }
+
+          await syncTrainingsFromDb();
+          setNotification({ message: 'Treinamento criado com sucesso.', type: 'success' });
+        } catch (e) {
+          console.error('Erro ao criar treinamento:', e);
+          setNotification({ message: 'Erro ao criar treinamento.', type: 'error' });
+        }
+      })();
+    },
+    [AUTH_MODE, loading, user, mapTrainingToDb, syncTrainingsFromDb]
+  );
+
+  const updateTraining = useCallback(
+    (t: Training) => {
+      if (AUTH_MODE !== 'supabase') {
+        setTrainings(prev => prev.map(item => (item.id === t.id ? t : item)));
+        return;
+      }
+
+      if (loading || !user) {
+        setNotification({
+          message: 'Aguarde a sessão carregar para salvar o treinamento.',
+          type: 'info'
+        });
+        return;
+      }
+
+      (async () => {
+        try {
+          // ✅ NÃO tenta atualizar o id
+          const payload = mapTrainingToDb(t);
+
+          const { error } = await supabase.from('trainings').update(payload).eq('id', t.id);
+
+          if (error) {
+            console.error('Erro update trainings:', error);
+            setNotification({
+              message: `Erro ao atualizar treinamento: ${error.message}`,
+              type: 'error'
+            });
+            return;
+          }
+
+          await syncTrainingsFromDb();
+          setNotification({ message: 'Treinamento atualizado com sucesso.', type: 'success' });
+        } catch (e) {
+          console.error('Erro ao atualizar treinamento:', e);
+          setNotification({ message: 'Erro ao atualizar treinamento.', type: 'error' });
+        }
+      })();
+    },
+    [AUTH_MODE, loading, user, mapTrainingToDb, syncTrainingsFromDb]
+  );
 
   const addAgendaItem = useCallback((item: AgendaItem) => {
     setAgendaItems(prev => [...prev, item]);
@@ -680,13 +813,11 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
         const z = (n: number) => n.toString().padStart(2, '0');
         const fmt = (d: Date) =>
-          `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(
-            d.getHours()
-          )}:${z(d.getMinutes())}`;
+          `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(
+            d.getMinutes()
+          )}`;
 
-        const sorted = [...remainingForDemand].sort((a, b) =>
-          a.startDate.localeCompare(b.startDate)
-        );
+        const sorted = [...remainingForDemand].sort((a, b) => a.startDate.localeCompare(b.startDate));
 
         const rebuilt = sorted.map((alloc, idx) => {
           let s = alloc.startDate;
@@ -800,7 +931,12 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   );
 
   const hasResourceConflict = useCallback(
-    (startDate: string, endDate: string, excludeDemandId?: string, excludeAllocationId?: string): boolean => {
+    (
+      startDate: string,
+      endDate: string,
+      excludeDemandId?: string,
+      excludeAllocationId?: string
+    ): boolean => {
       const start = new Date(startDate);
       const end = new Date(endDate);
 
@@ -840,10 +976,16 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
       return {
         suggested: activeCapableInstructors.filter(
-          i => !demand.regionId || demand.trainingLocal === 'N/A' || i.regionIds?.includes(demand.regionId)
+          i =>
+            !demand.regionId ||
+            demand.trainingLocal === 'N/A' ||
+            i.regionIds?.includes(demand.regionId)
         ),
         exceptions: activeCapableInstructors.filter(
-          i => demand.regionId && demand.trainingLocal !== 'N/A' && !i.regionIds?.includes(demand.regionId)
+          i =>
+            demand.regionId &&
+            demand.trainingLocal !== 'N/A' &&
+            !i.regionIds?.includes(demand.regionId)
         )
       };
     },
@@ -1042,15 +1184,7 @@ const ROLE_PERMISSIONS: Record<string, View[]> = {
     'measurement',
     'evidences'
   ],
-  analista: [
-    'dashboard',
-    'demands',
-    'calendar',
-    'registrations',
-    'logistics',
-    'logistics-control',
-    'evidences'
-  ],
+  analista: ['dashboard', 'demands', 'calendar', 'registrations', 'logistics', 'logistics-control', 'evidences'],
   coordenador: ['calendar'] // apenas visualização
 };
 

@@ -5,6 +5,7 @@ import { Company, Instructor, Training, Status, InstructorSkill, Segment, Logist
 // Added AlertCircle to imports from lucide-react
 import { X, Plus, Trash2, Check, UserPlus, Info, Edit3, Building2, MapPin, User, BookOpen, FolderOpen, Award, Target, Settings, AlertCircle } from 'lucide-react';
 import { SKILL_LABELS } from '../constants';
+import { supabase } from '../lib/supabase';
 
 type Tab = 'companies' | 'trainings' | 'instructors' | 'bases' | 'settings';
 
@@ -77,17 +78,20 @@ const Registrations: React.FC = () => {
   const [editingInstructorId, setEditingInstructorId] = useState<string | null>(null);
   const [instructorFormData, setInstructorFormData] = useState<{
     name: string;
+    email: string;
     status: Status;
     regionIds: string[];
     skills: InstructorSkill[];
     observations: string;
   }>({
     name: '',
+    email: '',
     status: 'ATIVO',
     regionIds: [],
     skills: [],
     observations: ''
   });
+
 
   const [tempSkill, setTempSkill] = useState<{ trainingId: string; level: number }>({
     trainingId: '',
@@ -156,7 +160,7 @@ const Registrations: React.FC = () => {
   // --- Instructor Handlers ---
   const handleOpenInstructorCreateModal = () => {
     setEditingInstructorId(null);
-    setInstructorFormData({ name: '', status: 'ATIVO', regionIds: [], skills: [], observations: '' });
+    setInstructorFormData({ name: '', email: '', status: 'ATIVO', regionIds: [], skills: [], observations: '' });
     setTempSkill({ trainingId: '', level: 3 });
     setIsInstructorModalOpen(true);
   };
@@ -164,12 +168,14 @@ const Registrations: React.FC = () => {
   const handleOpenInstructorEditModal = (instructor: Instructor) => {
     setEditingInstructorId(instructor.id);
     setInstructorFormData({ 
-      name: instructor.name, 
-      status: instructor.status, 
-      regionIds: [...instructor.regionIds], 
-      skills: [...instructor.skills.map(s => ({ ...s }))], 
-      observations: instructor.observations || '' 
-    });
+    name: instructor.name,
+    email: (instructor as any).email || '',
+    status: instructor.status, 
+    regionIds: [...instructor.regionIds], 
+    skills: [...instructor.skills.map(s => ({ ...s }))], 
+    observations: instructor.observations || '' 
+  });
+
     setTempSkill({ trainingId: '', level: 3 });
     setIsInstructorModalOpen(true);
   };
@@ -205,19 +211,125 @@ const Registrations: React.FC = () => {
     }));
   };
 
-  const handleSaveInstructor = () => {
-    if (!instructorFormData.name.trim()) return alert('O nome do instrutor é obrigatório.');
-    if (instructorFormData.regionIds.length === 0) return alert('Selecione pelo menos uma região de atuação.');
-    if (instructorFormData.skills.length === 0) return alert('Adicione pelo menos um treinamento que o instrutor ministra.');
-    
-    const data: Instructor = { 
-      id: editingInstructorId || `INST-${Date.now()}`, 
-      ...instructorFormData 
+  const toDbLevel = (level: number) => {
+  // Ajuste se o seu enum no banco tiver outros valores
+  if (level >= 4) return 'ESPECIALISTA';
+  if (level === 3) return 'AVANCADO';
+  if (level === 2) return 'INTERMEDIARIO';
+  return 'BASICO';
+};
+
+const getDbRegion = (regionIds: string[]) => {
+  // Seu banco hoje parece guardar 1 região (ex: "SUDESTE")
+  // Então vamos gravar a "primeira" selecionada.
+  const first = regionIds[0];
+  const region = regions.find(r => r.id === first);
+  return region?.name || null;
+};
+
+const handleSaveInstructor = async () => {
+  if (!instructorFormData.name.trim()) return alert('O nome do instrutor é obrigatório.');
+  if (instructorFormData.regionIds.length === 0) return alert('Selecione pelo menos uma região de atuação.');
+  if (instructorFormData.skills.length === 0) return alert('Adicione pelo menos um treinamento que o instrutor ministra.');
+
+  // Se não tiver supabase configurado, mantém o comportamento antigo (mock)
+  if (!supabase) {
+    const fallback: Instructor = {
+      id: editingInstructorId || `INST-${Date.now()}`,
+      name: instructorFormData.name,
+      status: instructorFormData.status,
+      regionIds: instructorFormData.regionIds,
+      skills: instructorFormData.skills,
+      observations: instructorFormData.observations,
     };
-    
-    editingInstructorId ? updateInstructor(data) : addInstructor(data);
+    (fallback as any).email = instructorFormData.email;
+
+    editingInstructorId ? updateInstructor(fallback) : addInstructor(fallback);
     setIsInstructorModalOpen(false);
-  };
+    return;
+  }
+
+  try {
+    const isActive = instructorFormData.status === 'ATIVO';
+    const dbRegion = getDbRegion(instructorFormData.regionIds);
+
+    // 1) UPSERT do instrutor (insert ou update)
+    let instructorId = editingInstructorId;
+
+    if (editingInstructorId) {
+      const { data, error } = await supabase
+        .from('instructors')
+        .update({
+          full_name: instructorFormData.name,
+          email: instructorFormData.email || null,
+          region: dbRegion,
+          is_active: isActive,
+        })
+        .eq('id', editingInstructorId)
+        .select('id')
+        .single();
+
+      if (error) throw error;
+      instructorId = data.id;
+    } else {
+      const { data, error } = await supabase
+        .from('instructors')
+        .insert({
+          full_name: instructorFormData.name,
+          email: instructorFormData.email || null,
+          region: dbRegion,
+          is_active: isActive,
+        })
+        .select('id')
+        .single();
+
+      if (error) throw error;
+      instructorId = data.id;
+    }
+
+    if (!instructorId) throw new Error('Não foi possível obter o ID do instrutor.');
+
+    // 2) Sincroniza a pivô instructor_trainings
+    // Estratégia simples e segura: apaga e insere de novo
+    const { error: delErr } = await supabase
+      .from('instructor_trainings')
+      .delete()
+      .eq('instructor_id', instructorId);
+
+    if (delErr) throw delErr;
+
+    const rows = instructorFormData.skills.map((s) => ({
+      instructor_id: instructorId,
+      training_id: s.trainingId,
+      level: toDbLevel(s.level),
+    }));
+
+    const { error: insErr } = await supabase
+      .from('instructor_trainings')
+      .insert(rows);
+
+    if (insErr) throw insErr;
+
+    // 3) Atualiza a UI local (pra refletir na hora)
+    const local: Instructor = {
+      id: instructorId,
+      name: instructorFormData.name,
+      status: instructorFormData.status,
+      regionIds: instructorFormData.regionIds,
+      skills: instructorFormData.skills,
+      observations: instructorFormData.observations,
+    };
+    (local as any).email = instructorFormData.email;
+
+    editingInstructorId ? updateInstructor(local) : addInstructor(local);
+
+    setIsInstructorModalOpen(false);
+  } catch (e: any) {
+    console.error(e);
+    alert(`Erro ao salvar instrutor no banco: ${e?.message || 'erro desconhecido'}`);
+  }
+};
+
 
   // --- Operational Bases Handlers ---
   const handleAddBaseItem = () => {
@@ -683,13 +795,35 @@ const Registrations: React.FC = () => {
               <section>
                 <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><User size={14} /> Identificação Básica</h3>
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-                  <div className="md:col-span-8">
+                  <div className="md:col-span-6">
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nome Completo *</label>
-                    <input type="text" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={instructorFormData.name} onChange={(e) => setInstructorFormData({...instructorFormData, name: e.target.value})} placeholder="Ex: Carlos Augusto Silva" />
+                    <input
+                      type="text"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      value={instructorFormData.name}
+                      onChange={(e) => setInstructorFormData({...instructorFormData, name: e.target.value})}
+                      placeholder="Ex: Carlos Augusto Silva"
+                    />
                   </div>
-                  <div className="md:col-span-4">
+
+                  <div className="md:col-span-3">
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Email</label>
+                    <input
+                      type="email"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      value={instructorFormData.email}
+                      onChange={(e) => setInstructorFormData({...instructorFormData, email: e.target.value})}
+                      placeholder="email@empresa.com"
+                    />
+                  </div>
+
+                  <div className="md:col-span-3">
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Status Operacional</label>
-                    <select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={instructorFormData.status} onChange={(e) => setInstructorFormData({...instructorFormData, status: e.target.value as Status})}>
+                    <select
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      value={instructorFormData.status}
+                      onChange={(e) => setInstructorFormData({...instructorFormData, status: e.target.value as Status})}
+                    >
                       <option value="ATIVO">Ativo (Disponível)</option>
                       <option value="INATIVO">Inativo (Bloqueado)</option>
                     </select>

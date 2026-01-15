@@ -101,6 +101,7 @@ export interface Instructor {
   status: Status;
   skills: InstructorSkill[];
   observations?: string;
+  email?: string;
 }
 
 export interface Schedule {

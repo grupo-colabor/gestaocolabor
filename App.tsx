@@ -63,6 +63,8 @@ import { fetchCompanies } from './services/companies';
 
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
+import { fetchInstructors, fetchInstructorTrainings } from './services/instructors';
+
 // ✅ Supabase client (precisa existir em ./lib/supabase)
 import { supabase } from './lib/supabase';
 
@@ -84,7 +86,7 @@ interface AppState {
   operationalBases: OperationalBases;
   notification: { message: string; type: 'info' | 'success' | 'error' } | null;
   nextDemandNumber: number;
-
+  
   // ✅ Evidências (GLOBAL)
   evidenceStore: Record<string, EvidenceData>;
   setEvidenceStore: React.Dispatch<React.SetStateAction<Record<string, EvidenceData>>>;
@@ -105,6 +107,7 @@ interface AppState {
   updateCompany: (c: Company) => void;
   addTraining: (t: Training) => void;
   updateTraining: (t: Training) => void;
+  reloadInstructors: () => Promise<void>;
 
   // Measurement Actions
   updateMeasurement: (m: Measurement) => void;
@@ -187,7 +190,9 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   // ✅ Agora carrega do banco; fallback = mock caso dê erro (somente se quiser)
   const [trainings, setTrainings] = useState<Training[]>([]);
-  const [instructors, setInstructors] = useState<Instructor[]>(MOCK_INSTRUCTORS);
+  const [instructors, setInstructors] = useState<Instructor[]>(
+  AUTH_MODE === 'supabase' ? [] : MOCK_INSTRUCTORS
+);
   const [demands, setDemands] = useState<Demand[]>(MOCK_DEMANDS);
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
   const [agendaItems, setAgendaItems] = useState<AgendaItem[]>([]);
@@ -273,6 +278,72 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     }
   }, [mapTrainingFromDb]);
 
+  const mapDbLevelToApp = useCallback((level: string | null | undefined): 1 | 2 | 3 | 4 => {
+  const v = (level || '').toUpperCase().trim();
+  if (v === 'ESPECIALISTA') return 4;
+  if (v === 'AVANCADO') return 3;
+  if (v === 'INTERMEDIARIO') return 2;
+  if (v === 'BASICO') return 1;
+  return 3;
+}, []);
+
+const mapInstructorFromDb = useCallback(
+  (row: any, skillsRows: Array<{ training_id: string; level: string | null }>): Instructor => {
+    const regionName = (row.region || '').toString().trim();
+    const regionMatch = regions.find(r => r.name.toLowerCase() === regionName.toLowerCase());
+    const regionIds = regionMatch ? [regionMatch.id] : [];
+
+    return {
+      id: row.id,
+      name: row.full_name,
+      email: row.email ?? undefined,
+      status: row.is_active === true ? 'ATIVO' : 'INATIVO',
+      regionIds,
+      skills: (skillsRows || []).map(s => ({
+        trainingId: s.training_id,
+        level: mapDbLevelToApp(s.level)
+      })),
+      observations: ''
+    };
+  },
+  [mapDbLevelToApp, regions]
+);
+
+const syncInstructorsFromDb = useCallback(async () => {
+  try {
+
+    const [instructorRows, pivotRows] = await Promise.all([
+      fetchInstructors(),
+      fetchInstructorTrainings()
+    ]);
+
+    const pivotsByInstructor = new Map<string, Array<{ training_id: string; level: string | null }>>();
+    for (const p of pivotRows) {
+      const list = pivotsByInstructor.get(p.instructor_id) || [];
+      list.push({ training_id: p.training_id, level: p.level });
+      pivotsByInstructor.set(p.instructor_id, list);
+    }
+
+    const mapped = instructorRows.map(r =>
+      mapInstructorFromDb(r, pivotsByInstructor.get(r.id) || [])
+    );
+
+    setInstructors(mapped);
+  } catch (e) {
+    console.error('Erro ao sincronizar instructors:', e);
+    // No modo Supabase, NÃO voltar pro hardcode (pra não confundir)
+    setInstructors([]);
+    setNotification({
+      message: 'Falha ao sincronizar instrutores do banco.',
+      type: 'error'
+    });
+  }
+}, [mapInstructorFromDb]);
+  
+  const reloadInstructors = useCallback(async () => {
+  await syncInstructorsFromDb();
+}, [syncInstructorsFromDb]);
+
   // ✅ Status automático de evidências (ONLINE não exige fotos)
   const getEvidenceAutoStatus = useCallback(
     (demandId: string): 'COMPLETA' | 'PENDENTE' => {
@@ -328,6 +399,15 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     if (!user) return;
     syncTrainingsFromDb();
   }, [user, loading, syncTrainingsFromDb]);
+
+  // ✅ Carregar Instrutores do Supabase (fonte da verdade)
+  useEffect(() => {
+    if (AUTH_MODE !== 'supabase') return;
+    if (loading) return;
+    if (!user) return;
+    syncInstructorsFromDb();
+}, [AUTH_MODE, user, loading, syncInstructorsFromDb]);
+
 
   // Inicializar medições para mock legados
   useEffect(() => {
@@ -1062,12 +1142,12 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       setNextDemandNumber,
       setNotification,
       setHybridPracticePeriod,
-
+      
       // ✅ Evidências (GLOBAL)
       evidenceStore,
       setEvidenceStore,
       getEvidenceAutoStatus,
-
+      reloadInstructors,
       addDemand,
       updateDemand,
       deleteDemand,

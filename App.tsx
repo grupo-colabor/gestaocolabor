@@ -57,13 +57,27 @@ import LogisticsControl from './components/LogisticsControl';
 import MeasurementView from './components/Measurement';
 import Evidences from './components/Evidences';
 import AuthGate from './components/AuthGate';
-
 import { fetchTrainings } from './services/trainings';
 import { fetchCompanies } from './services/companies';
-
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-
 import { fetchInstructors, fetchInstructorTrainings } from './services/instructors';
+
+// ✅ Demandas (Supabase) — services/demands.ts
+import {
+  fetchDemands,
+  insertDemand,
+  updateDemandById,
+  deleteDemandById,
+  fetchMaxDemandNumber
+} from './services/demands';
+
+// ✅ Demandas (Supabase) — /services/agenda
+import {
+  fetchAgendaItems,
+  insertAgendaItem,
+  updateAgendaItemById,
+  deleteAgendaItemById
+} from './services/agenda';
 
 // ✅ Supabase client (precisa existir em ./lib/supabase)
 import { supabase } from './lib/supabase';
@@ -86,7 +100,7 @@ interface AppState {
   operationalBases: OperationalBases;
   notification: { message: string; type: 'info' | 'success' | 'error' } | null;
   nextDemandNumber: number;
-  
+
   // ✅ Evidências (GLOBAL)
   evidenceStore: Record<string, EvidenceData>;
   setEvidenceStore: React.Dispatch<React.SetStateAction<Record<string, EvidenceData>>>;
@@ -191,11 +205,18 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // ✅ Agora carrega do banco; fallback = mock caso dê erro (somente se quiser)
   const [trainings, setTrainings] = useState<Training[]>([]);
   const [instructors, setInstructors] = useState<Instructor[]>(
-  AUTH_MODE === 'supabase' ? [] : MOCK_INSTRUCTORS
-);
-  const [demands, setDemands] = useState<Demand[]>(MOCK_DEMANDS);
+    AUTH_MODE === 'supabase' ? [] : MOCK_INSTRUCTORS
+  );
+
+  // ✅ Demandas: fonte da verdade é Supabase no modo supabase
+  const [demands, setDemands] = useState<Demand[]>(
+    AUTH_MODE === 'supabase' ? [] : MOCK_DEMANDS
+  );
+
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
-  const [agendaItems, setAgendaItems] = useState<AgendaItem[]>([]);
+  const [agendaItems, setAgendaItems] = useState<AgendaItem[]>(
+  AUTH_MODE === 'supabase' ? [] : []
+);
   const [instructorAllocations, setInstructorAllocations] = useState<InstructorAllocation[]>([]);
   const [resourceAllocations, setResourceAllocations] = useState<LogisticAllocation[]>([]);
   const [operationalBases, setOperationalBases] =
@@ -216,12 +237,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   /**
    * ✅ Helpers de persistência (treinamentos) — ALINHADO AO SCHEMA ATUAL DO SUPABASE
-   * Tabela trainings (conforme services/trainings.ts):
-   * id(uuid), name, nr, category, area_id, hours, modality, status, created_at
-   *
-   * IMPORTANTE:
-   * - NO INSERT: NÃO enviar "id" (uuid é gerado no banco)
-   * - NO UPDATE: NÃO atualizar "id" (usa eq('id', t.id))
    */
   const mapTrainingToDb = useCallback((t: Training) => {
     const cleanOrNull = (v?: string | null) => {
@@ -240,8 +255,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     };
   }, []);
 
-  // ✅ Mapper do formato do banco (TrainingRow) para o formato do app (Training)
-  // Campos extras ficam como defaults locais até o schema ser expandido.
   const mapTrainingFromDb = useCallback((row: any): Training => {
     return {
       id: row.id,
@@ -279,70 +292,145 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   }, [mapTrainingFromDb]);
 
   const mapDbLevelToApp = useCallback((level: string | null | undefined): 1 | 2 | 3 | 4 => {
-  const v = (level || '').toUpperCase().trim();
-  if (v === 'ESPECIALISTA') return 4;
-  if (v === 'AVANCADO') return 3;
-  if (v === 'INTERMEDIARIO') return 2;
-  if (v === 'BASICO') return 1;
-  return 3;
-}, []);
+    const v = (level || '').toUpperCase().trim();
+    if (v === 'ESPECIALISTA') return 4;
+    if (v === 'AVANCADO') return 3;
+    if (v === 'INTERMEDIARIO') return 2;
+    if (v === 'BASICO') return 1;
+    return 3;
+  }, []);
 
-const mapInstructorFromDb = useCallback(
-  (row: any, skillsRows: Array<{ training_id: string; level: string | null }>): Instructor => {
-    const regionName = (row.region || '').toString().trim();
-    const regionMatch = regions.find(r => r.name.toLowerCase() === regionName.toLowerCase());
-    const regionIds = regionMatch ? [regionMatch.id] : [];
+  const mapInstructorFromDb = useCallback(
+    (row: any, skillsRows: Array<{ training_id: string; level: string | null }>): Instructor => {
+      const regionName = (row.region || '').toString().trim();
+      const regionMatch = regions.find(r => r.name.toLowerCase() === regionName.toLowerCase());
+      const regionIds = regionMatch ? [regionMatch.id] : [];
 
+      return {
+        id: row.id,
+        name: row.full_name,
+        email: row.email ?? undefined,
+        status: row.is_active === true ? 'ATIVO' : 'INATIVO',
+        regionIds,
+        skills: (skillsRows || []).map(s => ({
+          trainingId: s.training_id,
+          level: mapDbLevelToApp(s.level)
+        })),
+        observations: ''
+      };
+    },
+    [mapDbLevelToApp, regions]
+  );
+
+  const syncInstructorsFromDb = useCallback(async () => {
+    try {
+      const [instructorRows, pivotRows] = await Promise.all([
+        fetchInstructors(),
+        fetchInstructorTrainings()
+      ]);
+
+      const pivotsByInstructor = new Map<
+        string,
+        Array<{ training_id: string; level: string | null }>
+      >();
+
+      for (const p of pivotRows) {
+        const list = pivotsByInstructor.get(p.instructor_id) || [];
+        list.push({ training_id: p.training_id, level: p.level });
+        pivotsByInstructor.set(p.instructor_id, list);
+      }
+
+      const mapped = instructorRows.map((r: any) =>
+        mapInstructorFromDb(r, pivotsByInstructor.get(r.id) || [])
+      );
+
+      setInstructors(mapped);
+    } catch (e) {
+      console.error('Erro ao sincronizar instructors:', e);
+      // No modo Supabase, NÃO voltar pro hardcode (pra não confundir)
+      setInstructors([]);
+      setNotification({
+        message: 'Falha ao sincronizar instrutores do banco.',
+        type: 'error'
+      });
+    }
+  }, [mapInstructorFromDb]);
+
+  const reloadInstructors = useCallback(async () => {
+    await syncInstructorsFromDb();
+  }, [syncInstructorsFromDb]);
+
+  // ======================================================
+  // ✅ DEMANDAS (SUPABASE) — mappers + sync
+  // ======================================================
+
+  const mapDemandFromDb = useCallback((row: any): Demand => {
     return {
       id: row.id,
-      name: row.full_name,
-      email: row.email ?? undefined,
-      status: row.is_active === true ? 'ATIVO' : 'INATIVO',
-      regionIds,
-      skills: (skillsRows || []).map(s => ({
-        trainingId: s.training_id,
-        level: mapDbLevelToApp(s.level)
-      })),
-      observations: ''
+      companyId: row.company_id ?? '',
+      trainingId: row.training_id ?? '',
+      regionId: row.region_id ?? '',
+      trainingLocal: row.training_local ?? 'N/A',
+      modality: row.modality ?? 'PRESENCIAL',
+      status: (row.status ?? 'NOVA') as DemandStatus,
+      startDate: row.start_date ?? '',
+      endDate: row.end_date ?? '',
+      practiceStartDate: row.practice_start_date ?? undefined,
+      practiceEndDate: row.practice_end_date ?? undefined,
+      instructorId: row.instructor_id ?? undefined
+    } as Demand;
+  }, []);
+
+  const mapDemandToDb = useCallback((d: Demand, extra?: { id?: string; number?: number }) => {
+    const cleanOrNull = (v?: string | null) => {
+      const s = (v ?? '').toString().trim();
+      return s.length ? s : null;
     };
-  },
-  [mapDbLevelToApp, regions]
-);
 
-const syncInstructorsFromDb = useCallback(async () => {
-  try {
+    const payload: any = {
+      company_id: cleanOrNull(d.companyId),
+      training_id: cleanOrNull(d.trainingId),
+      region_id: cleanOrNull(d.regionId),
+      training_local: cleanOrNull(d.trainingLocal),
+      modality: cleanOrNull(d.modality),
+      status: cleanOrNull(d.status),
+      start_date: cleanOrNull(d.startDate),
+      end_date: cleanOrNull(d.endDate),
+      practice_start_date: cleanOrNull((d as any).practiceStartDate),
+      practice_end_date: cleanOrNull((d as any).practiceEndDate),
+      instructor_id: cleanOrNull((d as any).instructorId)
+    };
 
-    const [instructorRows, pivotRows] = await Promise.all([
-      fetchInstructors(),
-      fetchInstructorTrainings()
-    ]);
+    if (extra?.id) payload.id = extra.id;
+    if (typeof extra?.number === 'number') payload.number = extra.number;
 
-    const pivotsByInstructor = new Map<string, Array<{ training_id: string; level: string | null }>>();
-    for (const p of pivotRows) {
-      const list = pivotsByInstructor.get(p.instructor_id) || [];
-      list.push({ training_id: p.training_id, level: p.level });
-      pivotsByInstructor.set(p.instructor_id, list);
+    return payload;
+  }, []);
+
+  const syncDemandsFromDb = useCallback(async () => {
+    try {
+      const rows = await fetchDemands();
+      const mapped = (rows || []).map(mapDemandFromDb);
+      setDemands(mapped);
+
+      // Ajustar próximo número (DEM-xxxx)
+      try {
+        const max = await fetchMaxDemandNumber();
+        const next = (typeof max === 'number' ? max : 0) + 1;
+        if (next > 0) setNextDemandNumber(next);
+      } catch (e) {
+        // Não bloqueia a tela se falhar o max number
+        console.warn('Falha ao buscar max demand number:', e);
+      }
+    } catch (e) {
+      console.error('Erro ao sincronizar demands:', e);
+      setDemands([]);
+      setNotification({
+        message: 'Falha ao sincronizar demandas do banco.',
+        type: 'error'
+      });
     }
-
-    const mapped = instructorRows.map(r =>
-      mapInstructorFromDb(r, pivotsByInstructor.get(r.id) || [])
-    );
-
-    setInstructors(mapped);
-  } catch (e) {
-    console.error('Erro ao sincronizar instructors:', e);
-    // No modo Supabase, NÃO voltar pro hardcode (pra não confundir)
-    setInstructors([]);
-    setNotification({
-      message: 'Falha ao sincronizar instrutores do banco.',
-      type: 'error'
-    });
-  }
-}, [mapInstructorFromDb]);
-  
-  const reloadInstructors = useCallback(async () => {
-  await syncInstructorsFromDb();
-}, [syncInstructorsFromDb]);
+  }, [mapDemandFromDb]);
 
   // ✅ Status automático de evidências (ONLINE não exige fotos)
   const getEvidenceAutoStatus = useCallback(
@@ -382,7 +470,6 @@ const syncInstructorsFromDb = useCallback(async () => {
     if (loading) return;
     if (!user) return;
 
-
     (async () => {
       try {
         const data = await fetchCompanies();
@@ -391,7 +478,7 @@ const syncInstructorsFromDb = useCallback(async () => {
         console.error('Erro ao carregar companies:', e);
       }
     })();
-  }, [user, loading]);
+  }, [AUTH_MODE, user, loading]);
 
   // ✅ Carregar treinamentos do Supabase (fonte da verdade)
   useEffect(() => {
@@ -406,8 +493,15 @@ const syncInstructorsFromDb = useCallback(async () => {
     if (loading) return;
     if (!user) return;
     syncInstructorsFromDb();
-}, [AUTH_MODE, user, loading, syncInstructorsFromDb]);
+  }, [AUTH_MODE, user, loading, syncInstructorsFromDb]);
 
+  // ✅ Carregar Demandas do Supabase (fonte da verdade)
+  useEffect(() => {
+    if (AUTH_MODE !== 'supabase') return;
+    if (loading) return;
+    if (!user) return;
+    syncDemandsFromDb();
+  }, [AUTH_MODE, user, loading, syncDemandsFromDb]);
 
   // Inicializar medições para mock legados
   useEffect(() => {
@@ -450,10 +544,10 @@ const syncInstructorsFromDb = useCallback(async () => {
 
   const getEffectiveDemandRange = useCallback(
     (d: Demand) => {
-      if (d.modality === 'HIBRIDO' && d.practiceStartDate && d.practiceEndDate) {
+      if (d.modality === 'HIBRIDO' && (d as any).practiceStartDate && (d as any).practiceEndDate) {
         return {
-          start: ensureDateTime(d.practiceStartDate, 'start'),
-          end: ensureDateTime(d.practiceEndDate, 'end')
+          start: ensureDateTime((d as any).practiceStartDate, 'start'),
+          end: ensureDateTime((d as any).practiceEndDate, 'end')
         };
       }
       return {
@@ -473,19 +567,19 @@ const syncInstructorsFromDb = useCallback(async () => {
 
       const totalStart = normalizeDate(d.startDate);
       const totalEnd = normalizeDate(d.endDate);
-      const pStart = normalizeDate(d.practiceStartDate);
-      const pEnd = normalizeDate(d.practiceEndDate);
+      const pStart = normalizeDate((d as any).practiceStartDate);
+      const pEnd = normalizeDate((d as any).practiceEndDate);
 
       const totalValid = !!totalStart && !!totalEnd && totalStart <= totalEnd;
       const practiceComplete = !!pStart && !!pEnd;
 
       if (!totalValid || !practiceComplete) {
-        return { ...d, practiceStartDate: undefined, practiceEndDate: undefined };
+        return { ...d, practiceStartDate: undefined, practiceEndDate: undefined } as any;
       }
 
       const withinRange = pStart! >= totalStart! && pEnd! <= totalEnd! && pStart! <= pEnd!;
       if (!withinRange) {
-        return { ...d, practiceStartDate: undefined, practiceEndDate: undefined };
+        return { ...d, practiceStartDate: undefined, practiceEndDate: undefined } as any;
       }
 
       return d;
@@ -496,68 +590,193 @@ const syncInstructorsFromDb = useCallback(async () => {
   /* -------------------------
      CRUD (Functional Updates)
   -------------------------- */
+
   const addDemand = useCallback(
     (d: Demand) => {
-      let seq = 0;
+      // ✅ MOCK MODE
+      if (AUTH_MODE !== 'supabase') {
+        let seq = 0;
 
-      setNextDemandNumber(prev => {
-        seq = prev;
-        return prev + 1;
-      });
+        setNextDemandNumber(prev => {
+          seq = prev;
+          return prev + 1;
+        });
 
-      const nextId = `DEM-${seq}`;
+        const nextId = `DEM-${seq}`;
 
-      const newDemand = sanitizeHybridPracticePeriod({
-        ...d,
-        id: nextId,
-        status: 'NOVA' as DemandStatus
-      });
+        const newDemand = sanitizeHybridPracticePeriod({
+          ...d,
+          id: nextId,
+          status: 'NOVA' as DemandStatus
+        });
 
-      const newMeasurement: Measurement = {
-        id: `MEA-${nextId}`,
-        demandId: nextId,
-        status: 'NAO_INICIADA',
-        expenses: {
-          breakfast: '',
-          lunch: '',
-          dinner: '',
-          transport: '',
-          others: ''
-        },
-        attachments: [],
-        otherExpenses: [],
-        updatedAt: new Date().toISOString()
-      };
+        const newMeasurement: Measurement = {
+          id: `MEA-${nextId}`,
+          demandId: nextId,
+          status: 'NAO_INICIADA',
+          expenses: {
+            breakfast: '',
+            lunch: '',
+            dinner: '',
+            transport: '',
+            others: ''
+          },
+          attachments: [],
+          otherExpenses: [],
+          updatedAt: new Date().toISOString()
+        };
 
-      setDemands(prev => [...prev, newDemand]);
-      setMeasurements(prev => [...prev, newMeasurement]);
+        setDemands(prev => [...prev, newDemand]);
+        setMeasurements(prev => [...prev, newMeasurement]);
 
-      setEvidenceStore(prev => ({
-        ...prev,
-        [nextId]:
-          prev[nextId] ??
-          {
-            demandId: nextId,
-            attendanceList: [],
-            certificates: [],
-            photos: []
+        setEvidenceStore(prev => ({
+          ...prev,
+          [nextId]:
+            prev[nextId] ??
+            {
+              demandId: nextId,
+              attendanceList: [],
+              certificates: [],
+              photos: []
+            }
+        }));
+
+        return;
+      }
+
+      // ✅ SUPABASE MODE
+      if (loading || !user) {
+        setNotification({
+          message: 'Aguarde a sessão carregar para salvar a demanda.',
+          type: 'info'
+        });
+        return;
+      }
+
+      (async () => {
+        try {
+          let seq = 0;
+          setNextDemandNumber(prev => {
+            seq = prev;
+            return prev + 1;
+          });
+
+          const nextId = `DEM-${seq}`;
+          const newDemand = sanitizeHybridPracticePeriod({
+            ...d,
+            id: nextId,
+            status: 'NOVA' as DemandStatus
+          });
+
+          const payload = mapDemandToDb(newDemand, { id: nextId, number: seq });
+
+          const { error } = await insertDemand(payload);
+          if (error) {
+            console.error('Erro insert demand:', error);
+            setNotification({
+              message: `Erro ao criar demanda: ${error.message}`,
+              type: 'error'
+            });
+            return;
           }
-      }));
+
+          // Atualiza lista (fonte da verdade)
+          await syncDemandsFromDb();
+
+          // Mantém medições/evidências localmente por enquanto (MVP)
+          const newMeasurement: Measurement = {
+            id: `MEA-${nextId}`,
+            demandId: nextId,
+            status: 'NAO_INICIADA',
+            expenses: {
+              breakfast: '',
+              lunch: '',
+              dinner: '',
+              transport: '',
+              others: ''
+            },
+            attachments: [],
+            otherExpenses: [],
+            updatedAt: new Date().toISOString()
+          };
+          setMeasurements(prev => (prev.some(m => m.demandId === nextId) ? prev : [...prev, newMeasurement]));
+
+          setEvidenceStore(prev => ({
+            ...prev,
+            [nextId]:
+              prev[nextId] ??
+              {
+                demandId: nextId,
+                attendanceList: [],
+                certificates: [],
+                photos: []
+              }
+          }));
+
+          setNotification({ message: 'Demanda criada com sucesso.', type: 'success' });
+        } catch (e) {
+          console.error('Erro ao criar demanda:', e);
+          setNotification({ message: 'Erro ao criar demanda.', type: 'error' });
+        }
+      })();
     },
-    [sanitizeHybridPracticePeriod]
+    [
+      AUTH_MODE,
+      loading,
+      user,
+      sanitizeHybridPracticePeriod,
+      mapDemandToDb,
+      syncDemandsFromDb
+    ]
   );
 
   const updateDemand = useCallback(
     (d: Demand) => {
-      setDemands(prev =>
-        prev.map(item => {
-          if (item.id !== d.id) return item;
-          const merged = { ...item, ...d } as Demand;
-          return sanitizeHybridPracticePeriod(merged);
-        })
-      );
+      // ✅ MOCK MODE
+      if (AUTH_MODE !== 'supabase') {
+        setDemands(prev =>
+          prev.map(item => {
+            if (item.id !== d.id) return item;
+            const merged = { ...item, ...d } as Demand;
+            return sanitizeHybridPracticePeriod(merged);
+          })
+        );
+        return;
+      }
+
+      // ✅ SUPABASE MODE
+      if (loading || !user) {
+        setNotification({
+          message: 'Aguarde a sessão carregar para salvar a demanda.',
+          type: 'info'
+        });
+        return;
+      }
+
+      (async () => {
+        try {
+          const merged = sanitizeHybridPracticePeriod(d);
+          const payload = mapDemandToDb(merged);
+
+          const { error } = await updateDemandById(merged.id, payload);
+          if (error) {
+            console.error('Erro update demand:', error);
+            setNotification({
+              message: `Erro ao atualizar demanda: ${error.message}`,
+              type: 'error'
+            });
+            return;
+          }
+
+          await syncDemandsFromDb();
+          setNotification({ message: 'Demanda atualizada com sucesso.', type: 'success' });
+        } catch (e) {
+          console.error('Erro ao atualizar demanda:', e);
+          setNotification({ message: 'Erro ao atualizar demanda.', type: 'error' });
+        }
+      })();
     },
-    [sanitizeHybridPracticePeriod]
+    [AUTH_MODE, loading, user, sanitizeHybridPracticePeriod, mapDemandToDb, syncDemandsFromDb]
   );
 
   const setHybridPracticePeriod = useCallback(
@@ -597,7 +816,7 @@ const syncInstructorsFromDb = useCallback(async () => {
         return false;
       }
 
-      updateDemand({ ...demand, practiceStartDate, practiceEndDate } as Demand);
+      updateDemand({ ...(demand as any), practiceStartDate, practiceEndDate } as Demand);
 
       setNotification({ message: 'Período de prática salvo com sucesso.', type: 'success' });
       return true;
@@ -605,23 +824,109 @@ const syncInstructorsFromDb = useCallback(async () => {
     [demands, normalizeDate, updateDemand]
   );
 
-  const deleteDemand = useCallback((id: string) => {
-    setDemands(prev => prev.filter(d => d.id !== id));
-    setMeasurements(prev => prev.filter(m => m.demandId !== id));
-    setAgendaItems(prev => prev.filter(item => item.relatedDemandId !== id));
-    setInstructorAllocations(prev => prev.filter(a => a.demandId !== id));
-    setResourceAllocations(prev => prev.filter(a => a.demandId !== id));
+  const deleteDemand = useCallback(
+    (id: string) => {
+      // ✅ MOCK MODE
+      if (AUTH_MODE !== 'supabase') {
+        setDemands(prev => prev.filter(d => d.id !== id));
+        setMeasurements(prev => prev.filter(m => m.demandId !== id));
+        setAgendaItems(prev => prev.filter(item => item.relatedDemandId !== id));
+        setInstructorAllocations(prev => prev.filter(a => a.demandId !== id));
+        setResourceAllocations(prev => prev.filter(a => a.demandId !== id));
 
-    setEvidenceStore(prev => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-  }, []);
+        setEvidenceStore(prev => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        return;
+      }
 
-  const cancelDemand = useCallback((demandId: string) => {
-    setDemands(prev => prev.map(d => (d.id === demandId ? { ...d, status: 'CANCELADA' } : d)));
-  }, []);
+      // ✅ SUPABASE MODE
+      if (loading || !user) {
+        setNotification({
+          message: 'Aguarde a sessão carregar para remover a demanda.',
+          type: 'info'
+        });
+        return;
+      }
+
+      (async () => {
+        try {
+          const { error } = await deleteDemandById(id);
+          if (error) {
+            console.error('Erro delete demand:', error);
+            setNotification({
+              message: `Erro ao excluir demanda: ${error.message}`,
+              type: 'error'
+            });
+            return;
+          }
+
+          await syncDemandsFromDb();
+
+          // Limpeza local (MVP)
+          setMeasurements(prev => prev.filter(m => m.demandId !== id));
+          setAgendaItems(prev => prev.filter(item => item.relatedDemandId !== id));
+          setInstructorAllocations(prev => prev.filter(a => a.demandId !== id));
+          setResourceAllocations(prev => prev.filter(a => a.demandId !== id));
+
+          setEvidenceStore(prev => {
+            const next = { ...prev };
+            delete next[id];
+            return next;
+          });
+
+          setNotification({ message: 'Demanda excluída com sucesso.', type: 'success' });
+        } catch (e) {
+          console.error('Erro ao excluir demanda:', e);
+          setNotification({ message: 'Erro ao excluir demanda.', type: 'error' });
+        }
+      })();
+    },
+    [AUTH_MODE, loading, user, syncDemandsFromDb]
+  );
+
+  const cancelDemand = useCallback(
+    (demandId: string) => {
+      // ✅ MOCK MODE
+      if (AUTH_MODE !== 'supabase') {
+        setDemands(prev => prev.map(d => (d.id === demandId ? { ...d, status: 'CANCELADA' } : d)));
+        return;
+      }
+
+      // ✅ SUPABASE MODE
+      if (loading || !user) {
+        setNotification({
+          message: 'Aguarde a sessão carregar para cancelar a demanda.',
+          type: 'info'
+        });
+        return;
+      }
+
+      (async () => {
+        try {
+          const payload = { status: 'CANCELADA' };
+          const { error } = await updateDemandById(demandId, payload);
+          if (error) {
+            console.error('Erro cancel demand:', error);
+            setNotification({
+              message: `Erro ao cancelar demanda: ${error.message}`,
+              type: 'error'
+            });
+            return;
+          }
+
+          await syncDemandsFromDb();
+          setNotification({ message: 'Demanda cancelada.', type: 'success' });
+        } catch (e) {
+          console.error('Erro ao cancelar demanda:', e);
+          setNotification({ message: 'Erro ao cancelar demanda.', type: 'error' });
+        }
+      })();
+    },
+    [AUTH_MODE, loading, user, syncDemandsFromDb]
+  );
 
   const updateMeasurement = useCallback((m: Measurement) => {
     setMeasurements(prev =>
@@ -1078,7 +1383,7 @@ const syncInstructorsFromDb = useCallback(async () => {
       if (!demand) return false;
 
       if (demand.modality === 'HIBRIDO') {
-        const hasPractice = !!demand.practiceStartDate && !!demand.practiceEndDate;
+        const hasPractice = !!(demand as any).practiceStartDate && !!(demand as any).practiceEndDate;
         if (!hasPractice) {
           setNotification({
             message:
@@ -1142,7 +1447,7 @@ const syncInstructorsFromDb = useCallback(async () => {
       setNextDemandNumber,
       setNotification,
       setHybridPracticePeriod,
-      
+
       // ✅ Evidências (GLOBAL)
       evidenceStore,
       setEvidenceStore,
@@ -1192,6 +1497,7 @@ const syncInstructorsFromDb = useCallback(async () => {
       nextDemandNumber,
       evidenceStore,
       getEvidenceAutoStatus,
+      reloadInstructors,
       addDemand,
       updateDemand,
       deleteDemand,
@@ -1264,7 +1570,15 @@ const ROLE_PERMISSIONS: Record<string, View[]> = {
     'measurement',
     'evidences'
   ],
-  analista: ['dashboard', 'demands', 'calendar', 'registrations', 'logistics', 'logistics-control', 'evidences'],
+  analista: [
+    'dashboard',
+    'demands',
+    'calendar',
+    'registrations',
+    'logistics',
+    'logistics-control',
+    'evidences'
+  ],
   coordenador: ['calendar'] // apenas visualização
 };
 

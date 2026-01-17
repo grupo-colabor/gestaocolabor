@@ -1,22 +1,90 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+
 import { useApp } from '../App';
-import { Demand, DemandStatus, Modality, TransportType, RentalCompany, PaymentMethod, AccommodationType, InstructorAllocation, LogisticAllocation } from '../types';
-import { 
-  Search, FileText, X, Plus, Filter, RotateCcw, 
-  ChevronDown, ChevronUp, MapPin, Truck, Home, UserCheck, 
-  Calendar, Check, AlertCircle, Building, Building2,
-  ArrowRight, Tag, Edit3, User, Info, FileSearch,
-  BookOpen, Clock, Mail, MessageCircle, FileDown,
-  FileText as FileWordIcon, Eraser, Trash2, Sparkles, Ban, RefreshCw, FilePlus, FileCheck,
-  UserPlus, Users
+
+import {
+  Demand,
+  DemandStatus,
+  Modality,
+  TransportType,
+  RentalCompany,
+  PaymentMethod,
+  AccommodationType,
+  InstructorAllocation,
+  LogisticAllocation
+} from '../types';
+
+import {
+  Search,
+  FileText,
+  X,
+  Plus,
+  Filter,
+  RotateCcw,
+  ChevronDown,
+  ChevronUp,
+  MapPin,
+  Truck,
+  Home,
+  UserCheck,
+  Calendar,
+  Check,
+  AlertCircle,
+  Building,
+  Building2,
+  Tag,
+  Edit3,
+  User,
+  Info,
+  FileSearch,
+  BookOpen,
+  Clock,
+  Mail,
+  MessageCircle,
+  FileDown,
+  FileText as FileWordIcon,
+  Eraser,
+  Trash2,
+  Ban,
+  RefreshCw,
+  FilePlus,
+  FileCheck,
+  UserPlus,
+  Users
 } from 'lucide-react';
-import { 
-  HISTORICAL_MATRICULADORES, 
-  CAR_CATEGORIES, PAYMENT_METHODS 
+
+import {
+  HISTORICAL_MATRICULADORES,
+  CAR_CATEGORIES,
+  PAYMENT_METHODS
 } from '../constants';
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } from 'docx';
+
+import {
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  HeadingLevel,
+  AlignmentType,
+  BorderStyle
+} from 'docx';
+
 import { calculateDemandStatus } from '../domain/demandStatus';
-import { useAuth } from "../contexts/AuthContext";
+import { useAuth } from '../contexts/AuthContext';
+
+/* ===== SERVICES (SUPABASE) ===== */
+
+import { upsertMeasurementByDemandId } from '../services/measurements';
+
+import {
+  uploadAndUpsertDemandPdf,
+  getDemandDocumentSignedUrl,
+  fetchDemandDocumentsByDemandId
+} from '../services/demandDocuments';
+
+
+import { upsertLogisticByDemandId, fetchLogisticByDemandId } from '../services/logistics';
+
 
 
 type Action =
@@ -66,6 +134,7 @@ const [filter, setFilter] = useState('');
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [confirmReactivate, setConfirmReactivate] = useState(false);
   const [resourceError, setResourceError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
 
   // Estados locais para motivo de cancelamento
@@ -143,48 +212,56 @@ const [filter, setFilter] = useState('');
   const [activeDemand, setActiveDemand] = useState<Demand | null>(null);
 
 
+// PDFs pendentes (selecionados no FORM e enviados no SAVE)
+  const [pendingPdfs, setPendingPdfs] = useState<{
+    classList: File | null;
+    instructorRelease: File | null;
+  }>({ classList: null, instructorRelease: null });
+
+  // Docs já salvos no banco (para VIEW)
+  const [dbDocs, setDbDocs] = useState<Record<string, { name: string; path: string }>>({});
+
+
+
   // Helper names
   const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
   const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
   const getRegionName = (id: string) => regions.find(r => r.id === id)?.name || 'N/A';
   const getInstructorName = (id?: string) => instructors.find(i => i.id === id)?.name || 'Não Alocado';
 
-  // --- LÓGICA DE PDF ---
-  const handlePdfUpload = (field: 'classListPdf' | 'instructorReleasePdf', file: File) => {
+// --- LÓGICA DE PDF (SUPABASE STORAGE + demand_documents) ---
+  const removePdf = (key: 'classList' | 'instructorRelease') => {
+    setPendingPdfs(prev => ({ ...prev, [key]: null }));
+  };
+
+  const handlePdfSelect = (key: 'classList' | 'instructorRelease', file: File) => {
     if (file.type !== 'application/pdf') {
       alert('Por favor, selecione apenas arquivos PDF.');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const base64 = e.target?.result as string;
-      setFormDemand(prev => ({
-        ...prev,
-        attachments: {
-          ...prev.attachments,
-          [field]: { name: file.name, base64 }
-        }
-      }));
-    };
-    reader.readAsDataURL(file);
+    setPendingPdfs(prev => ({ ...prev, [key]: file }));
   };
 
-  const removePdf = (field: 'classListPdf' | 'instructorReleasePdf') => {
-    setFormDemand(prev => {
-      const newAttachments = { ...prev.attachments };
-      delete newAttachments[field];
-      return { ...prev, attachments: newAttachments };
-    });
-  };
+  /**
+   * Download do PDF já salvo no Supabase (VIEW)
+   */
+  const downloadSavedPdf = async (docType: 'LISTA_TURMA' | 'LIBERACAO_INSTRUTOR') => {
+    const doc = dbDocs[docType];
+    if (!doc?.path) return;
 
-  const downloadPdf = (field: 'classListPdf' | 'instructorReleasePdf') => {
-    const data = formDemand.attachments?.[field];
-    if (!data) return;
-    const link = document.createElement('a');
-    link.href = data.base64;
-    link.download = data.name;
-    link.click();
+    try {
+      const signed = await getDemandDocumentSignedUrl(doc.path, 60);
+      if (signed.error) throw signed.error;
+
+      const signedUrl = signed.data?.signedUrl;
+      if (!signedUrl) throw new Error('Não foi possível gerar signedUrl.');
+
+      window.open(signedUrl, '_blank');
+    } catch (err: any) {
+      console.error(err);
+      alert(`Erro ao baixar PDF: ${err?.message || err}`);
+    }
   };
 
   // --- LÓGICA DE RECOMENDAÇÃO (SOMENTE LEITURA) ---
@@ -330,6 +407,79 @@ const filteredDemands = useMemo(() => {
       return { ...prev, modality: t.modality };
     });
   }, [formDemand.trainingId, trainings]);
+
+// Carrega dados persistidos (logística + documentos) ao abrir VIEW/EDIT
+useEffect(() => {
+  const run = async () => {
+    if (!isModalOpen) return;
+    if (!formDemand.id) return;
+
+    // 1) Documentos
+    try {
+      const docs = await fetchDemandDocumentsByDemandId(formDemand.id);
+      const mapped: Record<string, { name: string; path: string }> = {};
+      for (const d of docs) {
+        mapped[d.doc_type] = { name: d.file_name || d.doc_type, path: d.file_path };
+      }
+      setDbDocs(mapped);
+    } catch (e) {
+      // silencioso
+    }
+
+    // 2) Logística
+    try {
+      const { data, error } = await fetchLogisticByDemandId(formDemand.id);
+      if (error) throw error;
+      if (!data) return;
+
+      // joga os campos do banco no formDemand (sem quebrar o que já está)
+      setFormDemand(prev => ({
+        ...prev,
+      // ✅ status interno da logística (para VIEW não ficar "Pendente")
+      logisticsTransport:
+      data.transport_mode === 'CARRO_ALUGADO' || data.transport_mode === 'CARRO_PROPRIO'
+        ? 'CONFIRMADO'
+        : 'NAO_NECESSARIO',
+
+      logisticsHotel:
+      data.lodging_mode === 'PRECISA_HOTEL'
+        ? 'CONFIRMADO'
+        : 'NAO_NECESSARIO',
+
+      // ✅ modos vindos do banco -> UI
+        transportType:
+          data.transport_mode === 'CARRO_ALUGADO'
+            ? 'Carro Alugado'
+            : data.transport_mode === 'CARRO_PROPRIO'
+            ? 'Carro Próprio'
+            : null,
+
+        accommodationType:
+          data.lodging_mode === 'PRECISA_HOTEL' ? 'Hotel' : null,
+
+        // carro alugado
+        rentalCompany: data.rental_company ?? prev.rentalCompany,
+        rentalAgencyLocation: data.rental_agency_location ?? prev.rentalAgencyLocation,
+        rentalLocator: data.rental_locator ?? prev.rentalLocator,
+        carCategory: data.car_category ?? prev.carCategory,
+        rentalCheckIn: data.rental_check_in ?? prev.rentalCheckIn,
+        rentalCheckOut: data.rental_check_out ?? prev.rentalCheckOut,
+
+        // hotel
+        hotelCity: data.hotel_city ?? prev.hotelCity,
+        hotelName: data.hotel_name ?? prev.hotelName,
+        hotelCheckIn: data.hotel_check_in ?? prev.hotelCheckIn,
+        hotelCheckOut: data.hotel_check_out ?? prev.hotelCheckOut,
+        hotelPayment: data.hotel_payment ?? prev.hotelPayment,
+      }));
+    } catch (e) {
+      // silencioso
+    }
+  };
+
+  run();
+}, [isModalOpen, formDemand.id]);
+
 
 
   const clearFilters = () => {
@@ -714,6 +864,8 @@ ${formDemand.observations || 'N/A'}
     setConfirmCancel(false);
     setConfirmReactivate(false);
     setResourceError(null);
+    setPendingPdfs({ classList: null, instructorRelease: null });
+    setDbDocs({});
     setIsModalOpen(true);
   };
 
@@ -721,6 +873,8 @@ ${formDemand.observations || 'N/A'}
   setActiveDemand(demand);
   setFormDemand({ ...demand });
   setModalMode('EDIT');
+  setPendingPdfs({ classList: null, instructorRelease: null });
+  setDbDocs({});
 
   // 🔐 PASSO 3.3 — CONTROLE DE SUBMODE
   // Coordenador: sempre VIEW
@@ -743,51 +897,197 @@ ${formDemand.observations || 'N/A'}
 };
 
 
-const handleSave = () => {
+const mapTransportMode = (t: TransportType | null | undefined) => {
+  // ✅ NA é um valor real (não aplicável), nunca NULL
+  if (!t) return 'NA';
+  if (t === 'Carro Alugado') return 'CARRO_ALUGADO';
+  if (t === 'Carro Próprio') return 'CARRO_PROPRIO';
+  return 'NA';
+};
+
+
+const mapLodgingMode = (a: AccommodationType | null | undefined) => {
+  if (!a) return 'NA';
+  if (a === 'Hotel') return 'PRECISA_HOTEL';
+  return 'NA';
+};
+
+// ✅ helpers para normalizar inputs -> ISO (timestamptz)
+const toIsoFromDateInput = (v?: string | null) => {
+  if (!v) return null; // v: "YYYY-MM-DD"
+  return new Date(`${v}T00:00:00`).toISOString();
+};
+
+const toIsoFromDateTimeLocal = (v?: string | null) => {
+  if (!v) return null; // v: "YYYY-MM-DDTHH:mm"
+  return new Date(v).toISOString();
+};
+
+const handleSave = async () => {
   if (!isFormValid) return;
 
-  // Validação de datas (Início <= Fim)
-  if (formDemand.startDate && formDemand.endDate) {
-    const start = new Date(formDemand.startDate);
-    const end = new Date(formDemand.endDate);
-    if (start > end) {
-      setResourceError("A data de início não pode ser maior que a data de fim.");
-      setTimeout(() => setResourceError(null), 4000);
+  // ⛔ trava clique duplo
+  if (isSaving) return;
+  setIsSaving(true);
+
+  try {
+    // Validação de datas (Início <= Fim)
+    if (formDemand.startDate && formDemand.endDate) {
+      const start = new Date(formDemand.startDate);
+      const end = new Date(formDemand.endDate);
+      if (start > end) {
+        setResourceError("A data de início não pode ser maior que a data de fim.");
+        setTimeout(() => setResourceError(null), 4000);
+        return; // ✅ finally vai rodar e destravar o isSaving
+      }
+    }
+
+    // ✅ ONLINE: não pode gerar pendência de logística / local
+    const sanitizedDemand: Demand = {
+      ...(formDemand as Demand),
+      trainingLocal: formDemand.modality === 'ONLINE' ? '' : (formDemand.trainingLocal || ''),
+      regionId: formDemand.regionId || '',
+      logisticsTransport: formDemand.modality === 'ONLINE' ? 'NAO_NECESSARIO' : formDemand.logisticsTransport,
+      logisticsHotel: formDemand.modality === 'ONLINE' ? 'NAO_NECESSARIO' : formDemand.logisticsHotel,
+      transportType: formDemand.modality === 'ONLINE' ? null : formDemand.transportType,
+      accommodationType: formDemand.modality === 'ONLINE' ? null : formDemand.accommodationType,
+      rentalAgencyLocation: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalAgencyLocation || ''),
+      rentalLocator: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalLocator || ''),
+      rentalCheckIn: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalCheckIn || ''),
+      rentalCheckOut: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalCheckOut || ''),
+      hotelName: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelName || ''),
+      hotelCity: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelCity || ''),
+      hotelCheckIn: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelCheckIn || ''),
+      hotelCheckOut: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelCheckOut || ''),
+      hotelPayment: formDemand.modality === 'ONLINE' ? null : formDemand.hotelPayment,
+    };
+
+    setResourceError(null);
+
+    // 1) Garantir ID antes do CREATE (pra conseguir subir logística + PDFs no mesmo clique)
+    let demandId = (formDemand.id || sanitizedDemand.id) as string | undefined;
+
+    if (!demandId) {
+      demandId = `DEM-${Date.now()}`;
+      sanitizedDemand.id = demandId;
+      setFormDemand(prev => ({ ...prev, id: demandId }));
+    }
+
+    // 2) salva a demanda geral (seu fluxo atual)
+    // (coloquei Promise.resolve só pra não quebrar caso não seja async)
+    if (modalMode === 'CREATE') {
+      await Promise.resolve(addDemand(sanitizedDemand));
+    } else {
+      await Promise.resolve(updateDemand(sanitizedDemand));
+    }
+
+    // demandId já garantido acima
+    if (!demandId) {
+      setIsModalOpen(false);
+      setFormDemand(initialDemandState());
+      setActiveDemand(null);
       return;
     }
+
+    // 3) salvar logística (1 registro por demanda)
+    try {
+      const isCarRental = sanitizedDemand.transportType === 'Carro Alugado';
+      const isHotel = sanitizedDemand.accommodationType === 'Hotel';
+
+      const hotelPaymentSafe = isHotel ? (sanitizedDemand.hotelPayment || 'Faturado') : null;
+      const rentalCompanySafe = isCarRental ? (sanitizedDemand.rentalCompany || 'Localiza') : null;
+      const carCategorySafe = isCarRental ? (sanitizedDemand.carCategory || 'Grupo CE') : null;
+
+      await upsertLogisticByDemandId(demandId, {
+        // datas base da demanda
+        start_date: sanitizedDemand.startDate ? new Date(sanitizedDemand.startDate).toISOString() : null,
+        end_date: sanitizedDemand.endDate ? new Date(sanitizedDemand.endDate).toISOString() : null,
+
+        // modos (enum simplificado)
+        transport_mode: mapTransportMode(sanitizedDemand.transportType),
+        lodging_mode: mapLodgingMode(sanitizedDemand.accommodationType),
+
+        // ===== DETALHES CARRO ALUGADO =====
+        rental_company: rentalCompanySafe,
+        rental_agency_location: isCarRental ? (sanitizedDemand.rentalAgencyLocation || null) : null,
+        rental_locator: isCarRental ? (sanitizedDemand.rentalLocator || null) : null,
+        car_category: carCategorySafe,
+        rental_check_in: isCarRental ? toIsoFromDateTimeLocal(sanitizedDemand.rentalCheckIn) : null,
+        rental_check_out: isCarRental ? toIsoFromDateTimeLocal(sanitizedDemand.rentalCheckOut) : null,
+
+        // ===== DETALHES HOTEL =====
+        hotel_city: isHotel ? (sanitizedDemand.hotelCity || null) : null,
+        hotel_name: isHotel ? (sanitizedDemand.hotelName || null) : null,
+        hotel_check_in: isHotel ? toIsoFromDateInput(sanitizedDemand.hotelCheckIn) : null,
+        hotel_check_out: isHotel ? toIsoFromDateInput(sanitizedDemand.hotelCheckOut) : null,
+        hotel_payment: hotelPaymentSafe,
+
+        // flags
+        has_car: sanitizedDemand.transportType != null && sanitizedDemand.transportType !== 'N/A',
+        has_hotel: sanitizedDemand.accommodationType === 'Hotel',
+        has_material: false,
+
+        overall_status: 'PENDENTE',
+      });
+    } catch (e) {
+      console.error('Erro ao salvar logística:', e);
+    }
+
+    // 4) PDFs: enviar pendentes (funciona no CREATE e no EDIT)
+    try {
+      let classUploaded = false;
+      let releaseUploaded = false;
+
+      if (pendingPdfs.classList) {
+        const res = await uploadAndUpsertDemandPdf(demandId, 'LISTA_TURMA', pendingPdfs.classList);
+        if (res.error) throw res.error;
+        classUploaded = true;
+      }
+
+      if (pendingPdfs.instructorRelease) {
+        const res = await uploadAndUpsertDemandPdf(demandId, 'LIBERACAO_INSTRUTOR', pendingPdfs.instructorRelease);
+        if (res.error) throw res.error;
+        releaseUploaded = true;
+      }
+
+      // Atualiza flags na logística (se subiu algum)
+      if (classUploaded || releaseUploaded) {
+        await upsertLogisticByDemandId(demandId, {
+          has_class_list_pdf: classUploaded ? true : undefined,
+          has_release_pdf: releaseUploaded ? true : undefined
+        });
+      }
+
+      // Recarrega docs para aparecer no VIEW
+      if (classUploaded || releaseUploaded) {
+        const docs = await fetchDemandDocumentsByDemandId(demandId);
+        const mapped: Record<string, { name: string; path: string }> = {};
+        for (const d of docs) {
+          mapped[d.doc_type] = { name: d.file_name || d.doc_type, path: d.file_path };
+        }
+        setDbDocs(mapped);
+      }
+    } catch (e) {
+      console.error('Erro ao enviar PDFs:', e);
+    }
+
+    // 5) garantir measurement (pra Medição não ficar vazia)
+    try {
+      await upsertMeasurementByDemandId(demandId, {});
+    } catch (e) {
+      console.error('Erro ao garantir medição:', e);
+    }
+
+    // 6) limpar e fechar
+    setPendingPdfs({ classList: null, instructorRelease: null });
+    setIsModalOpen(false);
+    setFormDemand(initialDemandState());
+    setActiveDemand(null);
+
+  } finally {
+    // ✅ sempre destrava, mesmo se der return/erro
+    setIsSaving(false);
   }
-
-  // ✅ ONLINE: não pode gerar pendência de logística / local
-  const sanitizedDemand: Demand = {
-    ...(formDemand as Demand),
-    trainingLocal: formDemand.modality === 'ONLINE' ? '' : (formDemand.trainingLocal || ''),
-    regionId: formDemand.regionId || '',
-    logisticsTransport: formDemand.modality === 'ONLINE' ? 'NAO_NECESSARIO' : formDemand.logisticsTransport,
-    logisticsHotel: formDemand.modality === 'ONLINE' ? 'NAO_NECESSARIO' : formDemand.logisticsHotel,
-    transportType: formDemand.modality === 'ONLINE' ? null : formDemand.transportType,
-    accommodationType: formDemand.modality === 'ONLINE' ? null : formDemand.accommodationType,
-    rentalAgencyLocation: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalAgencyLocation || ''),
-    rentalLocator: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalLocator || ''),
-    rentalCheckIn: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalCheckIn || ''),
-    rentalCheckOut: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalCheckOut || ''),
-    hotelName: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelName || ''),
-    hotelCity: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelCity || ''),
-    hotelCheckIn: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelCheckIn || ''),
-    hotelCheckOut: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelCheckOut || ''),
-    hotelPayment: formDemand.modality === 'ONLINE' ? null : formDemand.hotelPayment,
-  };
-
-  setResourceError(null);
-
-  if (modalMode === 'CREATE') {
-    addDemand(sanitizedDemand);
-  } else {
-    updateDemand(sanitizedDemand);
-  }
-
-  setIsModalOpen(false);
-  setFormDemand(initialDemandState());
-  setActiveDemand(null);
 };
 
 
@@ -1630,64 +1930,91 @@ const handleSave = () => {
                         <div className="px-6 py-6 border-t border-slate-100 bg-white">
                           {modalSubMode === 'FORM' ? (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                               
                                {/* Lista da Turma */}
-                               <div className="space-y-3">
+                                <div className="space-y-3">
                                   <label className="block text-xs font-bold text-gray-500 uppercase">Lista da Turma (PDF)</label>
-                                  {formDemand.attachments?.classListPdf ? (
-                                    <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-blue-100">
-                                       <div className="flex items-center gap-2 overflow-hidden">
-                                          <FileCheck size={18} className="text-blue-600 shrink-0" />
-                                          <span className="text-xs font-bold text-slate-700 truncate">{formDemand.attachments.classListPdf.name}</span>
-                                       </div>
-                                       <button onClick={() => removePdf('classListPdf')} className="p-1.5 text-slate-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
-                                    </div>
-                                  ) : (
-                                    <div className="relative group">
-                                       <input type="file" accept=".pdf" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onChange={e => e.target.files && handlePdfUpload('classListPdf', e.target.files[0])} />
-                                       <div className="p-4 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center gap-2 group-hover:border-blue-400 group-hover:bg-blue-50/30 transition-all">
-                                          <FilePlus size={24} className="text-slate-300 group-hover:text-blue-500" />
-                                          <span className="text-[10px] font-black uppercase text-slate-400">Anexar Lista de Presença</span>
-                                       </div>
-                                    </div>
-                                  )}
-                               </div>
 
-                               {/* Liberação do Instrutor */}
-                               <div className="space-y-3">
-                                  <label className="block text-xs font-bold text-gray-500 uppercase">Liberação do Instrutor (PDF)</label>
-                                  {formDemand.attachments?.instructorReleasePdf ? (
+                                  {pendingPdfs.classList ? (
                                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-blue-100">
-                                       <div className="flex items-center gap-2 overflow-hidden">
-                                          <FileCheck size={18} className="text-blue-600 shrink-0" />
-                                          <span className="text-xs font-bold text-slate-700 truncate">{formDemand.attachments.instructorReleasePdf.name}</span>
-                                       </div>
-                                       <button onClick={() => removePdf('instructorReleasePdf')} className="p-1.5 text-slate-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
+                                      <div className="flex items-center gap-2 overflow-hidden">
+                                        <FileCheck size={18} className="text-blue-600 shrink-0" />
+                                        <span className="text-xs font-bold text-slate-700 truncate">{pendingPdfs.classList.name}</span>
+                                      </div>
+                                      <button onClick={() => removePdf('classList')} className="p-1.5 text-slate-300 hover:text-red-500 transition-colors">
+                                        <Trash2 size={16} />
+                                      </button>
                                     </div>
                                   ) : (
                                     <div className="relative group">
-                                       <input type="file" accept=".pdf" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onChange={e => e.target.files && handlePdfUpload('instructorReleasePdf', e.target.files[0])} />
-                                       <div className="p-4 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center gap-2 group-hover:border-blue-400 group-hover:bg-blue-50/30 transition-all">
-                                          <FilePlus size={24} className="text-slate-300 group-hover:text-blue-500" />
-                                          <span className="text-[10px] font-black uppercase text-slate-400">Anexar Liberação</span>
-                                       </div>
+                                      <input
+                                        type="file"
+                                        accept=".pdf"
+                                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                        onChange={e => e.target.files && handlePdfSelect('classList', e.target.files[0])}
+                                        disabled={false}
+                                      />
+                                      <div className={`p-4 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-2 transition-all
+                                        ${modalMode === 'CREATE' ? 'border-slate-200 bg-slate-50 opacity-60' : 'border-slate-200 group-hover:border-blue-400 group-hover:bg-blue-50/30'}
+                                      `}>
+                                        <FilePlus size={24} className="text-slate-300 group-hover:text-blue-500" />
+                                        <span className="text-[10px] font-black uppercase text-slate-400">
+                                          {modalMode === 'CREATE' ? 'Salve a demanda para anexar' : 'Anexar Lista de Presença'}
+                                        </span>
+                                      </div>
                                     </div>
                                   )}
-                               </div>
+                                </div>
+
+                              {/* Liberação do Instrutor */}
+                              <div className="space-y-3">
+                                <label className="block text-xs font-bold text-gray-500 uppercase">Liberação do Instrutor (PDF)</label>
+
+                                {pendingPdfs.instructorRelease ? (
+                                  <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-blue-100">
+                                    <div className="flex items-center gap-2 overflow-hidden">
+                                      <FileCheck size={18} className="text-blue-600 shrink-0" />
+                                      <span className="text-xs font-bold text-slate-700 truncate">{pendingPdfs.instructorRelease.name}</span>
+                                    </div>
+                                    <button onClick={() => removePdf('instructorRelease')} className="p-1.5 text-slate-300 hover:text-red-500 transition-colors">
+                                      <Trash2 size={16} />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="relative group">
+                                    <input
+                                      type="file"
+                                      accept=".pdf"
+                                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                      onChange={e => e.target.files && handlePdfSelect('instructorRelease', e.target.files[0])}
+                                    />
+                                    <div className={`p-4 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-2 transition-all
+                                      ${modalMode === 'CREATE' ? 'border-slate-200 bg-slate-50 opacity-60' : 'border-slate-200 group-hover:border-blue-400 group-hover:bg-blue-50/30'}
+                                    `}>
+                                      <FilePlus size={24} className="text-slate-300 group-hover:text-blue-500" />
+                                      <span className="text-[10px] font-black uppercase text-slate-400">
+                                        {modalMode === 'CREATE' ? 'Selecionar PDF (será enviado ao criar)' : 'Anexar Liberação'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           ) : (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                               <DataViewField 
-                                  label="Lista da Turma" 
-                                  value={formDemand.attachments?.classListPdf?.name} 
-                                  isPdf={true} 
-                                  onDownload={() => downloadPdf('classListPdf')} 
-                               />
-                               <DataViewField 
-                                  label="Liberação do Instrutor" 
-                                  value={formDemand.attachments?.instructorReleasePdf?.name} 
-                                  isPdf={true} 
-                                  onDownload={() => downloadPdf('instructorReleasePdf')} 
-                               />
+                               <DataViewField
+                                label="Lista da Turma"
+                                value={dbDocs['LISTA_TURMA']?.name}
+                                isPdf={true}
+                                onDownload={() => downloadSavedPdf('LISTA_TURMA')}
+                              />
+
+                              <DataViewField
+                                label="Liberação do Instrutor"
+                                value={dbDocs['LIBERACAO_INSTRUTOR']?.name}
+                                isPdf={true}
+                                onDownload={() => downloadSavedPdf('LIBERACAO_INSTRUTOR')}
+                              />
                             </div>
                           )}
                         </div>
@@ -1764,10 +2091,10 @@ const handleSave = () => {
                         </button>
                         
                             {modalSubMode === 'FORM' && canEditDemand && (
-                              <button 
+                              <button
                                 type="button"
-                                onClick={handleSave} 
-                                disabled={!isFormValid} 
+                                onClick={handleSave}
+                                disabled={!isFormValid || isSaving}
                                 className={`px-8 py-2.5 font-black rounded-xl transition shadow-lg text-xs uppercase tracking-widest flex items-center gap-2 
                                   ${isFormValid 
                                     ? 'bg-blue-600 hover:bg-blue-700 text-white' 

@@ -1,27 +1,34 @@
 import { supabase } from '../lib/supabase';
 
 export type DemandRow = {
-  id: string;                 // "DEM-6301"
-  number: number;             // 6301
+  id: string; // "DEM-6301"
+  number: number; // 6301
+
   company_id: string | null;
   training_id: string | null;
+
   status: string;
   modality: string;
 
-  start_date: string;         // timestamptz (ISO string)
+  start_date: string; // timestamptz (ISO string)
   end_date: string;
 
   practice_start_date: string | null;
   practice_end_date: string | null;
 
-  region_id: string | null;   // você deixou text no banco
+  region_id: string | null; // no banco pode ser text
   training_local: string | null;
 
   instructor_id: string | null;
+
   created_at?: string;
   updated_at?: string;
 };
 
+/**
+ * Lista demandas (ordenadas por number desc)
+ * - Não lança erro aqui: devolve [] e deixa o caller tratar via {error}
+ */
 export async function fetchDemands(): Promise<DemandRow[]> {
   const { data, error } = await supabase
     .from('demands')
@@ -37,10 +44,38 @@ export async function fetchDemands(): Promise<DemandRow[]> {
     )
     .order('number', { ascending: false });
 
-  if (error) throw error;
+  if (error) {
+    console.error('fetchDemands error:', error);
+    throw error; // manter throw aqui é ok (App.tsx já tem try/catch no sync)
+  }
+
   return (data || []) as DemandRow[];
 }
 
+/**
+ * Busca o maior número (number) existente no banco.
+ * Retorna 0 se não houver registros.
+ */
+export async function fetchMaxDemandNumber(): Promise<number> {
+  const { data, error } = await supabase
+    .from('demands')
+    .select('number')
+    .order('number', { ascending: false })
+    .limit(1);
+
+  if (error) {
+    console.error('fetchMaxDemandNumber error:', error);
+    throw error;
+  }
+
+  const max = data?.[0]?.number;
+  return typeof max === 'number' ? max : 0;
+}
+
+/**
+ * INSERT demanda
+ * - Compatível com App.tsx: retorna { data?, error? }
+ */
 export async function insertDemand(payload: Omit<DemandRow, 'created_at' | 'updated_at'>) {
   const { data, error } = await supabase
     .from('demands')
@@ -48,16 +83,37 @@ export async function insertDemand(payload: Omit<DemandRow, 'created_at' | 'upda
     .select('id')
     .single();
 
-  if (error) throw error;
-  return data as { id: string };
+  return { data: data as { id: string } | null, error };
 }
 
-export async function updateDemandDb(id: string, payload: Partial<DemandRow>) {
+/**
+ * UPDATE por id
+ * - Compatível com App.tsx: retorna { error }
+ */
+export async function updateDemandById(id: string, payload: Partial<DemandRow> | Record<string, any>) {
   const { error } = await supabase.from('demands').update(payload).eq('id', id);
+  return { error };
+}
+
+/**
+ * DELETE por id
+ * - Compatível com App.tsx: retorna { error }
+ */
+export async function deleteDemandById(id: string) {
+  const { error } = await supabase.from('demands').delete().eq('id', id);
+  return { error };
+}
+
+/**
+ * (Opcional) Aliases para não quebrar chamadas antigas (se existirem em outros arquivos)
+ * - Se você tiver algum lugar chamando updateDemandDb/deleteDemandDb, isso mantém compatibilidade.
+ */
+export async function updateDemandDb(id: string, payload: Partial<DemandRow>) {
+  const { error } = await updateDemandById(id, payload);
   if (error) throw error;
 }
 
 export async function deleteDemandDb(id: string) {
-  const { error } = await supabase.from('demands').delete().eq('id', id);
+  const { error } = await deleteDemandById(id);
   if (error) throw error;
 }

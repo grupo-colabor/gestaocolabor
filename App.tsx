@@ -591,12 +591,77 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
      CRUD (Functional Updates)
   -------------------------- */
 
-  const addDemand = useCallback(
-    (d: Demand) => {
-      // ✅ MOCK MODE
-      if (AUTH_MODE !== 'supabase') {
-        let seq = 0;
+const addDemand = useCallback(
+  (d: Demand) => {
+    // ✅ MOCK MODE
+    if (AUTH_MODE !== 'supabase') {
+      let seq = 0;
 
+      setNextDemandNumber(prev => {
+        seq = prev;
+        return prev + 1;
+      });
+
+      const nextId = `DEM-${seq}`;
+
+      const newDemand = sanitizeHybridPracticePeriod({
+        ...d,
+        id: nextId,
+        status: 'NOVA' as DemandStatus
+      });
+
+      // salva local
+      setDemands(prev => [...prev, newDemand]);
+
+      // MVP: cria measurement local (pra Medição não ficar vazia)
+      const newMeasurement: Measurement = {
+        id: `MEA-${nextId}`,
+        demandId: nextId,
+        status: 'NAO_INICIADA',
+        expenses: {
+          breakfast: '',
+          lunch: '',
+          dinner: '',
+          transport: '',
+          others: ''
+        },
+        attachments: [],
+        otherExpenses: [],
+        updatedAt: new Date().toISOString()
+      };
+
+      setMeasurements(prev => [...prev, newMeasurement]);
+
+      // MVP: evidências local
+      setEvidenceStore(prev => ({
+        ...prev,
+        [nextId]:
+          prev[nextId] ??
+          {
+            demandId: nextId,
+            attendanceList: [],
+            certificates: [],
+            photos: []
+          }
+      }));
+
+      setNotification({ message: 'Demanda criada (mock).', type: 'success' });
+      return;
+    }
+
+    // ✅ SUPABASE MODE
+    if (loading || !user) {
+      setNotification({
+        message: 'Aguarde a sessão carregar para salvar a demanda.',
+        type: 'info'
+      });
+      return;
+    }
+
+    (async () => {
+      try {
+        // ✅ gerar id/number localmente (seu schema de demands usa id text NOT NULL)
+        let seq = 0;
         setNextDemandNumber(prev => {
           seq = prev;
           return prev + 1;
@@ -610,6 +675,24 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           status: 'NOVA' as DemandStatus
         });
 
+        // ✅ IMPORTANTÍSSIMO: manda id/number pro mapper inserir no payload
+        const payload = mapDemandToDb(newDemand, { id: nextId, number: seq });
+
+        const { data, error } = await insertDemand(payload);
+
+        if (error || !data) {
+          console.error('Erro insert demand:', error);
+          setNotification({
+            message: `Erro ao criar demanda: ${error?.message ?? 'ver console'}`,
+            type: 'error'
+          });
+          return;
+        }
+
+        // Fonte da verdade: recarrega do banco
+        await syncDemandsFromDb();
+
+        // MVP: cria measurement local (enquanto não estiver persistindo medição no Supabase)
         const newMeasurement: Measurement = {
           id: `MEA-${nextId}`,
           demandId: nextId,
@@ -626,9 +709,11 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           updatedAt: new Date().toISOString()
         };
 
-        setDemands(prev => [...prev, newDemand]);
-        setMeasurements(prev => [...prev, newMeasurement]);
+        setMeasurements(prev =>
+          prev.some(m => m.demandId === nextId) ? prev : [...prev, newMeasurement]
+        );
 
+        // MVP: evidências local
         setEvidenceStore(prev => ({
           ...prev,
           [nextId]:
@@ -641,94 +726,27 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             }
         }));
 
-        return;
+        setNotification({ message: 'Demanda criada com sucesso.', type: 'success' });
+      } catch (e) {
+        console.error('Erro ao criar demanda:', e);
+        setNotification({ message: 'Erro ao criar demanda.', type: 'error' });
       }
+    })();
+  },
+  [
+    AUTH_MODE,
+    loading,
+    user,
+    sanitizeHybridPracticePeriod,
+    mapDemandToDb,
+    syncDemandsFromDb,
+    setNextDemandNumber,
+    setDemands,
+    setMeasurements,
+    setEvidenceStore
+  ]
+);
 
-      // ✅ SUPABASE MODE
-      if (loading || !user) {
-        setNotification({
-          message: 'Aguarde a sessão carregar para salvar a demanda.',
-          type: 'info'
-        });
-        return;
-      }
-
-      (async () => {
-        try {
-          let seq = 0;
-          setNextDemandNumber(prev => {
-            seq = prev;
-            return prev + 1;
-          });
-
-          const nextId = `DEM-${seq}`;
-          const newDemand = sanitizeHybridPracticePeriod({
-            ...d,
-            id: nextId,
-            status: 'NOVA' as DemandStatus
-          });
-
-          const payload = mapDemandToDb(newDemand, { id: nextId, number: seq });
-
-          const { error } = await insertDemand(payload);
-          if (error) {
-            console.error('Erro insert demand:', error);
-            setNotification({
-              message: `Erro ao criar demanda: ${error.message}`,
-              type: 'error'
-            });
-            return;
-          }
-
-          // Atualiza lista (fonte da verdade)
-          await syncDemandsFromDb();
-
-          // Mantém medições/evidências localmente por enquanto (MVP)
-          const newMeasurement: Measurement = {
-            id: `MEA-${nextId}`,
-            demandId: nextId,
-            status: 'NAO_INICIADA',
-            expenses: {
-              breakfast: '',
-              lunch: '',
-              dinner: '',
-              transport: '',
-              others: ''
-            },
-            attachments: [],
-            otherExpenses: [],
-            updatedAt: new Date().toISOString()
-          };
-          setMeasurements(prev => (prev.some(m => m.demandId === nextId) ? prev : [...prev, newMeasurement]));
-
-          setEvidenceStore(prev => ({
-            ...prev,
-            [nextId]:
-              prev[nextId] ??
-              {
-                demandId: nextId,
-                attendanceList: [],
-                certificates: [],
-                photos: []
-              }
-          }));
-
-          setNotification({ message: 'Demanda criada com sucesso.', type: 'success' });
-        } catch (e) {
-          console.error('Erro ao criar demanda:', e);
-          setNotification({ message: 'Erro ao criar demanda.', type: 'error' });
-        }
-      })();
-    },
-    [
-      AUTH_MODE,
-      loading,
-      user,
-      sanitizeHybridPracticePeriod,
-      mapDemandToDb,
-      syncDemandsFromDb
-    ]
-  );
 
   const updateDemand = useCallback(
     (d: Demand) => {

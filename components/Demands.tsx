@@ -923,6 +923,33 @@ const toIsoFromDateTimeLocal = (v?: string | null) => {
   return new Date(v).toISOString();
 };
 
+const toIsoFromDateSafe = (v?: string | null) => {
+  const s = (v ?? '').trim();
+  if (!s) return null;
+
+  if (s.includes('T')) {
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  }
+
+  const d = new Date(`${s}T00:00:00`);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+};
+
+const toIsoFromDateTimeLocalSafe = (v?: string | null) => {
+  const s = (v ?? '').trim();
+  if (!s) return null;
+
+  // se já veio com data+hora
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  }
+
+  // hora sem data (ex: "08:00:00+00:00") => inválido pro seu modelo
+  return null;
+};
+
 const handleSave = async () => {
   if (!isFormValid) return;
 
@@ -930,15 +957,46 @@ const handleSave = async () => {
   if (isSaving) return;
   setIsSaving(true);
 
+  // Helpers de data "seguros" (não quebram com string vazia / inválida)
+  const toIsoFromDateInputSafe = (dateStr?: string | null) => {
+    const s = (dateStr ?? '').trim();
+    if (!s) return null;
+    // aceita yyyy-mm-dd
+    const d = new Date(`${s}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString();
+  };
+
+  const toIsoFromDateTimeLocalSafe = (dt?: string | null) => {
+    const s = (dt ?? '').trim();
+    if (!s) return null;
+    // aceita yyyy-mm-ddThh:mm (datetime-local)
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString();
+  };
+
+  const toIsoFromAnyDateSafe = (v?: string | null) => {
+    const s = (v ?? '').trim();
+    if (!s) return null;
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString();
+  };
+
   try {
-    // Validação de datas (Início <= Fim)
+    // Validação de datas (Início <= Fim) — segura
     if (formDemand.startDate && formDemand.endDate) {
-      const start = new Date(formDemand.startDate);
-      const end = new Date(formDemand.endDate);
-      if (start > end) {
-        setResourceError("A data de início não pode ser maior que a data de fim.");
-        setTimeout(() => setResourceError(null), 4000);
-        return; // ✅ finally vai rodar e destravar o isSaving
+      const sIso = toIsoFromAnyDateSafe(formDemand.startDate);
+      const eIso = toIsoFromAnyDateSafe(formDemand.endDate);
+      if (sIso && eIso) {
+        const start = new Date(sIso);
+        const end = new Date(eIso);
+        if (start > end) {
+          setResourceError('A data de início não pode ser maior que a data de fim.');
+          setTimeout(() => setResourceError(null), 4000);
+          return;
+        }
       }
     }
 
@@ -947,14 +1005,18 @@ const handleSave = async () => {
       ...(formDemand as Demand),
       trainingLocal: formDemand.modality === 'ONLINE' ? '' : (formDemand.trainingLocal || ''),
       regionId: formDemand.regionId || '',
-      logisticsTransport: formDemand.modality === 'ONLINE' ? 'NAO_NECESSARIO' : formDemand.logisticsTransport,
-      logisticsHotel: formDemand.modality === 'ONLINE' ? 'NAO_NECESSARIO' : formDemand.logisticsHotel,
+      logisticsTransport:
+        formDemand.modality === 'ONLINE' ? 'NAO_NECESSARIO' : formDemand.logisticsTransport,
+      logisticsHotel:
+        formDemand.modality === 'ONLINE' ? 'NAO_NECESSARIO' : formDemand.logisticsHotel,
       transportType: formDemand.modality === 'ONLINE' ? null : formDemand.transportType,
       accommodationType: formDemand.modality === 'ONLINE' ? null : formDemand.accommodationType,
+
       rentalAgencyLocation: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalAgencyLocation || ''),
       rentalLocator: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalLocator || ''),
       rentalCheckIn: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalCheckIn || ''),
       rentalCheckOut: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalCheckOut || ''),
+
       hotelName: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelName || ''),
       hotelCity: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelCity || ''),
       hotelCheckIn: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelCheckIn || ''),
@@ -964,24 +1026,23 @@ const handleSave = async () => {
 
     setResourceError(null);
 
-    // 1) Garantir ID antes do CREATE (pra conseguir subir logística + PDFs no mesmo clique)
+    // 1) Garantir demandId (pra PDF / logística / medição)
     let demandId = (formDemand.id || sanitizedDemand.id) as string | undefined;
 
+    // ⚠️ Use esse fallback só se seu CREATE realmente puder vir sem id.
     if (!demandId) {
       demandId = `DEM-${Date.now()}`;
       sanitizedDemand.id = demandId;
       setFormDemand(prev => ({ ...prev, id: demandId }));
     }
 
-    // 2) salva a demanda geral (seu fluxo atual)
-    // (coloquei Promise.resolve só pra não quebrar caso não seja async)
+    // 2) Salvar a demanda (CREATE/EDIT)
     if (modalMode === 'CREATE') {
       await Promise.resolve(addDemand(sanitizedDemand));
     } else {
       await Promise.resolve(updateDemand(sanitizedDemand));
     }
 
-    // demandId já garantido acima
     if (!demandId) {
       setIsModalOpen(false);
       setFormDemand(initialDemandState());
@@ -989,8 +1050,9 @@ const handleSave = async () => {
       return;
     }
 
-    // 3) salvar logística (1 registro por demanda)
+    // 3) Logística — salva no CREATE e no EDIT (mas ONLINE vira “não necessário”)
     try {
+      const isOnline = sanitizedDemand.modality === 'ONLINE';
       const isCarRental = sanitizedDemand.transportType === 'Carro Alugado';
       const isHotel = sanitizedDemand.accommodationType === 'Hotel';
 
@@ -1000,31 +1062,31 @@ const handleSave = async () => {
 
       await upsertLogisticByDemandId(demandId, {
         // datas base da demanda
-        start_date: sanitizedDemand.startDate ? new Date(sanitizedDemand.startDate).toISOString() : null,
-        end_date: sanitizedDemand.endDate ? new Date(sanitizedDemand.endDate).toISOString() : null,
+        start_date: isOnline ? null : toIsoFromAnyDateSafe(sanitizedDemand.startDate),
+        end_date: isOnline ? null : toIsoFromAnyDateSafe(sanitizedDemand.endDate),
 
         // modos (enum simplificado)
-        transport_mode: mapTransportMode(sanitizedDemand.transportType),
-        lodging_mode: mapLodgingMode(sanitizedDemand.accommodationType),
+        transport_mode: isOnline ? 'NAO_NECESSARIO' : mapTransportMode(sanitizedDemand.transportType),
+        lodging_mode: isOnline ? 'NAO_NECESSARIO' : mapLodgingMode(sanitizedDemand.accommodationType),
 
         // ===== DETALHES CARRO ALUGADO =====
-        rental_company: rentalCompanySafe,
-        rental_agency_location: isCarRental ? (sanitizedDemand.rentalAgencyLocation || null) : null,
-        rental_locator: isCarRental ? (sanitizedDemand.rentalLocator || null) : null,
-        car_category: carCategorySafe,
-        rental_check_in: isCarRental ? toIsoFromDateTimeLocal(sanitizedDemand.rentalCheckIn) : null,
-        rental_check_out: isCarRental ? toIsoFromDateTimeLocal(sanitizedDemand.rentalCheckOut) : null,
+        rental_company: isOnline ? null : rentalCompanySafe,
+        rental_agency_location: !isOnline && isCarRental ? (sanitizedDemand.rentalAgencyLocation || null) : null,
+        rental_locator: !isOnline && isCarRental ? (sanitizedDemand.rentalLocator || null) : null,
+        car_category: isOnline ? null : carCategorySafe,
+        rental_check_in: !isOnline && isCarRental ? toIsoFromDateTimeLocalSafe(sanitizedDemand.rentalCheckIn) : null,
+        rental_check_out: !isOnline && isCarRental ? toIsoFromDateTimeLocalSafe(sanitizedDemand.rentalCheckOut) : null,
 
         // ===== DETALHES HOTEL =====
-        hotel_city: isHotel ? (sanitizedDemand.hotelCity || null) : null,
-        hotel_name: isHotel ? (sanitizedDemand.hotelName || null) : null,
-        hotel_check_in: isHotel ? toIsoFromDateInput(sanitizedDemand.hotelCheckIn) : null,
-        hotel_check_out: isHotel ? toIsoFromDateInput(sanitizedDemand.hotelCheckOut) : null,
-        hotel_payment: hotelPaymentSafe,
+        hotel_city: !isOnline && isHotel ? (sanitizedDemand.hotelCity || null) : null,
+        hotel_name: !isOnline && isHotel ? (sanitizedDemand.hotelName || null) : null,
+        hotel_check_in: !isOnline && isHotel ? toIsoFromDateInputSafe(sanitizedDemand.hotelCheckIn) : null,
+        hotel_check_out: !isOnline && isHotel ? toIsoFromDateInputSafe(sanitizedDemand.hotelCheckOut) : null,
+        hotel_payment: isOnline ? null : hotelPaymentSafe,
 
         // flags
-        has_car: sanitizedDemand.transportType != null && sanitizedDemand.transportType !== 'N/A',
-        has_hotel: sanitizedDemand.accommodationType === 'Hotel',
+        has_car: !isOnline && sanitizedDemand.transportType != null && sanitizedDemand.transportType !== 'N/A',
+        has_hotel: !isOnline && sanitizedDemand.accommodationType === 'Hotel',
         has_material: false,
 
         overall_status: 'PENDENTE',
@@ -1033,7 +1095,7 @@ const handleSave = async () => {
       console.error('Erro ao salvar logística:', e);
     }
 
-    // 4) PDFs: enviar pendentes (funciona no CREATE e no EDIT)
+    // 4) PDFs: enviar pendentes (CREATE e EDIT)
     try {
       let classUploaded = false;
       let releaseUploaded = false;
@@ -1045,7 +1107,11 @@ const handleSave = async () => {
       }
 
       if (pendingPdfs.instructorRelease) {
-        const res = await uploadAndUpsertDemandPdf(demandId, 'LIBERACAO_INSTRUTOR', pendingPdfs.instructorRelease);
+        const res = await uploadAndUpsertDemandPdf(
+          demandId,
+          'LIBERACAO_INSTRUTOR',
+          pendingPdfs.instructorRelease
+        );
         if (res.error) throw res.error;
         releaseUploaded = true;
       }
@@ -1085,7 +1151,6 @@ const handleSave = async () => {
     setActiveDemand(null);
 
   } finally {
-    // ✅ sempre destrava, mesmo se der return/erro
     setIsSaving(false);
   }
 };

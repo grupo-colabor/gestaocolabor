@@ -20,14 +20,26 @@ const SELECT_FIELDS = `
   created_at, updated_at
 `;
 
-export async function fetchDemandDocumentsByDemandId(demandId: string): Promise<DemandDocumentRow[]> {
+/**
+ * Busca documentos APENAS da demanda informada.
+ * (Esse filtro é CRÍTICO para não "puxar PDF fantasma")
+ */
+export async function fetchDemandDocumentsByDemandId(
+  demandId: string
+): Promise<DemandDocumentRow[]> {
+  const safeId = (demandId ?? '').trim();
+  if (!safeId) return [];
+
   const { data, error } = await supabase
     .from('demand_documents')
     .select(SELECT_FIELDS)
-    .eq('demand_id', demandId);
+    .eq('demand_id', safeId);
 
   if (error) throw error;
-  return (data || []) as DemandDocumentRow[];
+
+  // Garantia extra: se por algum motivo vier algo fora, filtra novamente no client
+  const rows = (data || []) as DemandDocumentRow[];
+  return rows.filter(r => r?.demand_id === safeId);
 }
 
 /**
@@ -35,8 +47,7 @@ export async function fetchDemandDocumentsByDemandId(demandId: string): Promise<
  * Assim o upload com upsert:true realmente substitui o arquivo.
  */
 function buildFixedPath(demandId: string, docType: DemandDocType, fileName: string) {
-  const safeName = fileName.replace(/[^\w.\-() ]/g, '_');
-  // mantém extensão original se vier no nome
+  const safeName = (fileName || 'arquivo.pdf').replace(/[^\w.\-() ]/g, '_');
   return `demands/${demandId}/${docType}-${safeName}`;
 }
 
@@ -48,7 +59,11 @@ export async function uploadDemandPdf(
   docType: DemandDocType,
   file: File
 ): Promise<{ path: string }> {
-  const path = buildFixedPath(demandId, docType, file.name);
+  const safeId = (demandId ?? '').trim();
+  if (!safeId) throw new Error('demandId inválido para upload.');
+  if (!file) throw new Error('Arquivo inválido para upload.');
+
+  const path = buildFixedPath(safeId, docType, file.name);
 
   const { error } = await supabase.storage.from(BUCKET).upload(path, file, {
     contentType: file.type || 'application/pdf',
@@ -65,9 +80,13 @@ export async function uploadDemandPdf(
 export async function upsertDemandDocument(
   payload: Omit<DemandDocumentRow, 'id' | 'created_at' | 'updated_at'>
 ) {
+  const safeId = (payload?.demand_id ?? '').trim();
+  if (!safeId) throw new Error('demand_id inválido no upsertDemandDocument.');
+
   // garante updated_at (caso não tenha trigger)
   const dataToUpsert: any = {
     ...payload,
+    demand_id: safeId,
     updated_at: new Date().toISOString()
   };
 
@@ -105,7 +124,10 @@ export async function uploadAndUpsertDemandPdf(
  * Signed URL (bucket privado)
  */
 export async function getDemandDocumentSignedUrl(filePath: string, expiresInSeconds = 60) {
-  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(filePath, expiresInSeconds);
+  const safePath = (filePath ?? '').trim();
+  if (!safePath) return { data: null, error: new Error('filePath inválido') as any };
+
+  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(safePath, expiresInSeconds);
   return { data, error }; // data.signedUrl
 }
 
@@ -113,6 +135,9 @@ export async function getDemandDocumentSignedUrl(filePath: string, expiresInSeco
  * Remover arquivo do storage (opcional)
  */
 export async function deleteDemandDocumentFile(filePath: string) {
-  const { data, error } = await supabase.storage.from(BUCKET).remove([filePath]);
+  const safePath = (filePath ?? '').trim();
+  if (!safePath) return { data: null, error: null };
+
+  const { data, error } = await supabase.storage.from(BUCKET).remove([safePath]);
   return { data, error };
 }

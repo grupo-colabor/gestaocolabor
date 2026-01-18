@@ -111,7 +111,7 @@ interface AppState {
     React.SetStateAction<{ message: string; type: 'info' | 'success' | 'error' } | null>
   >;
 
-  addDemand: (d: Demand) => void;
+  addDemand: (d: Demand) => Promise<{ id: string } | null>;
   updateDemand: (d: Demand) => void;
   deleteDemand: (id: string) => void;
   cancelDemand: (demandId: string) => void;
@@ -592,7 +592,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   -------------------------- */
 
 const addDemand = useCallback(
-  (d: Demand) => {
+  async (d: Demand): Promise<{ id: string } | null> => {
     // ✅ MOCK MODE
     if (AUTH_MODE !== 'supabase') {
       let seq = 0;
@@ -610,10 +610,8 @@ const addDemand = useCallback(
         status: 'NOVA' as DemandStatus
       });
 
-      // salva local
       setDemands(prev => [...prev, newDemand]);
 
-      // MVP: cria measurement local (pra Medição não ficar vazia)
       const newMeasurement: Measurement = {
         id: `MEA-${nextId}`,
         demandId: nextId,
@@ -632,7 +630,6 @@ const addDemand = useCallback(
 
       setMeasurements(prev => [...prev, newMeasurement]);
 
-      // MVP: evidências local
       setEvidenceStore(prev => ({
         ...prev,
         [nextId]:
@@ -646,92 +643,90 @@ const addDemand = useCallback(
       }));
 
       setNotification({ message: 'Demanda criada (mock).', type: 'success' });
-      return;
+      return { id: nextId };
     }
 
     // ✅ SUPABASE MODE
-    if (loading || !user) {
-      setNotification({
+    if (!user) {
+    setNotification({
         message: 'Aguarde a sessão carregar para salvar a demanda.',
         type: 'info'
       });
-      return;
+      return null;
     }
 
-    (async () => {
-      try {
-        // ✅ gerar id/number localmente (seu schema de demands usa id text NOT NULL)
-        let seq = 0;
-        setNextDemandNumber(prev => {
-          seq = prev;
-          return prev + 1;
+    try {
+      let seq = 0;
+      setNextDemandNumber(prev => {
+        seq = prev;
+        return prev + 1;
+      });
+
+      const nextId = `DEM-${seq}`;
+
+      const newDemand = sanitizeHybridPracticePeriod({
+        ...d,
+        id: nextId,
+        status: 'NOVA' as DemandStatus
+      });
+
+      const payload = mapDemandToDb(newDemand, { id: nextId, number: seq });
+
+      const { data, error } = await insertDemand(payload);
+
+      if (error || !data) {
+        console.error('Erro insert demand:', error);
+        setNotification({
+          message: `Erro ao criar demanda: ${error?.message ?? 'ver console'}`,
+          type: 'error'
         });
-
-        const nextId = `DEM-${seq}`;
-
-        const newDemand = sanitizeHybridPracticePeriod({
-          ...d,
-          id: nextId,
-          status: 'NOVA' as DemandStatus
-        });
-
-        // ✅ IMPORTANTÍSSIMO: manda id/number pro mapper inserir no payload
-        const payload = mapDemandToDb(newDemand, { id: nextId, number: seq });
-
-        const { data, error } = await insertDemand(payload);
-
-        if (error || !data) {
-          console.error('Erro insert demand:', error);
-          setNotification({
-            message: `Erro ao criar demanda: ${error?.message ?? 'ver console'}`,
-            type: 'error'
-          });
-          return;
-        }
-
-        // Fonte da verdade: recarrega do banco
-        await syncDemandsFromDb();
-
-        // MVP: cria measurement local (enquanto não estiver persistindo medição no Supabase)
-        const newMeasurement: Measurement = {
-          id: `MEA-${nextId}`,
-          demandId: nextId,
-          status: 'NAO_INICIADA',
-          expenses: {
-            breakfast: '',
-            lunch: '',
-            dinner: '',
-            transport: '',
-            others: ''
-          },
-          attachments: [],
-          otherExpenses: [],
-          updatedAt: new Date().toISOString()
-        };
-
-        setMeasurements(prev =>
-          prev.some(m => m.demandId === nextId) ? prev : [...prev, newMeasurement]
-        );
-
-        // MVP: evidências local
-        setEvidenceStore(prev => ({
-          ...prev,
-          [nextId]:
-            prev[nextId] ??
-            {
-              demandId: nextId,
-              attendanceList: [],
-              certificates: [],
-              photos: []
-            }
-        }));
-
-        setNotification({ message: 'Demanda criada com sucesso.', type: 'success' });
-      } catch (e) {
-        console.error('Erro ao criar demanda:', e);
-        setNotification({ message: 'Erro ao criar demanda.', type: 'error' });
+        return null;
       }
-    })();
+
+      await syncDemandsFromDb();
+
+      // MVP: cria measurement local (enquanto não persistir medição no Supabase)
+      const newMeasurement: Measurement = {
+        id: `MEA-${nextId}`,
+        demandId: nextId,
+        status: 'NAO_INICIADA',
+        expenses: {
+          breakfast: '',
+          lunch: '',
+          dinner: '',
+          transport: '',
+          others: ''
+        },
+        attachments: [],
+        otherExpenses: [],
+        updatedAt: new Date().toISOString()
+      };
+
+      setMeasurements(prev =>
+        prev.some(m => m.demandId === nextId) ? prev : [...prev, newMeasurement]
+      );
+
+      setEvidenceStore(prev => ({
+        ...prev,
+        [nextId]:
+          prev[nextId] ??
+          {
+            demandId: nextId,
+            attendanceList: [],
+            certificates: [],
+            photos: []
+          }
+      }));
+
+      setNotification({ message: 'Demanda criada com sucesso.', type: 'success' });
+
+      // ✅ Retorna o ID final
+      return { id: (data as any).id ?? nextId };
+    } catch (e) {
+      console.error('Erro ao criar demanda:', e);
+      setNotification({ message: 'Erro ao criar demanda.', type: 'error' });
+      return null;
+    }
   },
   [
     AUTH_MODE,
@@ -743,9 +738,11 @@ const addDemand = useCallback(
     setNextDemandNumber,
     setDemands,
     setMeasurements,
-    setEvidenceStore
+    setEvidenceStore,
+    setNotification
   ]
 );
+
 
 
   const updateDemand = useCallback(
@@ -763,7 +760,7 @@ const addDemand = useCallback(
       }
 
       // ✅ SUPABASE MODE
-      if (loading || !user) {
+      if (!user) {
         setNotification({
           message: 'Aguarde a sessão carregar para salvar a demanda.',
           type: 'info'
@@ -861,7 +858,7 @@ const addDemand = useCallback(
       }
 
       // ✅ SUPABASE MODE
-      if (loading || !user) {
+      if (!user) {
         setNotification({
           message: 'Aguarde a sessão carregar para remover a demanda.',
           type: 'info'
@@ -914,7 +911,7 @@ const addDemand = useCallback(
       }
 
       // ✅ SUPABASE MODE
-      if (loading || !user) {
+      if (!user) {
         setNotification({
           message: 'Aguarde a sessão carregar para cancelar a demanda.',
           type: 'info'
@@ -976,7 +973,7 @@ const addDemand = useCallback(
         return;
       }
 
-      if (loading || !user) {
+      if (!user) {
         setNotification({
           message: 'Aguarde a sessão carregar para salvar o treinamento.',
           type: 'info'
@@ -1018,7 +1015,7 @@ const addDemand = useCallback(
         return;
       }
 
-      if (loading || !user) {
+      if (!user) {
         setNotification({
           message: 'Aguarde a sessão carregar para salvar o treinamento.',
           type: 'info'

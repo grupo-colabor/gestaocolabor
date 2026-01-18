@@ -412,7 +412,10 @@ const filteredDemands = useMemo(() => {
 useEffect(() => {
   const run = async () => {
     if (!isModalOpen) return;
+    if (modalMode === 'CREATE') return;
     if (!formDemand.id) return;
+    if (modalSubMode !== 'VIEW') return;
+
 
     // 1) Documentos
     try {
@@ -437,14 +440,19 @@ useEffect(() => {
         ...prev,
       // ✅ status interno da logística (para VIEW não ficar "Pendente")
       logisticsTransport:
-      data.transport_mode === 'CARRO_ALUGADO' || data.transport_mode === 'CARRO_PROPRIO'
-        ? 'CONFIRMADO'
-        : 'NAO_NECESSARIO',
+        data.transport_mode === 'CARRO_ALUGADO' || data.transport_mode === 'CARRO_PROPRIO'
+          ? 'CONFIRMADO'
+          : (data.transport_mode === 'NAO_NECESSARIO' || data.transport_mode === 'NA')
+            ? 'NAO_NECESSARIO'
+            : '',
 
       logisticsHotel:
-      data.lodging_mode === 'PRECISA_HOTEL'
-        ? 'CONFIRMADO'
-        : 'NAO_NECESSARIO',
+        data.lodging_mode === 'PRECISA_HOTEL'
+          ? 'CONFIRMADO'
+          : (data.lodging_mode === 'NAO_NECESSARIO' || data.lodging_mode === 'NA')
+            ? 'NAO_NECESSARIO'
+            : '',
+
 
       // ✅ modos vindos do banco -> UI
         transportType:
@@ -898,19 +906,18 @@ ${formDemand.observations || 'N/A'}
 
 
 const mapTransportMode = (t: TransportType | null | undefined) => {
-  // ✅ NA é um valor real (não aplicável), nunca NULL
-  if (!t) return 'NA';
   if (t === 'Carro Alugado') return 'CARRO_ALUGADO';
   if (t === 'Carro Próprio') return 'CARRO_PROPRIO';
-  return 'NA';
+  return null;
 };
+
 
 
 const mapLodgingMode = (a: AccommodationType | null | undefined) => {
-  if (!a) return 'NA';
   if (a === 'Hotel') return 'PRECISA_HOTEL';
-  return 'NA';
+  return null;
 };
+
 
 // ✅ helpers para normalizar inputs -> ISO (timestamptz)
 const toIsoFromDateInput = (v?: string | null) => {
@@ -1006,9 +1013,9 @@ const handleSave = async () => {
       trainingLocal: formDemand.modality === 'ONLINE' ? '' : (formDemand.trainingLocal || ''),
       regionId: formDemand.regionId || '',
       logisticsTransport:
-        formDemand.modality === 'ONLINE' ? 'NAO_NECESSARIO' : formDemand.logisticsTransport,
+      formDemand.modality === 'ONLINE' ? 'NAO_NECESSARIO' : (formDemand.logisticsTransport ?? ''),
       logisticsHotel:
-        formDemand.modality === 'ONLINE' ? 'NAO_NECESSARIO' : formDemand.logisticsHotel,
+      formDemand.modality === 'ONLINE' ? 'NAO_NECESSARIO' : (formDemand.logisticsHotel ?? ''),
       transportType: formDemand.modality === 'ONLINE' ? null : formDemand.transportType,
       accommodationType: formDemand.modality === 'ONLINE' ? null : formDemand.accommodationType,
 
@@ -1026,22 +1033,24 @@ const handleSave = async () => {
 
     setResourceError(null);
 
-    // 1) Garantir demandId (pra PDF / logística / medição)
     let demandId = (formDemand.id || sanitizedDemand.id) as string | undefined;
+// ⚠️ No CREATE com Supabase, o ID final vem do addDemand.
+// Então aqui só mantemos demandId se já existir (ex.: EDIT / mock / casos legados).
 
-    // ⚠️ Use esse fallback só se seu CREATE realmente puder vir sem id.
-    if (!demandId) {
-      demandId = `DEM-${Date.now()}`;
-      sanitizedDemand.id = demandId;
-      setFormDemand(prev => ({ ...prev, id: demandId }));
-    }
 
-    // 2) Salvar a demanda (CREATE/EDIT)
     if (modalMode === 'CREATE') {
-      await Promise.resolve(addDemand(sanitizedDemand));
+      const created = await addDemand(sanitizedDemand);
+      if (!created?.id) {
+        // não prossegue pipeline se não criou a demanda
+        return;
+      }
+      demandId = created.id;
+      sanitizedDemand.id = created.id;
     } else {
       await Promise.resolve(updateDemand(sanitizedDemand));
+      demandId = demandId ?? sanitizedDemand.id;
     }
+
 
     if (!demandId) {
       setIsModalOpen(false);
@@ -1066,8 +1075,13 @@ const handleSave = async () => {
         end_date: isOnline ? null : toIsoFromAnyDateSafe(sanitizedDemand.endDate),
 
         // modos (enum simplificado)
-        transport_mode: isOnline ? 'NAO_NECESSARIO' : mapTransportMode(sanitizedDemand.transportType),
-        lodging_mode: isOnline ? 'NAO_NECESSARIO' : mapLodgingMode(sanitizedDemand.accommodationType),
+        transport_mode: isOnline
+          ? 'NAO_NECESSARIO'
+          : mapTransportMode(sanitizedDemand.transportType),
+
+        lodging_mode: isOnline
+          ? 'NAO_NECESSARIO'
+          : mapLodgingMode(sanitizedDemand.accommodationType),
 
         // ===== DETALHES CARRO ALUGADO =====
         rental_company: isOnline ? null : rentalCompanySafe,

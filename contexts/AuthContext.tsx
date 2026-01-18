@@ -176,6 +176,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const LAST_LOGIN_KEY = 'colabor:lastLoginDate';
+
+  function todayKey() {
+    return new Date().toDateString(); // simples e suficiente
+  }
+
+  function markLoggedToday() {
+    localStorage.setItem(LAST_LOGIN_KEY, todayKey());
+  }
+
+  function shouldForceLoginToday() {
+    return localStorage.getItem(LAST_LOGIN_KEY) !== todayKey();
+  }
+
   /* =========================
      Sessão inicial + listener (SUPABASE)
   ========================= */
@@ -198,6 +212,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(true);
         setInitializing(true);
       });
+      
+      // ✅ força login 1x por dia
+    if (shouldForceLoginToday()) {
+      await supabase.auth.signOut();
+      safeSet(() => {
+        setUser(null);
+        setProfile(null);
+        setLoading(false);
+        setInitializing(false);
+      });
+      return; // vai cair para tela de login, sem travar o app
+    }
 
       try {
         const { data, error } = await supabase.auth.getSession();
@@ -287,6 +313,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
+      markLoggedToday();
 
       const { data } = await supabase.auth.getSession();
       const sessionUser = data.session?.user ?? null;
@@ -305,6 +332,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (AUTH_MODE === 'mock') {
       setUser(null);
       setProfile(null);
+      localStorage.removeItem('colabor:lastLoginDate');
       return;
     }
     if (!supabase) return;
@@ -312,7 +340,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);
+    localStorage.removeItem('colabor:lastLoginDate');
   }
+
 
   /* =========================
      Regras de acesso

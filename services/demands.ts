@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { deleteDemandDocumentsByDemandId } from './demandDocuments';
 
 export type DemandRow = {
   id: string; // "DEM-6301"
@@ -27,7 +28,6 @@ export type DemandRow = {
 
 /**
  * Lista demandas (ordenadas por number desc)
- * - Não lança erro aqui: devolve [] e deixa o caller tratar via {error}
  */
 export async function fetchDemands(): Promise<DemandRow[]> {
   const { data, error } = await supabase
@@ -46,7 +46,7 @@ export async function fetchDemands(): Promise<DemandRow[]> {
 
   if (error) {
     console.error('fetchDemands error:', error);
-    throw error; // manter throw aqui é ok (App.tsx já tem try/catch no sync)
+    throw error;
   }
 
   return (data || []) as DemandRow[];
@@ -96,17 +96,40 @@ export async function updateDemandById(id: string, payload: Partial<DemandRow> |
 }
 
 /**
- * DELETE por id
- * - Compatível com App.tsx: retorna { error }
+ * DELETE por id (COM LIMPEZA DE DOCUMENTOS)
+ * - Remove documentos (storage + tabela demand_documents)
+ * - Remove demanda
+ * - Retorna { data, error }
  */
 export async function deleteDemandById(id: string) {
-  const { error } = await supabase.from('demands').delete().eq('id', id);
-  return { error };
+  const safeId = (id ?? '').trim();
+  if (!safeId) return { data: null, error: new Error('id inválido') as any };
+
+  // 1) Limpa documentos primeiro (evita "PDF fantasma" no storage/tabela)
+  //    Se falhar aqui, a gente retorna erro e NÃO deleta a demanda (pra você ver o erro).
+  try {
+    const res = await deleteDemandDocumentsByDemandId(safeId);
+    if (!res.ok) {
+      console.error('[deleteDemandById] erro ao limpar documentos:', res.error);
+      return { data: null, error: res.error };
+    }
+  } catch (e) {
+    console.error('[deleteDemandById] exception ao limpar documentos:', e);
+    return { data: null, error: e as any };
+  }
+
+  // 2) Agora remove a demanda
+  const { data, error } = await supabase
+    .from('demands')
+    .delete()
+    .eq('id', safeId)
+    .select('id'); // confirma
+
+  return { data, error };
 }
 
 /**
  * (Opcional) Aliases para não quebrar chamadas antigas (se existirem em outros arquivos)
- * - Se você tiver algum lugar chamando updateDemandDb/deleteDemandDb, isso mantém compatibilidade.
  */
 export async function updateDemandDb(id: string, payload: Partial<DemandRow>) {
   const { error } = await updateDemandById(id, payload);

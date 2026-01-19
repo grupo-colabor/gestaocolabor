@@ -33,6 +33,7 @@ import {
 import { SKILL_LABELS } from '../constants';
 import { supabase } from '../lib/supabase';
 import { AUTH_MODE } from '../config/authMode';
+import { deleteOperationalBaseItem } from '../services/operationalBases';
 
 type Tab = 'companies' | 'trainings' | 'instructors' | 'bases' | 'settings';
 
@@ -453,11 +454,29 @@ const Registrations: React.FC = () => {
     setNewBaseItem('');
   };
 
-  const handleRemoveBaseItem = (item: string) => {
-    if (confirm(`Deseja remover "${item}" da base?`)) {
-      updateOperationalBase(activeBaseKey, operationalBases[activeBaseKey].filter(i => i !== item));
-    }
-  };
+
+const handleRemoveBaseItem = async (item: string) => {
+  const value = (item ?? '').trim();
+  if (!value) return;
+
+  const ok = confirm(`Deseja remover "${value}" da base?`);
+  if (!ok) return;
+
+  try {
+    // 1) remove no Supabase
+    await deleteOperationalBaseItem(activeBaseKey, value);
+
+    // 2) remove no estado local (UI atualiza na hora)
+    updateOperationalBase(
+      activeBaseKey,
+      (operationalBases[activeBaseKey] || []).filter(i => (i ?? '').trim() !== value)
+    );
+  } catch (e: any) {
+    console.error(e);
+    alert(`Erro ao remover: ${e?.message || e}`);
+  }
+};
+
 
   const startEditBaseItem = (idx: number, val: string) => {
     setEditingBaseIdx(idx);

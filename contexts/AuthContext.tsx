@@ -64,10 +64,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // ✅ garante que não dispare vários loads de profile ao mesmo tempo
   const profilePromiseRef = useRef<Promise<Profile | null> | null>(null);
 
- 
   /* =========================
      Buscar perfil / Criar se não existir
-     ✅ sem timeout custom aqui para não dar "Timeout fantasma"
   ========================= */
   async function loadOrCreateProfile(sessionUser: any): Promise<Profile | null> {
     if (!supabase || !sessionUser?.id) return null;
@@ -153,48 +151,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function refreshProfileIfNeeded(reason: string) {
+  /**
+   * ✅ Revalida sessão e profile sem precisar F5
+   * (quando volta foco/visibilidade, ou se algo ficar stale)
+   */
+  async function ensureSessionAndProfile(reason: string) {
     if (AUTH_MODE !== 'supabase') return;
     if (!supabase) return;
     if (refreshingRef.current) return;
 
-    const currentUser = user;
-    if (!currentUser?.id) return;
-
-    // se já está ok, não refaz
-    if (profile?.id === currentUser.id) return;
-
     refreshingRef.current = true;
-
     try {
       setLoading(true);
-      const p = await loadOrCreateProfile(currentUser);
+
+      const { data, error } = await supabase.auth.getSession();
+      if (error) console.error('[Auth] ensureSession getSession error', error, { reason });
+
+      const sessionUser = data.session?.user ?? null;
+      setUser(sessionUser);
+
+      if (!sessionUser) {
+        setProfile(null);
+        return;
+      }
+
+      const p = await loadOrCreateProfile(sessionUser);
       setProfile(p);
+    } catch (e) {
+      console.error('[Auth] ensureSession exception', e, { reason });
     } finally {
       setLoading(false);
       refreshingRef.current = false;
     }
   }
 
-  const LAST_LOGIN_KEY = 'colabor:lastLoginDate';
-
-  function todayKey() {
-    return new Date().toDateString(); // simples e suficiente
-  }
-
-  function markLoggedToday() {
-    localStorage.setItem(LAST_LOGIN_KEY, todayKey());
-  }
-
-  function shouldForceLoginToday() {
-    return localStorage.getItem(LAST_LOGIN_KEY) !== todayKey();
-  }
-
   /* =========================
      Sessão inicial + listener (SUPABASE)
   ========================= */
   useEffect(() => {
-    if (AUTH_MODE !== 'supabase') return;
+    if (AUTH_MODE !== 'supabase') {
+      // modo mock: não travar AuthGate
+      setUser(null);
+      setProfile(null);
+      setLoading(false);
+      setInitializing(false);
+      return;
+    }
 
     if (!supabase) {
       setUser(null);
@@ -212,18 +214,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(true);
         setInitializing(true);
       });
-      
-      // ✅ força login 1x por dia
-    if (shouldForceLoginToday()) {
-      await supabase.auth.signOut();
-      safeSet(() => {
-        setUser(null);
-        setProfile(null);
-        setLoading(false);
-        setInitializing(false);
-      });
-      return; // vai cair para tela de login, sem travar o app
-    }
 
       try {
         const { data, error } = await supabase.auth.getSession();
@@ -279,17 +269,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       mounted = false;
       listener.subscription.unsubscribe();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* =========================
-     Quando volta o foco/visibilidade, recarrega profile se necessário
+     Quando volta o foco/visibilidade, revalida sessão+profile (sem F5)
   ========================= */
   useEffect(() => {
     if (AUTH_MODE !== 'supabase') return;
 
-    const onFocus = () => refreshProfileIfNeeded('focus');
+    const onFocus = () => ensureSessionAndProfile('focus');
     const onVisibility = () => {
-      if (!document.hidden) refreshProfileIfNeeded('visibility');
+      if (!document.hidden) ensureSessionAndProfile('visibility');
     };
 
     window.addEventListener('focus', onFocus);
@@ -300,7 +291,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', onVisibility);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [AUTH_MODE, user?.id, profile?.id]);
+  }, [AUTH_MODE]);
 
   /* =========================
      Auth actions
@@ -313,16 +304,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      markLoggedToday();
 
-      const { data } = await supabase.auth.getSession();
-      const sessionUser = data.session?.user ?? null;
-      setUser(sessionUser);
-
-      if (sessionUser) {
-        const p = await loadOrCreateProfile(sessionUser);
-        setProfile(p);
-      }
+      // ✅ garante sessão + profile logo após login (sem depender do listener)
+      await ensureSessionAndProfile('signIn');
     } finally {
       setLoading(false);
     }
@@ -332,7 +316,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (AUTH_MODE === 'mock') {
       setUser(null);
       setProfile(null);
-      localStorage.removeItem('colabor:lastLoginDate');
       return;
     }
     if (!supabase) return;
@@ -340,9 +323,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);
-    localStorage.removeItem('colabor:lastLoginDate');
   }
-
 
   /* =========================
      Regras de acesso

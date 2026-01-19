@@ -61,6 +61,8 @@ import { fetchTrainings } from './services/trainings';
 import { fetchCompanies } from './services/companies';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { fetchInstructors, fetchInstructorTrainings } from './services/instructors';
+import { fetchMeasurements, upsertMeasurementByDemandId } from './services/measurements';
+
 
 // ✅ Demandas (Supabase) — services/demands.ts
 import {
@@ -76,8 +78,12 @@ import {
   fetchAgendaItems,
   insertAgendaItem,
   updateAgendaItemById,
-  deleteAgendaItemById
-} from './services/agenda';
+  deleteAgendaItemById,
+  mapAgendaItemFromDb
+} from './services/agendaItems';
+
+
+
 
 // ✅ Supabase client (precisa existir em ./lib/supabase)
 import { supabase } from './lib/supabase';
@@ -219,8 +225,49 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 );
   const [instructorAllocations, setInstructorAllocations] = useState<InstructorAllocation[]>([]);
   const [resourceAllocations, setResourceAllocations] = useState<LogisticAllocation[]>([]);
-  const [operationalBases, setOperationalBases] =
-    useState<OperationalBases>(INITIAL_OPERATIONAL_BASES);
+  const [operationalBases, setOperationalBases] = useState<OperationalBases>({
+  aprovadores: [],
+  analistas: [],
+  corredores: [],
+  localidades: [],
+  hoteis: [],
+  locadoras: [],
+  tiposTreinamento: [],
+});
+
+useEffect(() => {
+  (async () => {
+    const { data, error } = await supabase
+      .from('operational_bases_items')
+      .select('base_key, value')
+      .order('value');
+
+    if (error) {
+      console.error('[OperationalBases] fetch error', error);
+      return;
+    }
+
+    const grouped: OperationalBases = {
+      aprovadores: [],
+      analistas: [],
+      corredores: [],
+      localidades: [],
+      hoteis: [],
+      locadoras: [],
+      tiposTreinamento: [],
+    };
+
+    for (const row of data ?? []) {
+      if (grouped[row.base_key as OperationalBaseKey]) {
+        grouped[row.base_key as OperationalBaseKey].push(row.value);
+      }
+    }
+
+    setOperationalBases(grouped);
+  })();
+}, []);
+
+
 
   const [notification, setNotification] = useState<{
     message: string;
@@ -234,6 +281,40 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   // ✅ respeitar loading para evitar chamadas no meio da troca de sessão/aba
   const { user, loading } = useAuth();
+
+ function mapMeasurementFromDb(row: any) {
+  return {
+    id: row.id,
+    demandId: row.demand_id,
+    status: row.status,
+    expenses: row.expenses ?? {},
+    attachments: row.attachments ?? [],
+    otherExpenses: row.other_expenses ?? [],
+    updatedAt: row.updated_at ?? row.created_at ?? new Date().toISOString(),
+  };
+}
+
+function mapMeasurementToDbPatch(m: any) {
+  return {
+    id: m.id,
+    status: m.status,
+    expenses: m.expenses ?? {},
+    attachments: m.attachments ?? [],
+    other_expenses: m.otherExpenses ?? [],
+    updated_at: new Date().toISOString(),
+  };
+}
+ const syncMeasurementsFromDb = useCallback(async () => {
+  if (AUTH_MODE !== 'supabase') return;
+
+  try {
+    const rows = await fetchMeasurements();
+    const mapped = (rows || []).map(mapMeasurementFromDb);
+    setMeasurements(mapped);
+  } catch (e) {
+    console.error('[Measurements] sync error', e);
+  }
+}, [AUTH_MODE]);
 
   /**
    * ✅ Helpers de persistência (treinamentos) — ALINHADO AO SCHEMA ATUAL DO SUPABASE
@@ -503,9 +584,17 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     syncDemandsFromDb();
   }, [AUTH_MODE, user, loading, syncDemandsFromDb]);
 
+  // ✅ Carregar Medições do Supabase (fonte da verdade)
+  useEffect(() => {
+  if (AUTH_MODE !== 'supabase') return;
+  if (loading) return;
+  if (!user) return;
+  syncMeasurementsFromDb();
+}, [AUTH_MODE, user, loading, syncMeasurementsFromDb]);
+
   // Inicializar medições para mock legados
   useEffect(() => {
-    if (measurements.length === 0 && demands.length > 0) {
+    if (AUTH_MODE !== 'supabase' && measurements.length === 0 && demands.length > 0) {
       const initialMeasurements = demands.map(d => ({
         id: `MEA-${d.id}`,
         demandId: d.id,
@@ -840,67 +929,99 @@ const addDemand = useCallback(
   );
 
   const deleteDemand = useCallback(
-    (id: string) => {
-      // ✅ MOCK MODE
-      if (AUTH_MODE !== 'supabase') {
-        setDemands(prev => prev.filter(d => d.id !== id));
-        setMeasurements(prev => prev.filter(m => m.demandId !== id));
-        setAgendaItems(prev => prev.filter(item => item.relatedDemandId !== id));
-        setInstructorAllocations(prev => prev.filter(a => a.demandId !== id));
-        setResourceAllocations(prev => prev.filter(a => a.demandId !== id));
+  (id: string) => {
+    // ✅ MOCK MODE
+    if (AUTH_MODE !== 'supabase') {
+      setDemands(prev => prev.filter(d => d.id !== id));
+      setMeasurements(prev => prev.filter(m => m.demandId !== id));
+      setAgendaItems(prev => prev.filter(item => item.relatedDemandId !== id));
+      setInstructorAllocations(prev => prev.filter(a => a.demandId !== id));
+      setResourceAllocations(prev => prev.filter(a => a.demandId !== id));
 
-        setEvidenceStore(prev => {
-          const next = { ...prev };
-          delete next[id];
-          return next;
-        });
-        return;
-      }
+      setEvidenceStore(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      return;
+    }
 
-      // ✅ SUPABASE MODE
-      if (!user) {
-        setNotification({
-          message: 'Aguarde a sessão carregar para remover a demanda.',
-          type: 'info'
-        });
-        return;
-      }
+    // ✅ SUPABASE MODE
+    if (!user) {
+      setNotification({
+        message: 'Aguarde a sessão carregar para remover a demanda.',
+        type: 'info'
+      });
+      return;
+    }
 
-      (async () => {
-        try {
-          const { error } = await deleteDemandById(id);
-          if (error) {
-            console.error('Erro delete demand:', error);
-            setNotification({
-              message: `Erro ao excluir demanda: ${error.message}`,
-              type: 'error'
-            });
-            return;
-          }
+    // ✅ Optimistic update: remove já no app (fica mais responsivo)
+    let prevDemandsSnapshot: Demand[] | null = null;
 
-          await syncDemandsFromDb();
+    setDemands(prev => {
+      prevDemandsSnapshot = prev;
+      return prev.filter(d => d.id !== id);
+    });
 
-          // Limpeza local (MVP)
-          setMeasurements(prev => prev.filter(m => m.demandId !== id));
-          setAgendaItems(prev => prev.filter(item => item.relatedDemandId !== id));
-          setInstructorAllocations(prev => prev.filter(a => a.demandId !== id));
-          setResourceAllocations(prev => prev.filter(a => a.demandId !== id));
+    // também limpa “dependências” localmente já
+    setMeasurements(prev => prev.filter(m => m.demandId !== id));
+    setAgendaItems(prev => prev.filter(item => item.relatedDemandId !== id));
+    setInstructorAllocations(prev => prev.filter(a => a.demandId !== id));
+    setResourceAllocations(prev => prev.filter(a => a.demandId !== id));
+    setEvidenceStore(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
 
-          setEvidenceStore(prev => {
-            const next = { ...prev };
-            delete next[id];
-            return next;
+    (async () => {
+      try {
+        const { data, error } = await deleteDemandById(id);
+
+        if (error) {
+          console.error('Erro delete demand:', error);
+
+          // rollback
+          if (prevDemandsSnapshot) setDemands(prevDemandsSnapshot);
+
+          setNotification({
+            message: `Erro ao excluir demanda: ${error.message}`,
+            type: 'error'
           });
-
-          setNotification({ message: 'Demanda excluída com sucesso.', type: 'success' });
-        } catch (e) {
-          console.error('Erro ao excluir demanda:', e);
-          setNotification({ message: 'Erro ao excluir demanda.', type: 'error' });
+          return;
         }
-      })();
-    },
-    [AUTH_MODE, loading, user, syncDemandsFromDb]
-  );
+
+        // ✅ garante que realmente deletou
+        if (!data || data.length === 0) {
+          console.error('Delete não removeu nenhuma linha. ID:', id);
+
+          // rollback
+          if (prevDemandsSnapshot) setDemands(prevDemandsSnapshot);
+
+          setNotification({
+            message: 'Não foi possível excluir a demanda (nenhuma linha foi removida).',
+            type: 'error'
+          });
+          return;
+        }
+
+        // ✅ sincroniza com banco para garantir consistência
+        await syncDemandsFromDb();
+
+        setNotification({ message: 'Demanda excluída com sucesso.', type: 'success' });
+      } catch (e) {
+        console.error('Erro ao excluir demanda:', e);
+
+        // rollback
+        if (prevDemandsSnapshot) setDemands(prevDemandsSnapshot);
+
+        setNotification({ message: 'Erro ao excluir demanda.', type: 'error' });
+      }
+    })();
+  },
+  [AUTH_MODE, user, syncDemandsFromDb, setNotification]
+);
+
 
   const cancelDemand = useCallback(
     (demandId: string) => {
@@ -944,10 +1065,38 @@ const addDemand = useCallback(
   );
 
   const updateMeasurement = useCallback((m: Measurement) => {
+  // MOCK
+  if (AUTH_MODE !== 'supabase') {
     setMeasurements(prev =>
       prev.map(item => (item.id === m.id ? { ...m, updatedAt: new Date().toISOString() } : item))
     );
-  }, []);
+    return;
+  }
+
+  // SUPABASE
+  (async () => {
+    try {
+      const patch = mapMeasurementToDbPatch(m);
+      const { data, error } = await upsertMeasurementByDemandId(m.demandId, patch);
+
+      if (error || !data) {
+        console.error('[Measurements] upsert error', error);
+        return;
+      }
+
+      const updated = mapMeasurementFromDb(data);
+
+      setMeasurements(prev => {
+        const exists = prev.some(x => x.demandId === updated.demandId);
+        if (!exists) return [updated, ...prev];
+        return prev.map(x => (x.demandId === updated.demandId ? updated : x));
+      });
+    } catch (e) {
+      console.error('[Measurements] update exception', e);
+    }
+  })();
+}, [AUTH_MODE]);
+
 
   const addInstructor = useCallback((i: Instructor) => {
     setInstructors(prev => [...prev, i]);
@@ -1050,17 +1199,92 @@ const addDemand = useCallback(
     [AUTH_MODE, loading, user, mapTrainingToDb, syncTrainingsFromDb]
   );
 
-  const addAgendaItem = useCallback((item: AgendaItem) => {
-    setAgendaItems(prev => [...prev, item]);
-  }, []);
 
-  const updateAgendaItem = useCallback((item: AgendaItem) => {
-    setAgendaItems(prev => prev.map(i => (i.id === item.id ? item : i)));
-  }, []);
+/** 🔄 Sync do Supabase -> State */
+const syncAgendaItemsFromDb = useCallback(async () => {
+  if (AUTH_MODE !== 'supabase') return;
 
-  const removeAgendaItem = useCallback((id: string) => {
-    setAgendaItems(prev => prev.filter(i => i.id !== id));
-  }, []);
+  try {
+    const rows = await fetchAgendaItems();
+    const mapped = rows.map(mapAgendaItemFromDb);
+    setAgendaItems(mapped);
+  } catch (e) {
+    console.error('syncAgendaItemsFromDb error:', e);
+  }
+}, [AUTH_MODE]);
+
+/** ✅ CREATE */
+/** ✅ CREATE */
+const addAgendaItem = useCallback(
+  async (item: AgendaItem) => {
+    // MOCK
+    if (AUTH_MODE !== 'supabase') {
+      setAgendaItems(prev => [...prev, item]);
+      return;
+    }
+
+    try {
+    const { data, error } = await insertAgendaItem(item); // passa AgendaItem direto
+    if (error) throw error;
+    await syncAgendaItemsFromDb();
+
+      setNotification({ message: 'Registro salvo com sucesso.', type: 'success' });
+    } catch (e) {
+      console.error('addAgendaItem error:', e);
+      setNotification({ message: 'Erro ao salvar registro na agenda.', type: 'error' });
+    }
+  },
+  [AUTH_MODE, syncAgendaItemsFromDb, setNotification]
+);
+
+/** ✅ UPDATE */
+const updateAgendaItem = useCallback(
+  async (item: AgendaItem) => {
+    // MOCK
+    if (AUTH_MODE !== 'supabase') {
+      setAgendaItems(prev => prev.map(i => (i.id === item.id ? item : i)));
+      return;
+    }
+
+    try {
+    const { data, error } = await updateAgendaItemById(item.id, item); // passa patch do app
+    if (error) throw error;
+    await syncAgendaItemsFromDb();
+
+
+      setNotification({ message: 'Registro atualizado com sucesso.', type: 'success' });
+    } catch (e) {
+      console.error('updateAgendaItem error:', e);
+      setNotification({ message: 'Erro ao atualizar registro da agenda.', type: 'error' });
+    }
+  },
+  [AUTH_MODE, syncAgendaItemsFromDb, setNotification]
+);
+
+/** ✅ DELETE */
+const removeAgendaItem = useCallback(
+  async (id: string) => {
+    // MOCK
+    if (AUTH_MODE !== 'supabase') {
+      setAgendaItems(prev => prev.filter(i => i.id !== id));
+      return;
+    }
+
+    try {
+      const { error } = await deleteAgendaItemById(id);
+      if (error) throw error;
+
+      // ✅ remove local + garante que ficou igual ao banco
+      setAgendaItems(prev => prev.filter(i => i.id !== id));
+
+      setNotification({ message: 'Registro removido com sucesso.', type: 'success' });
+    } catch (e) {
+      console.error('removeAgendaItem error:', e);
+      setNotification({ message: 'Erro ao excluir registro da agenda.', type: 'error' });
+    }
+  },
+  [AUTH_MODE, setNotification]
+);
 
   /**
    * ADD INSTRUCTOR ALLOCATION WITH AUTOMATIC SPLIT
@@ -1263,9 +1487,26 @@ const addDemand = useCallback(
     setResourceAllocations(prev => prev.filter(a => a.id !== id));
   }, []);
 
-  const updateOperationalBase = useCallback((key: OperationalBaseKey, newList: string[]) => {
+  const updateOperationalBase = useCallback(
+  async (key: OperationalBaseKey, newList: string[]) => {
+    // apaga tudo da base
+    await supabase.from('operational_bases_items').delete().eq('base_key', key);
+
+    // recria a lista
+    const payload = newList.map(value => ({
+      base_key: key,
+      value,
+    }));
+
+    if (payload.length) {
+      await supabase.from('operational_bases_items').insert(payload);
+    }
+
+    // atualiza estado local
     setOperationalBases(prev => ({ ...prev, [key]: newList }));
-  }, []);
+  },
+  []
+);
 
   /* -------------------------
      Business rules

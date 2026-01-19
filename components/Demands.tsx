@@ -414,19 +414,24 @@ useEffect(() => {
     if (!isModalOpen) return;
     if (modalMode === 'CREATE') return;
     if (!formDemand.id) return;
-    if (modalSubMode !== 'VIEW') return;
+    if (modalSubMode !== 'VIEW' && modalSubMode !== 'EDIT') return;
 
+    // ✅ SEMPRE começa vazio ao abrir (evita “herdar” docs de outra demanda)
+    setDbDocs({});
 
     // 1) Documentos
     try {
       const docs = await fetchDemandDocumentsByDemandId(formDemand.id);
       const mapped: Record<string, { name: string; path: string }> = {};
+
       for (const d of docs) {
         mapped[d.doc_type] = { name: d.file_name || d.doc_type, path: d.file_path };
       }
+
       setDbDocs(mapped);
     } catch (e) {
-      // silencioso
+      // silencioso (mas garante vazio)
+      setDbDocs({});
     }
 
     // 2) Logística
@@ -438,23 +443,25 @@ useEffect(() => {
       // joga os campos do banco no formDemand (sem quebrar o que já está)
       setFormDemand(prev => ({
         ...prev,
-      // ✅ status interno da logística (para VIEW não ficar "Pendente")
-      logisticsTransport:
-        data.transport_mode === 'CARRO_ALUGADO' || data.transport_mode === 'CARRO_PROPRIO'
-          ? 'CONFIRMADO'
-          : (data.transport_mode === 'NAO_NECESSARIO' || data.transport_mode === 'NA')
+
+        // ✅ status interno da logística (para VIEW não ficar "Pendente")
+        logisticsTransport:
+          data.transport_mode === 'CARRO_ALUGADO' || data.transport_mode === 'CARRO_PROPRIO'
+            ? 'CONFIRMADO'
+            : data.transport_mode === 'NAO_NECESSARIO' ||
+              data.transport_mode === 'NA'
             ? 'NAO_NECESSARIO'
             : '',
 
-      logisticsHotel:
-        data.lodging_mode === 'PRECISA_HOTEL'
-          ? 'CONFIRMADO'
-          : (data.lodging_mode === 'NAO_NECESSARIO' || data.lodging_mode === 'NA')
+        logisticsHotel:
+          data.lodging_mode === 'PRECISA_HOTEL'
+            ? 'CONFIRMADO'
+            : data.lodging_mode === 'NAO_NECESSARIO' ||
+              data.lodging_mode === 'NA'
             ? 'NAO_NECESSARIO'
             : '',
 
-
-      // ✅ modos vindos do banco -> UI
+        // ✅ modos vindos do banco -> UI
         transportType:
           data.transport_mode === 'CARRO_ALUGADO'
             ? 'Carro Alugado'
@@ -486,7 +493,7 @@ useEffect(() => {
   };
 
   run();
-}, [isModalOpen, formDemand.id]);
+}, [isModalOpen, modalMode, modalSubMode, formDemand.id]);
 
 
 

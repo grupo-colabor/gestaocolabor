@@ -43,12 +43,18 @@ export async function fetchDemandDocumentsByDemandId(
 }
 
 /**
- * Gera um path FIXO (1 arquivo por demanda + docType)
- * Assim o upload com upsert:true realmente substitui o arquivo.
+ * ✅ Path FIXO de verdade (1 arquivo por demanda + docType)
+ * - NÃO usa o nome original do arquivo
+ * - garante que upload com upsert:true substitui sempre o mesmo arquivo
  */
-function buildFixedPath(demandId: string, docType: DemandDocType, fileName: string) {
-  const safeName = (fileName || 'arquivo.pdf').replace(/[^\w.\-() ]/g, '_');
-  return `demands/${demandId}/${docType}-${safeName}`;
+function buildFixedPath(demandId: string, docType: DemandDocType, fileName?: string) {
+  const safeId = (demandId ?? '').trim();
+
+  // tenta manter extensão original se existir, senão ".pdf"
+  const extMatch = (fileName ?? '').toLowerCase().match(/\.(pdf)$/);
+  const ext = extMatch ? extMatch[0] : '.pdf';
+
+  return `demands/${safeId}/${docType}${ext}`;
 }
 
 /**
@@ -109,10 +115,13 @@ export async function uploadAndUpsertDemandPdf(
   docType: DemandDocType,
   file: File
 ) {
-  const { path } = await uploadDemandPdf(demandId, docType, file);
+  const safeId = (demandId ?? '').trim();
+  if (!safeId) throw new Error('demandId inválido.');
+
+  const { path } = await uploadDemandPdf(safeId, docType, file);
 
   return upsertDemandDocument({
-    demand_id: demandId,
+    demand_id: safeId,
     doc_type: docType,
     file_path: path,
     file_name: file.name,
@@ -127,7 +136,10 @@ export async function getDemandDocumentSignedUrl(filePath: string, expiresInSeco
   const safePath = (filePath ?? '').trim();
   if (!safePath) return { data: null, error: new Error('filePath inválido') as any };
 
-  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(safePath, expiresInSeconds);
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUrl(safePath, expiresInSeconds);
+
   return { data, error }; // data.signedUrl
 }
 
@@ -140,4 +152,36 @@ export async function deleteDemandDocumentFile(filePath: string) {
 
   const { data, error } = await supabase.storage.from(BUCKET).remove([safePath]);
   return { data, error };
+}
+
+/**
+ * ✅ Remove TODOS os documentos de uma demanda:
+ * - apaga arquivos do storage
+ * - apaga linhas na tabela demand_documents
+ *
+ * Use isso quando excluir a demanda (antes ou depois de deletar a demanda).
+ */
+export async function deleteDemandDocumentsByDemandId(demandId: string) {
+  const safeId = (demandId ?? '').trim();
+  if (!safeId) return { ok: true };
+
+  // 1) busca docs para saber os paths
+  const docs = await fetchDemandDocumentsByDemandId(safeId);
+
+  // 2) remove arquivos do storage (se existirem)
+  const paths = docs.map(d => d.file_path).filter(Boolean);
+
+  if (paths.length) {
+    const { error: storageError } = await supabase.storage.from(BUCKET).remove(paths);
+    if (storageError) {
+      // não aborta automaticamente, mas retorna erro para você tratar se quiser
+      return { ok: false, error: storageError };
+    }
+  }
+
+  // 3) remove linhas da tabela
+  const { error: dbError } = await supabase.from('demand_documents').delete().eq('demand_id', safeId);
+  if (dbError) return { ok: false, error: dbError };
+
+  return { ok: true };
 }

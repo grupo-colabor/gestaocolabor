@@ -1152,6 +1152,15 @@ const handleSave = async () => {
 
     // 4) PDFs: enviar pendentes (CREATE e EDIT)
     try {
+      const hasAnyPdf = !!pendingPdfs.classList || !!pendingPdfs.instructorRelease;
+
+      if (hasAnyPdf) {
+        setNotification({
+          type: 'info',
+          message: 'Enviando PDFs... aguarde.'
+        });
+      }
+
       let classUploaded = false;
       let releaseUploaded = false;
 
@@ -1188,9 +1197,22 @@ const handleSave = async () => {
         }
         setDbDocs(mapped);
       }
-    } catch (e) {
+
+      if (hasAnyPdf) {
+        setNotification({
+          type: 'success',
+          message: 'PDF(s) enviado(s) com sucesso.'
+        });
+      }
+    } catch (e: any) {
       console.error('Erro ao enviar PDFs:', e);
+
+      setNotification({
+        type: 'error',
+        message: `Erro ao enviar PDF. Tente novamente. (${e?.message || e})`
+      });
     }
+
 
     // 5) garantir measurement (pra Medição não ficar vazia)
     try {

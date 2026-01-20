@@ -54,8 +54,11 @@ const Dashboard: React.FC = () => {
 
   // ✅ Supabase (controle logístico): demand_id -> logistic_allocations
   const [logisticsByDemandId, setLogisticsByDemandId] = useState<Record<string, LogisticAllocationRow>>({});
+  // ✅ evita "piscar" (pendente vs ok) enquanto carrega do Supabase
+  const [isLoadingPendencies, setIsLoadingPendencies] = useState(true);
 
   const syncLogisticsControlFromDb = useCallback(async () => {
+    setIsLoadingPendencies(true);
     try {
       const rows = await fetchLogisticAllocations();
       const map: Record<string, LogisticAllocationRow> = {};
@@ -67,8 +70,11 @@ const Dashboard: React.FC = () => {
     } catch (e) {
       console.error('[Dashboard] sync logistic_allocations error:', e);
       setLogisticsByDemandId({});
+    } finally {
+      setIsLoadingPendencies(false);
     }
   }, []);
+
 
   useEffect(() => {
     syncLogisticsControlFromDb();
@@ -380,16 +386,20 @@ const pendingLogisticsDemands = useMemo(() => {
               <div>
                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">Demandas com Pendência Logística</h3>
                 <p className="text-xs font-bold text-slate-400">
-                  {pendingLogisticsDemands.length > 0
-                    ? `${pendingLogisticsDemands.length} demandas aguardando tratativa operacional`
-                    : "Nenhuma pendência logística no momento ✅"
-                  }
-                </p>
+                {isLoadingPendencies
+                  ? "Carregando pendências logísticas..."
+                  : (pendingLogisticsDemands.length > 0
+                      ? `${pendingLogisticsDemands.length} demandas aguardando tratativa operacional`
+                      : "Nenhuma pendência logística no momento ✅"
+                    )
+                }
+              </p>
+
               </div>
             </div>
           </div>
 
-          {pendingLogisticsDemands.length > 0 && (
+          {!isLoadingPendencies && pendingLogisticsDemands.length > 0 && (
             <div className="px-5 pb-5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {pendingLogisticsDemands.slice(0, 5).map(d => {
                 const isHotelOkLegacy = d.logisticsHotel === 'CONFIRMADO' || d.logisticsHotel === 'NAO_NECESSARIO';

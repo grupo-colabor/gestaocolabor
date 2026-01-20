@@ -446,31 +446,36 @@ useEffect(() => {
 
         // ✅ status interno da logística (para VIEW não ficar "Pendente")
         logisticsTransport:
-          data.transport_mode === 'CARRO_ALUGADO' || data.transport_mode === 'CARRO_PROPRIO'
-            ? 'CONFIRMADO'
-            : data.transport_mode === 'NAO_NECESSARIO' ||
-              data.transport_mode === 'NA'
-            ? 'NAO_NECESSARIO'
-            : '',
+        data.transport_mode === 'CARRO_ALUGADO' || data.transport_mode === 'CARRO_PROPRIO'
+          ? 'CONFIRMADO'
+          : data.transport_mode === 'NAO_NECESSARIO' || data.transport_mode === 'NA'
+          ? 'NAO_NECESSARIO'
+          : '',
 
         logisticsHotel:
-          data.lodging_mode === 'PRECISA_HOTEL'
-            ? 'CONFIRMADO'
-            : data.lodging_mode === 'NAO_NECESSARIO' ||
-              data.lodging_mode === 'NA'
-            ? 'NAO_NECESSARIO'
-            : '',
+        data.lodging_mode === 'PRECISA_HOTEL'
+          ? 'CONFIRMADO'
+          : data.lodging_mode === 'NAO_NECESSARIO' || data.lodging_mode === 'NA'
+          ? 'NAO_NECESSARIO'
+          : '',
+
 
         // ✅ modos vindos do banco -> UI
-        transportType:
-          data.transport_mode === 'CARRO_ALUGADO'
-            ? 'Carro Alugado'
-            : data.transport_mode === 'CARRO_PROPRIO'
-            ? 'Carro Próprio'
-            : null,
+      transportType:
+        data.transport_mode === 'CARRO_ALUGADO'
+          ? 'Carro Alugado'
+          : data.transport_mode === 'CARRO_PROPRIO'
+          ? 'Carro Próprio'
+          : data.transport_mode === 'NAO_NECESSARIO' || data.transport_mode === 'NA'
+          ? 'N/A'
+          : null,
 
-        accommodationType:
-          data.lodging_mode === 'PRECISA_HOTEL' ? 'Hotel' : null,
+      accommodationType:
+        data.lodging_mode === 'PRECISA_HOTEL'
+          ? 'Hotel'
+          : data.lodging_mode === 'NAO_NECESSARIO' || data.lodging_mode === 'NA'
+          ? 'N/A'
+          : null,
 
         // carro alugado
         rentalCompany: data.rental_company ?? prev.rentalCompany,
@@ -1019,10 +1024,17 @@ const handleSave = async () => {
       ...(formDemand as Demand),
       trainingLocal: formDemand.modality === 'ONLINE' ? '' : (formDemand.trainingLocal || ''),
       regionId: formDemand.regionId || '',
+
       logisticsTransport:
-      formDemand.modality === 'ONLINE' ? 'NAO_NECESSARIO' : (formDemand.logisticsTransport ?? ''),
+        formDemand.modality === 'ONLINE'
+          ? 'NAO_NECESSARIO'
+          : (formDemand.logisticsTransport ?? ''),
+
       logisticsHotel:
-      formDemand.modality === 'ONLINE' ? 'NAO_NECESSARIO' : (formDemand.logisticsHotel ?? ''),
+        formDemand.modality === 'ONLINE'
+          ? 'NAO_NECESSARIO'
+          : (formDemand.logisticsHotel ?? ''),
+
       transportType: formDemand.modality === 'ONLINE' ? null : formDemand.transportType,
       accommodationType: formDemand.modality === 'ONLINE' ? null : formDemand.accommodationType,
 
@@ -1041,9 +1053,8 @@ const handleSave = async () => {
     setResourceError(null);
 
     let demandId = (formDemand.id || sanitizedDemand.id) as string | undefined;
-// ⚠️ No CREATE com Supabase, o ID final vem do addDemand.
-// Então aqui só mantemos demandId se já existir (ex.: EDIT / mock / casos legados).
-
+    // ⚠️ No CREATE com Supabase, o ID final vem do addDemand.
+    // Então aqui só mantemos demandId se já existir (ex.: EDIT / mock / casos legados).
 
     if (modalMode === 'CREATE') {
       const created = await addDemand(sanitizedDemand);
@@ -1058,7 +1069,6 @@ const handleSave = async () => {
       demandId = demandId ?? sanitizedDemand.id;
     }
 
-
     if (!demandId) {
       setIsModalOpen(false);
       setFormDemand(initialDemandState());
@@ -1066,12 +1076,39 @@ const handleSave = async () => {
       return;
     }
 
-    // 3) Logística — salva no CREATE e no EDIT (mas ONLINE vira “não necessário”)
-    try {
-      const isOnline = sanitizedDemand.modality === 'ONLINE';
-      const isCarRental = sanitizedDemand.transportType === 'Carro Alugado';
-      const isHotel = sanitizedDemand.accommodationType === 'Hotel';
+    // ==============================
+    // ✅ FIX PRINCIPAL: N/A é resposta
+    // ==============================
+    const isOnline = sanitizedDemand.modality === 'ONLINE';
+    const isCarRental = sanitizedDemand.transportType === 'Carro Alugado';
+    const isHotel = sanitizedDemand.accommodationType === 'Hotel';
 
+    // ✅ transport_mode / lodging_mode: N/A vira 'NA' (não null)
+    const transportModeToDb = isOnline
+      ? 'NAO_NECESSARIO'
+      : sanitizedDemand.transportType === 'Carro Alugado'
+      ? 'CARRO_ALUGADO'
+      : sanitizedDemand.transportType === 'Carro Próprio'
+      ? 'CARRO_PROPRIO'
+      : sanitizedDemand.transportType === 'N/A'
+      ? 'NA'
+      : null;
+
+    const lodgingModeToDb = isOnline
+      ? 'NAO_NECESSARIO'
+      : sanitizedDemand.accommodationType === 'Hotel'
+      ? 'PRECISA_HOTEL'
+      : sanitizedDemand.accommodationType === 'N/A'
+      ? 'NA'
+      : null;
+
+    // flags coerentes com a regra:
+    // - tem carro/hotel se respondeu qualquer coisa (incluindo N/A)
+    const hasCarFlag = isOnline ? true : transportModeToDb != null;
+    const hasHotelFlag = isOnline ? true : lodgingModeToDb != null;
+
+    // 3) Logística — salva no CREATE e no EDIT
+    try {
       const hotelPaymentSafe = isHotel ? (sanitizedDemand.hotelPayment || 'Faturado') : null;
       const rentalCompanySafe = isCarRental ? (sanitizedDemand.rentalCompany || 'Localiza') : null;
       const carCategorySafe = isCarRental ? (sanitizedDemand.carCategory || 'Grupo CE') : null;
@@ -1081,14 +1118,9 @@ const handleSave = async () => {
         start_date: isOnline ? null : toIsoFromAnyDateSafe(sanitizedDemand.startDate),
         end_date: isOnline ? null : toIsoFromAnyDateSafe(sanitizedDemand.endDate),
 
-        // modos (enum simplificado)
-        transport_mode: isOnline
-          ? 'NAO_NECESSARIO'
-          : mapTransportMode(sanitizedDemand.transportType),
-
-        lodging_mode: isOnline
-          ? 'NAO_NECESSARIO'
-          : mapLodgingMode(sanitizedDemand.accommodationType),
+        // ✅ modos (com N/A persistido)
+        transport_mode: transportModeToDb,
+        lodging_mode: lodgingModeToDb,
 
         // ===== DETALHES CARRO ALUGADO =====
         rental_company: isOnline ? null : rentalCompanySafe,
@@ -1105,9 +1137,11 @@ const handleSave = async () => {
         hotel_check_out: !isOnline && isHotel ? toIsoFromDateInputSafe(sanitizedDemand.hotelCheckOut) : null,
         hotel_payment: isOnline ? null : hotelPaymentSafe,
 
-        // flags
-        has_car: !isOnline && sanitizedDemand.transportType != null && sanitizedDemand.transportType !== 'N/A',
-        has_hotel: !isOnline && sanitizedDemand.accommodationType === 'Hotel',
+        // ✅ flags (N/A conta como preenchido)
+        has_car: hasCarFlag,
+        has_hotel: hasHotelFlag,
+
+        // material continua manual no controle
         has_material: false,
 
         overall_status: 'PENDENTE',
@@ -1349,45 +1383,58 @@ const handleSave = async () => {
   );
 
   const handleTransportClick = (t: TransportType) => {
+  setFormDemand(prev => {
     if (t === 'Carro Alugado') {
-      setFormDemand({
-        ...formDemand,
+      return {
+        ...prev,
         transportType: 'Carro Alugado',
         logisticsTransport: 'CONFIRMADO'
-      });
-    } else {
-      // Limpa campos de locação para 'Carro Próprio' ou 'N/A'
-      setFormDemand({
-        ...formDemand,
-        transportType: t === 'N/A' ? null : t,
-        logisticsTransport: 'NAO_NECESSARIO',
-        rentalCompany: 'Localiza',
-        rentalAgencyLocation: '',
-        rentalLocator: '',
-        carCategory: 'Grupo CE',
-        rentalCheckIn: '',
-        rentalCheckOut: ''
-      });
+      };
     }
-  };
 
-  const handleAccommodationClick = (type: AccommodationType) => {
-    if (type === 'N/A') {
-      setFormDemand({
-        ...formDemand,
-        accommodationType: null,
-        logisticsHotel: 'NAO_NECESSARIO'
-      });
-    } else {
-      setFormDemand({
-        ...formDemand,
-        accommodationType: type,
-        logisticsHotel: 'CONFIRMADO'
-      });
-    }
-  };
+    // Carro Próprio ou N/A
+    return {
+      ...prev,
+      transportType: t,                 // <- mantém 'N/A' como valor (não null)
+      logisticsTransport: 'NAO_NECESSARIO',
 
-      // Filtrar alocações para a demanda atual
+      // se não for carro alugado, limpa campos de locação
+      rentalAgencyLocation: '',
+      rentalLocator: '',
+      rentalCheckIn: '',
+      rentalCheckOut: '',
+      // (se você quiser manter defaults, ok, mas não é obrigatório)
+    };
+  });
+};
+
+
+
+ const handleAccommodationClick = (type: AccommodationType) => {
+  if (type === 'N/A') {
+    setFormDemand(prev => ({
+      ...prev,
+      accommodationType: 'N/A',
+
+      // 🔥 limpa tudo de hotel
+      hotelCity: '',
+      hotelName: '',
+      hotelCheckIn: '',
+      hotelCheckOut: '',
+      hotelPayment: null,
+
+      logisticsHotel: 'NAO_NECESSARIO',
+    }));
+  } else {
+    setFormDemand(prev => ({
+      ...prev,
+      accommodationType: 'Hotel',
+      logisticsHotel: 'CONFIRMADO',
+    }));
+  }
+};
+
+  // Filtrar alocações para a demanda atual
   const currentAllocations = useMemo(() => {
     if (!formDemand.id) return [];
     return instructorAllocations.filter(a => a.demandId === formDemand.id);
@@ -1914,18 +1961,23 @@ const handleSave = async () => {
                           {modalSubMode === 'FORM' ? (
                             <div className="space-y-6">
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Meio de Transporte</label>
-                                <div className="flex gap-2">{(['Carro Alugado', 'Carro Próprio', 'N/A'] as TransportType[]).map(t => (
-                                  <button 
-                                    key={t} 
-                                    onClick={() => handleTransportClick(t)} 
-                                    className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all 
-                                      ${(t === 'N/A' && formDemand.logisticsTransport === 'NAO_NECESSARIO' && !formDemand.transportType) || (t !== 'N/A' && formDemand.transportType === t) 
-                                        ? 'bg-amber-600 text-white border-amber-600' 
-                                        : 'bg-white text-slate-500 border-slate-200 hover:border-amber-400'}`}
+                             <div className="flex gap-2">
+                                {(['Carro Alugado', 'Carro Próprio', 'N/A'] as TransportType[]).map((t) => (
+                                  <button
+                                    key={t}
+                                    type="button"
+                                    onClick={() => handleTransportClick(t)}
+                                    className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all
+                                      ${
+                                        formDemand.transportType === t
+                                          ? 'bg-amber-600 text-white border-amber-600'
+                                          : 'bg-white text-slate-500 border-slate-200 hover:border-amber-400'
+                                      }`}
                                   >
                                     {t}
                                   </button>
-                                ))}</div>
+                                ))}
+                              </div>
                               </div>
                               {formDemand.transportType === 'Carro Alugado' && (
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-5 bg-amber-50/50 rounded-xl border border-amber-100">
@@ -1960,53 +2012,142 @@ const handleSave = async () => {
                     </div>
 
                     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                      <button onClick={() => toggleSection('hospedagem')} className="w-full px-6 py-4 flex items-center justify-between bg-white hover:bg-slate-50 transition no-print"><div className="flex items-center gap-3"><div className="p-2 bg-green-50 rounded-lg text-green-600"><Home size={20} /></div><h3 className="font-bold text-slate-800 uppercase text-sm">Logística — Hospedagem</h3></div>{openSections.hospedagem ? <ChevronUp size={20} /> : <ChevronDown size={20} />}</button>
-                      {openSections.hospedagem && (
-                        <div className="px-6 py-6 border-t border-slate-100 bg-white">
-                          {modalSubMode === 'FORM' ? (
-                            <div className="space-y-6">
-                              <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Hospedagem</label>
-                                <div className="flex gap-2">{(['Hotel', 'N/A'] as AccommodationType[]).map(type => (
-                                  <button 
-                                    key={type} 
-                                    onClick={() => handleAccommodationClick(type)} 
-                                    className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all 
-                                      ${(type === 'N/A' && formDemand.logisticsHotel === 'NAO_NECESSARIO' && !formDemand.accommodationType) || (type !== 'N/A' && formDemand.accommodationType === type)
-                                        ? 'bg-green-600 text-white border-green-600' 
-                                        : 'bg-white text-slate-500 border-slate-200 hover:border-green-400'}`}
-                                  >
-                                    {type === 'N/A' ? 'N/A' : 'Precisa de Hotel'}
-                                  </button>
-                                ))}</div>
-                              </div>
-                              {formDemand.accommodationType === 'Hotel' && (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-5 bg-green-50/50 rounded-xl border border-green-100">
-                                  <div><label className="block text-xs font-bold text-green-800 uppercase mb-1">Cidade / Estado</label><input list="cidades-list" className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={formDemand.hotelCity || ''} onChange={(e) => setFormDemand({...formDemand, hotelCity: e.target.value})} /></div>
-                                  <div><label className="block text-xs font-bold text-green-800 uppercase mb-1">Hotel</label><input list="hoteis-list" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={formDemand.hotelName || ''} onChange={(e) => setFormDemand({...formDemand, hotelName: e.target.value})} /></div>
-                                  <div><label className="block text-xs font-bold text-green-800 uppercase mb-1">Check-in</label><input type="date" className="w-full border border-green-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-green-500" value={formDemand.hotelCheckIn || ''} onChange={e => setFormDemand({...formDemand, hotelCheckIn: e.target.value})} /></div>
-                                  <div><label className="block text-xs font-bold text-green-800 uppercase mb-1">Check-out</label><input type="date" className="w-full border border-green-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-green-500" value={formDemand.hotelCheckOut || ''} onChange={e => setFormDemand({...formDemand, hotelCheckOut: e.target.value})} /></div>
-                                  <div className="md:col-span-2"><label className="block text-xs font-bold text-green-800 uppercase mb-1">Pagamento</label><select className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={formDemand.hotelPayment || 'Faturado'} onChange={(e) => setFormDemand({...formDemand, hotelPayment: e.target.value as PaymentMethod})}>{PAYMENT_METHODS.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="space-y-4">
-                              <DataViewField label="Hospedagem" value={formDemand.accommodationType === 'Hotel' ? 'Hotel Requerido' : (formDemand.logisticsHotel === 'NAO_NECESSARIO' ? 'N/A' : 'Pendente')} icon={Home} />
-                              {formDemand.accommodationType === 'Hotel' && (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-green-50 rounded-xl border border-green-100">
-                                  <DataViewField label="Cidade / Estado" value={formDemand.hotelCity} icon={MapPin} />
-                                  <DataViewField label="Hotel" value={formDemand.hotelName} icon={Building2} />
-                                  <DataViewField label="Check-in" value={formDemand.hotelCheckIn ? new Date(formDemand.hotelCheckIn).toLocaleDateString() : ''} icon={Calendar} />
-                                  <DataViewField label="Check-out" value={formDemand.hotelCheckOut ? new Date(formDemand.hotelCheckOut).toLocaleDateString() : ''} icon={Calendar} />
-                                  <DataViewField label="Pagamento" value={formDemand.hotelPayment} icon={Tag} />
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
+          <button
+            onClick={() => toggleSection('hospedagem')}
+            className="w-full px-6 py-4 flex items-center justify-between bg-white hover:bg-slate-50 transition no-print"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-green-50 rounded-lg text-green-600">
+                <Home size={20} />
+              </div>
+              <h3 className="font-bold text-slate-800 uppercase text-sm">Logística — Hospedagem</h3>
+            </div>
+            {openSections.hospedagem ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </button>
 
+          {openSections.hospedagem && (
+            <div className="px-6 py-6 border-t border-slate-100 bg-white">
+              {modalSubMode === 'FORM' ? (
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Hospedagem</label>
+
+                    <div className="flex gap-2">
+                      {(['Hotel', 'N/A'] as AccommodationType[]).map((type) => (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => handleAccommodationClick(type)}
+                          className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all
+                            ${
+                              formDemand.accommodationType === type
+                                ? 'bg-green-600 text-white border-green-600'
+                                : 'bg-white text-slate-500 border-slate-200 hover:border-green-400'
+                            }`}
+                        >
+                          {type === 'N/A' ? 'N/A' : 'Precisa de Hotel'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {formDemand.accommodationType === 'Hotel' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-5 bg-green-50/50 rounded-xl border border-green-100">
+                      <div>
+                        <label className="block text-xs font-bold text-green-800 uppercase mb-1">Cidade / Estado</label>
+                        <input
+                          list="cidades-list"
+                          className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                          value={formDemand.hotelCity || ''}
+                          onChange={(e) => setFormDemand({ ...formDemand, hotelCity: e.target.value })}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-green-800 uppercase mb-1">Hotel</label>
+                        <input
+                          list="hoteis-list"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                          value={formDemand.hotelName || ''}
+                          onChange={(e) => setFormDemand({ ...formDemand, hotelName: e.target.value })}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-green-800 uppercase mb-1">Check-in</label>
+                        <input
+                          type="date"
+                          className="w-full border border-green-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
+                          value={formDemand.hotelCheckIn || ''}
+                          onChange={(e) => setFormDemand({ ...formDemand, hotelCheckIn: e.target.value })}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-green-800 uppercase mb-1">Check-out</label>
+                        <input
+                          type="date"
+                          className="w-full border border-green-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
+                          value={formDemand.hotelCheckOut || ''}
+                          onChange={(e) => setFormDemand({ ...formDemand, hotelCheckOut: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-bold text-green-800 uppercase mb-1">Pagamento</label>
+                        <select
+                          className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                          value={formDemand.hotelPayment || 'Faturado'}
+                          onChange={(e) =>
+                            setFormDemand({ ...formDemand, hotelPayment: e.target.value as PaymentMethod })
+                          }
+                        >
+                          {PAYMENT_METHODS.map((p) => (
+                            <option key={p} value={p}>
+                              {p}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <DataViewField
+                    label="Hospedagem"
+                    value={
+                      formDemand.accommodationType === 'Hotel'
+                        ? 'Hotel Requerido'
+                        : formDemand.logisticsHotel === 'NAO_NECESSARIO'
+                        ? 'N/A'
+                        : 'Pendente'
+                    }
+                    icon={Home}
+                  />
+
+                  {formDemand.accommodationType === 'Hotel' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-green-50 rounded-xl border border-green-100">
+                      <DataViewField label="Cidade / Estado" value={formDemand.hotelCity} icon={MapPin} />
+                      <DataViewField label="Hotel" value={formDemand.hotelName} icon={Building2} />
+                      <DataViewField
+                        label="Check-in"
+                        value={formDemand.hotelCheckIn ? new Date(formDemand.hotelCheckIn).toLocaleDateString() : ''}
+                        icon={Calendar}
+                      />
+                      <DataViewField
+                        label="Check-out"
+                        value={formDemand.hotelCheckOut ? new Date(formDemand.hotelCheckOut).toLocaleDateString() : ''}
+                        icon={Calendar}
+                      />
+                      <DataViewField label="Pagamento" value={formDemand.hotelPayment} icon={Tag} />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
                     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
                       <button onClick={() => toggleSection('documentos')} className="w-full px-6 py-4 flex items-center justify-between bg-white hover:bg-slate-50 transition no-print">
                         <div className="flex items-center gap-3"><div className="p-2 bg-rose-50 rounded-lg text-rose-600"><FileDown size={20} /></div><h3 className="font-bold text-slate-800 uppercase text-sm">Documentos da Demanda</h3></div>

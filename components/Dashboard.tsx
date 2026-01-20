@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell
@@ -13,6 +13,10 @@ import {
 } from 'lucide-react';
 import { Demand } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
+import {
+  fetchLogisticAllocations,
+  LogisticAllocationRow
+} from '../services/logisticAllocations';
 
 // --- Constantes Visuais ---
 const COLORS = {
@@ -38,11 +42,52 @@ type TabType = 'GERAL' | 'OPERACIONAL' | 'INSTRUTORES' | 'CLIENTES' | 'CUSTOS';
 
 const Dashboard: React.FC = () => {
   const { demands, companies, regions, instructors, trainings, measurements, getEvidenceAutoStatus } = useApp();
+
+  // ✅ NORMALIZADOR (1 vez só)
+  const normId = (v: any) => String(v ?? '').trim().replace(/^#/, '');
+
   const [activeTab, setActiveTab] = useState<TabType>('GERAL');
   const [showNoInstructorTooltip, setShowNoInstructorTooltip] = useState(false);
   const [showNoMeasurementTooltip, setShowNoMeasurementTooltip] = useState(false);
   const [showCancelledList, setShowCancelledList] = useState(false);
   const today = new Date();
+
+  // ✅ Supabase (controle logístico): demand_id -> logistic_allocations
+  const [logisticsByDemandId, setLogisticsByDemandId] = useState<Record<string, LogisticAllocationRow>>({});
+
+  const syncLogisticsControlFromDb = useCallback(async () => {
+    try {
+      const rows = await fetchLogisticAllocations();
+      const map: Record<string, LogisticAllocationRow> = {};
+      for (const r of rows || []) {
+        const key = normId(r?.demand_id);
+        if (key) map[key] = r;
+      }
+      setLogisticsByDemandId(map);
+    } catch (e) {
+      console.error('[Dashboard] sync logistic_allocations error:', e);
+      setLogisticsByDemandId({});
+    }
+  }, []);
+
+  useEffect(() => {
+    syncLogisticsControlFromDb();
+  }, [syncLogisticsControlFromDb]);
+
+  useEffect(() => {
+    const onFocus = () => syncLogisticsControlFromDb();
+    const onVisibility = () => {
+      if (!document.hidden) syncLogisticsControlFromDb();
+    };
+
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [syncLogisticsControlFromDb]);
 
   // --- Filtros Globais ---
   const [filters, setFilters] = useState({
@@ -139,7 +184,6 @@ const Dashboard: React.FC = () => {
 
       if (filters.companyId && d.companyId !== filters.companyId) return false;
       if (filters.regionId && d.regionId !== filters.regionId) return false;
-
       if (filters.status && currentStatus !== filters.status) return false;
 
       return true;
@@ -151,39 +195,80 @@ const Dashboard: React.FC = () => {
     return measurements.filter(m => demandIds.has(m.demandId));
   }, [measurements, filteredDemands]);
 
-  // --- Lógica de Pendências Logísticas ---
-  const pendingLogisticsDemands = useMemo(() => {
-    return filteredDemands.filter(d => {
-      const status = getCalculatedStatus(d);
+  // ✅ Helpers: lê status do Supabase logistic_allocations
+  const isCarOkFromAlloc = (alloc?: LogisticAllocationRow) => {
+    if (!alloc) return null;
+    const mode = String(alloc.transport_mode ?? '').toUpperCase();
+    if (mode === 'NAO_NECESSARIO') return true;
+    return alloc.has_car === true;
+  };
 
-      if (isOnlineDemand(d)) return false;
-      if (status === 'CANCELADA' || status === 'CONCLUIDA') return false;
+  const isHotelOkFromAlloc = (alloc?: LogisticAllocationRow) => {
+    if (!alloc) return null;
+    const mode = String(alloc.lodging_mode ?? '').toUpperCase();
+    if (mode === 'NAO_NECESSARIO') return true;
+    return alloc.has_hotel === true;
+  };
 
-      const isHotelPending = d.logisticsHotel === null;
-      const isTransportPending = d.logisticsTransport === null;
-      const isMaterialPending = d.materialReady !== true;
-      const isReleasePending = !d.attachments?.instructorReleasePdf;
-      const isClassListPending = !d.attachments?.classListPdf;
+  // ✅ ALTERAÇÃO: PDFs SEM alloc = pendente (false)
+  const isReleaseOkFromAlloc = (alloc?: LogisticAllocationRow) => {
+    if (!alloc) return false;
+    return alloc.has_release_pdf === true;
+  };
 
-      return (
-        isHotelPending ||
-        isTransportPending ||
-        isMaterialPending ||
-        isReleasePending ||
-        isClassListPending
-      );
-    });
-  }, [filteredDemands, trainings]);
+  const isListOkFromAlloc = (alloc?: LogisticAllocationRow) => {
+    if (!alloc) return false;
+    return alloc.has_class_list_pdf === true;
+  };
+
+  const isMaterialOkFromAlloc = (alloc?: LogisticAllocationRow) => {
+    if (!alloc) return null;
+    return alloc.has_material === true;
+  };
+
+  // --- Lógica de Pendências Logísticas (SOMENTE STATUS DO CONTROLE) ---
+const pendingLogisticsDemands = useMemo(() => {
+  return filteredDemands.filter(d => {
+    const status = getCalculatedStatus(d);
+
+    // Regras gerais
+    if (isOnlineDemand(d)) return false;
+    if (status === 'CANCELADA' || status === 'CONCLUIDA') return false;
+
+    const alloc = logisticsByDemandId?.[normId(d.id)];
+    const hasAlloc = !!alloc;
+
+    // ✅ SE TEM CONTROLE LOGÍSTICO, A NOTIFICAÇÃO USA SÓ O STATUS
+    if (hasAlloc) {
+      const overall = String(alloc?.overall_status ?? 'PENDENTE').toUpperCase();
+      return overall !== 'CONCLUIDA';
+    }
+
+    // ✅ fallback legacy (demandas antigas sem alloc)
+    const isHotelOkLegacy = d.logisticsHotel === 'CONFIRMADO' || d.logisticsHotel === 'NAO_NECESSARIO';
+    const isCarOkLegacy = d.logisticsTransport === 'CONFIRMADO' || d.logisticsTransport === 'NAO_NECESSARIO';
+    const isMaterialOkLegacy = d.materialReady === true;
+    const isReleaseOkLegacy = !!d.attachments?.instructorReleasePdf;
+    const isListOkLegacy = !!d.attachments?.classListPdf;
+
+    const allReadyLegacy =
+      isHotelOkLegacy && isCarOkLegacy && isMaterialOkLegacy && isReleaseOkLegacy && isListOkLegacy;
+
+    return !allReadyLegacy;
+  });
+}, [filteredDemands, trainings, logisticsByDemandId]);
+
+
 
   // --- Pendências de Evidências (só conta após CONCLUSÃO) ---
   const pendingEvidenceDemands = useMemo(() => {
     return filteredDemands.filter(d => {
       const status = getCalculatedStatus(d);
 
-      // ✅ só após conclusão
+      // só após conclusão
       if (status !== 'CONCLUIDA') return false;
 
-      // ✅ ONLINE/EAD não conta como pendência de evidência
+      // ONLINE/EAD não conta
       if (isOnlineDemand(d)) return false;
 
       const evStatus = getEvidenceAutoStatus(d.id);
@@ -286,7 +371,7 @@ const Dashboard: React.FC = () => {
       <div className="space-y-6 animate-fade-in">
 
         {/* --- CARD DE ALERTA DE PENDÊNCIAS LOGÍSTICAS --- */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden border-l-4 border-l-amber-400">
+        <div className={`bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden border-l-4 ${pendingLogisticsDemands.length > 0 ? 'border-l-amber-400' : 'border-l-emerald-400'}`}>
           <div className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <div className="p-3 bg-amber-50 rounded-full text-amber-500">
@@ -307,12 +392,38 @@ const Dashboard: React.FC = () => {
           {pendingLogisticsDemands.length > 0 && (
             <div className="px-5 pb-5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {pendingLogisticsDemands.slice(0, 5).map(d => {
-                const pendencies = [];
-                if (d.logisticsTransport === null) pendencies.push(<span key="car" title="Transporte"><Car size={14} className="text-amber-500" /></span>);
-                if (d.logisticsHotel === null) pendencies.push(<span key="hotel" title="Hospedagem"><Hotel size={14} className="text-amber-500" /></span>);
-                if (d.materialReady === false) pendencies.push(<span key="mat" title="Material"><Package size={14} className="text-amber-500" /></span>);
-                if (!d.attachments?.classListPdf) pendencies.push(<span key="list" title="Lista"><FileText size={14} className="text-amber-500" /></span>);
-                if (!d.attachments?.instructorReleasePdf) pendencies.push(<span key="rel" title="Liberação"><UserCheck size={14} className="text-amber-500" /></span>);
+                const isHotelOkLegacy = d.logisticsHotel === 'CONFIRMADO' || d.logisticsHotel === 'NAO_NECESSARIO';
+                const isCarOkLegacy = d.logisticsTransport === 'CONFIRMADO' || d.logisticsTransport === 'NAO_NECESSARIO';
+                const isMaterialOkLegacy = d.materialReady === true;
+
+                const isReleaseOkLegacy = !!d.attachments?.instructorReleasePdf;
+                const isListOkLegacy = !!d.attachments?.classListPdf;
+
+
+                const alloc = logisticsByDemandId?.[normId(d.id)];
+                const overall = String(alloc?.overall_status ?? 'PENDENTE').toUpperCase();
+
+                  return (
+                    <div key={d.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between group">
+                      <div className="flex items-center gap-3 overflow-hidden">
+                        <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse shrink-0"></div>
+                        <div className="overflow-hidden">
+                          <p className="text-[11px] font-black text-slate-700 truncate">
+                            <span className="text-blue-600 font-mono mr-1">#{d.id}</span>
+                            {getTrainingName(d.trainingId)}
+                          </p>
+                          <p className="text-[9px] font-bold text-slate-400 truncate uppercase">{getCompanyName(d.companyId)}</p>
+                        </div>
+                      </div>
+
+                      <div className="shrink-0 ml-3">
+                        <span className="px-2 py-1 rounded-lg text-[9px] font-black uppercase bg-amber-100 text-amber-700">
+                          {overall}
+                        </span>
+                      </div>
+                    </div>
+                  );
+
 
                 return (
                   <div key={d.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between group">
@@ -326,8 +437,10 @@ const Dashboard: React.FC = () => {
                         <p className="text-[9px] font-bold text-slate-400 truncate uppercase">{getCompanyName(d.companyId)}</p>
                       </div>
                     </div>
-                    <div className="flex gap-1.5 shrink-0 ml-3">
-                      {pendencies}
+                    <div className="shrink-0 ml-3">
+                      <span className="px-2 py-1 rounded-lg text-[9px] font-black uppercase bg-amber-100 text-amber-700">
+                        {overall}
+                      </span>
                     </div>
                   </div>
                 );

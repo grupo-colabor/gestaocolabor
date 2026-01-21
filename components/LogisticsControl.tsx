@@ -44,6 +44,9 @@ const LogisticsControl: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>('WEEK');
   const [referenceDate, setReferenceDate] = useState<Date>(new Date());
 
+  // ✅ normalizador (evita mismatch de id tipo "#DEM-1" vs "DEM-1")
+  const normId = (v: any) => String(v ?? '').trim().replace(/^#/, '');
+
   // ✅ mapa Supabase: demand_id -> logistic_allocations row
   const [logisticsByDemandId, setLogisticsByDemandId] = useState<Record<string, LogisticAllocationRow>>({});
   // ✅ mapa docs: demand_id -> flags de PDFs
@@ -136,30 +139,95 @@ const LogisticsControl: React.FC = () => {
 
   const handleToday = () => setReferenceDate(new Date());
 
-  // ✅ Sync: logistic_allocations + demand_documents
+  // ✅ Helpers de “OK” usando Supabase (alloc)
+  const isCarOkFromAlloc = (alloc?: LogisticAllocationRow) => {
+    if (!alloc) return null;
+
+    if (alloc.has_car === true) return true;
+
+    const m = (alloc.transport_mode || '').toUpperCase();
+    if (m === 'NAO_NECESSARIO') return true;
+    if (m === 'CARRO_ALUGADO') return true;
+    if (m === 'CARRO_PROPRIO') return true;
+
+    return false;
+  };
+
+  const isHotelOkFromAlloc = (alloc?: LogisticAllocationRow) => {
+    if (!alloc) return null;
+
+    if (alloc.has_hotel === true) return true;
+
+    const m = (alloc.lodging_mode || '').toUpperCase();
+    if (m === 'NAO_NECESSARIO') return true;
+    if (m === 'PRECISA_HOTEL') return true;
+
+    return false;
+  };
+
+  const isMaterialOkFromAlloc = (alloc?: LogisticAllocationRow) => {
+    if (!alloc) return null;
+    return alloc.has_material === true;
+  };
+
+  // ✅ PDFs: prioridade é demand_documents (docsByDemandId)
+  const isReleaseOkFromDocs = (demandId: string) => {
+    const id = normId(demandId);
+    return docsByDemandId?.[id]?.has_release_pdf === true;
+  };
+
+  const isListOkFromDocs = (demandId: string) => {
+    const id = normId(demandId);
+    return docsByDemandId?.[id]?.has_class_list_pdf === true;
+  };
+
+  // ✅ cálculo oficial do overall (alloc + docs)
+  const computeOverallStatusFromAllocAndDocs = (
+    alloc?: LogisticAllocationRow,
+    docs?: { has_class_list_pdf: boolean; has_release_pdf: boolean }
+  ) => {
+    if (!alloc) return { overall: 'PENDENTE', has_release_pdf: false, has_class_list_pdf: false };
+
+    const carOk = isCarOkFromAlloc(alloc) === true;
+    const hotelOk = isHotelOkFromAlloc(alloc) === true;
+    const materialOk = isMaterialOkFromAlloc(alloc) === true;
+
+    const releaseOk = docs?.has_release_pdf === true;
+    const listOk = docs?.has_class_list_pdf === true;
+
+    const allReady = carOk && hotelOk && materialOk && releaseOk && listOk;
+
+    return {
+      overall: allReady ? 'CONCLUIDA' : 'PENDENTE',
+      has_release_pdf: releaseOk,
+      has_class_list_pdf: listOk,
+    };
+  };
+
+  // ✅ Sync: logistic_allocations + demand_documents (FIX: sem piscar / sem status falso)
   const syncLogisticsControlFromDb = useCallback(async () => {
     setIsSyncing(true);
     try {
-      // 1) logistic_allocations (array direto)
+      // 1) logistic_allocations
       const rows = await fetchLogisticAllocations();
       const allocMap: Record<string, LogisticAllocationRow> = {};
       for (const r of rows || []) {
-        if (r?.demand_id) allocMap[r.demand_id] = r;
+        const id = normId(r?.demand_id);
+        if (id) allocMap[id] = r;
       }
-      setLogisticsByDemandId(allocMap);
 
-      // 2) demand_documents (pra pegar PDFs com robustez)
+      // 2) demand_documents (PDFs)
       const { data: docsData, error: docsErr } = await supabase
         .from('demand_documents')
         .select('demand_id, doc_type');
 
+      const docsMap: Record<string, { has_class_list_pdf: boolean; has_release_pdf: boolean }> = {};
+
       if (docsErr) {
         console.error('[LogisticsControl] demand_documents error:', docsErr);
-        setDocsByDemandId({});
       } else {
-        const docsMap: Record<string, { has_class_list_pdf: boolean; has_release_pdf: boolean }> = {};
         for (const row of (docsData as DemandDocumentRowMini[]) || []) {
-          const demandId = (row?.demand_id || '').trim();
+          const demandId = normId(row?.demand_id);
           if (!demandId) continue;
 
           if (!docsMap[demandId]) {
@@ -167,52 +235,52 @@ const LogisticsControl: React.FC = () => {
           }
           if (row.doc_type === 'LISTA_TURMA') docsMap[demandId].has_class_list_pdf = true;
           if (row.doc_type === 'LIBERACAO_INSTRUTOR') docsMap[demandId].has_release_pdf = true;
-
-          const updates: Promise<any>[] = [];
-        for (const demandId of Object.keys(allocMap)) {
-          const alloc = allocMap[demandId];
-          const docs = docsMap[demandId]; // pode ser undefined
-
-          const computed = computeOverallStatusFromAllocAndDocs(alloc, docs);
-
-          const nextOverall = computed.overall;
-          const currentOverall = String(alloc?.overall_status ?? 'PENDENTE').toUpperCase();
-
-          const currentRelease = alloc?.has_release_pdf === true;
-          const currentList = alloc?.has_class_list_pdf === true;
-
-          const patch: any = {};
-
-          // só atualiza se mudou
-          if (currentRelease !== computed.has_release_pdf) patch.has_release_pdf = computed.has_release_pdf;
-          if (currentList !== computed.has_class_list_pdf) patch.has_class_list_pdf = computed.has_class_list_pdf;
-          if (currentOverall !== nextOverall) patch.overall_status = nextOverall;
-
-          // se tiver algo pra atualizar, chama update
-          if (Object.keys(patch).length > 0) {
-            updates.push(updateLogisticAllocationByDemandId(demandId, patch));
-          }
         }
-
-        if (updates.length > 0) {
-          await Promise.all(updates);
-
-          // refetch pra garantir estado 100% atualizado
-          const rows2 = await fetchLogisticAllocations();
-          const allocMap2: Record<string, LogisticAllocationRow> = {};
-          for (const r of rows2 || []) {
-            if (r?.demand_id) allocMap2[r.demand_id] = r;
-          }
-          setLogisticsByDemandId(allocMap2);
-        } else {
-          setLogisticsByDemandId(allocMap);
-        }
-
-        // docs sempre atualiza
-        setDocsByDemandId(docsMap);
-        }
-        setDocsByDemandId(docsMap);
       }
+
+      // 3) Atualiza logistic_allocations somente após docsMap estar pronto
+      const updates: Promise<any>[] = [];
+
+      for (const demandId of Object.keys(allocMap)) {
+        const alloc = allocMap[demandId];
+        const docs = docsMap[demandId]; // pode ser undefined
+
+        const computed = computeOverallStatusFromAllocAndDocs(alloc, docs);
+
+        const nextOverall = String(computed.overall).toUpperCase();
+        const currentOverall = String(alloc?.overall_status ?? 'PENDENTE').toUpperCase();
+
+        const currentRelease = alloc?.has_release_pdf === true;
+        const currentList = alloc?.has_class_list_pdf === true;
+
+        const patch: any = {};
+
+        if (currentRelease !== computed.has_release_pdf) patch.has_release_pdf = computed.has_release_pdf;
+        if (currentList !== computed.has_class_list_pdf) patch.has_class_list_pdf = computed.has_class_list_pdf;
+        if (currentOverall !== nextOverall) patch.overall_status = nextOverall;
+
+        if (Object.keys(patch).length > 0) {
+          updates.push(updateLogisticAllocationByDemandId(demandId, patch));
+        }
+      }
+
+      // 4) Se atualizou algo, refetch pra garantir estado consistente
+      if (updates.length > 0) {
+        await Promise.all(updates);
+
+        const rows2 = await fetchLogisticAllocations();
+        const allocMap2: Record<string, LogisticAllocationRow> = {};
+        for (const r of rows2 || []) {
+          const id = normId(r?.demand_id);
+          if (id) allocMap2[id] = r;
+        }
+        setLogisticsByDemandId(allocMap2);
+      } else {
+        setLogisticsByDemandId(allocMap);
+      }
+
+      // 5) docs sempre atualiza (mesmo se der erro, pode ficar vazio)
+      setDocsByDemandId(docsMap);
     } catch (e) {
       console.error('[LogisticsControl] sync error', e);
       setLogisticsByDemandId({});
@@ -257,77 +325,14 @@ const LogisticsControl: React.FC = () => {
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
   }, [demands, filterText, periodBounds, companies, trainings]);
 
-  // ✅ Helpers de “OK” usando Supabase (alloc)
-  const isCarOkFromAlloc = (alloc?: LogisticAllocationRow) => {
-    if (!alloc) return null;
-
-    if (alloc.has_car === true) return true;
-
-    const m = (alloc.transport_mode || '').toUpperCase();
-    if (m === 'NAO_NECESSARIO') return true;
-    if (m === 'CARRO_ALUGADO') return true;
-    if (m === 'CARRO_PROPRIO') return true;
-
-    return false;
-  };
-
-  const isHotelOkFromAlloc = (alloc?: LogisticAllocationRow) => {
-    if (!alloc) return null;
-
-    if (alloc.has_hotel === true) return true;
-
-    const m = (alloc.lodging_mode || '').toUpperCase();
-    if (m === 'NAO_NECESSARIO') return true;
-    if (m === 'PRECISA_HOTEL') return true;
-
-    return false;
-  };
-
-  // ✅ PDFs: prioridade é demand_documents (docsByDemandId)
-  const isReleaseOkFromDocs = (demandId: string) => {
-    return docsByDemandId?.[demandId]?.has_release_pdf === true;
-  };
-
-  const isListOkFromDocs = (demandId: string) => {
-    return docsByDemandId?.[demandId]?.has_class_list_pdf === true;
-  };
-
-  const isMaterialOkFromAlloc = (alloc?: LogisticAllocationRow) => {
-    if (!alloc) return null;
-    return alloc.has_material === true;
-  };
-
-  const computeOverallStatusFromAllocAndDocs = (
-  alloc?: LogisticAllocationRow,
-  docs?: { has_class_list_pdf: boolean; has_release_pdf: boolean }
-) => {
-  if (!alloc) return { overall: 'PENDENTE', has_release_pdf: false, has_class_list_pdf: false };
-
-  const carOk = isCarOkFromAlloc(alloc) === true;
-  const hotelOk = isHotelOkFromAlloc(alloc) === true;
-  const materialOk = isMaterialOkFromAlloc(alloc) === true;
-
-  const releaseOk = docs?.has_release_pdf === true;
-  const listOk = docs?.has_class_list_pdf === true;
-
-  const allReady = carOk && hotelOk && materialOk && releaseOk && listOk;
-
-  return {
-    overall: allReady ? 'CONCLUIDA' : 'PENDENTE',
-    has_release_pdf: releaseOk,
-    has_class_list_pdf: listOk,
-  };
-};
-
-
   // ✅ Handler para marcação manual de material (Supabase)
   const toggleMaterial = async (demand: Demand) => {
-    const alloc = logisticsByDemandId?.[demand.id];
+    const alloc = logisticsByDemandId?.[normId(demand.id)];
     const current = alloc?.has_material === true;
     const nextValue = !current;
 
     try {
-      await updateLogisticAllocationByDemandId(demand.id, { has_material: nextValue } as any);
+      await updateLogisticAllocationByDemandId(normId(demand.id), { has_material: nextValue } as any);
       await syncLogisticsControlFromDb();
     } catch (e) {
       console.error('[LogisticsControl] toggleMaterial error:', e);
@@ -469,7 +474,8 @@ const LogisticsControl: React.FC = () => {
                 filteredDemands
                   .filter(d => String(d.modality).toUpperCase() !== 'ONLINE')
                   .map(d => {
-                    const alloc = logisticsByDemandId?.[d.id];
+                    const demandId = normId(d.id);
+                    const alloc = logisticsByDemandId?.[demandId];
 
                     // ✅ Preferência: Supabase. Fallback: campos antigos.
                     const carOkFromDb = isCarOkFromAlloc(alloc);
@@ -477,8 +483,8 @@ const LogisticsControl: React.FC = () => {
                     const materialOkFromDb = isMaterialOkFromAlloc(alloc);
 
                     // PDFs: prioridade = demand_documents
-                    const releaseOkFromDocs = isReleaseOkFromDocs(d.id);
-                    const listOkFromDocs = isListOkFromDocs(d.id);
+                    const releaseOkFromDocs = isReleaseOkFromDocs(demandId);
+                    const listOkFromDocs = isListOkFromDocs(demandId);
 
                     // legacy fallback (só pra não quebrar nada)
                     const isHotelOkLegacy =
@@ -492,8 +498,8 @@ const LogisticsControl: React.FC = () => {
                     const isMaterialOk = materialOkFromDb ?? isMaterialOkLegacy;
 
                     // ✅ PDFs finais
-                    const isReleaseOk = releaseOkFromDocs; // aqui não usa mais attachments
-                    const isListOk = listOkFromDocs;       // aqui não usa mais attachments
+                    const isReleaseOk = releaseOkFromDocs;
+                    const isListOk = listOkFromDocs;
 
                     const statusLegacy = calculateDemandStatus(
                       {
@@ -615,7 +621,7 @@ const LogisticsControl: React.FC = () => {
                               {statusLabel}
                             </span>
 
-                            {/* Se você quiser manter o statusLegacy visível só pra debug, descomenta:
+                            {/* debug opcional:
                             <span className="text-[8px] text-slate-200 font-bold uppercase">
                               {String(statusLegacy).replace('_', ' ')}
                             </span>

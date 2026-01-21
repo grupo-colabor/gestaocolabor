@@ -233,36 +233,30 @@ const Dashboard: React.FC = () => {
   };
 
   // --- Lógica de Pendências Logísticas (SOMENTE STATUS DO CONTROLE) ---
+// --- Lógica de Pendências Logísticas (SOMENTE STATUS DO CONTROLE) ---
 const pendingLogisticsDemands = useMemo(() => {
-  return filteredDemands.filter(d => {
-    const status = getCalculatedStatus(d);
+  // enquanto carrega, não calcula (evita piscar)
+  if (isLoadingPendencies) return [];
 
-    // Regras gerais
+  return filteredDemands.filter(d => {
+    // regras gerais (mantém)
     if (isOnlineDemand(d)) return false;
+
+    const status = getCalculatedStatus(d);
     if (status === 'CANCELADA' || status === 'CONCLUIDA') return false;
 
+    // ✅ fonte da verdade: Controle Logístico
     const alloc = logisticsByDemandId?.[normId(d.id)];
-    const hasAlloc = !!alloc;
 
-    // ✅ SE TEM CONTROLE LOGÍSTICO, A NOTIFICAÇÃO USA SÓ O STATUS
-    if (hasAlloc) {
-      const overall = String(alloc?.overall_status ?? 'PENDENTE').toUpperCase();
-      return overall !== 'CONCLUIDA';
-    }
+    // se não existe controle logístico ainda, NÃO entra como pendência
+    // (senão vai piscar / dar falso positivo)
+    if (!alloc) return false;
 
-    // ✅ fallback legacy (demandas antigas sem alloc)
-    const isHotelOkLegacy = d.logisticsHotel === 'CONFIRMADO' || d.logisticsHotel === 'NAO_NECESSARIO';
-    const isCarOkLegacy = d.logisticsTransport === 'CONFIRMADO' || d.logisticsTransport === 'NAO_NECESSARIO';
-    const isMaterialOkLegacy = d.materialReady === true;
-    const isReleaseOkLegacy = !!d.attachments?.instructorReleasePdf;
-    const isListOkLegacy = !!d.attachments?.classListPdf;
-
-    const allReadyLegacy =
-      isHotelOkLegacy && isCarOkLegacy && isMaterialOkLegacy && isReleaseOkLegacy && isListOkLegacy;
-
-    return !allReadyLegacy;
+    const overall = String(alloc.overall_status ?? 'PENDENTE').toUpperCase();
+    return overall !== 'CONCLUIDA';
   });
-}, [filteredDemands, trainings, logisticsByDemandId]);
+}, [filteredDemands, logisticsByDemandId, isLoadingPendencies]);
+
 
 
 
@@ -402,59 +396,31 @@ const pendingLogisticsDemands = useMemo(() => {
           {!isLoadingPendencies && pendingLogisticsDemands.length > 0 && (
             <div className="px-5 pb-5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {pendingLogisticsDemands.slice(0, 5).map(d => {
-                const isHotelOkLegacy = d.logisticsHotel === 'CONFIRMADO' || d.logisticsHotel === 'NAO_NECESSARIO';
-                const isCarOkLegacy = d.logisticsTransport === 'CONFIRMADO' || d.logisticsTransport === 'NAO_NECESSARIO';
-                const isMaterialOkLegacy = d.materialReady === true;
+              const alloc = logisticsByDemandId?.[normId(d.id)];
+              const overall = String(alloc?.overall_status ?? 'PENDENTE').toUpperCase();
 
-                const isReleaseOkLegacy = !!d.attachments?.instructorReleasePdf;
-                const isListOkLegacy = !!d.attachments?.classListPdf;
-
-
-                const alloc = logisticsByDemandId?.[normId(d.id)];
-                const overall = String(alloc?.overall_status ?? 'PENDENTE').toUpperCase();
-
-                  return (
-                    <div key={d.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between group">
-                      <div className="flex items-center gap-3 overflow-hidden">
-                        <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse shrink-0"></div>
-                        <div className="overflow-hidden">
-                          <p className="text-[11px] font-black text-slate-700 truncate">
-                            <span className="text-blue-600 font-mono mr-1">#{d.id}</span>
-                            {getTrainingName(d.trainingId)}
-                          </p>
-                          <p className="text-[9px] font-bold text-slate-400 truncate uppercase">{getCompanyName(d.companyId)}</p>
-                        </div>
-                      </div>
-
-                      <div className="shrink-0 ml-3">
-                        <span className="px-2 py-1 rounded-lg text-[9px] font-black uppercase bg-amber-100 text-amber-700">
-                          {overall}
-                        </span>
-                      </div>
-                    </div>
-                  );
-
-
-                return (
-                  <div key={d.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between group">
-                    <div className="flex items-center gap-3 overflow-hidden">
-                      <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse shrink-0"></div>
-                      <div className="overflow-hidden">
-                        <p className="text-[11px] font-black text-slate-700 truncate">
-                          <span className="text-blue-600 font-mono mr-1">#{d.id}</span>
-                          {getTrainingName(d.trainingId)}
-                        </p>
-                        <p className="text-[9px] font-bold text-slate-400 truncate uppercase">{getCompanyName(d.companyId)}</p>
-                      </div>
-                    </div>
-                    <div className="shrink-0 ml-3">
-                      <span className="px-2 py-1 rounded-lg text-[9px] font-black uppercase bg-amber-100 text-amber-700">
-                        {overall}
-                      </span>
+              return (
+                <div key={d.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between group">
+                  <div className="flex items-center gap-3 overflow-hidden">
+                    <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse shrink-0"></div>
+                    <div className="overflow-hidden">
+                      <p className="text-[11px] font-black text-slate-700 truncate">
+                        <span className="text-blue-600 font-mono mr-1">#{d.id}</span>
+                        {getTrainingName(d.trainingId)}
+                      </p>
+                      <p className="text-[9px] font-bold text-slate-400 truncate uppercase">{getCompanyName(d.companyId)}</p>
                     </div>
                   </div>
-                );
-              })}
+
+                  <div className="shrink-0 ml-3">
+                    <span className="px-2 py-1 rounded-lg text-[9px] font-black uppercase bg-amber-100 text-amber-700">
+                      {overall}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+
               {pendingLogisticsDemands.length > 5 && (
                 <div className="p-3 bg-slate-50/50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center">
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">

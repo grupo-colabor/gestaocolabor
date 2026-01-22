@@ -204,6 +204,9 @@ export interface Attachment {
   category: ExpenseCategory;
   value: number | string; // Valor monetário da notinha (aceita string para digitação fluida)
   otherId?: string; // Vinculo opcional para despesas em 'Outros'
+  bucket?: string;
+  path?: string;
+  size?: number;
 }
 
 export interface OtherExpenseItem {
@@ -269,8 +272,19 @@ export interface EvidenceFile {
   id: string;
   name: string;
   uploadDate: string;
-  base64?: string; // Simulação de arquivo
+
+  // ✅ novo (mas opcional durante migração)
+  storagePath?: string;
+
+  // ✅ legado (temporário)
+  base64?: string;
+
+  mimeType?: string;
+  size?: number;
+  url?: string;
 }
+
+
 
 export interface EvidenceData {
   demandId: string;

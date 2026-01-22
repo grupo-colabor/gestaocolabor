@@ -45,8 +45,7 @@ import {
   MOCK_TRAININGS,
   MOCK_INSTRUCTORS,
   MOCK_DEMANDS,
-  INITIAL_OPERATIONAL_BASES
-} from './constants';
+  } from './constants';
 
 import Dashboard from './components/Dashboard';
 import Registrations from './components/Registrations';
@@ -62,6 +61,7 @@ import { fetchCompanies } from './services/companies';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { fetchInstructors, fetchInstructorTrainings } from './services/instructors';
 import { fetchMeasurements, upsertMeasurementByDemandId } from './services/measurements';
+import { fetchEvidences, upsertEvidenceByDemandId } from './services/evidences';
 
 
 // ✅ Demandas (Supabase) — services/demands.ts
@@ -111,6 +111,7 @@ interface AppState {
   evidenceStore: Record<string, EvidenceData>;
   setEvidenceStore: React.Dispatch<React.SetStateAction<Record<string, EvidenceData>>>;
   getEvidenceAutoStatus: (demandId: string) => 'COMPLETA' | 'PENDENTE';
+  updateEvidence: (demandId: string, data: EvidenceData) => Promise<void>;
 
   setNextDemandNumber: React.Dispatch<React.SetStateAction<number>>;
   setNotification: React.Dispatch<
@@ -133,9 +134,10 @@ interface AppState {
   updateMeasurement: (m: Measurement) => void;
 
   // Agenda Actions
-  addAgendaItem: (item: AgendaItem) => void;
-  updateAgendaItem: (item: AgendaItem) => void;
-  removeAgendaItem: (id: string) => void;
+  addAgendaItem: (item: AgendaItem) => Promise<void>;
+  updateAgendaItem: (item: AgendaItem) => Promise<void>;
+  removeAgendaItem: (id: string) => Promise<void>;
+
 
   // Instructor Allocation Actions
   addInstructorAllocation: (a: InstructorAllocation) => void;
@@ -304,6 +306,28 @@ function mapMeasurementToDbPatch(m: any) {
     updated_at: new Date().toISOString(),
   };
 }
+
+function mapEvidenceFromDb(row: any): EvidenceData {
+  return {
+    demandId: row.demand_id,
+    attendanceList: row.attendance_list ?? [],
+    certificates: row.certificates ?? [],
+    photos: row.photos ?? [],
+    notes: row.notes ?? '' // ✅ FIX
+  };
+}
+
+function mapEvidenceToDbPatch(e: EvidenceData) {
+  return {
+    attendance_list: e.attendanceList ?? [],
+    certificates: e.certificates ?? [],
+    photos: e.photos ?? [],
+    notes: e.notes ?? '', // ✅ FIX
+    updated_at: new Date().toISOString()
+  };
+}
+
+
  const syncMeasurementsFromDb = useCallback(async () => {
   if (AUTH_MODE !== 'supabase') return;
 
@@ -315,6 +339,29 @@ function mapMeasurementToDbPatch(m: any) {
     console.error('[Measurements] sync error', e);
   }
 }, [AUTH_MODE]);
+
+
+// ================================
+// EVIDENCES — sync DB -> store
+// ================================
+const syncEvidencesFromDb = useCallback(async () => {
+  if (AUTH_MODE !== 'supabase') return;
+
+  try {
+    const rows = await fetchEvidences();
+
+    const record: Record<string, EvidenceData> = {};
+    for (const r of rows || []) {
+      const ev = mapEvidenceFromDb(r);
+      record[ev.demandId] = ev;
+    }
+
+    setEvidenceStore(record);
+  } catch (e) {
+    console.error('[Evidences] sync error', e);
+  }
+}, [AUTH_MODE]);
+
 
   /**
    * ✅ Helpers de persistência (treinamentos) — ALINHADO AO SCHEMA ATUAL DO SUPABASE
@@ -488,6 +535,19 @@ function mapMeasurementToDbPatch(m: any) {
     return payload;
   }, []);
 
+/** 🔄 Sync do Supabase -> State */
+  const syncAgendaItemsFromDb = useCallback(async () => {
+    if (AUTH_MODE !== 'supabase') return;
+
+    try {
+      const rows = await fetchAgendaItems();
+      const mapped = rows.map(mapAgendaItemFromDb);
+      setAgendaItems(mapped);
+    } catch (e) {
+      console.error('syncAgendaItemsFromDb error:', e);
+    }
+  }, [AUTH_MODE, mapAgendaItemFromDb]);
+
   const syncDemandsFromDb = useCallback(async () => {
     try {
       const rows = await fetchDemands();
@@ -522,7 +582,7 @@ function mapMeasurementToDbPatch(m: any) {
       const demand = demands.find(d => d.id === demandId);
       const training = trainings.find(t => t.id === demand?.trainingId);
 
-      const isOnline = training?.modality === 'ONLINE';
+      const isOnline = (training?.modality === 'ONLINE') || (demand?.modality === 'ONLINE');
 
       const hasAttendance = (data.attendanceList || []).length > 0;
       const hasCertificates = (data.certificates || []).length > 0;
@@ -536,6 +596,53 @@ function mapMeasurementToDbPatch(m: any) {
     },
     [evidenceStore, demands, trainings]
   );
+
+  // ================================
+// EVIDENCES — update (local + upsert)
+// ================================
+const updateEvidence = useCallback(
+  async (demandId: string, data: EvidenceData) => {
+    // ✅ garante notes mesmo que venha undefined
+    const normalized: EvidenceData = {
+      demandId,
+      attendanceList: data.attendanceList ?? [],
+      certificates: data.certificates ?? [],
+      photos: data.photos ?? [],
+      notes: data.notes ?? ''
+    };
+
+    // 1) atualiza estado local imediatamente
+    setEvidenceStore(prev => ({
+      ...prev,
+      [demandId]: normalized
+    }));
+
+    // 2) mock mode não salva no banco
+    if (AUTH_MODE !== 'supabase') return;
+
+    try {
+      const patch = mapEvidenceToDbPatch(normalized);
+      const { data: saved, error } = await upsertEvidenceByDemandId(demandId, patch);
+
+      if (error) {
+        console.error('[Evidences] upsert error', error);
+        return;
+      }
+
+      // opcional: garantir store igual ao banco
+      if (saved) {
+        const mapped = mapEvidenceFromDb(saved);
+        setEvidenceStore(prev => ({
+          ...prev,
+          [demandId]: mapped
+        }));
+      }
+    } catch (e) {
+      console.error('[Evidences] update exception', e);
+    }
+  },
+  [AUTH_MODE]
+);
 
   // Auto-clear notification
   useEffect(() => {
@@ -561,6 +668,22 @@ function mapMeasurementToDbPatch(m: any) {
     })();
   }, [AUTH_MODE, user, loading]);
 
+  // ✅ Carregar Agenda do Supabase (fonte da verdade)
+  useEffect(() => {
+  if (AUTH_MODE !== 'supabase') return;
+  if (loading) return;
+  if (!user) return;
+  syncAgendaItemsFromDb();
+}, [AUTH_MODE, user, loading, syncAgendaItemsFromDb]);
+
+// ✅ Carregar Evidências do Supabase (fonte da verdade)
+useEffect(() => {
+  if (AUTH_MODE !== 'supabase') return;
+  if (loading) return;
+  if (!user) return;
+  syncEvidencesFromDb();
+}, [AUTH_MODE, user, loading, syncEvidencesFromDb]);
+
   // ✅ Carregar treinamentos do Supabase (fonte da verdade)
   useEffect(() => {
     if (loading) return;
@@ -583,6 +706,7 @@ function mapMeasurementToDbPatch(m: any) {
     if (!user) return;
     syncDemandsFromDb();
   }, [AUTH_MODE, user, loading, syncDemandsFromDb]);
+
 
   // ✅ Carregar Medições do Supabase (fonte da verdade)
   useEffect(() => {
@@ -727,7 +851,8 @@ const addDemand = useCallback(
             demandId: nextId,
             attendanceList: [],
             certificates: [],
-            photos: []
+            photos: [],
+            notes: ''
           }
       }));
 
@@ -803,7 +928,8 @@ const addDemand = useCallback(
             demandId: nextId,
             attendanceList: [],
             certificates: [],
-            photos: []
+            photos: [],
+            notes: ''
           }
       }));
 
@@ -1095,7 +1221,7 @@ const addDemand = useCallback(
       console.error('[Measurements] update exception', e);
     }
   })();
-}, [AUTH_MODE]);
+}, [AUTH_MODE, upsertMeasurementByDemandId, mapMeasurementFromDb, mapMeasurementToDbPatch]);
 
 
   const addInstructor = useCallback((i: Instructor) => {
@@ -1200,20 +1326,6 @@ const addDemand = useCallback(
   );
 
 
-/** 🔄 Sync do Supabase -> State */
-const syncAgendaItemsFromDb = useCallback(async () => {
-  if (AUTH_MODE !== 'supabase') return;
-
-  try {
-    const rows = await fetchAgendaItems();
-    const mapped = rows.map(mapAgendaItemFromDb);
-    setAgendaItems(mapped);
-  } catch (e) {
-    console.error('syncAgendaItemsFromDb error:', e);
-  }
-}, [AUTH_MODE]);
-
-/** ✅ CREATE */
 /** ✅ CREATE */
 const addAgendaItem = useCallback(
   async (item: AgendaItem) => {
@@ -1277,13 +1389,16 @@ const removeAgendaItem = useCallback(
       // ✅ remove local + garante que ficou igual ao banco
       setAgendaItems(prev => prev.filter(i => i.id !== id));
 
+      // ✅ garante consistência com o banco (importante)
+      await syncAgendaItemsFromDb();
+
       setNotification({ message: 'Registro removido com sucesso.', type: 'success' });
     } catch (e) {
       console.error('removeAgendaItem error:', e);
       setNotification({ message: 'Erro ao excluir registro da agenda.', type: 'error' });
     }
   },
-  [AUTH_MODE, setNotification]
+  [AUTH_MODE, setNotification, syncAgendaItemsFromDb]
 );
 
   /**
@@ -1708,6 +1823,7 @@ const removeAgendaItem = useCallback(
       evidenceStore,
       setEvidenceStore,
       getEvidenceAutoStatus,
+      updateEvidence,
       reloadInstructors,
       addDemand,
       updateDemand,
@@ -1781,7 +1897,8 @@ const removeAgendaItem = useCallback(
       hasScheduleConflict,
       hasResourceConflict,
       isCompanyFullLogistics,
-      setHybridPracticePeriod
+      setHybridPracticePeriod,
+      updateEvidence,
     ]
   );
 

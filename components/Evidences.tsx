@@ -19,7 +19,8 @@ import { EvidenceData } from '../types';
 import EvidenceDetails from './EvidenceDetails';
 
 const Evidences: React.FC = () => {
-  const { demands, companies, trainings } = useApp();
+  const { demands, companies, trainings, evidenceStore, updateEvidence } = useApp();
+
 
   // Estado para os filtros
   const [filterId, setFilterId] = useState('');
@@ -29,8 +30,6 @@ const Evidences: React.FC = () => {
   // Estado para gerenciar qual demanda está sendo visualizada (null = lista)
   const [selectedDemandId, setSelectedDemandId] = useState<string | null>(null);
   
-  // Estado local para simular o banco de evidências (Indexado por demandId)
-  const [evidenceStore, setEvidenceStore] = useState<Record<string, EvidenceData>>({});
 
   const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
   const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
@@ -114,29 +113,25 @@ const getEvidenceAutoStatus = (
       .sort((a, b) => b.startDate.localeCompare(a.startDate));
   }, [demands, filterId, startDateFilter, endDateFilter]);
 
-  const handleOpenDetails = (id: string) => {
-    // Inicializar dados se não existirem no store local
-    if (!evidenceStore[id]) {
-      setEvidenceStore(prev => ({
-        ...prev,
-        [id]: {
-          demandId: id,
-          attendanceList: [],
-          certificates: [],
-          photos: [],
-          notes: ''
-        }
-      }));
-    }
-    setSelectedDemandId(id);
-  };
+  const handleOpenDetails = async (id: string) => {
+  // Inicializar dados se não existirem no store global
+  if (!evidenceStore[id]) {
+    await updateEvidence(id, {
+      demandId: id,
+      attendanceList: [],
+      certificates: [],
+      photos: [],
+      notes: ''
+    });
+  }
+  setSelectedDemandId(id);
+};
 
-  const handleUpdateEvidence = (updated: EvidenceData) => {
-    setEvidenceStore(prev => ({
-      ...prev,
-      [updated.demandId]: updated
-    }));
-  };
+
+  const handleUpdateEvidence = async (updated: EvidenceData) => {
+  await updateEvidence(updated.demandId, updated);
+};
+
 
   // Se uma demanda estiver selecionada, renderiza o componente de detalhes
   if (selectedDemandId) {

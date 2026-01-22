@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ImageRun } from 'docx';
 import { calculateDemandStatus } from '../domain/demandStatus';
+import { supabase } from '../lib/supabase';
 
 const STAGE_LABELS: Record<MeasurementStatus, string> = {
   NAO_INICIADA: 'Não iniciada',
@@ -310,41 +311,100 @@ const MeasurementView: React.FC = () => {
     }
   };
 
-  const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
-    if (!selectedMeasurement) return;
-    
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*,application/pdf';
-    input.multiple = true;
-    input.onchange = (e: any) => {
-      const files = e.target.files;
-      if (!files) return;
+  const BUCKET = 'measurement-attachments';
 
-      Array.from(files).forEach((f: any) => {
-        const reader = new FileReader();
-        reader.onload = (event: any) => {
-          const newAttachment: Attachment = {
-            id: `FILE-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-            name: f.name,
-            url: '#',
-            data: event.target.result,
-            type: f.type,
-            date: new Date().toISOString(),
-            category,
-            value: '', 
-            otherId
-          };
-          setSelectedMeasurement(prev => prev ? {
-            ...prev,
-            attachments: [...prev.attachments, newAttachment]
-          } : null);
+const sanitizeFileName = (name: string) =>
+  name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9.\-_]/g, '_');
+
+const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
+  if (!selectedMeasurement) return;
+
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*,application/pdf';
+  input.multiple = true;
+
+  input.onchange = async (e: any) => {
+    const files: FileList | null = e.target.files;
+    if (!files || !selectedMeasurement) return;
+
+    const demandId = selectedMeasurement.demandId;
+
+    for (const f of Array.from(files)) {
+      try {
+        // id estável pro anexo
+        const attachmentId = `FILE-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const safeName = sanitizeFileName(f.name);
+
+        // path organizado por demanda
+        const path = `measurements/${demandId}/${attachmentId}-${safeName}`;
+
+        // ✅ upload no Storage
+        const { error: uploadError } = await supabase
+          .storage
+          .from(BUCKET)
+          .upload(path, f, {
+            contentType: f.type,
+            upsert: false
+          });
+
+        if (uploadError) {
+          console.error('[Storage] upload error:', uploadError);
+          alert(`Falha ao subir arquivo: ${uploadError.message}`);
+          continue;
+        }
+
+        // ✅ URL para preview (escolha uma das opções abaixo)
+
+        // OPÇÃO 1: bucket PUBLIC
+        const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
+        const fileUrl = pub?.publicUrl || '#';
+
+        // OPÇÃO 2: bucket PRIVATE (use signed URL)
+        // const { data: signed, error: signedError } = await supabase
+        //   .storage
+        //   .from(BUCKET)
+        //   .createSignedUrl(path, 60 * 60); // 1h
+        // const fileUrl = signedError ? '#' : (signed?.signedUrl || '#');
+
+        const newAttachment: Attachment = {
+          id: attachmentId,
+          name: f.name,
+          url: fileUrl,
+
+          // 🚫 NÃO guardar base64:
+          // data: ...
+
+          type: f.type,
+          date: new Date().toISOString(),
+          category,
+          value: '',
+          otherId,
+
+          // ✅ campos novos (você pode manter em jsonb sem mexer no schema)
+          bucket: BUCKET as any,
+          path: path as any,
+          size: (f as any).size
         };
-        reader.readAsDataURL(f);
-      });
-    };
-    input.click();
+
+        setSelectedMeasurement(prev =>
+          prev
+            ? { ...prev, attachments: [...prev.attachments, newAttachment] }
+            : null
+        );
+      } catch (err) {
+        console.error('[Storage] upload exception:', err);
+        alert('Erro inesperado ao subir arquivo.');
+      }
+    }
   };
+
+  input.click();
+};
+
 
   const handleAddManualValue = (category: ExpenseCategory, otherId?: string) => {
     if (!selectedMeasurement) return;
@@ -372,13 +432,37 @@ const MeasurementView: React.FC = () => {
     });
   };
 
-  const handleRemoveAttachment = (id: string) => {
+  const handleRemoveAttachment = async (id: string) => {
     if (!selectedMeasurement) return;
-    setSelectedMeasurement({
-      ...selectedMeasurement,
-      attachments: selectedMeasurement.attachments.filter(a => a.id !== id)
-    });
+
+    const attachment = selectedMeasurement.attachments.find(a => a.id === id);
+    if (!attachment) return;
+
+    // 🔥 1. Se veio do Storage, remove o arquivo físico
+    if (attachment.path && attachment.bucket) {
+      const { error } = await supabase
+        .storage
+        .from(attachment.bucket)
+        .remove([attachment.path]);
+
+      if (error) {
+        console.error('[Storage] erro ao deletar arquivo:', error);
+        alert('Erro ao excluir arquivo do Storage.');
+        return; // ❗ não remove do state se falhar
+      }
+    }
+
+    // 🧠 2. Remove do state (UI)
+    setSelectedMeasurement(prev =>
+      prev
+        ? {
+            ...prev,
+            attachments: prev.attachments.filter(a => a.id !== id)
+          }
+        : prev
+    );
   };
+
 
   const handleAddOtherExpense = () => {
     if (!selectedMeasurement) return;
@@ -410,6 +494,7 @@ const MeasurementView: React.FC = () => {
     });
   };
 
+
   const base64ToUint8Array = (base64String: string) => {
     const base64Content = base64String.split(',')[1];
     const binaryString = window.atob(base64Content);
@@ -420,115 +505,214 @@ const MeasurementView: React.FC = () => {
     return bytes;
   };
 
-  const createDemandDocSection = (m: Measurement) => {
-    const d = demands.find(demand => demand.id === m.demandId);
-    if (!d) return [];
+  const urlToUint8Array = async (url: string) => {
+  // garante URL “segura” (especialmente se vier com espaços)
+  const safeUrl = encodeURI(url);
 
-    const demandTotals = getMeasurementTotals(m);
-    const companyName = getCompanyName(d.companyId);
-    const trainingName = getTrainingName(d.trainingId);
-    const instructorName = getInstructorName(d.instructorId);
+  const res = await fetch(safeUrl);
+  if (!res.ok) throw new Error(`Falha ao baixar imagem: ${res.status}`);
 
-    const children: any[] = [
-      new Paragraph({
-        text: `DEMANDA: ${d.id} - ${companyName}`,
-        heading: HeadingLevel.HEADING_2,
-        border: { bottom: { color: "e2e8f0", space: 1, style: BorderStyle.SINGLE, size: 6 } },
-        spacing: { before: 400, after: 200 },
-      }),
-      new Paragraph({ children: [new TextRun({ text: "🎓 Treinamento: ", bold: true }), new TextRun(trainingName)] }),
-      new Paragraph({ children: [new TextRun({ text: "📅 Período: ", bold: true }), new TextRun(`${formatDateTime(d.startDate)} até ${formatDateTime(d.endDate)}`)] }),
-      new Paragraph({ children: [new TextRun({ text: "📍 Localidade: ", bold: true }), new TextRun(d.trainingLocal || 'N/A')] }),
-      new Paragraph({ children: [new TextRun({ text: "👨‍🏫 Instrutor: ", bold: true }), new TextRun(instructorName)] }),
-      new Paragraph({ spacing: { after: 200 } }),
-    ];
+  const buf = await res.arrayBuffer();
+  return new Uint8Array(buf);
+};
 
-    const categories: { key: ExpenseCategory; label: string; details?: string }[] = [
-      { key: 'HOSPEDAGEM', label: '🏨 HOSPEDAGEM', details: d.accommodationType === 'N/A' ? 'Sem hospedagem registrada' : `${d.hotelName} (${d.hotelCity})` },
-      { key: 'LOCOMOCAO', label: '🚗 LOCOMOÇÃO', details: d.transportType === 'N/A' ? 'Sem locomoção registrada' : `${d.transportType} (${d.rentalCompany})` },
-      { key: 'CAFE', label: '☕ CAFÉ DA MANHÃ' },
-      { key: 'ALMOCO', label: '🍛 ALMOÇO' },
-      { key: 'JANTAR', label: '🍽️ JANTAR' },
-    ];
 
-    categories.forEach(cat => {
-      const attachments = m.attachments.filter(a => a.category === cat.key && !a.otherId);
-      const totalCat = attachments.reduce((acc, curr) => acc + (Number(typeof curr.value === 'string' ? curr.value.replace(',', '.') : curr.value) || 0), 0);
+  const createDemandDocSection = async (m: Measurement) => {
+  const d = demands.find(demand => demand.id === m.demandId);
+  if (!d) return [];
 
-      children.push(new Paragraph({ text: cat.label, heading: HeadingLevel.HEADING_3, spacing: { before: 200 } }));
-      if (cat.details) {
-        children.push(new Paragraph({ children: [new TextRun({ text: "Info: ", italics: true }), new TextRun(cat.details)] }));
-      }
+  const demandTotals = getMeasurementTotals(m);
+  const companyName = getCompanyName(d.companyId);
+  const trainingName = getTrainingName(d.trainingId);
+  const instructorName = getInstructorName(d.instructorId);
 
-      if (attachments.length > 0) {
-        attachments.forEach(a => {
-          children.push(new Paragraph({ children: [new TextRun({ text: `• ${a.name}: `, bold: true }), new TextRun(formatCurrency(a.value))] }));
-          if (a.data && a.type.startsWith('image/')) {
-            try {
-              children.push(new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [
-                  new ImageRun({
-                    data: base64ToUint8Array(a.data),
-                    transformation: { width: 400, height: 300 },
-                  } as any),
-                ],
-                spacing: { before: 100, after: 100 },
-              }));
-            } catch (err) {
-              children.push(new Paragraph({ children: [new TextRun({ text: "[Erro ao carregar imagem]", italics: true, color: "red" })] }));
-            }
-          } else if (a.type === 'application/pdf') {
-            children.push(new Paragraph({ children: [new TextRun({ text: "(Arquivo PDF anexado no sistema - Visualize online)", italics: true, color: "64748b" })] }));
-          }
-        });
-        children.push(new Paragraph({ children: [new TextRun({ text: `TOTAL ${cat.label.split(' ')[1]}: `, bold: true }), new TextRun(formatCurrency(totalCat))] }));
-      } else {
-        children.push(new Paragraph({ children: [new TextRun({ text: "Nenhuma despesa ou comprovante registrado nesta categoria.", italics: true, color: "94a3b8" })] }));
-      }
-    });
+  const children: any[] = [
+    new Paragraph({
+      text: `DEMANDA: ${d.id} - ${companyName}`,
+      heading: HeadingLevel.HEADING_2,
+      border: { bottom: { color: "e2e8f0", space: 1, style: BorderStyle.SINGLE, size: 6 } },
+      spacing: { before: 400, after: 200 },
+    }),
+    new Paragraph({ children: [new TextRun({ text: "🎓 Treinamento: ", bold: true }), new TextRun(trainingName)] }),
+    new Paragraph({ children: [new TextRun({ text: "📅 Período: ", bold: true }), new TextRun(`${formatDateTime(d.startDate)} até ${formatDateTime(d.endDate)}`)] }),
+    new Paragraph({ children: [new TextRun({ text: "📍 Localidade: ", bold: true }), new TextRun(d.trainingLocal || 'N/A')] }),
+    new Paragraph({ children: [new TextRun({ text: "👨‍🏫 Instrutor: ", bold: true }), new TextRun(instructorName)] }),
+    new Paragraph({ spacing: { after: 200 } }),
+  ];
 
-    if (m.otherExpenses.length > 0) {
-      children.push(new Paragraph({ text: "➕ OUTRAS DESPESAS", heading: HeadingLevel.HEADING_3, spacing: { before: 200 } }));
-      m.otherExpenses.forEach(o => {
-        const atts = m.attachments.filter(a => a.otherId === o.id);
-        const totalOth = atts.reduce((acc, curr) => acc + (Number(typeof curr.value === 'string' ? curr.value.replace(',', '.') : curr.value) || 0), 0);
-        children.push(new Paragraph({ children: [new TextRun({ text: `${o.description || 'Despesa Extra'}: `, bold: true }), new TextRun(formatCurrency(totalOth))] }));
-        atts.forEach(a => {
-          if (a.data && a.type.startsWith('image/')) {
-            children.push(new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [
-                new ImageRun({ data: base64ToUint8Array(a.data), transformation: { width: 400, height: 300 } } as any),
-              ],
-            }));
-          }
-        });
-      });
-      children.push(new Paragraph({ children: [new TextRun({ text: "TOTAL OUTROS: ", bold: true }), new TextRun(formatCurrency(demandTotals.outros))] }));
+  const categories: { key: ExpenseCategory; label: string; details?: string }[] = [
+    { key: 'HOSPEDAGEM', label: '🏨 HOSPEDAGEM', details: d.accommodationType === 'N/A' ? 'Sem hospedagem registrada' : `${d.hotelName} (${d.hotelCity})` },
+    { key: 'LOCOMOCAO', label: '🚗 LOCOMOÇÃO', details: d.transportType === 'N/A' ? 'Sem locomoção registrada' : `${d.transportType} (${d.rentalCompany})` },
+    { key: 'CAFE', label: '☕ CAFÉ DA MANHÃ' },
+    { key: 'ALMOCO', label: '🍛 ALMOÇO' },
+    { key: 'JANTAR', label: '🍽️ JANTAR' },
+  ];
+
+  for (const cat of categories) {
+    const attachments = m.attachments.filter(a => a.category === cat.key && !a.otherId);
+    const totalCat = attachments.reduce((acc, curr) => acc + (Number(typeof curr.value === 'string' ? curr.value.replace(',', '.') : curr.value) || 0), 0);
+
+    children.push(new Paragraph({ text: cat.label, heading: HeadingLevel.HEADING_3, spacing: { before: 200 } }));
+    if (cat.details) {
+      children.push(new Paragraph({ children: [new TextRun({ text: "Info: ", italics: true }), new TextRun(cat.details)] }));
     }
 
-    children.push(new Paragraph({ 
+    if (attachments.length > 0) {
+      for (const a of attachments) {
+        children.push(
+          new Paragraph({
+            children: [
+              new TextRun({ text: `• ${a.name}: `, bold: true }),
+              new TextRun(formatCurrency(a.value)),
+            ],
+          })
+        );
+
+        // ✅ IMAGEM via URL (Storage)
+        if (a.type?.startsWith('image/')) {
+          try {
+            // prioridade: url (Storage). fallback: base64 antigo (se existir)
+            if (a.url && a.url !== '#') {
+              const bytes = await urlToUint8Array(a.url);
+              children.push(
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [
+                    new ImageRun({
+                      data: bytes,
+                      transformation: { width: 400, height: 300 },
+                    } as any),
+                  ],
+                  spacing: { before: 100, after: 100 },
+                })
+              );
+            } else if ((a as any).data) {
+              children.push(
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [
+                    new ImageRun({
+                      data: base64ToUint8Array((a as any).data),
+                      transformation: { width: 400, height: 300 },
+                    } as any),
+                  ],
+                  spacing: { before: 100, after: 100 },
+                })
+              );
+            } else {
+              children.push(new Paragraph({ children: [new TextRun({ text: "(Imagem sem URL disponível)", italics: true, color: "64748b" })] }));
+            }
+          } catch (err) {
+            children.push(new Paragraph({ children: [new TextRun({ text: "[Erro ao carregar imagem do Storage]", italics: true, color: "FF0000" })] }));
+          }
+        } else if (a.type === 'application/pdf') {
+          children.push(new Paragraph({ children: [new TextRun({ text: "(Arquivo PDF anexado no sistema - Visualize online)", italics: true, color: "64748b" })] }));
+        }
+      }
+
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({ text: `TOTAL ${cat.label.split(' ')[1]}: `, bold: true }),
+            new TextRun(formatCurrency(totalCat)),
+          ],
+        })
+      );
+    } else {
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: "Nenhuma despesa ou comprovante registrado nesta categoria.",
+              italics: true,
+              color: "94a3b8",
+            }),
+          ],
+        })
+      );
+    }
+  }
+
+  if (m.otherExpenses.length > 0) {
+    children.push(new Paragraph({ text: "➕ OUTRAS DESPESAS", heading: HeadingLevel.HEADING_3, spacing: { before: 200 } }));
+
+    for (const o of m.otherExpenses) {
+      const atts = m.attachments.filter(a => a.otherId === o.id);
+      const totalOth = atts.reduce((acc, curr) => acc + (Number(typeof curr.value === 'string' ? curr.value.replace(',', '.') : curr.value) || 0), 0);
+
+      children.push(new Paragraph({ children: [new TextRun({ text: `${o.description || 'Despesa Extra'}: `, bold: true }), new TextRun(formatCurrency(totalOth))] }));
+
+      for (const a of atts) {
+        if (a.type?.startsWith('image/')) {
+          try {
+            if (a.url && a.url !== '#') {
+              const bytes = await urlToUint8Array(a.url);
+              children.push(
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [
+                    new ImageRun({ data: bytes, transformation: { width: 400, height: 300 } } as any),
+                  ],
+                })
+              );
+            } else if ((a as any).data) {
+              children.push(
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [
+                    new ImageRun({ data: base64ToUint8Array((a as any).data), transformation: { width: 400, height: 300 } } as any),
+                  ],
+                })
+              );
+            }
+          } catch (err) {
+            children.push(new Paragraph({ children: [new TextRun({ text: "[Erro ao carregar imagem do Storage]", italics: true, color: "FF0000" })] }));
+          }
+        }
+      }
+    }
+
+    children.push(new Paragraph({ children: [new TextRun({ text: "TOTAL OUTROS: ", bold: true }), new TextRun(formatCurrency(demandTotals.outros))] }));
+  }
+
+  children.push(
+    new Paragraph({
       alignment: AlignmentType.RIGHT,
       spacing: { before: 300, after: 300 },
       children: [
         new TextRun({
-          text: `TOTAL GERAL DEMANDA ${d.id}: ${formatCurrency(demandTotals.total)}`, 
-          bold: true, 
-        })
-      ]
-    }));
+          text: `TOTAL GERAL DEMANDA ${d.id}: ${formatCurrency(demandTotals.total)}`,
+          bold: true,
+        }),
+      ],
+    })
+  );
 
-    return children;
-  };
+  return children;
+};
+
 
   const handleConfirmExport = async () => {
-    if (selectedForExport.size === 0) return alert('Selecione pelo menos uma demanda para exportar.');
+  if (selectedForExport.size === 0) {
+    alert('Selecione pelo menos uma demanda para exportar.');
+    return;
+  }
 
-    const selectedMeasurements = measurements.filter(m => selectedForExport.has(m.id));
+  const selectedMeasurements = measurements.filter(m =>
+    selectedForExport.has(m.id)
+  );
 
-    const doc = new Document({
-      sections: [{
+  // 🔹 Como createDemandDocSection agora é async,
+  // precisamos resolver tudo antes de montar o DOC
+  const sectionsArr = await Promise.all(
+    selectedMeasurements.map(m => createDemandDocSection(m))
+  );
+
+  const allChildren = sectionsArr.flat();
+
+  const doc = new Document({
+    sections: [
+      {
         properties: {},
         children: [
           new Paragraph({
@@ -550,21 +734,29 @@ const MeasurementView: React.FC = () => {
             spacing: { after: 600 },
           }),
 
-          ...selectedMeasurements.flatMap(m => createDemandDocSection(m))
+          // ✅ aqui entram TODAS as seções com imagens já resolvidas
+          ...allChildren,
         ],
-      }],
-    });
+      },
+    ],
+  });
 
-    const blob = await Packer.toBlob(doc);
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `Relatorio_Medicao_Consolidado_${new Date().toISOString().split('T')[0]}.docx`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setIsExportSelectionOpen(false);
-  };
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `Relatorio_Medicao_Consolidado_${new Date()
+    .toISOString()
+    .split('T')[0]}.docx`;
+
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  setIsExportSelectionOpen(false);
+};
+
 
   const toggleExportSelection = (id: string) => {
     const next = new Set(selectedForExport);
@@ -582,33 +774,36 @@ const MeasurementView: React.FC = () => {
   };
 
   const handleGenerateWord = async () => {
-    if (!selectedMeasurement) return;
-    const d = demands.find(dm => dm.id === selectedMeasurement.demandId);
-    
-    const doc = new Document({
-      sections: [{
-        properties: {},
-        children: [
-          new Paragraph({
-            text: `RELATÓRIO DE MEDIÇÃO: DEMANDA #${d?.id}`,
-            heading: HeadingLevel.HEADING_1,
-            alignment: AlignmentType.CENTER,
-            spacing: { after: 400 },
-          }),
-          ...createDemandDocSection(selectedMeasurement)
-        ]
-      }]
-    });
+  if (!selectedMeasurement) return;
+  const d = demands.find(dm => dm.id === selectedMeasurement.demandId);
 
-    const blob = await Packer.toBlob(doc);
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `Medicao_${d?.id}.docx`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  const sectionChildren = await createDemandDocSection(selectedMeasurement);
+
+  const doc = new Document({
+    sections: [{
+      properties: {},
+      children: [
+        new Paragraph({
+          text: `RELATÓRIO DE MEDIÇÃO: DEMANDA #${d?.id}`,
+          heading: HeadingLevel.HEADING_1,
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 400 },
+        }),
+        ...sectionChildren
+      ]
+    }]
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `Medicao_${d?.id}.docx`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
 
   const handleSendWhatsApp = () => {
     if (!selectedMeasurement) return;

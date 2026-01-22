@@ -11,15 +11,17 @@ export type EvidenceRow = {
 
   created_at?: string;
   updated_at?: string;
+  notes?: string;
 };
 
 const SELECT_FIELDS = `
-  id,
   demand_id,
+  id,
   status,
   attendance_list,
   certificates,
   photos,
+  notes,
   created_at,
   updated_at
 `;
@@ -71,13 +73,17 @@ export async function upsertEvidenceByDemandId(
   if (payload.certificates == null) payload.certificates = [];
   if (payload.photos == null) payload.photos = [];
 
+  // ✅ FIX: garantir notes sempre definido (evita voltar ''/undefined e "travar" a digitação)
+  if (payload.notes == null) payload.notes = '';
+
   payload.updated_at = new Date().toISOString();
 
   const { data, error } = await supabase
     .from('evidences')
     .upsert(payload, { onConflict: 'demand_id' })
-    .select(SELECT_FIELDS)
+    .select(SELECT_FIELDS) // ✅ IMPORTANTE: SELECT_FIELDS precisa incluir "notes"
     .single();
 
   return { data: (data as EvidenceRow | null) ?? null, error };
 }
+

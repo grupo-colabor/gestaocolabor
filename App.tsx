@@ -82,6 +82,12 @@ import {
   mapAgendaItemFromDb
 } from './services/agendaItems';
 
+import {
+  fetchResourceAllocations,
+  upsertResourceAllocation,
+  deleteResourceAllocationByDemandId
+} from './services/resourceAllocations';
+
 
 
 
@@ -493,6 +499,28 @@ const syncEvidencesFromDb = useCallback(async () => {
     }
   }, [mapInstructorFromDb]);
 
+  const mapResourceAllocationFromDb = useCallback((row: any): LogisticAllocation => {
+  return {
+    id: row.id,
+    demandId: row.demand_id,
+    resourceType: row.resource_type,
+    startDate: row.start_date ?? '',
+    endDate: row.end_date ?? ''
+  } as LogisticAllocation;
+}, []);
+
+const syncResourceAllocationsFromDb = useCallback(async () => {
+  if (AUTH_MODE !== 'supabase') return;
+
+  try {
+    const rows = await fetchResourceAllocations();
+    const mapped = (rows || []).map(mapResourceAllocationFromDb);
+    setResourceAllocations(mapped);
+  } catch (e) {
+    console.error('[ResourceAllocations] sync error', e);
+  }
+}, [AUTH_MODE, mapResourceAllocationFromDb]);
+
   const reloadInstructors = useCallback(async () => {
     await syncInstructorsFromDb();
   }, [syncInstructorsFromDb]);
@@ -687,6 +715,13 @@ const updateEvidence = useCallback(
   if (!user) return;
   syncAgendaItemsFromDb();
 }, [AUTH_MODE, user, loading, syncAgendaItemsFromDb]);
+
+useEffect(() => {
+  if (AUTH_MODE !== 'supabase') return;
+  if (loading) return;
+  if (!user) return;
+  syncResourceAllocationsFromDb();
+}, [AUTH_MODE, user, loading, syncResourceAllocationsFromDb]);
 
 // ✅ Carregar Evidências do Supabase (fonte da verdade)
 useEffect(() => {
@@ -1603,16 +1638,79 @@ const removeAgendaItem = useCallback(
   );
 
   const addResourceAllocation = useCallback((a: LogisticAllocation) => {
-    setResourceAllocations(prev => [...prev, a]);
-  }, []);
+  // estado local
+  setResourceAllocations(prev => [...prev, a]);
+
+  // supabase
+  if (AUTH_MODE !== 'supabase') return;
+
+  (async () => {
+    try {
+      await upsertResourceAllocation({
+        demand_id: a.demandId,
+        resource_type: 'CENTRO_TREINAMENTO_MOVEL',
+        start_date: a.startDate,
+        end_date: a.endDate
+      });
+
+      await syncResourceAllocationsFromDb();
+    } catch (e) {
+      console.error('[ResourceAllocations] add error', e);
+    }
+  })();
+}, [AUTH_MODE, syncResourceAllocationsFromDb]);
+
 
   const updateResourceAllocation = useCallback((a: LogisticAllocation) => {
-    setResourceAllocations(prev => prev.map(item => (item.id === a.id ? a : item)));
-  }, []);
+  setResourceAllocations(prev => prev.map(item => (item.id === a.id ? a : item)));
+
+  if (AUTH_MODE !== 'supabase') return;
+
+  (async () => {
+    try {
+      await upsertResourceAllocation({
+        demand_id: a.demandId,
+        resource_type: 'CENTRO_TREINAMENTO_MOVEL',
+        start_date: a.startDate,
+        end_date: a.endDate
+      });
+
+      await syncResourceAllocationsFromDb();
+    } catch (e) {
+      console.error('[ResourceAllocations] update error', e);
+    }
+  })();
+}, [AUTH_MODE, syncResourceAllocationsFromDb]);
+
 
   const removeResourceAllocation = useCallback((id: string) => {
-    setResourceAllocations(prev => prev.filter(a => a.id !== id));
-  }, []);
+  let found: LogisticAllocation | undefined;
+
+  // remove local (e captura o item certo do "prev")
+  setResourceAllocations(prev => {
+    found = prev.find(a => a.id === id);
+    return prev.filter(a => a.id !== id);
+  });
+
+  if (AUTH_MODE !== 'supabase') return;
+
+  (async () => {
+    try {
+      if (found?.demandId) {
+        await deleteResourceAllocationByDemandId(found.demandId);
+      } else {
+        // fallback: apaga direto pelo id
+        await supabase.from('resource_allocations').delete().eq('id', id);
+      }
+
+      await syncResourceAllocationsFromDb();
+    } catch (e) {
+      console.error('[ResourceAllocations] remove error', e);
+    }
+  })();
+}, [AUTH_MODE, syncResourceAllocationsFromDb]);
+
+
 
   const updateOperationalBase = useCallback(
   async (key: OperationalBaseKey, newList: string[]) => {
@@ -1804,13 +1902,32 @@ const removeAgendaItem = useCallback(
   );
 
   const deallocateInstructor = useCallback((demandId: string) => {
-    setDemands(prev =>
-      prev.map(d =>
-        d.id === demandId ? { ...d, instructorId: undefined, status: 'PENDENTE' } : d
-      )
-    );
-    setInstructorAllocations(prev => prev.filter(a => a.demandId !== demandId));
-  }, []);
+  // 1) volta demanda para programação
+  setDemands(prev =>
+    prev.map(d =>
+      d.id === demandId ? { ...d, instructorId: undefined, status: 'PENDENTE' } : d
+    )
+  );
+
+  // 2) remove alocações de instrutor
+  setInstructorAllocations(prev => prev.filter(a => a.demandId !== demandId));
+
+  // 3) remove CTM local
+  setResourceAllocations(prev => prev.filter(a => a.demandId !== demandId));
+
+  // 4) remove CTM no Supabase
+  if (AUTH_MODE !== 'supabase') return;
+
+  (async () => {
+    try {
+      await deleteResourceAllocationByDemandId(demandId);
+      await syncResourceAllocationsFromDb();
+    } catch (e) {
+      console.error('[ResourceAllocations] deallocate -> delete CTM error', e);
+    }
+  })();
+}, [AUTH_MODE, syncResourceAllocationsFromDb]);
+
 
   const contextValue = useMemo(
     () => ({

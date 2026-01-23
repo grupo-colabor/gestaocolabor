@@ -17,7 +17,7 @@ import {
   MessageSquare
 } from 'lucide-react';
 import { AgendaItem, AgendaType, Demand, Instructor } from '../types';
-import { calculateDemandStatus } from '../domain/demandStatus';
+import { calculateDemandStatus, formatDemandLabel } from '../domain/demandStatus';
 import { useAuth } from '../contexts/AuthContext';
 
 // Configuração visual para cada tipo de compromisso
@@ -206,7 +206,13 @@ const CalendarView: React.FC = () => {
 
         const training = trainings.find(t => t.id === d.trainingId);
         const company = companies.find(c => c.id === d.companyId);
-        const formattedTitle = `DEM-${d.id} • ${company?.name ?? 'Empresa'} • ${training?.nr ?? 'Treinamento'}`;
+        const formattedTitle = formatDemandLabel({
+        trainingNr: training?.nr,
+        companyName: company?.name,
+        startDate: d.startDate,
+        endDate: d.endDate,
+      });
+
 
         while (cursor <= end) {
           map[formatDateKey(cursor)] = {
@@ -260,7 +266,13 @@ const CalendarView: React.FC = () => {
 
       const training = trainings.find(t => t.id === d.trainingId);
       const company = companies.find(c => c.id === d.companyId);
-      const formattedTitle = `${d.id} • ${company?.name ?? 'Empresa'} • ${training?.nr ?? 'Treinamento'}`;
+      const formattedTitle = formatDemandLabel({
+        trainingNr: training?.nr,
+        companyName: company?.name,
+        startDate: d.startDate,
+        endDate: d.endDate,
+      });
+
 
       const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
@@ -551,18 +563,37 @@ const CalendarView: React.FC = () => {
     setIsModalOpen(false);
   };
 
+  const removeCTMForDemandIfAny = (demandId: string) => {
+  const ctmAllocs = resourceAllocations.filter(
+    a => a.resourceType === 'CENTRO_TREINAMENTO_MOVEL' && a.demandId === demandId
+  );
+
+  ctmAllocs.forEach(a => removeResourceAllocation(a.id));
+};
+
   const handleRemoveAction = () => {
-    if (isMobileContext && activeItem) {
-      removeResourceAllocation(activeItem.id);
-    } else if (activeItem?.source === 'DEMANDA') {
-      deallocateInstructor(activeItem.id);
-    } else if (activeItem?.source === 'ALLOCATION') {
-      removeInstructorAllocation(activeItem.id);
-    } else if (activeItem) {
-      removeAgendaItem(activeItem.id);
-    }
-    setIsModalOpen(false);
-  };
+  if (!activeItem) return;
+
+  // ✅ Se for uma demanda (ou allocation) e existir CTM ligado a ela, remove junto
+  if (activeItem.source === 'DEMANDA' || activeItem.source === 'ALLOCATION') {
+    const demandId = activeItem.demandId || activeItem.id; // DEMANDA usa id, ALLOCATION usa demandId
+    removeCTMForDemandIfAny(demandId);
+  }
+
+  // fluxo atual (sem inventar nada novo)
+  if (isMobileContext && activeItem) {
+    removeResourceAllocation(activeItem.id);
+  } else if (activeItem.source === 'DEMANDA') {
+    deallocateInstructor(activeItem.id);
+  } else if (activeItem.source === 'ALLOCATION') {
+    removeInstructorAllocation(activeItem.id);
+  } else {
+    removeAgendaItem(activeItem.id);
+  }
+
+  setIsModalOpen(false);
+};
+
 
   const handleRemoveMobileEvent = () => {
     if (activeMobileEvent) setMobileResourceEvents(prev => prev.filter(e => e.id !== activeMobileEvent.id));
@@ -621,84 +652,131 @@ const CalendarView: React.FC = () => {
               {instructors
                 .filter(i => i.status === 'ATIVO')
                 .map(instructor => (
-                  <tr key={instructor.id} className="border-b border-gray-100 last:border-0 hover:bg-slate-50/10 transition-colors">
-                    <td className="p-4 border-r border-gray-100 font-bold text-slate-700 bg-white sticky left-0 z-20 shadow-sm flex items-center gap-3">
+                <tr
+                  key={instructor.id}
+                  className="border-b border-gray-100 last:border-0 hover:bg-slate-50/10 transition-colors"
+                >
+                  {/* COLUNA INSTRUTOR (ajustada p/ auto-height) */}
+                  <td className="p-3 border-r border-gray-100 font-bold text-slate-700 bg-white sticky left-0 z-20 shadow-sm align-top">
+                    <div className="h-full flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-black text-[10px] border border-blue-100">
                         {instructor.name.charAt(0)}
                       </div>
                       <span className="truncate max-w-[140px] font-bold text-slate-600">{instructor.name}</span>
-                    </td>
+                    </div>
+                  </td>
 
-                    <td className="px-1 py-2 border-r border-gray-100 bg-white">
-                      <input
-                        type="text"
-                        placeholder="Atende..."
-                        className="w-full text-[9px] font-bold p-0.5 border border-transparent rounded bg-transparent outline-none focus:border-blue-300"
-                        value={extraInfo[instructor.id]?.coverage || ''}
-                        onChange={e =>
-                          setExtraInfo({
-                            ...extraInfo,
-                            [instructor.id]: { ...extraInfo[instructor.id], coverage: e.target.value }
-                          })
-                        }
-                      />
-                    </td>
+                  <td className="px-1 py-2 border-r border-gray-100 bg-white align-top">
+                    <input
+                      type="text"
+                      placeholder="Atende..."
+                      className="w-full text-[9px] font-bold p-0.5 border border-transparent rounded bg-transparent outline-none focus:border-blue-300"
+                      value={extraInfo[instructor.id]?.coverage || ''}
+                      onChange={e =>
+                        setExtraInfo({
+                          ...extraInfo,
+                          [instructor.id]: { ...extraInfo[instructor.id], coverage: e.target.value }
+                        })
+                      }
+                    />
+                  </td>
 
-                    <td className="px-1 py-2 border-r border-gray-100 bg-white">
-                      <input
-                        type="text"
-                        placeholder="Reside..."
-                        className="w-full text-[9px] font-bold p-0.5 border border-transparent rounded bg-transparent outline-none focus:border-blue-300"
-                        value={extraInfo[instructor.id]?.residence || ''}
-                        onChange={e =>
-                          setExtraInfo({
-                            ...extraInfo,
-                            [instructor.id]: { ...extraInfo[instructor.id], residence: e.target.value }
-                          })
-                        }
-                      />
-                    </td>
-
+                  <td className="px-1 py-2 border-r border-gray-100 bg-white align-top">
+                    <input
+                      type="text"
+                      placeholder="Reside..."
+                      className="w-full text-[9px] font-bold p-0.5 border border-transparent rounded bg-transparent outline-none focus:border-blue-300"
+                      value={extraInfo[instructor.id]?.residence || ''}
+                      onChange={e =>
+                        setExtraInfo({
+                          ...extraInfo,
+                          [instructor.id]: { ...extraInfo[instructor.id], residence: e.target.value }
+                        })
+                      }
+                    />
+                  </td>
                     {daysInView.map(day => {
                       const dateKey = `${instructor.id}-${formatDateKey(day)}`;
                       const item = agendaByDay[dateKey];
                       const cellItem = item ? { type: 'INSTRUCTOR_EVENT', data: item } : null;
 
                       return (
-                        <td
-                          key={dateKey}
-                          onClick={() => handleCellClick(instructor, day)}
-                          onDragOver={e => e.preventDefault()}
-                          onDrop={e => handleDrop(e, instructor.id)}
-                          className={`p-1 border-r border-gray-100 h-16 cursor-pointer transition-all ${day.getDay() % 6 === 0 ? 'bg-slate-50/50' : ''}`}
-                        >
-                          {cellItem && (
-                            <div
-                              draggable={!isCoordinator && (cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION')}
-                              onDragStart={!isCoordinator ? e => handleDragStart(e, cellItem.data) : undefined}
-                              className={`w-full h-full rounded-lg border shadow-sm p-1 flex flex-col items-center justify-center text-center overflow-hidden transition-all active:scale-95 ${
-                                AGENDA_STYLING[cellItem.data.type]?.bg || 'bg-gray-100'
-                              } ${AGENDA_STYLING[cellItem.data.type]?.text || 'text-gray-600'} ${
-                                AGENDA_STYLING[cellItem.data.type]?.border || 'border-gray-200'
-                              }`}
-                            >
-                              <span className="text-[8px] font-black uppercase tracking-tighter truncate w-full leading-tight">
-                                {cellItem.data.title}
-                              </span>
+                    <td
+                      key={dateKey}
+                      onClick={() => handleCellClick(instructor, day)}
+                      onDragOver={e => e.preventDefault()}
+                      onDrop={e => handleDrop(e, instructor.id)}
+                      className={`p-1 border-r border-gray-100 h-16 cursor-pointer transition-all ${
+                      day.getDay() % 6 === 0 ? 'bg-slate-50/50' : ''
+                    }`}
 
-                              {(cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION') && (
-                                <span className="text-[7px] opacity-60 font-black tracking-tighter truncate mt-0.5 uppercase">
-                                  {cellItem.data.source === 'ALLOCATION' ? '👤 Alocado' : 'Demanda'}
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </td>
+                    >
+                    {cellItem && (
+                      <div
+                        draggable={!isCoordinator && (cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION')}
+                        onDragStart={!isCoordinator ? e => handleDragStart(e, cellItem.data) : undefined}
+                        className={`w-full h-full rounded-lg border shadow-sm p-1 flex flex-col items-center justify-center text-center overflow-hidden transition-all active:scale-95 ${
+                          AGENDA_STYLING[cellItem.data.type]?.bg || 'bg-gray-100'
+                        } ${AGENDA_STYLING[cellItem.data.type]?.text || 'text-gray-600'} ${
+                          AGENDA_STYLING[cellItem.data.type]?.border || 'border-gray-200'
+                        }`}
+                      >
+                        <div className="flex flex-col items-center justify-center w-full leading-tight">
+                          {/* Linha principal */}
+                          <span className="text-[8px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-2">
+                            {cellItem.data.title}
+                          </span>
+
+                          {/* Linha secundária: ID SAP / Pedido Cliente */}
+                          {(() => {
+                            const demandId =
+                              cellItem.data.source === 'ALLOCATION'
+                                ? cellItem.data.demandId
+                                : cellItem.data.demandId || cellItem.data.id;
+
+                            const demand = demands.find(d => d.id === demandId);
+                            if (!demand?.clientDemandId) return null;
+
+                            return (
+                              <span className="text-[9px] font-semibold text-white/85 tracking-tight mt-0.5">
+                                {demand.clientDemandId}
+                              </span>
+                            );
+                          })()}
+                        </div>
+
+                        {/* CTM */}
+                        {(cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION') &&
+                          (() => {
+                            const demandId =
+                              cellItem.data.source === 'ALLOCATION'
+                                ? cellItem.data.demandId
+                                : cellItem.data.demandId || cellItem.data.id;
+
+                            const hasCTM =
+                              !!demandId &&
+                              resourceAllocations.some(
+                                a => a.resourceType === 'CENTRO_TREINAMENTO_MOVEL' && a.demandId === demandId
+                              );
+
+                            if (!hasCTM) return null;
+
+                            return (
+                              <span className="mt-0.5 flex items-center justify-center gap-1 opacity-80 pt-[1px]">
+                                <Truck size={10} strokeWidth={2.75} />
+                                <span className="text-[7px] font-black uppercase tracking-tight">CTM</span>
+                              </span>
+                            );
+                          })()}
+                      </div>
+                    )}
+
+                    </td>
+
                       );
                     })}
                   </tr>
                 ))}
-
               {/* Linha Centro Móvel */}
               <tr className="bg-slate-50 border-t-2 border-slate-200 border-b border-gray-100">
                 <td className="p-4 border-r border-gray-100 font-black text-[11px] text-amber-700 bg-[#fffbeb] sticky left-0 z-20 shadow-sm flex items-center gap-3">
@@ -718,24 +796,26 @@ const CalendarView: React.FC = () => {
                   if (!cellItem)
                     return (
                       <td
-                        key={`mobile-${key}`}
-                        onClick={() => handleMobileCellClick(day)}
-                        className={`p-1 border-r border-gray-100 h-16 cursor-pointer transition-all ${day.getDay() % 6 === 0 ? 'bg-slate-50/50' : ''}`}
+                    key={`mobile-${key}`}
+                    onClick={() => handleMobileCellClick(day)}
+                    className={`p-1 border-r border-gray-100 relative cursor-pointer overflow-hidden transition-all align-top ${
+                      day.getDay() % 6 === 0 ? 'bg-slate-50/50' : ''
+                    }`}
                       />
                     );
 
                   const isStart = getDatePart(cellItem.data.start) === key;
 
                   return (
-                    <td
-                      key={`mobile-${key}`}
-                      onClick={() => handleMobileCellClick(day)}
-                      className={`p-1 border-r border-gray-100 h-16 relative cursor-pointer overflow-hidden transition-all ${
-                        day.getDay() % 6 === 0 ? 'bg-slate-50/50' : ''
-                      }`}
+                  <td
+                    key={`mobile-${key}`}
+                    onClick={() => handleMobileCellClick(day)}
+                    className={`p-1 border-r border-gray-100 relative cursor-pointer overflow-hidden transition-all align-top ${
+                      day.getDay() % 6 === 0 ? 'bg-slate-50/50' : ''
+                    }`}
                     >
                       <div
-                        className={`w-full h-full max-h-full rounded-lg border-2 p-1 flex flex-col items-center justify-center text-center overflow-hidden transition-all active:scale-95 leading-tight ${
+                        className={`w-full min-h-[72px] rounded-lg border-2 p-1 flex flex-col items-center justify-center text-center overflow-hidden transition-all active:scale-95 leading-tight ${
                           cellItem.type === 'MIRROR'
                             ? 'border-dashed border-amber-300 bg-amber-50 text-amber-800'
                             : 'border-solid border-slate-300 bg-slate-100 text-slate-600'
@@ -853,55 +933,71 @@ const CalendarView: React.FC = () => {
             <div className="p-7 pt-0 flex flex-col gap-3 border-t bg-white overflow-y-auto flex-1">
               {modalMode === 'VIEW' && activeItem ? (
                 <>
-                  {(() => {
-                    const linkedDemand =
-                      activeItem.source === 'DEMANDA' || activeItem.source === 'ALLOCATION'
-                        ? demands.find(d => d.id === (activeItem.demandId || activeItem.id))
-                        : null;
-                    if (!linkedDemand) return null;
+              {(() => {
+                const linkedDemand =
+                  activeItem.source === 'DEMANDA' || activeItem.source === 'ALLOCATION'
+                    ? demands.find(d => d.id === (activeItem.demandId || activeItem.id))
+                    : null;
 
-                    const company = companies.find(c => c.id === linkedDemand.companyId);
-                    const training = trainings.find(t => t.id === linkedDemand.trainingId);
+                if (!linkedDemand) return null;
 
-                    return (
-                      <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 space-y-2 mb-2">
-                        <div className="flex items-center gap-2">
-                          <Tag size={14} className="text-blue-500" />
-                          <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest">Demanda: #{linkedDemand.id}</span>
-                        </div>
+                const company = companies.find(c => c.id === linkedDemand.companyId);
+                const training = trainings.find(t => t.id === linkedDemand.trainingId);
 
-                        <div className="flex items-center gap-2">
-                          <Building size={14} className="text-blue-400" />
-                          <span className="text-xs font-bold text-slate-700">{company?.name || '---'}</span>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <GraduationCap size={14} className="text-blue-400" />
-                          <span className="text-xs font-medium text-slate-600">{training?.name || '---'}</span>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <Info size={12} className="text-slate-400" />
-                        <label className="text-[8px] font-black text-slate-400 uppercase">ORIGEM</label>
-                      </div>
-                      <span className="text-xs font-black text-slate-700">
-                        {activeItem.source === 'ALLOCATION' ? 'ALOCAÇÃO' : activeItem.source}
+                return (
+                  <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 space-y-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <Tag size={14} className="text-blue-500" />
+                      <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest">
+                        DEMANDA: #{linkedDemand.id}
                       </span>
                     </div>
 
-                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <CalendarDays size={12} className="text-slate-400" />
-                        <label className="text-[8px] font-black text-slate-400 uppercase">TIPO</label>
+                    {/* ✅ ID do Cliente (SAP / Pedido / ID interno) */}
+                    {linkedDemand.clientDemandId && (
+                      <div className="flex items-center gap-2">
+                        <Tag size={14} className="text-blue-400" />
+                        <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest">
+                          ID: {linkedDemand.clientDemandId}
+                        </span>
                       </div>
-                      <span className="text-xs font-black text-blue-600 uppercase">{activeItem.type}</span>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <Building size={14} className="text-blue-400" />
+                      <span className="text-xs font-bold text-slate-700">{company?.name || '---'}</span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <GraduationCap size={14} className="text-blue-400" />
+                      <span className="text-xs font-medium text-slate-600">{training?.name || '---'}</span>
                     </div>
                   </div>
+                );
+              })()}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <Info size={12} className="text-slate-400" />
+                    <label className="text-[8px] font-black text-slate-400 uppercase">ORIGEM</label>
+                  </div>
+
+                  <span className="text-xs font-black text-slate-700">
+                    {activeItem.source === 'ALLOCATION' ? 'ALOCAÇÃO' : activeItem.source}
+                  </span>
+                </div>
+
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <CalendarDays size={12} className="text-slate-400" />
+                    <label className="text-[8px] font-black text-slate-400 uppercase">TIPO</label>
+                  </div>
+
+                  <span className="text-xs font-black text-blue-600 uppercase">{activeItem.type}</span>
+                </div>
+              </div>
+
 
                   <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
                     <div className="flex items-center gap-1.5 mb-1">

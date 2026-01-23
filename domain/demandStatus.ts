@@ -87,3 +87,52 @@ export function calculateDemandStatus(
   // 7️⃣ Caso inicial
   return 'NOVA';
 }
+
+// ✅ Label centralizado para a Agenda (inclui marcação Noturno "(N)")
+export function formatDemandLabel(input: {
+  trainingNr?: string;
+  companyName?: string;
+  startDate?: string | Date;
+  endDate?: string | Date;
+}) {
+  const trainingNr = String(input.trainingNr ?? '').trim();
+  const companyName = String(input.companyName ?? '').trim();
+
+  const base =
+    trainingNr && companyName
+      ? `${trainingNr} - ${companyName}`
+      : trainingNr || companyName || 'Demanda';
+
+  const hasTimeInfo = (v: any) => {
+    const s = String(v ?? '');
+    // detecta se tem hora (ex: 2026-01-23T18:00:00 ou "18:00")
+    return s.includes('T') || /(\d{1,2}):(\d{2})/.test(s);
+  };
+
+  const isNight = (() => {
+    if (!input.startDate || !input.endDate) return false;
+
+    // Se não tiver hora no start/end, não arriscamos marcar como noturno
+    if (!hasTimeInfo(input.startDate) && !hasTimeInfo(input.endDate)) return false;
+
+    const start = new Date(input.startDate);
+    const end = new Date(input.endDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return false;
+
+    const sh = start.getHours();
+    const eh = end.getHours();
+
+    // Regra do seu pedido: 18h–6h
+    // Marca noturno se:
+    // - começa >= 18h
+    // - OU termina <= 6h
+    // - OU atravessa meia-noite (hora final menor que hora inicial)
+    if (sh >= 18) return true;
+    if (eh <= 6) return true;
+    if (sh > eh) return true;
+
+    return false;
+  })();
+
+  return isNight ? `${base} (N)` : base;
+}

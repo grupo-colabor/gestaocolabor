@@ -289,7 +289,16 @@ useEffect(() => {
     id: row.id,
     demandId: row.demand_id,
     status: row.status,
-    expenses: row.expenses ?? {},
+    expenses: {
+      breakfast: '',
+      lunch: '',
+      dinner: '',
+      transport: '',
+      others: '',
+      classHours: undefined,
+      hourRate: undefined,
+      ...(row.expenses ?? {})
+    },
     attachments: row.attachments ?? [],
     otherExpenses: row.other_expenses ?? [],
     updatedAt: row.updated_at ?? row.created_at ?? new Date().toISOString(),

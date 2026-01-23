@@ -264,12 +264,44 @@ const MeasurementView: React.FC = () => {
     };
   };
 
-  const totals = useMemo(() => {
-    if (!selectedMeasurement) return { 
-      hospedagem: 0, locomocao: 0, cafe: 0, almoco: 0, jantar: 0, outros: 0, total: 0 
+const totals = useMemo(() => {
+  if (!selectedMeasurement) {
+    return {
+      hospedagem: 0,
+      locomocao: 0,
+      cafe: 0,
+      almoco: 0,
+      jantar: 0,
+      outros: 0,
+      hourClass: 0,
+      total: 0
     };
-    return getMeasurementTotals(selectedMeasurement);
-  }, [selectedMeasurement]);
+  }
+
+  // totais normais (despesas)
+  const baseTotals = getMeasurementTotals(selectedMeasurement);
+
+  // Hora/Aula
+  const classHours =
+    Number((selectedMeasurement.expenses as any)?.classHours ?? 0) || 0;
+
+  const hourRate =
+    Number((selectedMeasurement.expenses as any)?.hourRate ?? 0) || 0;
+
+  const hourClass = classHours * hourRate;
+
+  return {
+    ...baseTotals,
+    hourClass,
+    total: baseTotals.total + hourClass
+  };
+}, [selectedMeasurement]);
+
+  // ✅ Valores para a UI do bloco Hora/Aula (não dão erro de escopo)
+  const classHours = Number((selectedMeasurement?.expenses as any)?.classHours ?? 0) || 0;
+  const hourRate = Number((selectedMeasurement?.expenses as any)?.hourRate ?? 0) || 0;
+  const hourClassTotal = classHours * hourRate;
+
 
   const exportSummary = useMemo(() => {
     const selectedMeasurements = measurements.filter(m => selectedForExport.has(m.id));
@@ -286,9 +318,33 @@ const MeasurementView: React.FC = () => {
   }, [measurements, selectedForExport]);
 
   const handleOpenDetail = (m: Measurement) => {
-    setSelectedMeasurement({ ...m });
-    setIsModalOpen(true);
-  };
+  const d = demands.find(dm => dm.id === m.demandId);
+  const t = d ? trainings.find(tr => tr.id === d.trainingId) : null;
+
+  const trainingHours =
+    typeof t?.hours === 'number'
+      ? t.hours
+      : Number((t as any)?.hours) || undefined; // fallback se vier string
+
+  const next: Measurement = {
+  ...m,
+  expenses: {
+    // ✅ garante os campos obrigatórios SEMPRE
+    breakfast: m.expenses?.breakfast ?? '',
+    lunch: m.expenses?.lunch ?? '',
+    dinner: m.expenses?.dinner ?? '',
+    transport: m.expenses?.transport ?? '',
+    others: m.expenses?.others ?? '',
+
+    // ✅ novos campos
+    classHours: m.expenses?.classHours ?? trainingHours,
+    hourRate: m.expenses?.hourRate ?? undefined
+  }
+};
+  setSelectedMeasurement(next);
+  setIsModalOpen(true);
+};
+
 
   const handleSaveMeasurement = () => {
     if (selectedMeasurement) {
@@ -522,6 +578,15 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
   if (!d) return [];
 
   const demandTotals = getMeasurementTotals(m);
+
+  // ✅ Hora/Aula (vem de expenses)
+  const classHours = Number((m.expenses as any)?.classHours ?? 0) || 0;
+  const hourRate = Number((m.expenses as any)?.hourRate ?? 0) || 0;
+  const hourClassTotal = classHours * hourRate;
+
+  // ✅ total geral considerando Hora/Aula
+  const totalWithHourClass = demandTotals.total + hourClassTotal;
+
   const companyName = getCompanyName(d.companyId);
   const trainingName = getTrainingName(d.trainingId);
   const instructorName = getInstructorName(d.instructorId);
@@ -633,6 +698,15 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
     }
   }
 
+  // ✅ Bloco Hora/Aula no Word (aparece no relatório)
+  children.push(
+    new Paragraph({ text: "💰 HORA/AULA", heading: HeadingLevel.HEADING_3, spacing: { before: 200 } }),
+    new Paragraph({ children: [new TextRun({ text: "Horas do Treinamento: ", bold: true }), new TextRun(String(classHours))] }),
+    new Paragraph({ children: [new TextRun({ text: "Valor Hora/Aula: ", bold: true }), new TextRun(formatCurrency(hourRate))] }),
+    new Paragraph({ children: [new TextRun({ text: "TOTAL HORA/AULA: ", bold: true }), new TextRun(formatCurrency(hourClassTotal))] }),
+    new Paragraph({ spacing: { after: 200 } })
+  );
+
   if (m.otherExpenses.length > 0) {
     children.push(new Paragraph({ text: "➕ OUTRAS DESPESAS", heading: HeadingLevel.HEADING_3, spacing: { before: 200 } }));
 
@@ -681,7 +755,8 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
       spacing: { before: 300, after: 300 },
       children: [
         new TextRun({
-          text: `TOTAL GERAL DEMANDA ${d.id}: ${formatCurrency(demandTotals.total)}`,
+          // ✅ total final com Hora/Aula
+          text: `TOTAL GERAL DEMANDA ${d.id}: ${formatCurrency(totalWithHourClass)}`,
           bold: true,
         }),
       ],
@@ -1140,6 +1215,59 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                  ))}
               </div>
 
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-4">
+                <DollarSign size={14} className="text-emerald-500" /> Hora/Aula
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">
+                    Horas do Treinamento
+                  </label>
+                  <input
+                    type="number"
+                    className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none bg-slate-50"
+                    value={classHours}
+                    disabled
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">Puxado do Treinamento</p>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">
+                    Valor Hora/Aula (manual)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                    value={hourRate}
+                    onChange={(e) => {
+                    const val = Number(e.target.value || 0);
+
+                    setSelectedMeasurement({
+                      ...selectedMeasurement,
+                      expenses: {
+                        ...selectedMeasurement.expenses, // mantém breakfast/lunch/dinner etc
+                        hourRate: val,                   // atualiza hourRate
+                      } as any,
+                    });
+                  }}
+                  />
+                </div>
+
+                <div className="text-right">
+                  <span className="block text-[10px] font-black text-slate-300 uppercase tracking-widest">
+                    Total Hora/Aula
+                  </span>
+                  <span className="text-2xl font-black text-slate-900">
+                    {formatCurrency(hourClassTotal)}
+                  </span>
+                </div>
+              </div>
+            </div>
+   
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <CategoryBlock 
                   category="HOSPEDAGEM" label="Hospedagem" icon={Home} colorClass="text-green-500" 

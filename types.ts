@@ -225,6 +225,8 @@ export interface Measurement {
     dinner: string;
     transport: string;
     others: string;
+    classHours?: number;
+    hourRate?: number;
   };
   attachments: Attachment[];
   otherExpenses: OtherExpenseItem[]; // Múltiplas despesas 'Outros'

@@ -505,7 +505,9 @@ const syncEvidencesFromDb = useCallback(async () => {
       endDate: row.end_date ?? '',
       practiceStartDate: row.practice_start_date ?? undefined,
       practiceEndDate: row.practice_end_date ?? undefined,
-      instructorId: row.instructor_id ?? undefined
+      instructorId: row.instructor_id ?? undefined,
+      clientDemandId: row.client_demand_id ?? undefined,
+            
     } as Demand;
   }, []);
 
@@ -526,7 +528,8 @@ const syncEvidencesFromDb = useCallback(async () => {
       end_date: cleanOrNull(d.endDate),
       practice_start_date: cleanOrNull((d as any).practiceStartDate),
       practice_end_date: cleanOrNull((d as any).practiceEndDate),
-      instructor_id: cleanOrNull((d as any).instructorId)
+      instructor_id: cleanOrNull((d as any).instructorId),
+      client_demand_id: cleanOrNull((d as any).clientDemandId),
     };
 
     if (extra?.id) payload.id = extra.id;

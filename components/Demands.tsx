@@ -327,10 +327,13 @@ const filteredDemands = useMemo(() => {
     }
 
 
-    const matchesText = 
-      d.id.toLowerCase().includes(filter.toLowerCase()) ||
-      getCompanyName(d.companyId).toLowerCase().includes(filter.toLowerCase()) ||
-      getTrainingName(d.trainingId).toLowerCase().includes(filter.toLowerCase());
+    const q = filter.trim().toLowerCase();
+
+    const matchesText =
+      d.id.toLowerCase().includes(q) ||
+      (d.clientDemandId || '').toLowerCase().includes(filter.toLowerCase()) ||
+      getCompanyName(d.companyId).toLowerCase().includes(q) ||
+      getTrainingName(d.trainingId).toLowerCase().includes(q);
 
     if (!matchesText) return false;
 
@@ -1830,6 +1833,7 @@ const handleSave = async () => {
                               {/* Grade de Informações Gerais */}
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-y-6 md:col-span-2">
                                 <DataViewField label="Empresa" value={getCompanyName(formDemand.companyId!)} icon={Building} />
+                                {getCompanyName(formDemand.companyId!).toUpperCase().includes('VALE') && (<DataViewField label="ID SAP / Pedido Cliente" value={formDemand.clientDemandId || '---'} icon={Tag} />)}
                                 <DataViewField label="Treinamento" value={getTrainingName(formDemand.trainingId!)} icon={BookOpen} />
                                 <DataViewField label="Unidade / Local" value={formDemand.modality === 'ONLINE' ? 'N/A' : formDemand.trainingLocal} icon={MapPin} />
                                 <DataViewField label="Início" value={formatDateTime(formDemand.startDate)} icon={Calendar} />

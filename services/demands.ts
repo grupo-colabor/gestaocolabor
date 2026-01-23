@@ -37,7 +37,7 @@ export async function fetchDemands(): Promise<DemandRow[]> {
       id, number, company_id, training_id, status, modality,
       start_date, end_date,
       practice_start_date, practice_end_date,
-      region_id, training_local,
+      region_id, training_local,client_demand_id,
       instructor_id,
       created_at, updated_at
     `

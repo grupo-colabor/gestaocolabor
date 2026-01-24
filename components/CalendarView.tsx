@@ -91,9 +91,26 @@ const getDayBoundsForIteration = (startStr: string, endStr: string) => {
 // Para exibição: se vier só data (sem hora), assume 08:00 / 18:00
 const ensureDateTimeForDisplay = (s: string, kind: 'start' | 'end') => {
   if (!s) return s;
+
+  // se vier só data
   if (isDateOnly(s)) return `${s}T${kind === 'start' ? '08:00' : '18:00'}`;
-  return s;
+
+  // ✅ se vier com timezone (Z ou +00:00 / -03:00), remove pra não converter horário
+  // exemplos:
+  // 2026-01-28T14:00:00.000Z -> 2026-01-28T14:00
+  // 2026-01-28T14:00:00-03:00 -> 2026-01-28T14:00
+  const noTz = s
+    .replace(/\.\d{3}Z$/, '')                 // remove .000Z
+    .replace(/Z$/, '')                        // remove Z final
+    .replace(/([+-]\d{2}:\d{2})$/, '');        // remove offset final
+
+  // corta segundos se existir (opcional, mas ajuda a padronizar)
+  // 2026-01-28T14:00:00 -> 2026-01-28T14:00
+  const noSeconds = noTz.replace(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(:\d{2})?$/, '$1');
+
+  return noSeconds;
 };
+
 
 function resolveLinkedDemand(item: UnifiedItem | null, demands: Demand[]): Demand | null {
   if (!item) return null;
@@ -256,12 +273,41 @@ const CalendarView: React.FC = () => {
       }
     });
 
-    // PRIORIDADE 1: InstructorAllocations
+   // PRIORIDADE 1: InstructorAllocations
     instructorAllocations.forEach(a => {
       const d = demands.find(dm => dm.id === a.demandId);
       if (!d || d.status === 'CANCELADA') return;
+      console.log('🧪 TESTE AGENDA', {
+      demandId: d.id,
+      modality: d.modality,
 
-      const { start, end } = getDayBoundsForIteration(a.startDate, a.endDate);
+      demandStart: d.startDate,
+      demandEnd: d.endDate,
+
+      practiceStart: d.practiceStartDate,
+      practiceEnd: d.practiceEndDate,
+
+      allocationStart: a.startDate,
+      allocationEnd: a.endDate
+    });
+
+      // ✅ Se for HÍBRIDO e existir prática definida, a agenda deve mostrar APENAS a prática
+      const effectiveStart =
+      d.modality === 'HIBRIDO' && d.practiceStartDate && d.practiceEndDate
+        ? d.practiceStartDate
+        : d.startDate;
+
+    const effectiveEnd =
+      d.modality === 'HIBRIDO' && d.practiceStartDate && d.practiceEndDate
+        ? d.practiceEndDate
+        : d.endDate;
+
+
+      // ✅ Para exibição: se vier só data (sem hora), assume 08:00 / 18:00
+      const displayStart = ensureDateTimeForDisplay(effectiveStart, 'start');
+      const displayEnd = ensureDateTimeForDisplay(effectiveEnd, 'end');
+
+      const { start, end } = getDayBoundsForIteration(displayStart, displayEnd);
       const cursor = new Date(start);
 
       const training = trainings.find(t => t.id === d.trainingId);
@@ -270,9 +316,8 @@ const CalendarView: React.FC = () => {
         trainingNr: training?.nr,
         companyName: company?.name,
         startDate: d.startDate,
-        endDate: d.endDate,
+        endDate: d.endDate
       });
-
 
       const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
@@ -280,8 +325,8 @@ const CalendarView: React.FC = () => {
         map[`${a.instructorId}-${formatDateKey(cursor)}`] = {
           id: a.id,
           instructorId: a.instructorId,
-          startDate: a.startDate,
-          endDate: a.endDate,
+          startDate: displayStart,  // ✅ agora reflete prática no híbrido
+          endDate: displayEnd,      // ✅ agora reflete prática no híbrido
           type: 'TREINAMENTO',
           title: formattedTitle,
           source: 'ALLOCATION',
@@ -291,7 +336,8 @@ const CalendarView: React.FC = () => {
         };
         cursor.setDate(cursor.getDate() + 1);
       }
-    });
+});
+
 
     // PRIORIDADE 2: Demandas sem Allocation (Instrutor único / Legado)
     demands
@@ -304,7 +350,9 @@ const CalendarView: React.FC = () => {
         const effectiveEnd =
           d.modality === 'HIBRIDO' && d.practiceStartDate && d.practiceEndDate ? d.practiceEndDate : d.endDate;
 
-        const { start, end } = getDayBoundsForIteration(effectiveStart, effectiveEnd);
+        const start = parseAnyToDate(ensureDateTimeForDisplay(effectiveStart, 'start'));
+        const end = parseAnyToDate(ensureDateTimeForDisplay(effectiveEnd, 'end'));
+
         const cursor = new Date(start);
 
         const training = trainings.find(t => t.id === d.trainingId);

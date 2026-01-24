@@ -417,7 +417,6 @@ useEffect(() => {
     if (!isModalOpen) return;
     if (modalMode === 'CREATE') return;
     if (!formDemand.id) return;
-    if (modalSubMode !== 'VIEW' && modalSubMode !== 'EDIT') return;
 
     // ✅ SEMPRE começa vazio ao abrir (evita “herdar” docs de outra demanda)
     setDbDocs({});
@@ -518,25 +517,52 @@ useEffect(() => {
     });
   };
 
-  const formatDateTime = (dateStr?: string) => {
-    if (!dateStr) return '---';
-    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-      const [y, m, d] = dateStr.split('-');
-      return `${d}/${m}/${y}`;
+const formatDateTime = (dateStr?: string) => {
+  if (!dateStr) return '---';
+
+  const s = String(dateStr).trim();
+  if (!s) return '---';
+
+  // 1) Se vier só "YYYY-MM-DD" (date input)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, d] = s.split('-');
+    return `${d}/${m}/${y}`;
+  }
+
+  // 2) Se vier "YYYY-MM-DDTHH:mm..." (com ou sem Z / seconds)
+  //    ✅ NÃO usar new Date() aqui (evita shift de timezone na Visualização)
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) {
+    const [datePart, timePartRaw] = s.split('T');
+    const [y, m, d] = datePart.split('-');
+
+    const hhmm = (timePartRaw || '').slice(0, 5); // "HH:mm"
+    if (hhmm && /^\d{2}:\d{2}$/.test(hhmm)) {
+      return `${d}/${m}/${y} ${hhmm}`;
     }
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return dateStr;
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const year = date.getFullYear();
-    const baseDate = `${day}/${month}/${year}`;
-    if (dateStr.includes('T') || (dateStr.includes(':') && dateStr.length > 10)) {
-      const hours = String(date.getHours()).padStart(2, '0');
-      const minutes = String(date.getMinutes()).padStart(2, '0');
-      return `${baseDate} ${hours}:${minutes}`;
-    }
-    return baseDate;
-  };
+
+    // se por algum motivo não tiver HH:mm, cai só na data
+    return `${d}/${m}/${y}`;
+  }
+
+  // 3) Fallback: tenta parsear com Date() (para formatos diferentes)
+  const date = new Date(s);
+  if (isNaN(date.getTime())) return s;
+
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  const baseDate = `${day}/${month}/${year}`;
+
+  // Se tiver hora (string tem 'T' ou parece datetime), mostra HH:mm
+  if (s.includes('T') || (s.includes(':') && s.length > 10)) {
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${baseDate} ${hours}:${minutes}`;
+  }
+
+  return baseDate;
+};
+
 
   // --- HANDLER DE EXCLUSÃO (REAL COM VALIDAÇÃO) ---
         const handleDeleteDemand = () => {
@@ -890,6 +916,7 @@ ${formDemand.observations || 'N/A'}
     setPendingPdfs({ classList: null, instructorRelease: null });
     setDbDocs({});
     setIsModalOpen(true);
+    didSyncEditTimesRef.current = false;
   };
 
  const handleOpenView = (demand: Demand) => {
@@ -898,6 +925,7 @@ ${formDemand.observations || 'N/A'}
   setModalMode('EDIT');
   setPendingPdfs({ classList: null, instructorRelease: null });
   setDbDocs({});
+  didSyncEditTimesRef.current = false;
 
   // 🔐 PASSO 3.3 — CONTROLE DE SUBMODE
   // Coordenador: sempre VIEW
@@ -934,42 +962,47 @@ const mapLodgingMode = (a: AccommodationType | null | undefined) => {
 };
 
 
-// ✅ helpers para normalizar inputs -> ISO (timestamptz)
-const toIsoFromDateInput = (v?: string | null) => {
-  if (!v) return null; // v: "YYYY-MM-DD"
-  return new Date(`${v}T00:00:00`).toISOString();
-};
+// ===============================
+// ✅ Helpers ÚNICOS (não duplicar)
+// - Usados no handleSave e na logística
+// - IMPORTANTE: NÃO use toISOString() para startDate/endDate da demanda
+// ===============================
 
-const toIsoFromDateTimeLocal = (v?: string | null) => {
-  if (!v) return null; // v: "YYYY-MM-DDTHH:mm"
-  return new Date(v).toISOString();
-};
-
-const toIsoFromDateSafe = (v?: string | null) => {
+const toIsoFromAnyDateSafe = (v?: string | null) => {
   const s = (v ?? '').trim();
   if (!s) return null;
 
-  if (s.includes('T')) {
-    const d = new Date(s);
-    return isNaN(d.getTime()) ? null : d.toISOString();
-  }
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+
+  return d.toISOString();
+};
+
+// datetime-local ("YYYY-MM-DDTHH:mm") -> ISO (para campos de logística que são timestamptz)
+const toIsoFromDateTimeLocalSafe = (dt?: string | null) => {
+  const s = (dt ?? '').trim();
+  if (!s) return null;
+
+  // aceita yyyy-mm-ddThh:mm
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) return null;
+
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+
+  return d.toISOString();
+};
+
+// date ("YYYY-MM-DD") -> ISO 00:00:00 (para hotelCheckIn/out se forem timestamptz/date no banco)
+const toIsoFromDateInputSafe = (dateStr?: string | null) => {
+  const s = (dateStr ?? '').trim();
+  if (!s) return null;
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
 
   const d = new Date(`${s}T00:00:00`);
-  return isNaN(d.getTime()) ? null : d.toISOString();
-};
+  if (Number.isNaN(d.getTime())) return null;
 
-const toIsoFromDateTimeLocalSafe = (v?: string | null) => {
-  const s = (v ?? '').trim();
-  if (!s) return null;
-
-  // se já veio com data+hora
-  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
-    const d = new Date(s);
-    return isNaN(d.getTime()) ? null : d.toISOString();
-  }
-
-  // hora sem data (ex: "08:00:00+00:00") => inválido pro seu modelo
-  return null;
+  return d.toISOString();
 };
 
 const handleSave = async () => {
@@ -979,32 +1012,6 @@ const handleSave = async () => {
   if (isSaving) return;
   setIsSaving(true);
 
-  // Helpers de data "seguros" (não quebram com string vazia / inválida)
-  const toIsoFromDateInputSafe = (dateStr?: string | null) => {
-    const s = (dateStr ?? '').trim();
-    if (!s) return null;
-    // aceita yyyy-mm-dd
-    const d = new Date(`${s}T00:00:00`);
-    if (Number.isNaN(d.getTime())) return null;
-    return d.toISOString();
-  };
-
-  const toIsoFromDateTimeLocalSafe = (dt?: string | null) => {
-    const s = (dt ?? '').trim();
-    if (!s) return null;
-    // aceita yyyy-mm-ddThh:mm (datetime-local)
-    const d = new Date(s);
-    if (Number.isNaN(d.getTime())) return null;
-    return d.toISOString();
-  };
-
-  const toIsoFromAnyDateSafe = (v?: string | null) => {
-    const s = (v ?? '').trim();
-    if (!s) return null;
-    const d = new Date(s);
-    if (Number.isNaN(d.getTime())) return null;
-    return d.toISOString();
-  };
 
   try {
     // Validação de datas (Início <= Fim) — segura
@@ -1025,6 +1032,16 @@ const handleSave = async () => {
     // ✅ ONLINE: não pode gerar pendência de logística / local
     const sanitizedDemand: Demand = {
       ...(formDemand as Demand),
+
+      // ✅ FIX: salvar datas sempre como ISO (timestamptz estável)
+      // (evita sumir hora / input quebrar quando volta do Supabase)
+      startDate: (formDemand.startDate || '') as any,
+      endDate: (formDemand.endDate || '') as any,
+
+      // ✅ prática híbrida (se existir) também em ISO estável
+      practiceStartDate: ((formDemand as any).practiceStartDate || null) as any,
+      practiceEndDate: ((formDemand as any).practiceEndDate || null) as any,
+
       trainingLocal: formDemand.modality === 'ONLINE' ? '' : (formDemand.trainingLocal || ''),
       regionId: formDemand.regionId || '',
 
@@ -1052,6 +1069,7 @@ const handleSave = async () => {
       hotelCheckOut: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelCheckOut || ''),
       hotelPayment: formDemand.modality === 'ONLINE' ? null : formDemand.hotelPayment,
     };
+
 
     setResourceError(null);
 
@@ -1107,8 +1125,8 @@ const handleSave = async () => {
 
     // flags coerentes com a regra:
     // - tem carro/hotel se respondeu qualquer coisa (incluindo N/A)
-    const hasCarFlag = isOnline ? true : transportModeToDb != null;
-    const hasHotelFlag = isOnline ? true : lodgingModeToDb != null;
+    const hasCarFlag = isOnline ? false : transportModeToDb != null;
+    const hasHotelFlag = isOnline ? false : lodgingModeToDb != null;
 
     // 3) Logística — salva no CREATE e no EDIT
     try {
@@ -1118,8 +1136,9 @@ const handleSave = async () => {
 
       await upsertLogisticByDemandId(demandId, {
         // datas base da demanda
-        start_date: isOnline ? null : toIsoFromAnyDateSafe(sanitizedDemand.startDate),
-        end_date: isOnline ? null : toIsoFromAnyDateSafe(sanitizedDemand.endDate),
+       start_date: null,
+        end_date: null,
+
 
         // ✅ modos (com N/A persistido)
         transport_mode: transportModeToDb,
@@ -1234,14 +1253,23 @@ const handleSave = async () => {
     setIsSaving(false);
   }
 };
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+
+  const toLocalDateInputFromAny = (v?: string) => {
+    if (!v) return '';
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return (v.includes('T') ? v.split('T')[0] : v);
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  };
 
 
   const handleOpenAllocationModal = () => {
     if (!formDemand.id) return;
     setAllocationForm({
       instructorId: '',
-      startDate: formDemand.startDate?.split('T')[0] || '',
-      endDate: formDemand.endDate?.split('T')[0] || ''
+      startDate: toLocalDateInputFromAny(formDemand.startDate) || '',
+      endDate: toLocalDateInputFromAny(formDemand.endDate) || ''
+
     });
     setIsAllocationModalOpen(true);
   };
@@ -1269,9 +1297,54 @@ const handleSave = async () => {
       return;
     }
 
-    // Dados de tempo padrão para persistência no estado e agenda (08:00 às 18:00)
-    const startIso = `${allocationForm.startDate}T08:00`;
-    const endIso = `${allocationForm.endDate}T18:00`;
+  const usePractice =
+    (formDemand.modality === 'HIBRIDO' || formDemand.modality === 'HÍBRIDA' || formDemand.modality === 'HÍBRIDO') &&
+    !!(formDemand as any).practiceStartDate &&
+    !!(formDemand as any).practiceEndDate;
+
+    const getHHMMFromISO = (v?: string) => {
+  if (!v) return '';
+  if (!v.includes('T')) return '';
+  return v.split('T')[1].slice(0, 5);
+};
+
+
+
+  // prática (se existir)
+  const practiceStartRaw = (formDemand as any).practiceStartDate as string | undefined;
+  const practiceEndRaw   = (formDemand as any).practiceEndDate as string | undefined;
+
+  // datas locais (YYYY-MM-DD) da prática
+  const practiceStartDateOnly = toLocalDateInputFromAny(practiceStartRaw);
+  const practiceEndDateOnly   = toLocalDateInputFromAny(practiceEndRaw);
+
+  // horários locais (HH:mm) da prática
+  const practiceStartTime = getHHMMFromISO(practiceStartRaw) || '08:00';
+  const practiceEndTime   = getHHMMFromISO(practiceEndRaw)   || '18:00';
+
+
+  // horários locais (HH:mm) da demanda (isso é o que aparece na Visualização da Demanda)
+  const demandStartTime = getHHMMFromISO(formDemand.startDate) || '08:00';
+  const demandEndTime = getHHMMFromISO(formDemand.endDate) || '18:00';
+
+
+  // monta datetime local (YYYY-MM-DDTHH:mm)
+  const startLocal = usePractice
+  ? `${practiceStartDateOnly}T${practiceStartTime}`
+  : `${allocationForm.startDate}T${demandStartTime}`;
+
+  const endLocal = usePractice
+  ? `${practiceEndDateOnly}T${practiceEndTime}`
+  : `${allocationForm.endDate}T${demandEndTime}`;
+
+
+ // ✅ SALVA SEM CONVERSÃO (mantém HH:mm e não aplica timezone)
+  const startIso = startLocal;
+  const endIso   = endLocal;
+
+
+
+
 
     // 2. Validar conflito de agenda do instrutor (usa comparação exata de data/hora)
     if (hasScheduleConflict(allocationForm.instructorId, startIso, endIso)) {
@@ -1300,8 +1373,9 @@ const handleSave = async () => {
     if (!formDemand.id) return;
     setResourceError(null);
     setResourceForm({
-      startDate: formDemand.startDate?.split('T')[0] || '',
-      endDate: formDemand.endDate?.split('T')[0] || ''
+      startDate: toLocalDateInputFromAny(formDemand.startDate) || '',
+      endDate: toLocalDateInputFromAny(formDemand.endDate) || ''
+
     });
     setIsResourceModalOpen(true);
   };
@@ -1360,30 +1434,106 @@ const handleSave = async () => {
     }
   };
 
+// =======================================
+// ✅ Date/Time helpers (inputs estáveis)
+// - Aceita ISO com Z, ISO sem Z, ou YYYY-MM-DDTHH:mm
+// - Sempre retorna valores válidos p/ input date/time
+// =======================================
+
+  
+  const toLocalDateInput = (v?: string | null) => {
+    const s = (v ?? '').trim();
+    if (!s) return '';
+
+    // Se vier só yyyy-mm-dd, já serve
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) {
+      // fallback: tenta cortar "YYYY-MM-DD" se existir
+      if (s.includes('T')) return s.split('T')[0];
+      return '';
+    }
+
+    const y = d.getFullYear();
+    const m = pad2(d.getMonth() + 1);
+    const day = pad2(d.getDate());
+    return `${y}-${m}-${day}`;
+  };
+
+  const toLocalTimeInput = (v?: string | null) => {
+    const s = (v ?? '').trim();
+    if (!s) return '';
+
+    // Se já veio como YYYY-MM-DDTHH:mm (sem seconds/Z), pega HH:mm
+    const m1 = s.match(/T(\d{2}:\d{2})/);
+    if (m1?.[1]) return m1[1];
+
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return '';
+
+    const hh = pad2(d.getHours());
+    const mm = pad2(d.getMinutes());
+    return `${hh}:${mm}`;
+  };
+
+  const buildLocalDateTime = (date: string, time: string) => {
+    const d = (date ?? '').trim();
+    const t = (time ?? '').trim();
+    if (!d) return '';
+    const safeTime = t || '08:00';
+    // datetime-local padrão: YYYY-MM-DDTHH:mm
+    return `${d}T${safeTime}`;
+  };
+
   const handleDateChange = (field: 'startDate' | 'endDate', val: string) => {
-    const currentFull = formDemand[field] || '';
-    const timePart = currentFull.includes('T') ? currentFull.split('T')[1] : '08:00';
-    setFormDemand({ ...formDemand, [field]: `${val}T${timePart}` });
+    const time = toLocalTimeInput(formDemand[field] as any) || '08:00';
+    setFormDemand(prev => ({ ...prev, [field]: buildLocalDateTime(val, time) }));
     setResourceError(null);
   };
 
   const handleTimeChange = (field: 'startDate' | 'endDate', val: string) => {
-    const currentFull = formDemand[field] || '';
-    const datePart = currentFull.includes('T') ? currentFull.split('T')[0] : '';
-    if (!datePart) return;
-    setFormDemand({ ...formDemand, [field]: `${datePart}T${val}` });
+    const date = toLocalDateInput(formDemand[field] as any);
+    if (!date) return;
+    setFormDemand(prev => ({ ...prev, [field]: buildLocalDateTime(date, val) }));
     setResourceError(null);
   };
 
   const getDateValue = (field: 'startDate' | 'endDate') => {
-    const full = formDemand[field] || '';
-    return full.includes('T') ? full.split('T')[0] : full;
+    return toLocalDateInput(formDemand[field] as any);
   };
 
   const getTimeValue = (field: 'startDate' | 'endDate') => {
-    const full = formDemand[field] || '';
-    return full.includes('T') ? full.split('T')[1] : '';
+    return toLocalTimeInput(formDemand[field] as any);
   };
+
+  // ✅ Ao entrar em "FORM" no EDIT, garante que os inputs de hora abram com o horário real salvo
+  const didSyncEditTimesRef = useRef(false);
+
+  useEffect(() => {
+    // Só roda quando abrir edição e entrar no FORM
+    if (!isModalOpen) return;
+    if (modalMode !== 'EDIT') return;
+    if (modalSubMode !== 'FORM') return;
+    if (!activeDemand) return;
+
+    // evita ficar sobrescrevendo enquanto usuário edita
+    if (didSyncEditTimesRef.current) return;
+    didSyncEditTimesRef.current = true;
+
+    const startDate = toLocalDateInput(activeDemand.startDate);
+    const startTime = toLocalTimeInput(activeDemand.startDate) || '08:00';
+
+    const endDate = toLocalDateInput(activeDemand.endDate);
+    const endTime = toLocalTimeInput(activeDemand.endDate) || '18:00';
+
+    setFormDemand(prev => ({
+      ...prev,
+      startDate: buildLocalDateTime(startDate, startTime),
+      endDate: buildLocalDateTime(endDate, endTime),
+    }));
+  }, [isModalOpen, modalMode, modalSubMode, activeDemand]);
+
 
   const DataViewField = ({ label, value, icon: Icon, isPdf = false, onDownload }: { label: string, value: string | number | undefined, icon?: any, isPdf?: boolean, onDownload?: () => void }) => (
     <div className="flex flex-col space-y-1">
@@ -1796,7 +1946,22 @@ const handleSave = async () => {
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Empresa / Cliente *</label><select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={formDemand.companyId} onChange={(e) => setFormDemand({...formDemand, companyId: e.target.value})}><option value="">Selecione...</option>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
                               {isValeSelected && (<div className="bg-blue-50 p-3 rounded-lg border border-blue-100"><label className="block text-xs font-bold text-blue-700 mb-1">ID SAP / Pedido Cliente *</label><input type="text" className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={formDemand.clientDemandId || ''} onChange={(e) => setFormDemand({...formDemand, clientDemandId: e.target.value})} /></div>)}
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Treinamento *</label><select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" value={formDemand.trainingId} onChange={(e) => { const t = trainings.find(t => t.id === e.target.value); setFormDemand({...formDemand, trainingId: e.target.value, modality: t?.modality || formDemand.modality}); }}><option value="">Selecione...</option>{trainings.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
-                              <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Local do Treinamento *</label><input list="localidades-list" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={formDemand.trainingLocal || ''} onChange={(e) => setFormDemand({...formDemand, trainingLocal: e.target.value})} placeholder="Ex: Brucutu, Vitória..." /></div>
+                              <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                                  Local do Treinamento {formDemand.modality === 'ONLINE' ? '' : '*'}
+                                </label>
+
+                                <input
+                                  list="localidades-list"
+                                  className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${
+                                    formDemand.modality === 'ONLINE' ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''
+                                  }`}
+                                  value={formDemand.modality === 'ONLINE' ? '' : (formDemand.trainingLocal || '')}
+                                  onChange={(e) => setFormDemand({ ...formDemand, trainingLocal: e.target.value })}
+                                  placeholder={formDemand.modality === 'ONLINE' ? 'N/A (ONLINE)' : 'Ex: Brucutu, Vitória...'}
+                                  disabled={formDemand.modality === 'ONLINE'}
+                                />
+                              </div>
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Região</label><select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" value={formDemand.regionId} onChange={(e) => setFormDemand({...formDemand, regionId: e.target.value})}><option value="">Selecione...</option>{regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></div>
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tipo de Atendimento</label><input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-slate-100 text-slate-700 font-bold" value={formDemand.modality || '---'} readOnly /><p className="text-[10px] text-slate-400 mt-1">Campo automático (puxado do Treinamento).</p></div>
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Solicitante</label><input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={formDemand.requester || ''} onChange={(e) => setFormDemand({...formDemand, requester: e.target.value})} /></div>
@@ -2186,15 +2351,24 @@ const handleSave = async () => {
                                
                                {/* Lista da Turma */}
                                 <div className="space-y-3">
-                                  <label className="block text-xs font-bold text-gray-500 uppercase">Lista da Turma (PDF)</label>
+                                  <label className="block text-xs font-bold text-gray-500 uppercase">
+                                    Lista da Turma (PDF)
+                                  </label>
 
                                   {pendingPdfs.classList ? (
                                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-blue-100">
                                       <div className="flex items-center gap-2 overflow-hidden">
                                         <FileCheck size={18} className="text-blue-600 shrink-0" />
-                                        <span className="text-xs font-bold text-slate-700 truncate">{pendingPdfs.classList.name}</span>
+                                        <span className="text-xs font-bold text-slate-700 truncate">
+                                          {pendingPdfs.classList.name}
+                                        </span>
                                       </div>
-                                      <button onClick={() => removePdf('classList')} className="p-1.5 text-slate-300 hover:text-red-500 transition-colors">
+
+                                      <button
+                                        onClick={() => removePdf('classList')}
+                                        className="p-1.5 text-slate-300 hover:text-red-500 transition-colors"
+                                        title="Remover PDF"
+                                      >
                                         <Trash2 size={16} />
                                       </button>
                                     </div>
@@ -2202,22 +2376,34 @@ const handleSave = async () => {
                                     <div className="relative group">
                                       <input
                                         type="file"
-                                        accept=".pdf"
+                                        accept="application/pdf"
                                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                                        onChange={e => e.target.files && handlePdfSelect('classList', e.target.files[0])}
+                                        onChange={(e) => {
+                                          const f = e.target.files?.[0];
+                                          if (f) handlePdfSelect('classList', f);
+
+                                          // 🔧 permite selecionar o MESMO arquivo novamente
+                                          e.currentTarget.value = '';
+                                        }}
                                         disabled={false}
                                       />
-                                      <div className={`p-4 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-2 transition-all
-                                        ${modalMode === 'CREATE' ? 'border-slate-200 bg-slate-50 opacity-60' : 'border-slate-200 group-hover:border-blue-400 group-hover:bg-blue-50/30'}
-                                      `}>
+
+                                      <div
+                                        className={`p-4 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-2 transition-all
+                                          border-slate-200 group-hover:border-blue-400 group-hover:bg-blue-50/30
+                                        `}
+                                      >
                                         <FilePlus size={24} className="text-slate-300 group-hover:text-blue-500" />
                                         <span className="text-[10px] font-black uppercase text-slate-400">
-                                          {modalMode === 'CREATE' ? 'Salve a demanda para anexar' : 'Anexar Lista de Presença'}
+                                          {modalMode === 'CREATE'
+                                            ? 'Selecionar PDF (será enviado ao criar)'
+                                            : 'Anexar Lista de Presença'}
                                         </span>
                                       </div>
                                     </div>
                                   )}
                                 </div>
+
 
                               {/* Liberação do Instrutor */}
                               <div className="space-y-3">
@@ -2239,10 +2425,14 @@ const handleSave = async () => {
                                       type="file"
                                       accept=".pdf"
                                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                                      onChange={e => e.target.files && handlePdfSelect('instructorRelease', e.target.files[0])}
+                                      onChange={(e) => {
+                                      const f = e.target.files?.[0];
+                                      if (f) handlePdfSelect('instructorRelease', f);
+                                      e.currentTarget.value = '';
+                                    }}
                                     />
                                     <div className={`p-4 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-2 transition-all
-                                      ${modalMode === 'CREATE' ? 'border-slate-200 bg-slate-50 opacity-60' : 'border-slate-200 group-hover:border-blue-400 group-hover:bg-blue-50/30'}
+                                      ${'border-slate-200 group-hover:border-blue-400 group-hover:bg-blue-50/30'}
                                     `}>
                                       <FilePlus size={24} className="text-slate-300 group-hover:text-blue-500" />
                                       <span className="text-[10px] font-black uppercase text-slate-400">

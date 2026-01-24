@@ -514,16 +514,34 @@ const syncResourceAllocationsFromDb = useCallback(async () => {
 
   try {
     const rows = await fetchResourceAllocations();
-    const mapped = (rows || []).map(mapResourceAllocationFromDb);
+    // ✅ proteção extra: se demandas ainda não carregaram, NÃO tenta limpar órfãos
+    if (demands.length === 0) {
+      const mapped = (rows || []).map(mapResourceAllocationFromDb);
+      setResourceAllocations(mapped);
+      return;
+    }
+    // ✅ filtra CTMs órfãos (resource_allocations sem demanda existente)
+    const demandIds = new Set(demands.map(d => d.id));
+    const validRows = (rows || []).filter(r => demandIds.has(r.demand_id));
+    const orphanRows = (rows || []).filter(r => !demandIds.has(r.demand_id));
+
+    if (orphanRows.length) {
+      console.warn('[CTM] Encontrado(s) CTM órfão(s) no banco. Removendo:', orphanRows);
+
+      // remove do banco para não bloquear alocações futuras
+      await supabase
+        .from('resource_allocations')
+        .delete()
+        .in('id', orphanRows.map(o => o.id));
+    }
+
+    const mapped = validRows.map(mapResourceAllocationFromDb);
     setResourceAllocations(mapped);
   } catch (e) {
     console.error('[ResourceAllocations] sync error', e);
   }
-}, [AUTH_MODE, mapResourceAllocationFromDb]);
+}, [AUTH_MODE, mapResourceAllocationFromDb, demands.length]);
 
-  const reloadInstructors = useCallback(async () => {
-    await syncInstructorsFromDb();
-  }, [syncInstructorsFromDb]);
 
   // ======================================================
   // ✅ DEMANDAS (SUPABASE) — mappers + sync
@@ -720,8 +738,13 @@ useEffect(() => {
   if (AUTH_MODE !== 'supabase') return;
   if (loading) return;
   if (!user) return;
+
+  // ✅ só sincroniza CTM depois que demandas já foram carregadas
+  if (demands.length === 0) return;
+
   syncResourceAllocationsFromDb();
-}, [AUTH_MODE, user, loading, syncResourceAllocationsFromDb]);
+}, [AUTH_MODE, user, loading, demands.length, syncResourceAllocationsFromDb]);
+
 
 // ✅ Carregar Evidências do Supabase (fonte da verdade)
 useEffect(() => {
@@ -745,6 +768,11 @@ useEffect(() => {
     if (!user) return;
     syncInstructorsFromDb();
   }, [AUTH_MODE, user, loading, syncInstructorsFromDb]);
+
+  const reloadInstructors = useCallback(async () => {
+  await syncInstructorsFromDb();
+}, [syncInstructorsFromDb]);
+
 
   // ✅ Carregar Demandas do Supabase (fonte da verdade)
   useEffect(() => {
@@ -1639,7 +1667,12 @@ const removeAgendaItem = useCallback(
 
   const addResourceAllocation = useCallback((a: LogisticAllocation) => {
   // estado local
-  setResourceAllocations(prev => [...prev, a]);
+  setResourceAllocations(prev => {
+  const exists = prev.some(x => x.demandId === a.demandId);
+  if (exists) return prev.map(x => (x.demandId === a.demandId ? a : x));
+  return [...prev, a];
+});
+
 
   // supabase
   if (AUTH_MODE !== 'supabase') return;
@@ -1662,7 +1695,10 @@ const removeAgendaItem = useCallback(
 
 
   const updateResourceAllocation = useCallback((a: LogisticAllocation) => {
-  setResourceAllocations(prev => prev.map(item => (item.id === a.id ? a : item)));
+  setResourceAllocations(prev =>
+  prev.map(item => (item.demandId === a.demandId ? { ...item, ...a } : item))
+);
+
 
   if (AUTH_MODE !== 'supabase') return;
 
@@ -1686,11 +1722,14 @@ const removeAgendaItem = useCallback(
   const removeResourceAllocation = useCallback((id: string) => {
   let found: LogisticAllocation | undefined;
 
-  // remove local (e captura o item certo do "prev")
   setResourceAllocations(prev => {
     found = prev.find(a => a.id === id);
-    return prev.filter(a => a.id !== id);
+    if (!found) return prev;
+
+    // ✅ remove pelo demandId (chave real)
+    return prev.filter(a => a.demandId !== found!.demandId);
   });
+
 
   if (AUTH_MODE !== 'supabase') return;
 

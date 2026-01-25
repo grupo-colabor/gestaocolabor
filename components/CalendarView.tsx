@@ -291,21 +291,32 @@ const CalendarView: React.FC = () => {
       allocationEnd: a.endDate
     });
 
-      // ✅ Se for HÍBRIDO e existir prática definida, a agenda deve mostrar APENAS a prática
-      const effectiveStart =
-      d.modality === 'HIBRIDO' && d.practiceStartDate && d.practiceEndDate
-        ? d.practiceStartDate
-        : d.startDate;
+      // ✅ Base sempre é o período do ALLOCATION (não a demanda inteira)
+    const allocStart = ensureDateTimeForDisplay(a.startDate, 'start');
+    const allocEnd = ensureDateTimeForDisplay(a.endDate, 'end');
 
-    const effectiveEnd =
-      d.modality === 'HIBRIDO' && d.practiceStartDate && d.practiceEndDate
-        ? d.practiceEndDate
-        : d.endDate;
+    let displayStart = allocStart;
+    let displayEnd = allocEnd;
 
+    // ✅ HÍBRIDO: agenda só mostra PRÁTICA, mas respeitando o split do allocation (interseção)
+    if (d.modality === 'HIBRIDO' && d.practiceStartDate && d.practiceEndDate) {
+      const practiceStart = ensureDateTimeForDisplay(d.practiceStartDate, 'start');
+      const practiceEnd = ensureDateTimeForDisplay(d.practiceEndDate, 'end');
 
-      // ✅ Para exibição: se vier só data (sem hora), assume 08:00 / 18:00
-      const displayStart = ensureDateTimeForDisplay(effectiveStart, 'start');
-      const displayEnd = ensureDateTimeForDisplay(effectiveEnd, 'end');
+      const startDate = parseAnyToDate(displayStart);
+      const endDate = parseAnyToDate(displayEnd);
+      const pStartDate = parseAnyToDate(practiceStart);
+      const pEndDate = parseAnyToDate(practiceEnd);
+
+      // max(start)
+      displayStart = startDate > pStartDate ? displayStart : practiceStart;
+      // min(end)
+      displayEnd = endDate < pEndDate ? displayEnd : practiceEnd;
+
+      // sem sobreposição? não renderiza nada
+      if (parseAnyToDate(displayStart) > parseAnyToDate(displayEnd)) return;
+    }
+
 
       const { start, end } = getDayBoundsForIteration(displayStart, displayEnd);
       const cursor = new Date(start);

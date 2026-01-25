@@ -1359,14 +1359,29 @@ const handleSave = async () => {
 
   const handleOpenAllocationModal = () => {
     if (!formDemand.id) return;
+
+    const usePractice =
+      (formDemand.modality === 'HIBRIDO' || formDemand.modality === 'HÍBRIDA' || formDemand.modality === 'HÍBRIDO') &&
+      !!(formDemand as any).practiceStartDate &&
+      !!(formDemand as any).practiceEndDate;
+
+    const startBase = usePractice
+      ? toLocalDateInputFromAny((formDemand as any).practiceStartDate)
+      : toLocalDateInputFromAny(formDemand.startDate);
+
+    const endBase = usePractice
+      ? toLocalDateInputFromAny((formDemand as any).practiceEndDate)
+      : toLocalDateInputFromAny(formDemand.endDate);
+
     setAllocationForm({
       instructorId: '',
-      startDate: toLocalDateInputFromAny(formDemand.startDate) || '',
-      endDate: toLocalDateInputFromAny(formDemand.endDate) || ''
-
+      startDate: startBase || '',
+      endDate: endBase || ''
     });
+
     setIsAllocationModalOpen(true);
   };
+
 
   const handleAddAllocation = () => {
     if (!allocationForm.instructorId || !allocationForm.startDate || !allocationForm.endDate) {
@@ -1423,12 +1438,12 @@ const handleSave = async () => {
 
 
   // monta datetime local (YYYY-MM-DDTHH:mm)
-  const startLocal = usePractice
-  ? `${practiceStartDateOnly}T${practiceStartTime}`
+ const startLocal = usePractice
+  ? `${allocationForm.startDate}T${practiceStartTime}`
   : `${allocationForm.startDate}T${demandStartTime}`;
 
-  const endLocal = usePractice
-  ? `${practiceEndDateOnly}T${practiceEndTime}`
+const endLocal = usePractice
+  ? `${allocationForm.endDate}T${practiceEndTime}`
   : `${allocationForm.endDate}T${demandEndTime}`;
 
 

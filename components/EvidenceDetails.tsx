@@ -32,6 +32,7 @@ interface EvidenceDetailsProps {
   data: EvidenceData;
   onBack: () => void;
   onUpdate: (updatedData: EvidenceData) => void;
+  onSaveNotes: (notes: string) => Promise<void>;
 }
 
 const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
@@ -40,8 +41,10 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
   training,
   data,
   onBack,
-  onUpdate
+  onUpdate,
+  onSaveNotes
 }) => {
+
   const { setNotification, instructors } = useApp();
 
   // ✅ safeData DENTRO do componente
@@ -52,6 +55,13 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
     photos: [],
     notes: ''
   };
+
+  const [notes, setNotes] = React.useState(safeData.notes || '');
+
+  React.useEffect(() => {
+    setNotes(safeData.notes || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.demandId]); // ou [demand.id]
 
   // ✅ Cache de signed URLs para preview (principalmente fotos)
   const [signedUrlByFileId, setSignedUrlByFileId] = React.useState<Record<string, string>>({});
@@ -504,8 +514,8 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
           <textarea
             className="w-full h-24 border border-slate-100 rounded-2xl p-4 text-xs font-medium text-slate-600 outline-none focus:ring-2 focus:ring-purple-100 resize-none bg-slate-50/50"
             placeholder="Digite notas relevantes sobre as evidências deste treinamento..."
-            value={safeData.notes || ''}
-            onChange={(e) => onUpdate({ ...safeData, notes: e.target.value })}
+            value={notes}
+          onChange={(e) => setNotes(e.target.value)}
           />
         </div>
       </div>

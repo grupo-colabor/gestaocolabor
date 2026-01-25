@@ -88,6 +88,54 @@ export function calculateDemandStatus(
   return 'NOVA';
 }
 
+// ===================================================
+// ✅ NOTURNO (timezone-safe)
+// - NÃO usa new Date() para extrair hora (evita shift por timezone)
+// - Extrai HH:mm direto da string (YYYY-MM-DDTHH:mm / ISO)
+// ===================================================
+
+const getHHMM = (v?: string | Date | null) => {
+  if (!v) return null;
+
+  // Se vier Date, extrai HH:mm do próprio Date (caso raro)
+  // (mas a preferência do app é string, então não depende disso)
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return null;
+    const hh = v.getHours();
+    const mm = v.getMinutes();
+    return { hh, mm, total: hh * 60 + mm };
+  }
+
+  const s = String(v).trim();
+  if (!s) return null;
+
+  // pega HH:mm de qualquer coisa que tenha "T"
+  const m = s.match(/T(\d{2}):(\d{2})/);
+  if (!m) return null;
+
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
+
+  return { hh, mm, total: hh * 60 + mm };
+};
+
+const isNightShift = (start?: string | Date | null, end?: string | Date | null) => {
+  const s = getHHMM(start);
+  const e = getHHMM(end);
+  if (!s || !e) return false;
+
+  const nightStart = 18 * 60; // 18:00
+  const nightEnd = 6 * 60;    // 06:00
+
+  // Regra pedida: "18h–6h"
+  // Marca noturno se:
+  // - começa >= 18:00, OU
+  // - termina <= 06:00, OU
+  // - cruza meia-noite (end menor que start)
+  return s.total >= nightStart || e.total <= nightEnd || e.total < s.total;
+};
+
 // ✅ Label centralizado para a Agenda (inclui marcação Noturno "(N)")
 export function formatDemandLabel(input: {
   trainingNr?: string;
@@ -103,36 +151,8 @@ export function formatDemandLabel(input: {
       ? `${trainingNr} - ${companyName}`
       : trainingNr || companyName || 'Demanda';
 
-  const hasTimeInfo = (v: any) => {
-    const s = String(v ?? '');
-    // detecta se tem hora (ex: 2026-01-23T18:00:00 ou "18:00")
-    return s.includes('T') || /(\d{1,2}):(\d{2})/.test(s);
-  };
+  // ✅ Agora é timezone-safe: usa extractor HH:mm da string
+  const nightTag = isNightShift(input.startDate ?? null, input.endDate ?? null) ? ' (N)' : '';
 
-  const isNight = (() => {
-    if (!input.startDate || !input.endDate) return false;
-
-    // Se não tiver hora no start/end, não arriscamos marcar como noturno
-    if (!hasTimeInfo(input.startDate) && !hasTimeInfo(input.endDate)) return false;
-
-    const start = new Date(input.startDate);
-    const end = new Date(input.endDate);
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) return false;
-
-    const sh = start.getHours();
-    const eh = end.getHours();
-
-    // Regra do seu pedido: 18h–6h
-    // Marca noturno se:
-    // - começa >= 18h
-    // - OU termina <= 6h
-    // - OU atravessa meia-noite (hora final menor que hora inicial)
-    if (sh >= 18) return true;
-    if (eh <= 6) return true;
-    if (sh > eh) return true;
-
-    return false;
-  })();
-
-  return isNight ? `${base} (N)` : base;
+  return `${base}${nightTag}`;
 }

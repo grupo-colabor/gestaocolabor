@@ -128,6 +128,20 @@ const Demands: React.FC = () => {
   const canDeleteDemand = isAdmin || isAnalyst;
 
 const [filter, setFilter] = useState('');
+  type SortKey =
+    | 'id'
+    | 'company'
+    | 'training'
+    | 'region'
+    | 'startDate'
+    | 'instructor'
+    | 'status';
+
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({
+    key: 'id',
+    dir: 'desc',
+  });
+
   const [showDeleteMessage, setShowDeleteMessage] = useState(false);
   const [showDeleteBlocked, setShowDeleteBlocked] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -317,63 +331,137 @@ const [filter, setFilter] = useState('');
     return map;
   }, [demands, instructorAllocations]);
 
+
 const filteredDemands = useMemo(() => {
-  return demands.filter(d => {
-
-    // 🔐 REGRA DE VISUALIZAÇÃO — COORDENADOR
-    // Coordenador só vê demandas que tenham instrutor principal (via alocações ou campo antigo)
-    if (isCoordinator && !principalInstructorByDemandId[d.id]) {
-      return false;
-    }
-
-
-    const q = filter.trim().toLowerCase();
-
-    const matchesText =
-      d.id.toLowerCase().includes(q) ||
-      (d.clientDemandId || '').toLowerCase().includes(filter.toLowerCase()) ||
-      getCompanyName(d.companyId).toLowerCase().includes(q) ||
-      getTrainingName(d.trainingId).toLowerCase().includes(q);
-
-    if (!matchesText) return false;
-
-    const currentStatus = calculateDemandStatus({
-      startDate: d.startDate,
-      endDate: d.endDate,
-      instructorId: d.instructorId,
-      cancelled: d.status === 'CANCELADA',
-      trainingLocal: d.trainingLocal,
-      modality: d.modality,
-    } as any);
-
-
-    if (advancedFilters.companyId && d.companyId !== advancedFilters.companyId) return false;
-    if (advancedFilters.regionId && d.regionId !== advancedFilters.regionId) return false;
-    if (advancedFilters.trainingId && d.trainingId !== advancedFilters.trainingId) return false;
-
-    if (advancedFilters.status) {
-      if (advancedFilters.status === 'CANCELADA') {
-        if (d.status !== 'CANCELADA') return false;
-      } else {
-        if (d.status === 'CANCELADA') return false;
-        if (currentStatus !== advancedFilters.status) return false;
+  return demands
+    .filter(d => {
+      // 🔐 REGRA DE VISUALIZAÇÃO — COORDENADOR
+      // Coordenador só vê demandas que tenham instrutor principal (via alocações ou campo antigo)
+      if (isCoordinator && !principalInstructorByDemandId[d.id]) {
+        return false;
       }
-    }
 
-    if (advancedFilters.instructorId) {
-      if (advancedFilters.instructorId === 'unallocated') {
-        if (d.instructorId) return false;
-      } else {
-        if (d.instructorId !== advancedFilters.instructorId) return false;
+      const q = filter.trim().toLowerCase();
+
+      const matchesText =
+        d.id.toLowerCase().includes(q) ||
+        (d.clientDemandId || '').toLowerCase().includes(q) ||
+        getCompanyName(d.companyId).toLowerCase().includes(q) ||
+        getTrainingName(d.trainingId).toLowerCase().includes(q);
+
+      if (!matchesText) return false;
+
+      const currentStatus = calculateDemandStatus({
+        startDate: d.startDate,
+        endDate: d.endDate,
+        instructorId: d.instructorId,
+        cancelled: d.status === 'CANCELADA',
+        trainingLocal: d.trainingLocal,
+        modality: d.modality,
+      } as any);
+
+      if (advancedFilters.companyId && d.companyId !== advancedFilters.companyId) return false;
+      if (advancedFilters.regionId && d.regionId !== advancedFilters.regionId) return false;
+      if (advancedFilters.trainingId && d.trainingId !== advancedFilters.trainingId) return false;
+
+      if (advancedFilters.status) {
+        if (advancedFilters.status === 'CANCELADA') {
+          if (d.status !== 'CANCELADA') return false;
+        } else {
+          if (d.status === 'CANCELADA') return false;
+          if (currentStatus !== advancedFilters.status) return false;
+        }
       }
-    }
 
-    if (advancedFilters.startDate && d.startDate.split('T')[0] < advancedFilters.startDate) return false;
-    if (advancedFilters.endDate && d.startDate.split('T')[0] > advancedFilters.endDate) return false;
+      if (advancedFilters.instructorId) {
+        if (advancedFilters.instructorId === 'unallocated') {
+          if (d.instructorId) return false;
+        } else {
+          if (d.instructorId !== advancedFilters.instructorId) return false;
+        }
+      }
 
-    return true;
-  }).sort((a, b) => b.id.localeCompare(a.id));
-}, [demands, filter, advancedFilters, companies, trainings, isCoordinator]);
+      if (advancedFilters.startDate && d.startDate.split('T')[0] < advancedFilters.startDate) return false;
+      if (advancedFilters.endDate && d.startDate.split('T')[0] > advancedFilters.endDate) return false;
+
+      return true;
+    })
+    .sort((a, b) => {
+      // ⚠️ Precisa existir:
+      // - sort: { key: SortKey; dir: 'asc' | 'desc' }
+      // - principalInstructorByDemandId
+      // - calculateDemandStatus
+      const dir = sort.dir === 'asc' ? 1 : -1;
+
+      const getStatus = (d: Demand) =>
+        calculateDemandStatus({
+          startDate: d.startDate,
+          endDate: d.endDate,
+          instructorId: d.instructorId,
+          cancelled: d.status === 'CANCELADA',
+          trainingLocal: d.trainingLocal,
+          modality: d.modality,
+        } as any);
+
+      const ai = principalInstructorByDemandId[a.id];
+      const bi = principalInstructorByDemandId[b.id];
+
+      const va = (() => {
+        switch (sort.key) {
+          case 'id':
+            return a.id;
+          case 'company':
+            return getCompanyName(a.companyId);
+          case 'training':
+            return getTrainingName(a.trainingId);
+          case 'region':
+            return getRegionName(a.regionId);
+          case 'startDate':
+            return a.startDate || '';
+          case 'instructor':
+            return getInstructorName(ai);
+          case 'status':
+            return getStatus(a);
+          default:
+            return a.id;
+        }
+      })();
+
+      const vb = (() => {
+        switch (sort.key) {
+          case 'id':
+            return b.id;
+          case 'company':
+            return getCompanyName(b.companyId);
+          case 'training':
+            return getTrainingName(b.trainingId);
+          case 'region':
+            return getRegionName(b.regionId);
+          case 'startDate':
+            return b.startDate || '';
+          case 'instructor':
+            return getInstructorName(bi);
+          case 'status':
+            return getStatus(b);
+          default:
+            return b.id;
+        }
+      })();
+
+      // compara string de forma consistente
+      return dir * String(va).localeCompare(String(vb), 'pt-BR', { sensitivity: 'base' });
+    });
+}, [
+  demands,
+  filter,
+  advancedFilters,
+  companies,
+  trainings,
+  isCoordinator,
+  sort,
+  principalInstructorByDemandId,
+]);
+
 
   // ✅ Mantém o instructorId do modal alinhado ao instrutor principal calculado
   // Só sincroniza enquanto estiver em VIEW (não atrapalha edição no FORM)
@@ -502,6 +590,12 @@ useEffect(() => {
   run();
 }, [isModalOpen, modalMode, modalSubMode, formDemand.id]);
 
+  const toggleSort = (key: SortKey) => {
+    setSort(prev => {
+      if (prev.key !== key) return { key, dir: 'asc' };
+      return { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' };
+    });
+  };
 
 
   const clearFilters = () => {
@@ -1783,15 +1877,58 @@ const handleSave = async () => {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200 text-[11px] uppercase tracking-wider font-black text-slate-500">
-                <th className="p-4">ID</th>
-                <th className="p-4">Empresa</th>
-                <th className="p-4">Treinamento</th>
-                <th className="p-4">Região</th>
-                <th className="p-4">Data Início</th>
-                <th className="p-4">Instrutor</th>
-                <th className="p-4 text-center">Status</th>
-                <th className="p-4 text-center">Ações</th>
-              </tr>
+              <th
+                className="p-4 cursor-pointer select-none"
+                onClick={() => toggleSort('id')}
+              >
+                ID {sort.key === 'id' && (sort.direction === 'asc' ? '↑' : '↓')}
+              </th>
+
+              <th
+                className="p-4 cursor-pointer select-none"
+                onClick={() => toggleSort('company')}
+              >
+                Empresa {sort.key === 'company' && (sort.direction === 'asc' ? '↑' : '↓')}
+              </th>
+
+              <th
+                className="p-4 cursor-pointer select-none"
+                onClick={() => toggleSort('training')}
+              >
+                Treinamento {sort.key === 'training' && (sort.direction === 'asc' ? '↑' : '↓')}
+              </th>
+
+              <th
+                className="p-4 cursor-pointer select-none"
+                onClick={() => toggleSort('region')}
+              >
+                Região {sort.key === 'region' && (sort.direction === 'asc' ? '↑' : '↓')}
+              </th>
+
+              <th
+                className="p-4 cursor-pointer select-none"
+                onClick={() => toggleSort('startDate')}
+              >
+                Data Início {sort.key === 'startDate' && (sort.direction === 'asc' ? '↑' : '↓')}
+              </th>
+
+              <th
+                className="p-4 cursor-pointer select-none"
+                onClick={() => toggleSort('instructor')}
+              >
+                Instrutor {sort.key === 'instructor' && (sort.direction === 'asc' ? '↑' : '↓')}
+              </th>
+
+              <th
+                className="p-4 text-center cursor-pointer select-none"
+                onClick={() => toggleSort('status')}
+              >
+                Status {sort.key === 'status' && (sort.direction === 'asc' ? '↑' : '↓')}
+              </th>
+
+              <th className="p-4 text-center">Ações</th>
+            </tr>
+
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filteredDemands.length > 0 ? filteredDemands.map(demand => {

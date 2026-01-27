@@ -17,7 +17,7 @@ import {
   MessageSquare
 } from 'lucide-react';
 import { AgendaItem, AgendaType, Demand, Instructor } from '../types';
-import { calculateDemandStatus, formatDemandLabel } from '../domain/demandStatus';
+import { calculateDemandStatus } from '../domain/demandStatus';
 import { useAuth } from '../contexts/AuthContext';
 
 // Configuração visual para cada tipo de compromisso
@@ -177,6 +177,19 @@ const CalendarView: React.FC = () => {
 
   const handlePrevMonth = () => setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
   const handleNextMonth = () => setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+  
+  const buildDemandTitle = React.useCallback(
+  (d: Demand) => {
+    const training = trainings.find(t => t.id === d.trainingId);
+    const company = companies.find(c => c.id === d.companyId);
+
+    return `${d.id} • ${company?.name ?? 'Empresa'} • ${training?.nr ?? 'Treinamento'}`;
+  },
+  [trainings, companies]
+);
+
+
+
 
   const daysInView = useMemo(() => {
     const year = currentDate.getFullYear();
@@ -221,15 +234,7 @@ const CalendarView: React.FC = () => {
         const { start, end } = getDayBoundsForIteration(a.startDate, a.endDate);
         const cursor = new Date(start);
 
-        const training = trainings.find(t => t.id === d.trainingId);
-        const company = companies.find(c => c.id === d.companyId);
-        const formattedTitle = formatDemandLabel({
-        trainingNr: training?.nr,
-        companyName: company?.name,
-        startDate: d.startDate,
-        endDate: d.endDate,
-      });
-
+        const formattedTitle = buildDemandTitle(d);
 
         while (cursor <= end) {
           map[formatDateKey(cursor)] = {
@@ -245,7 +250,7 @@ const CalendarView: React.FC = () => {
       });
 
     return map;
-  }, [mobileResourceEvents, resourceAllocations, demands, trainings, companies]);
+  }, [mobileResourceEvents, resourceAllocations, demands, buildDemandTitle]);
 
   /** =========================
    *  2) AGENDA INSTRUTORES
@@ -321,14 +326,8 @@ const CalendarView: React.FC = () => {
       const { start, end } = getDayBoundsForIteration(displayStart, displayEnd);
       const cursor = new Date(start);
 
-      const training = trainings.find(t => t.id === d.trainingId);
-      const company = companies.find(c => c.id === d.companyId);
-      const formattedTitle = formatDemandLabel({
-        trainingNr: training?.nr,
-        companyName: company?.name,
-        startDate: d.startDate,
-        endDate: d.endDate
-      });
+      const formattedTitle = buildDemandTitle(d);
+
 
       const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
@@ -366,9 +365,8 @@ const CalendarView: React.FC = () => {
 
         const cursor = new Date(start);
 
-        const training = trainings.find(t => t.id === d.trainingId);
-        const company = companies.find(c => c.id === d.companyId);
-        const formattedTitle = `${d.id} • ${company?.name ?? 'Empresa'} • ${training?.nr ?? 'Treinamento'}`;
+        const formattedTitle = buildDemandTitle(d);
+
 
         const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
@@ -390,7 +388,7 @@ const CalendarView: React.FC = () => {
       });
 
     return map;
-  }, [agendaItems, instructorAllocations, demands, trainings, companies]);
+  }, [agendaItems, instructorAllocations, demands, buildDemandTitle]);
 
   const handleDragStart = (e: React.DragEvent, item: UnifiedItem) => {
     if (isCoordinator) {

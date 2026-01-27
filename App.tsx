@@ -1658,103 +1658,147 @@ const removeAgendaItem = useCallback(
   }, []);
 
   const removeInstructorAllocation = useCallback(
-    (id: string) => {
-      setInstructorAllocations(prev => {
-        const toRemove = prev.find(a => a.id === id);
-        if (!toRemove) return prev;
+  (id: string) => {
+    setInstructorAllocations(prev => {
+      const toRemove = prev.find(a => a.id === id);
+      if (!toRemove) return prev;
 
-        const demandId = toRemove.demandId;
-        const demand = demands.find(d => d.id === demandId);
-        if (!demand) return prev.filter(a => a.id !== id);
+      const demandId = toRemove.demandId;
+      const demand = demands.find(d => d.id === demandId);
 
-        const otherAllocations = prev.filter(a => a.demandId !== demandId);
-        const remainingForDemand = prev.filter(a => a.demandId === demandId && a.id !== id);
+      // Se não achou demanda, remove local e ainda assim tenta persistir o que sobrou no banco
+      if (!demand) {
+        const next = prev.filter(a => a.id !== id);
 
-        const effective = getEffectiveDemandRange(demand);
+        if (AUTH_MODE === 'supabase') {
+          const forDemand = next.filter(a => a.demandId === demandId);
+          (async () => {
+            await persistInstructorAllocationsForDemand(demandId, forDemand);
+          })();
+        }
 
-        const isValidRange = (startStr: string, endStr: string) => {
-          const s = new Date(startStr).getTime();
-          const e = new Date(endStr).getTime();
-          return !isNaN(s) && !isNaN(e) && s <= e;
+        return next;
+      }
+
+      const otherAllocations = prev.filter(a => a.demandId !== demandId);
+      const remainingForDemand = prev.filter(a => a.demandId === demandId && a.id !== id);
+
+      const effective = getEffectiveDemandRange(demand);
+
+      const isValidRange = (startStr: string, endStr: string) => {
+        const s = new Date(startStr).getTime();
+        const e = new Date(endStr).getTime();
+        return !isNaN(s) && !isNaN(e) && s <= e;
+      };
+
+      // ✅ CASO 1: removeu tudo -> volta para programação (e persiste no Supabase)
+      if (remainingForDemand.length === 0) {
+        // IMPORTANTE: usar updateDemand (persiste no Supabase)
+        updateDemand({ ...demand, instructorId: undefined, status: 'PENDENTE' });
+
+        if (AUTH_MODE === 'supabase') {
+          (async () => {
+            await persistInstructorAllocationsForDemand(demandId, []);
+          })();
+        }
+
+        return otherAllocations;
+      }
+
+      // ✅ CASO 2: sobrou 1 instrutor -> merge para cobrir o período inteiro
+      const uniqueInstructorIds: string[] = Array.from(
+        new Set(
+          remainingForDemand
+            .map(a => a.instructorId)
+            .filter((x): x is string => typeof x === 'string' && x.length > 0)
+        )
+      );
+
+      if (uniqueInstructorIds.length === 1) {
+        const remainingInstructorId = uniqueInstructorIds[0];
+
+        const merged: InstructorAllocation = {
+          id: `ALOC-MERGED-${Date.now()}`, // mantém como você estava fazendo
+          demandId,
+          instructorId: remainingInstructorId,
+          startDate: effective.start,
+          endDate: effective.end
         };
 
-        if (remainingForDemand.length === 0) {
-          setDemands(dPrev =>
-            dPrev.map(d =>
-              d.id === demandId ? { ...d, instructorId: undefined, status: 'PENDENTE' } : d
-            )
-          );
-          return otherAllocations;
+        const next = [...otherAllocations, merged];
+
+        if (AUTH_MODE === 'supabase') {
+          const forDemand = next.filter(a => a.demandId === demandId);
+          (async () => {
+            await persistInstructorAllocationsForDemand(demandId, forDemand);
+          })();
         }
-
-        const uniqueInstructorIds: string[] = Array.from(
-          new Set<string>(
-            remainingForDemand
-              .map(a => a.instructorId)
-              .filter((x): x is string => typeof x === 'string' && x.length > 0)
-          )
-        );
-
-        if (uniqueInstructorIds.length === 1) {
-          const remainingInstructorId = uniqueInstructorIds[0];
-          const instName =
-            instructors.find(i => i.id === remainingInstructorId)?.name || 'outro instrutor';
-
-          const merged: InstructorAllocation = {
-            id: `ALOC-MERGED-${Date.now()}`,
-            demandId,
-            instructorId: remainingInstructorId,
-            startDate: effective.start,
-            endDate: effective.end
-          };
-
-          setNotification({
-            message: `O período removido foi automaticamente reassumido pelo instrutor ${instName} para manter a demanda completa.`,
-            type: 'info'
-          });
-
-          return [...otherAllocations, merged];
-        }
-
-        const z = (n: number) => n.toString().padStart(2, '0');
-        const fmt = (d: Date) =>
-          `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(
-            d.getMinutes()
-          )}`;
-
-        const sorted = [...remainingForDemand].sort((a, b) => a.startDate.localeCompare(b.startDate));
-
-        const rebuilt = sorted.map((alloc, idx) => {
-          let s = alloc.startDate;
-          let e = alloc.endDate;
-
-          if (idx === 0) s = effective.start;
-          if (idx === sorted.length - 1) e = effective.end;
-
-          if (idx < sorted.length - 1) {
-            const nextStart = new Date(sorted[idx + 1].startDate);
-            const currentEnd = new Date(nextStart);
-            currentEnd.setDate(currentEnd.getDate() - 1);
-            currentEnd.setHours(18, 0, 0, 0);
-            e = fmt(currentEnd);
-          }
-
-          return { ...alloc, startDate: s, endDate: e };
-        });
-
-        const cleaned = rebuilt.filter(a => isValidRange(a.startDate, a.endDate));
 
         setNotification({
           message:
-            'O período removido foi automaticamente reassumido por outro instrutor para manter a demanda completa.',
+            'O período removido foi automaticamente reassumido pelo instrutor restante para manter a demanda completa.',
           type: 'info'
         });
 
-        return [...otherAllocations, ...cleaned];
+        return next;
+      }
+
+      // ✅ CASO 3: sobrou mais de 1 -> recalcula limites (sua lógica original)
+      const z = (n: number) => n.toString().padStart(2, '0');
+      const fmt = (d: Date) =>
+        `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(
+          d.getMinutes()
+        )}`;
+
+      const sorted = [...remainingForDemand].sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+      const rebuilt = sorted.map((alloc, idx) => {
+        let s = alloc.startDate;
+        let e = alloc.endDate;
+
+        if (idx === 0) s = effective.start;
+        if (idx === sorted.length - 1) e = effective.end;
+
+        if (idx < sorted.length - 1) {
+          const nextStart = new Date(sorted[idx + 1].startDate);
+          const currentEnd = new Date(nextStart);
+          currentEnd.setDate(currentEnd.getDate() - 1);
+          currentEnd.setHours(18, 0, 0, 0);
+          e = fmt(currentEnd);
+        }
+
+        return { ...alloc, startDate: s, endDate: e };
       });
-    },
-    [demands, instructors, getEffectiveDemandRange]
-  );
+
+      const cleaned = rebuilt.filter(a => isValidRange(a.startDate, a.endDate));
+      const next = [...otherAllocations, ...cleaned];
+
+      if (AUTH_MODE === 'supabase') {
+        const forDemand = next.filter(a => a.demandId === demandId);
+        (async () => {
+          await persistInstructorAllocationsForDemand(demandId, forDemand);
+        })();
+      }
+
+      setNotification({
+        message:
+          'O período removido foi automaticamente reassumido por outro instrutor para manter a demanda completa.',
+        type: 'info'
+      });
+
+      return next;
+    });
+  },
+  [
+    AUTH_MODE,
+    demands,
+    getEffectiveDemandRange,
+    persistInstructorAllocationsForDemand,
+    setNotification,
+    updateDemand
+  ]
+);
+
 
   const addResourceAllocation = useCallback((a: LogisticAllocation) => {
   // estado local

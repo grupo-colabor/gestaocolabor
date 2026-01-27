@@ -6,6 +6,7 @@ import React, {
   useCallback,
   useMemo
 } from 'react';
+
 import {
   LayoutDashboard,
   Briefcase,
@@ -88,6 +89,10 @@ import {
   deleteResourceAllocationByDemandId
 } from './services/resourceAllocations';
 
+import {
+  fetchInstructorAllocations,
+  replaceInstructorAllocationsForDemand
+} from './services/instructorAllocations';
 
 
 
@@ -542,6 +547,38 @@ const syncResourceAllocationsFromDb = useCallback(async () => {
   }
 }, [AUTH_MODE, mapResourceAllocationFromDb, demands.length]);
 
+const mapInstructorAllocationFromDb = useCallback((row: any): InstructorAllocation => {
+  return {
+    id: row.id,
+    demandId: row.demand_id,
+    instructorId: row.instructor_id,
+    startDate: row.start_date,
+    endDate: row.end_date
+  } as InstructorAllocation;
+}, []);
+
+const syncInstructorAllocationsFromDb = useCallback(async () => {
+  if (AUTH_MODE !== 'supabase') return;
+
+  try {
+    const rows = await fetchInstructorAllocations();
+
+    // ✅ Se demandas ainda não carregaram, só mapeia (sem limpar órfãos)
+    if (demands.length === 0) {
+      setInstructorAllocations((rows || []).map(mapInstructorAllocationFromDb));
+      return;
+    }
+
+    // ✅ limpa órfãos localmente (no banco já deve cascade, mas mantém seguro)
+    const demandIds = new Set(demands.map(d => d.id));
+    const valid = (rows || []).filter(r => demandIds.has(r.demand_id));
+
+    setInstructorAllocations(valid.map(mapInstructorAllocationFromDb));
+  } catch (e) {
+    console.error('[InstructorAllocations] sync error', e);
+  }
+}, [AUTH_MODE, demands, mapInstructorAllocationFromDb]);
+
 
   // ======================================================
   // ✅ DEMANDAS (SUPABASE) — mappers + sync
@@ -782,6 +819,16 @@ useEffect(() => {
     syncDemandsFromDb();
   }, [AUTH_MODE, user, loading, syncDemandsFromDb]);
 
+  useEffect(() => {
+    if (AUTH_MODE !== 'supabase') return;
+    if (loading) return;
+    if (!user) return;
+
+    // ✅ só sincroniza depois que demandas carregaram
+    if (demands.length === 0) return;
+
+    syncInstructorAllocationsFromDb();
+  }, [AUTH_MODE, user, loading, demands.length, syncInstructorAllocationsFromDb]);
 
   // ✅ Carregar Medições do Supabase (fonte da verdade)
   useEffect(() => {
@@ -1476,91 +1523,135 @@ const removeAgendaItem = useCallback(
   [AUTH_MODE, setNotification, syncAgendaItemsFromDb]
 );
 
+  const persistInstructorAllocationsForDemand = useCallback(
+    async (demandId: string, allocationsForDemand: InstructorAllocation[]) => {
+      if (AUTH_MODE !== 'supabase') return;
+
+      try {
+        const rows = allocationsForDemand.map(a => ({
+          id: a.id,
+          demand_id: a.demandId,
+          instructor_id: a.instructorId,
+          start_date: a.startDate,
+          end_date: a.endDate
+        }));
+
+        await replaceInstructorAllocationsForDemand(demandId, rows);
+
+        // garante consistência
+        await syncInstructorAllocationsFromDb();
+      } catch (e) {
+        console.error('[InstructorAllocations] persist error', e);
+        setNotification({
+          message: 'Erro ao salvar alocações de instrutor no banco.',
+          type: 'error'
+        });
+      }
+    },
+    [AUTH_MODE, syncInstructorAllocationsFromDb]
+  );
   /**
    * ADD INSTRUCTOR ALLOCATION WITH AUTOMATIC SPLIT
    */
-  const addInstructorAllocation = useCallback((newAlloc: InstructorAllocation) => {
-    setInstructorAllocations(prev => {
-      const fmt = (d: Date) => {
-        const z = (n: number) => n.toString().padStart(2, '0');
-        return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(
-          d.getHours()
-        )}:${z(d.getMinutes())}`;
-      };
+  const addInstructorAllocation = useCallback(
+    (newAlloc: InstructorAllocation) => {
+      setInstructorAllocations(prev => {
+        const fmt = (d: Date) => {
+          const z = (n: number) => n.toString().padStart(2, '0');
+          return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(
+            d.getHours()
+          )}:${z(d.getMinutes())}`;
+        };
 
-      const nStart = new Date(newAlloc.startDate);
-      const nEnd = new Date(newAlloc.endDate);
-      const nStartTime = nStart.getTime();
-      const nEndTime = nEnd.getTime();
+        const nStart = new Date(newAlloc.startDate);
+        const nEnd = new Date(newAlloc.endDate);
+        const nStartTime = nStart.getTime();
+        const nEndTime = nEnd.getTime();
 
-      const adjusted: InstructorAllocation[] = [];
+        const adjusted: InstructorAllocation[] = [];
 
-      prev.forEach(old => {
-        if (old.demandId !== newAlloc.demandId) {
+        prev.forEach(old => {
+          if (old.demandId !== newAlloc.demandId) {
+            adjusted.push(old);
+            return;
+          }
+
+          const oStart = new Date(old.startDate);
+          const oEnd = new Date(old.endDate);
+          const oStartTime = oStart.getTime();
+          const oEndTime = oEnd.getTime();
+
+          if (nStartTime <= oStartTime && nEndTime >= oEndTime) return;
+
+          if (nStartTime > oStartTime && nEndTime < oEndTime) {
+            const p1End = new Date(nStart);
+            p1End.setDate(p1End.getDate() - 1);
+            p1End.setHours(18, 0, 0, 0);
+
+            adjusted.push({
+              ...old,
+              id: `${old.id}-1`,
+              endDate: fmt(p1End)
+            });
+
+            const p2Start = new Date(nEnd);
+            p2Start.setDate(p2Start.getDate() + 1);
+            p2Start.setHours(8, 0, 0, 0);
+
+            adjusted.push({
+              ...old,
+              id: `${old.id}-2`,
+              startDate: fmt(p2Start)
+            });
+            return;
+          }
+
+          if (nStartTime > oStartTime && nStartTime <= oEndTime) {
+            const trimmedEnd = new Date(nStart);
+            trimmedEnd.setDate(trimmedEnd.getDate() - 1);
+            trimmedEnd.setHours(18, 0, 0, 0);
+
+            adjusted.push({
+              ...old,
+              endDate: fmt(trimmedEnd)
+            });
+            return;
+          }
+
+          if (nEndTime >= oStartTime && nEndTime < oEndTime) {
+            const trimmedStart = new Date(nEnd);
+            trimmedStart.setDate(trimmedStart.getDate() + 1);
+            trimmedStart.setHours(8, 0, 0, 0);
+
+            adjusted.push({
+              ...old,
+              startDate: fmt(trimmedStart)
+            });
+            return;
+          }
+
           adjusted.push(old);
-          return;
+        });
+
+        const next = [...adjusted, newAlloc];
+
+        // ✅ persist: replace todas alocações dessa demanda
+        if (AUTH_MODE === 'supabase') {
+          const demandId = newAlloc.demandId;
+          const forDemand = next.filter(a => a.demandId === demandId);
+
+          // fire-and-forget controlado
+          (async () => {
+            await persistInstructorAllocationsForDemand(demandId, forDemand);
+          })();
         }
 
-        const oStart = new Date(old.startDate);
-        const oEnd = new Date(old.endDate);
-        const oStartTime = oStart.getTime();
-        const oEndTime = oEnd.getTime();
-
-        if (nStartTime <= oStartTime && nEndTime >= oEndTime) return;
-
-        if (nStartTime > oStartTime && nEndTime < oEndTime) {
-          const p1End = new Date(nStart);
-          p1End.setDate(p1End.getDate() - 1);
-          p1End.setHours(18, 0, 0, 0);
-
-          adjusted.push({
-            ...old,
-            id: `${old.id}-1`,
-            endDate: fmt(p1End)
-          });
-
-          const p2Start = new Date(nEnd);
-          p2Start.setDate(p2Start.getDate() + 1);
-          p2Start.setHours(8, 0, 0, 0);
-
-          adjusted.push({
-            ...old,
-            id: `${old.id}-2`,
-            startDate: fmt(p2Start)
-          });
-          return;
-        }
-
-        if (nStartTime > oStartTime && nStartTime <= oEndTime) {
-          const trimmedEnd = new Date(nStart);
-          trimmedEnd.setDate(trimmedEnd.getDate() - 1);
-          trimmedEnd.setHours(18, 0, 0, 0);
-
-          adjusted.push({
-            ...old,
-            endDate: fmt(trimmedEnd)
-          });
-          return;
-        }
-
-        if (nEndTime >= oStartTime && nEndTime < oEndTime) {
-          const trimmedStart = new Date(nEnd);
-          trimmedStart.setDate(trimmedStart.getDate() + 1);
-          trimmedStart.setHours(8, 0, 0, 0);
-
-          adjusted.push({
-            ...old,
-            startDate: fmt(trimmedStart)
-          });
-          return;
-        }
-
-        adjusted.push(old);
+        return next;
       });
+    },
+    [AUTH_MODE, persistInstructorAllocationsForDemand]
+  );
 
-      return [...adjusted, newAlloc];
-    });
-  }, []);
 
   const updateInstructorAllocation = useCallback((updated: InstructorAllocation) => {
     setInstructorAllocations(prev => prev.map(a => (a.id === updated.id ? updated : a)));
@@ -1748,7 +1839,6 @@ const removeAgendaItem = useCallback(
     }
   })();
 }, [AUTH_MODE, syncResourceAllocationsFromDb]);
-
 
 
   const updateOperationalBase = useCallback(

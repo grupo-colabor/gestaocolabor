@@ -1230,8 +1230,9 @@ const handleSave = async () => {
 
       await upsertLogisticByDemandId(demandId, {
         // datas base da demanda
-       start_date: null,
-        end_date: null,
+       start_date: sanitizedDemand.startDate?.slice(0, 10) ?? null,
+        end_date: sanitizedDemand.endDate?.slice(0, 10) ?? null,
+
 
 
         // ✅ modos (com N/A persistido)

@@ -657,6 +657,25 @@ const formatDateTime = (dateStr?: string) => {
   return baseDate;
 };
 
+const formatDateOnlySafe = (dateStr?: string) => {
+  if (!dateStr) return '---';
+
+  const s = String(dateStr).trim();
+  if (!s) return '---';
+
+  // pega só a parte YYYY-MM-DD se vier ISO
+  const datePart = s.includes('T') ? s.split('T')[0] : s;
+
+  // se já for YYYY-MM-DD, formata sem Date()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+    const [y, m, d] = datePart.split('-');
+    return `${d}/${m}/${y}`;
+  }
+
+  // fallback
+  return formatDateTime(s).split(' ')[0];
+};
+
 
   // --- HANDLER DE EXCLUSÃO (REAL COM VALIDAÇÃO) ---
         const handleDeleteDemand = () => {
@@ -2211,7 +2230,8 @@ const endLocal = usePractice
                                       <div>
                                         <p className="text-sm font-bold text-slate-800">{getInstructorName(allocation.instructorId)}</p>
                                         <p className="text-[10px] font-medium text-slate-500 flex items-center gap-2">
-                                          <Calendar size={10} /> {formatDateTime(allocation.startDate.split('T')[0])} até {formatDateTime(allocation.endDate.split('T')[0])}
+                                          <Calendar size={10} /> {formatDateOnlySafe(allocation.startDate)} até {formatDateOnlySafe(allocation.endDate)}
+
                                         </p>
                                       </div>
                                     </div>
@@ -2256,7 +2276,8 @@ const endLocal = usePractice
                                       <div>
                                         <p className="text-sm font-bold text-amber-800">Centro Móvel</p>
                                         <p className="text-[10px] font-medium text-amber-600 flex items-center gap-2">
-                                          <Calendar size={10} /> {formatDateTime(allocation.startDate)} até {formatDateTime(allocation.endDate)}
+                                          <Calendar size={10} /> {formatDateOnlySafe(allocation.startDate)} até {formatDateOnlySafe(allocation.endDate)}
+
                                         </p>
                                       </div>
                                     </div>

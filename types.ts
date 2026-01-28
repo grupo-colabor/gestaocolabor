@@ -134,7 +134,7 @@ export interface Demand {
   companyId: string;
   regionId: string;
   trainingId: string;
-  trainingLocal?: string; // Novo: Mina, Planta, etc.
+  trainingLocal?: string; 
   modality: Modality;
   startDate: string;
   endDate: string;
@@ -257,11 +257,13 @@ export type OperationalBaseKey =
   | 'localidades'
   | 'hoteis'
   | 'locadoras'
-  | 'tiposTreinamento';
+  | 'tiposTreinamento'
+  | 'matriculadores';
 
 export interface OperationalBases {
   aprovadores: string[];
   analistas: string[];
+  matriculadores: string[];
   corredores: string[];
   localidades: string[];
   hoteis: string[];

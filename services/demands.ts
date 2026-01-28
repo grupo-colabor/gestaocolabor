@@ -17,9 +17,10 @@ export type DemandRow = {
   practice_start_date: string | null;
   practice_end_date: string | null;
 
-  region_id: string | null; // no banco pode ser text
+  region_id: string | null; 
   training_local: string | null;
-
+  corredor: string | null;
+  
   instructor_id: string | null;
 
   created_at?: string;
@@ -49,7 +50,7 @@ export async function fetchDemands(): Promise<DemandRow[]> {
       client_demand_id,
       instructor_id,
       requester, observations, approver, analyst, matriculador,
-      created_at, updated_at
+      created_at, updated_at, corredor
     `)
     .order('number', { ascending: false });
 

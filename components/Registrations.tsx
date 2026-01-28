@@ -57,7 +57,8 @@ const BASE_LABELS: Record<OperationalBaseKey, string> = {
   localidades: 'Localidades',
   hoteis: 'Hotéis',
   locadoras: 'Empresas de Locação',
-  tiposTreinamento: 'Tipos de Treinamento'
+  tiposTreinamento: 'Tipos de Treinamento',
+  matriculadores: 'Matriculadores'
 };
 
 const Registrations: React.FC = () => {

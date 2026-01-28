@@ -161,7 +161,8 @@ interface AppState {
   removeResourceAllocation: (id: string) => void;
 
   // Operational Bases Actions
-  updateOperationalBase: (key: OperationalBaseKey, newList: string[]) => void;
+  updateOperationalBase: (key: OperationalBaseKey, newList: string[]) => Promise<void>;
+
 
   recommendInstructors: (demand: Demand) => {
     suggested: (Instructor & { score: number })[];
@@ -241,6 +242,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [operationalBases, setOperationalBases] = useState<OperationalBases>({
   aprovadores: [],
   analistas: [],
+  matriculadores: [],
   corredores: [],
   localidades: [],
   hoteis: [],
@@ -260,9 +262,12 @@ useEffect(() => {
       return;
     }
 
+    const rows = (data ?? []) as Array<{ base_key: OperationalBaseKey; value: string }>;
+
     const grouped: OperationalBases = {
       aprovadores: [],
       analistas: [],
+      matriculadores: [],
       corredores: [],
       localidades: [],
       hoteis: [],
@@ -270,7 +275,7 @@ useEffect(() => {
       tiposTreinamento: [],
     };
 
-    for (const row of data ?? []) {
+    for (const row of rows) {
       if (grouped[row.base_key as OperationalBaseKey]) {
         grouped[row.base_key as OperationalBaseKey].push(row.value);
       }
@@ -599,8 +604,7 @@ const syncInstructorAllocationsFromDb = useCallback(async () => {
       practiceEndDate: row.practice_end_date ?? undefined,
       instructorId: row.instructor_id ?? undefined,
       clientDemandId: row.client_demand_id ?? undefined,
-
-      // ✅ novos campos
+      corredor: row.corredor ?? undefined,
       requester: row.requester ?? undefined,
       observations: row.observations ?? undefined,
       approver: row.approver ?? undefined,
@@ -630,8 +634,7 @@ const syncInstructorAllocationsFromDb = useCallback(async () => {
     practice_end_date: cleanOrNull((d as any).practiceEndDate),
     instructor_id: cleanOrNull((d as any).instructorId),
     client_demand_id: cleanOrNull((d as any).clientDemandId),
-
-    // ✅ novos campos
+    corredor: cleanOrNull((d as any).corredor),
     requester: cleanOrNull((d as any).requester),
     observations: cleanOrNull((d as any).observations),
     approver: cleanOrNull((d as any).approver),
@@ -1902,25 +1905,53 @@ const removeAgendaItem = useCallback(
 }, [AUTH_MODE, syncResourceAllocationsFromDb]);
 
 
-  const updateOperationalBase = useCallback(
+ const updateOperationalBase = useCallback(
   async (key: OperationalBaseKey, newList: string[]) => {
-    // apaga tudo da base
-    await supabase.from('operational_bases_items').delete().eq('base_key', key);
-
-    // recria a lista
-    const payload = newList.map(value => ({
-      base_key: key,
-      value,
-    }));
-
-    if (payload.length) {
-      await supabase.from('operational_bases_items').insert(payload);
+    // Se quiser bloquear no modo mock (opcional, mas recomendado)
+    if (AUTH_MODE !== 'supabase') {
+      setOperationalBases(prev => ({ ...prev, [key]: newList }));
+      return;
     }
 
-    // atualiza estado local
-    setOperationalBases(prev => ({ ...prev, [key]: newList }));
+    try {
+      // 1) apaga tudo da base (daquela key)
+      const { error: delError } = await supabase
+        .from('operational_bases_items')
+        .delete()
+        .eq('base_key', key);
+
+      if (delError) throw delError;
+
+      // 2) recria a lista
+      const payload = (newList || [])
+        .map(v => (v ?? '').trim())
+        .filter(Boolean)
+        .map(value => ({
+          base_key: key,
+          value
+        }));
+
+      if (payload.length) {
+        const { error: insError } = await supabase
+          .from('operational_bases_items')
+          .insert(payload);
+
+        if (insError) throw insError;
+      }
+
+      // 3) atualiza estado local
+      setOperationalBases(prev => ({ ...prev, [key]: newList }));
+
+      setNotification({ message: 'Base operacional atualizada com sucesso.', type: 'success' });
+    } catch (e: any) {
+      console.error('[OperationalBases] update error', e);
+      setNotification({
+        message: `Erro ao atualizar base operacional: ${e?.message ?? 'ver console'}`,
+        type: 'error'
+      });
+    }
   },
-  []
+  [AUTH_MODE, setNotification]
 );
 
   /* -------------------------

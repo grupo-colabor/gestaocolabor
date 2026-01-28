@@ -1,13 +1,5 @@
 import { supabase } from '../lib/supabase';
-
-export type OperationalBaseKey =
-  | 'aprovadores'
-  | 'analistas'
-  | 'corredores'
-  | 'localidades'
-  | 'hoteis'
-  | 'locadoras'
-  | 'tiposTreinamento';
+import type { OperationalBaseKey } from '../types';
 
 export async function deleteOperationalBaseItem(baseKey: OperationalBaseKey, value: string) {
   const { error } = await supabase

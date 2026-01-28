@@ -54,10 +54,10 @@ import {
 } from 'lucide-react';
 
 import {
-  HISTORICAL_MATRICULADORES,
   CAR_CATEGORIES,
   PAYMENT_METHODS
 } from '../constants';
+
 
 import {
   Document,
@@ -406,50 +406,66 @@ const filteredDemands = useMemo(() => {
       const ai = principalInstructorByDemandId[a.id];
       const bi = principalInstructorByDemandId[b.id];
 
-      const va = (() => {
-        switch (sort.key) {
-          case 'id':
-            return a.id;
-          case 'company':
-            return getCompanyName(a.companyId);
-          case 'training':
-            return getTrainingName(a.trainingId);
-          case 'region':
-            return getRegionName(a.regionId);
-          case 'startDate':
-            return a.startDate || '';
-          case 'instructor':
-            return getInstructorName(ai);
-          case 'status':
-            return getStatus(a);
-          default:
-            return a.id;
-        }
-      })();
+// helper local para extrair número do ID (ex: DEM-12 -> 12)
+// IDs inválidos ou 0 vão para o FINAL da lista
+    const idNum = (id: string) => {
+      const m = String(id).match(/\d+/);
+      const n = m ? Number(m[0]) : NaN;
 
-      const vb = (() => {
-        switch (sort.key) {
-          case 'id':
-            return b.id;
-          case 'company':
-            return getCompanyName(b.companyId);
-          case 'training':
-            return getTrainingName(b.trainingId);
-          case 'region':
-            return getRegionName(b.regionId);
-          case 'startDate':
-            return b.startDate || '';
-          case 'instructor':
-            return getInstructorName(bi);
-          case 'status':
-            return getStatus(b);
-          default:
-            return b.id;
-        }
-      })();
+      // ❌ 0 ou inválido não são IDs válidos
+      return !n || n <= 0 ? Number.MAX_SAFE_INTEGER : n;
+    };
 
-      // compara string de forma consistente
-      return dir * String(va).localeCompare(String(vb), 'pt-BR', { sensitivity: 'base' });
+    const va = (() => {
+      switch (sort.key) {
+        case 'id':
+          return idNum(a.id);
+        case 'company':
+          return getCompanyName(a.companyId);
+        case 'training':
+          return getTrainingName(a.trainingId);
+        case 'region':
+          return getRegionName(a.regionId);
+        case 'startDate':
+          return a.startDate || '';
+        case 'instructor':
+          return getInstructorName(ai);
+        case 'status':
+          return getStatus(a);
+        default:
+          return idNum(a.id);
+      }
+    })();
+
+    const vb = (() => {
+      switch (sort.key) {
+        case 'id':
+          return idNum(b.id);
+        case 'company':
+          return getCompanyName(b.companyId);
+        case 'training':
+          return getTrainingName(b.trainingId);
+        case 'region':
+          return getRegionName(b.regionId);
+        case 'startDate':
+          return b.startDate || '';
+        case 'instructor':
+          return getInstructorName(bi);
+        case 'status':
+          return getStatus(b);
+        default:
+          return idNum(b.id);
+      }
+    })();
+
+    // ✅ comparação correta
+    if (sort.key === 'id') {
+      return dir * (Number(va) - Number(vb));
+    }
+
+    return dir * String(va).localeCompare(String(vb), 'pt-BR', {
+      sensitivity: 'base',
+    });
     });
 }, [
   demands,
@@ -1804,6 +1820,7 @@ const endLocal = usePractice
       <DataList id="localidades-list" items={operationalBases.localidades} />
       <DataList id="hoteis-list" items={operationalBases.hoteis} />
       <DataList id="agencias-list" items={operationalBases.localidades} />
+      <DataList id="matriculadores-list" items={operationalBases.matriculadores} />
 
       <div className="flex flex-col space-y-4 no-print">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -2135,6 +2152,16 @@ const endLocal = usePractice
                                 />
                               </div>
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Região</label><select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" value={formDemand.regionId} onChange={(e) => setFormDemand({...formDemand, regionId: e.target.value})}><option value="">Selecione...</option>{regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></div>
+                              <div>
+                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Corredor</label>
+                              <input
+                                list="corredores-list"
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                                value={formDemand.corredor || ''}
+                                onChange={(e) => setFormDemand({ ...formDemand, corredor: e.target.value })}
+                                placeholder="Selecione ou digite..."
+                              />
+                            </div>
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tipo de Atendimento</label><input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-slate-100 text-slate-700 font-bold" value={formDemand.modality || '---'} readOnly /><p className="text-[10px] text-slate-400 mt-1">Campo automático (puxado do Treinamento).</p></div>
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Solicitante</label><input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={formDemand.requester || ''} onChange={(e) => setFormDemand({...formDemand, requester: e.target.value})} /></div>
                               
@@ -2176,6 +2203,7 @@ const endLocal = usePractice
                                 <DataViewField label="Início" value={formatDateTime(formDemand.startDate)} icon={Calendar} />
                                 <DataViewField label="Fim" value={formatDateTime(formDemand.endDate)} icon={Calendar} />
                                 <DataViewField label="Região" value={getRegionName(formDemand.regionId!)} icon={MapPin} />
+                                <DataViewField label="Corredor" value={formDemand.corredor} icon={MapPin} />
                                 <DataViewField label="Modalidade" value={formDemand.modality} icon={Info} />
                                 <DataViewField label="Solicitante" value={formDemand.requester} icon={User} />
                                 <div className="flex flex-col space-y-1">
@@ -2306,7 +2334,7 @@ const endLocal = usePractice
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Aprovador</label><input list="aprovadores-list" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={formDemand.approver || ''} onChange={(e) => setFormDemand({...formDemand, approver: e.target.value})} /></div>
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Analista</label><input list="analistas-list" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={formDemand.analyst || ''} onChange={(e) => setFormDemand({...formDemand, analyst: e.target.value})} /></div>
-                              <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Matriculador</label><select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={formDemand.matriculador || ''} onChange={(e) => setFormDemand({...formDemand, matriculador: e.target.value})}><option value="">Selecione...</option>{HISTORICAL_MATRICULADORES.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
+                              <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Matriculador</label><input list="matriculadores-list" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={formDemand.matriculador || ''} onChange={(e) => setFormDemand({ ...formDemand, matriculador: e.target.value })} placeholder="Selecione ou digite..." /></div>
                             </div>
                           ) : (
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

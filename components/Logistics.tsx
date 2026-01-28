@@ -269,6 +269,30 @@ const Logistics: React.FC = () => {
     return ok;
   };
 
+  const handleRemoveHybridPractice = () => {
+  if (!selectedDemand) return;
+  if (selectedDemand.modality !== 'HIBRIDO') return;
+
+  const confirmed = window.confirm('Remover o período de prática desta demanda?');
+  if (!confirmed) return;
+
+  // Limpa no FORM (UI)
+  setHybridPracticeForm(prev => ({
+    ...prev,
+    practiceStartDate: '',
+    practiceEndDate: '',
+    practiceStartTime: '08:00',
+    practiceEndTime: '18:00'
+  }));
+
+  // Limpa na DEMANDA (persistência via updateDemand -> sanitize -> mapDemandToDb -> null no Supabase)
+  updateDemand({
+    ...selectedDemand,
+    practiceStartDate: undefined,
+    practiceEndDate: undefined
+  });
+};
+
   const handleRemoveResource = () => {
     if (currentResourceAllocation) {
       removeResourceAllocation(currentResourceAllocation.id);
@@ -477,13 +501,23 @@ const Logistics: React.FC = () => {
                           onChange={(e) => setHybridPracticeForm(prev => ({ ...prev, practiceEndDate: e.target.value }))}
                         />
                       </div>
+                        <div className="w-full flex flex-col gap-2">
+                          <button
+                            onClick={handleSaveHybridPractice}
+                            className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] uppercase tracking-widest rounded-xl transition-all shadow-lg"
+                          >
+                            Salvar prática
+                          </button>
 
-                      <button
-                        onClick={handleSaveHybridPractice}
-                        className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] uppercase tracking-widest rounded-xl transition-all shadow-lg"
-                      >
-                        Salvar prática
-                      </button>
+                          {selectedDemand.practiceStartDate && selectedDemand.practiceEndDate && (
+                            <button
+                              onClick={handleRemoveHybridPractice}
+                              className="w-full px-6 py-3 bg-white hover:bg-red-50 text-red-600 border border-red-200 font-black text-[10px] uppercase tracking-widest rounded-xl transition-all shadow-sm"
+                            >
+                              Remover prática
+                            </button>
+                          )}
+                        </div>
                     </div>
 
                     {/* LINHA 2: HORÁRIOS (novo, mantendo o mesmo padrão visual) */}

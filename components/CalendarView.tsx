@@ -293,19 +293,7 @@ const CalendarView: React.FC = () => {
     instructorAllocations.forEach(a => {
       const d = demands.find(dm => dm.id === a.demandId);
       if (!d || d.status === 'CANCELADA') return;
-      console.log('🧪 TESTE AGENDA', {
-      demandId: d.id,
-      modality: d.modality,
-
-      demandStart: d.startDate,
-      demandEnd: d.endDate,
-
-      practiceStart: d.practiceStartDate,
-      practiceEnd: d.practiceEndDate,
-
-      allocationStart: a.startDate,
-      allocationEnd: a.endDate
-    });
+      
 
       // ✅ Base sempre é o período do ALLOCATION (não a demanda inteira)
     const allocStart = ensureDateTimeForDisplay(a.startDate, 'start');

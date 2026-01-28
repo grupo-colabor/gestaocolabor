@@ -143,6 +143,7 @@ export interface Demand {
   resourceId?: string;
   requester?: string;
   observations?: string;
+  
 
   // HÍBRIDO (MVP): período presencial (prática) dentro do período total
   practiceStartDate?: string;

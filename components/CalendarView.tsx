@@ -19,6 +19,7 @@ import {
 import { AgendaItem, AgendaType, Demand, Instructor } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { useAuth } from '../contexts/AuthContext';
+import { formatDemandLabel } from '../domain/demandStatus';
 
 // Configuração visual para cada tipo de compromisso
 const AGENDA_STYLING: Record<string, { bg: string; text: string; border: string }> = {
@@ -233,8 +234,18 @@ const CalendarView: React.FC = () => {
 
         const { start, end } = getDayBoundsForIteration(a.startDate, a.endDate);
         const cursor = new Date(start);
+        const training = trainings.find(t => t.id === d.trainingId);
+       const company = companies.find(c => c.id === d.companyId);
 
-        const formattedTitle = buildDemandTitle(d);
+        const base = formatDemandLabel({
+        trainingNr: training?.nr,
+        companyName: company?.name,
+        startDate: ensureDateTimeForDisplay(a.startDate, 'start'),
+        endDate: ensureDateTimeForDisplay(a.endDate, 'end')
+      });
+
+      const formattedTitle = `${d.id} • ${base}`;
+
 
         while (cursor <= end) {
           map[formatDateKey(cursor)] = {
@@ -250,7 +261,7 @@ const CalendarView: React.FC = () => {
       });
 
     return map;
-  }, [mobileResourceEvents, resourceAllocations, demands, buildDemandTitle]);
+  }, [mobileResourceEvents, resourceAllocations, demands, trainings, companies]);
 
   /** =========================
    *  2) AGENDA INSTRUTORES
@@ -326,7 +337,20 @@ const CalendarView: React.FC = () => {
       const { start, end } = getDayBoundsForIteration(displayStart, displayEnd);
       const cursor = new Date(start);
 
-      const formattedTitle = buildDemandTitle(d);
+      const training = trainings.find(t => t.id === d.trainingId);
+      const company = companies.find(c => c.id === d.companyId);
+
+      const base = formatDemandLabel({
+      trainingNr: training?.nr,
+      companyName: company?.name,
+      startDate: ensureDateTimeForDisplay(a.startDate, 'start'),
+      endDate: ensureDateTimeForDisplay(a.endDate, 'end')
+    });
+
+    const formattedTitle = `${d.id} • ${base}`;
+
+
+
 
 
       const cStatus = calculateDemandStatus({ ...d, cancelled: false });
@@ -388,7 +412,7 @@ const CalendarView: React.FC = () => {
       });
 
     return map;
-  }, [agendaItems, instructorAllocations, demands, buildDemandTitle]);
+  }, [agendaItems, instructorAllocations, demands, trainings, companies, buildDemandTitle]);
 
   const handleDragStart = (e: React.DragEvent, item: UnifiedItem) => {
     if (isCoordinator) {
@@ -780,7 +804,7 @@ const CalendarView: React.FC = () => {
                       >
                         <div className="flex flex-col items-center justify-center w-full leading-tight">
                           {/* Linha principal */}
-                          <span className="text-[8px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-2">
+                          <span className="text-[9px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-2">
                             {cellItem.data.title}
                           </span>
 
@@ -836,12 +860,16 @@ const CalendarView: React.FC = () => {
                 ))}
               {/* Linha Centro Móvel */}
               <tr className="bg-slate-50 border-t-2 border-slate-200 border-b border-gray-100">
-                <td className="p-4 border-r border-gray-100 font-black text-[11px] text-amber-700 bg-[#fffbeb] sticky left-0 z-20 shadow-sm flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600 border border-amber-200 shadow-sm">
-                    <Truck size={18} />
-                  </div>
-                  <span className="uppercase tracking-tight leading-tight">Centro Móvel</span>
-                </td>
+               <td className="p-4 border-r border-gray-100 font-black text-[11px] text-amber-700 bg-[#fffbeb] sticky left-0 z-20 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600 border border-amber-200 shadow-sm">
+                  <Truck size={18} />
+                </div>
+                <span className="uppercase tracking-tight leading-tight">
+                  Centro Móvel
+                </span>
+              </div>
+            </td>
                 <td className="p-4 border-r border-gray-100 bg-white"></td>
                 <td className="p-4 border-r border-gray-100 bg-white"></td>
 

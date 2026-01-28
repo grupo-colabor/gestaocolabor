@@ -24,6 +24,15 @@ export type DemandRow = {
 
   created_at?: string;
   updated_at?: string;
+
+  client_demand_id?: string | null;
+
+  requester: string | null;
+  observations: string | null;
+
+  approver: string | null;
+  analyst: string | null;
+  matriculador: string | null;
 };
 
 /**
@@ -32,16 +41,16 @@ export type DemandRow = {
 export async function fetchDemands(): Promise<DemandRow[]> {
   const { data, error } = await supabase
     .from('demands')
-    .select(
-      `
+    .select(`
       id, number, company_id, training_id, status, modality,
       start_date, end_date,
       practice_start_date, practice_end_date,
-      region_id, training_local,client_demand_id,
+      region_id, training_local,
+      client_demand_id,
       instructor_id,
+      requester, observations, approver, analyst, matriculador,
       created_at, updated_at
-    `
-    )
+    `)
     .order('number', { ascending: false });
 
   if (error) {
@@ -90,7 +99,10 @@ export async function insertDemand(payload: Omit<DemandRow, 'created_at' | 'upda
  * UPDATE por id
  * - Compatível com App.tsx: retorna { error }
  */
-export async function updateDemandById(id: string, payload: Partial<DemandRow> | Record<string, any>) {
+export async function updateDemandById(
+  id: string,
+  payload: Partial<DemandRow> | Record<string, any>
+) {
   const { error } = await supabase.from('demands').update(payload).eq('id', id);
   return { error };
 }
@@ -106,7 +118,6 @@ export async function deleteDemandById(id: string) {
   if (!safeId) return { data: null, error: new Error('id inválido') as any };
 
   // 1) Limpa documentos primeiro (evita "PDF fantasma" no storage/tabela)
-  //    Se falhar aqui, a gente retorna erro e NÃO deleta a demanda (pra você ver o erro).
   try {
     const res = await deleteDemandDocumentsByDemandId(safeId);
     if (!res.ok) {

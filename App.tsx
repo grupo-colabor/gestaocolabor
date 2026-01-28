@@ -599,36 +599,53 @@ const syncInstructorAllocationsFromDb = useCallback(async () => {
       practiceEndDate: row.practice_end_date ?? undefined,
       instructorId: row.instructor_id ?? undefined,
       clientDemandId: row.client_demand_id ?? undefined,
-            
+
+      // ✅ novos campos
+      requester: row.requester ?? undefined,
+      observations: row.observations ?? undefined,
+      approver: row.approver ?? undefined,
+      analyst: row.analyst ?? undefined,
+      matriculador: row.matriculador ?? undefined,
     } as Demand;
   }, []);
 
+
+
   const mapDemandToDb = useCallback((d: Demand, extra?: { id?: string; number?: number }) => {
-    const cleanOrNull = (v?: string | null) => {
-      const s = (v ?? '').toString().trim();
-      return s.length ? s : null;
-    };
+  const cleanOrNull = (v?: string | null) => {
+    const s = (v ?? '').toString().trim();
+    return s.length ? s : null;
+  };
 
-    const payload: any = {
-      company_id: cleanOrNull(d.companyId),
-      training_id: cleanOrNull(d.trainingId),
-      region_id: cleanOrNull(d.regionId),
-      training_local: cleanOrNull(d.trainingLocal),
-      modality: cleanOrNull(d.modality),
-      status: cleanOrNull(d.status),
-      start_date: cleanOrNull(d.startDate),
-      end_date: cleanOrNull(d.endDate),
-      practice_start_date: cleanOrNull((d as any).practiceStartDate),
-      practice_end_date: cleanOrNull((d as any).practiceEndDate),
-      instructor_id: cleanOrNull((d as any).instructorId),
-      client_demand_id: cleanOrNull((d as any).clientDemandId),
-    };
+  const payload: any = {
+    company_id: cleanOrNull(d.companyId),
+    training_id: cleanOrNull(d.trainingId),
+    region_id: cleanOrNull(d.regionId),
+    training_local: cleanOrNull(d.trainingLocal),
+    modality: cleanOrNull(d.modality),
+    status: cleanOrNull(d.status),
+    start_date: cleanOrNull(d.startDate),
+    end_date: cleanOrNull(d.endDate),
+    practice_start_date: cleanOrNull((d as any).practiceStartDate),
+    practice_end_date: cleanOrNull((d as any).practiceEndDate),
+    instructor_id: cleanOrNull((d as any).instructorId),
+    client_demand_id: cleanOrNull((d as any).clientDemandId),
 
-    if (extra?.id) payload.id = extra.id;
-    if (typeof extra?.number === 'number') payload.number = extra.number;
+    // ✅ novos campos
+    requester: cleanOrNull((d as any).requester),
+    observations: cleanOrNull((d as any).observations),
+    approver: cleanOrNull((d as any).approver),
+    analyst: cleanOrNull((d as any).analyst),
+    matriculador: cleanOrNull((d as any).matriculador),
+  };
 
-    return payload;
-  }, []);
+  if (extra?.id) payload.id = extra.id;
+  if (typeof extra?.number === 'number') payload.number = extra.number;
+
+  return payload;
+}, []);
+
+
 
 /** 🔄 Sync do Supabase -> State */
   const syncAgendaItemsFromDb = useCallback(async () => {

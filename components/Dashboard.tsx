@@ -271,15 +271,10 @@ const pendingLogisticsDemands = useMemo(() => {
       // ONLINE/EAD não conta
       if (isOnlineDemand(d)) return false;
 
-      // ✅ NOVO: se estiver FATURADA, não é mais "pendência de evidência"
-      const m = measurements.find(m => String(m.demandId) === String(d.id));
-      if (String(m?.status ?? '').toUpperCase() === 'FATURADA') return false;
-
       const evStatus = getEvidenceAutoStatus(d.id);
       return evStatus !== 'COMPLETA';
     });
-  }, [filteredDemands, trainings, getEvidenceAutoStatus, measurements]);
-
+  }, [filteredDemands, trainings, getEvidenceAutoStatus]);
 
   // --- Helpers de Cálculo ---
   const getTrainingHours = (trainingId: string) => trainings.find(t => t.id === trainingId)?.hours || 0;

@@ -821,6 +821,7 @@ ${b('📘 INFORMAÇÕES GERAIS')}
 • Unidade/Local: ${formDemand.modality === 'ONLINE' ? 'N/A' : (formDemand.trainingLocal || 'N/A')}
 • Modalidade: ${formDemand.modality}
 • Região: ${getRegionName(formDemand.regionId!)}
+• Corredor: ${formDemand.corredor || 'Não informado'}
 • Solicitante: ${formDemand.requester || 'Não informado'}
 
 ${b('🚗 LOGÍSTICA — LOCOMOÇÃO')}
@@ -926,6 +927,7 @@ ${formDemand.observations || 'N/A'}
           new Paragraph({ children: [new TextRun({ text: "🌐 Modalidade: ", bold: true }), new TextRun(formDemand.modality!)] }),
           new Paragraph({ children: [new TextRun({ text: "📅 Período: ", bold: true }), new TextRun(`${formatDateTime(formDemand.startDate)} até ${formatDateTime(formDemand.endDate)}`)] }),
           new Paragraph({ children: [new TextRun({ text: "📍 Local / Unidade: ", bold: true }), new TextRun(formDemand.modality === 'ONLINE' ? 'N/A' : (formDemand.trainingLocal || 'N/A'))] }),
+          new Paragraph({ children: [new TextRun({ text: "🏢 Corredor: ", bold: true }), new TextRun(formDemand.corredor || 'Não informado')] }),
           new Paragraph({ children: [new TextRun({ text: "🌎 Região: ", bold: true }), new TextRun(getRegionName(formDemand.regionId!))] }),
           new Paragraph({ children: [new TextRun({ text: "🧑‍💼 Solicitante: ", bold: true }), new TextRun(formDemand.requester || 'Não informado')] }),
 

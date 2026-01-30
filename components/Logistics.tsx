@@ -33,9 +33,14 @@ const Logistics: React.FC = () => {
     allocateInstructor,
     addResourceAllocation,
     removeResourceAllocation,
+    companionAllocations,
+    addCompanionAllocation,
+    removeCompanionAllocation,
     updateDemand,
-    setHybridPracticePeriod
+    setHybridPracticePeriod,
+    setNotification
   } = useApp();
+
 
   const [selectedDemandId, setSelectedDemandId] = useState<string | null>(null);
   const [filterText, setFilterText] = useState('');
@@ -48,6 +53,14 @@ const Logistics: React.FC = () => {
     startTime: '08:00',
     endTime: '18:00'
   });
+  
+  const [isCompanionPickerOpen, setIsCompanionPickerOpen] = useState(false);
+ 
+  // Modal de datas do acompanhante (dias avulsos)
+  const [isCompanionDatesOpen, setIsCompanionDatesOpen] = useState(false);
+  const [pendingCompanionInstructorId, setPendingCompanionInstructorId] = useState<string | null>(null);
+  const [companionSelectedDays, setCompanionSelectedDays] = useState<string[]>([]);
+  const [companionDayInput, setCompanionDayInput] = useState('');
 
   // HÍBRIDO (MVP) — formulário do período presencial (prática)
   const [hybridPracticeForm, setHybridPracticeForm] = useState({
@@ -89,6 +102,124 @@ const Logistics: React.FC = () => {
     const { time } = splitDateTime(value);
     return time || '';
   };
+
+  const companionsForSelectedDemand = useMemo(() => {
+  if (!selectedDemandId) return [];
+  return companionAllocations.filter((a: any) => a.demandId === selectedDemandId);
+}, [companionAllocations, selectedDemandId]);
+
+const handleAddCompanion = (companionInstructorId: string) => {
+  if (!selectedDemand) return;
+
+  // evita duplicar
+  const already = companionsForSelectedDemand.some((a: any) => a.instructorId === companionInstructorId);
+  if (already) {
+    setNotification({ type: 'error', message: 'Este instrutor já está como acompanhante nesta demanda.' });
+    return;
+  }
+
+  // Conflito de agenda do acompanhante no período da demanda
+  if (hasScheduleConflict(companionInstructorId, selectedDemand.startDate, selectedDemand.endDate, selectedDemand.id)) {
+    setNotification({ type: 'error', message: 'Não é possível alocar: o acompanhante já possui conflito na agenda.' });
+    return;
+  }
+
+  addCompanionAllocation({
+    id: `CA-${Date.now()}`,
+    demandId: selectedDemand.id,
+    instructorId: companionInstructorId,
+    startDate: selectedDemand.startDate,
+    endDate: selectedDemand.endDate
+  });
+
+  setNotification({ type: 'success', message: 'Acompanhante alocado com sucesso.' });
+  setIsCompanionPickerOpen(false);
+};
+
+const handleRemoveCompanion = (allocationId: string) => {
+  removeCompanionAllocation(allocationId);
+  setNotification({ type: 'success', message: 'Acompanhante removido.' });
+};
+
+const openCompanionDatesModal = (instructorId: string) => {
+  if (!selectedDemand) return;
+
+  setPendingCompanionInstructorId(instructorId);
+  setCompanionSelectedDays([]); // começa vazio (dias avulsos)
+  setCompanionDayInput('');
+  setIsCompanionDatesOpen(true);
+};
+
+const closeCompanionDatesModal = () => {
+  setIsCompanionDatesOpen(false);
+  setPendingCompanionInstructorId(null);
+  setCompanionSelectedDays([]);
+  setCompanionDayInput('');
+};
+
+const addCompanionDay = (day: string) => {
+  if (!day) return;
+  setCompanionSelectedDays(prev => (prev.includes(day) ? prev : [...prev, day].sort()));
+  setCompanionDayInput('');
+};
+
+const removeCompanionDay = (day: string) => {
+  setCompanionSelectedDays(prev => prev.filter(d => d !== day));
+};
+
+const handleSaveCompanionDays = () => {
+  if (!selectedDemand) return;
+  if (!pendingCompanionInstructorId) return;
+
+  // evita duplicar instrutor acompanhante (regra atual)
+  const already = companionsForSelectedDemand.some((a: any) => a.instructorId === pendingCompanionInstructorId);
+  if (already) {
+    setNotification({ type: 'error', message: 'Este instrutor já está como acompanhante nesta demanda.' });
+    return;
+  }
+
+  if (companionSelectedDays.length === 0) {
+    setNotification({ type: 'error', message: 'Selecione pelo menos 1 dia para o acompanhante.' });
+    return;
+  }
+
+  // horários padrão (usa o que existir na demanda; senão 08/18)
+  const demandStart = splitDateTime(selectedDemand.startDate);
+  const demandEnd = splitDateTime(selectedDemand.endDate);
+  const startTime = demandStart.time || '08:00';
+  const endTime = demandEnd.time || '18:00';
+
+  // valida conflito dia a dia e cria 1 allocation por dia
+  for (const day of companionSelectedDays) {
+    const startDateTime = buildDateTime(day, startTime, '08:00');
+    const endDateTime = buildDateTime(day, endTime, '18:00');
+
+    if (hasScheduleConflict(pendingCompanionInstructorId, startDateTime, endDateTime, selectedDemand.id)) {
+      setNotification({
+        type: 'error',
+        message: `Conflito na agenda do acompanhante no dia ${formatDateBR(day)}.`
+      });
+      return;
+    }
+  }
+
+  companionSelectedDays.forEach(day => {
+    const startDateTime = buildDateTime(day, startTime, '08:00');
+    const endDateTime = buildDateTime(day, endTime, '18:00');
+
+    addCompanionAllocation({
+      id: `CA-${Date.now()}-${day}`,
+      demandId: selectedDemand.id,
+      instructorId: pendingCompanionInstructorId,
+      startDate: startDateTime,
+      endDate: endDateTime
+    });
+  });
+
+  setNotification({ type: 'success', message: 'Dias do acompanhante salvos com sucesso.' });
+  closeCompanionDatesModal();
+};
+
 
   // Sincroniza o form quando muda a demanda selecionada
   useEffect(() => {
@@ -268,7 +399,7 @@ const Logistics: React.FC = () => {
 
     return ok;
   };
-
+  
   const handleRemoveHybridPractice = () => {
   if (!selectedDemand) return;
   if (selectedDemand.modality !== 'HIBRIDO') return;
@@ -575,6 +706,115 @@ const Logistics: React.FC = () => {
                       </h3>
                     </div>
 
+                    {/* ✅ PICKER SIMPLES (modal leve) */}
+                    {isCompanionDatesOpen && selectedDemand && pendingCompanionInstructorId && (
+                  <div className="fixed inset-0 z-[130] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
+                      <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-black text-slate-800 uppercase">Datas do acompanhante</p>
+                          <p className="text-[11px] font-semibold text-slate-500">
+                            Selecione dias avulsos (ex: 21, 23 e 25)
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={closeCompanionDatesModal}
+                          className="px-3 py-2 rounded-xl text-[11px] font-black uppercase border border-slate-200 hover:bg-slate-50"
+                        >
+                          Fechar
+                        </button>
+                      </div>
+
+                      <div className="p-4 space-y-4">
+                        {/* adicionar dia */}
+                        <div className="flex gap-2 items-end">
+                          <div className="flex-1">
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                              Adicionar dia
+                            </label>
+                            <input
+                              type="date"
+                              className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                              value={companionDayInput}
+                              min={selectedDemand.startDate.split('T')[0]}
+                              max={selectedDemand.endDate.split('T')[0]}
+                              onChange={(e) => setCompanionDayInput(e.target.value)}
+                            />
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => addCompanionDay(companionDayInput)}
+                            className="px-4 py-2.5 rounded-xl text-[11px] font-black uppercase border border-slate-200 hover:bg-slate-50"
+                            disabled={!companionDayInput}
+                          >
+                            + Adicionar
+                          </button>
+                        </div>
+
+                        {/* lista de dias */}
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                          {companionSelectedDays.length === 0 ? (
+                            <div className="text-[11px] font-semibold text-slate-400">
+                              Nenhum dia selecionado.
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap gap-2">
+                              {companionSelectedDays.map(day => (
+                                <div
+                                  key={day}
+                                  className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200"
+                                >
+                                  <span className="text-[11px] font-black text-slate-700 uppercase">
+                                    {formatDateBR(day)}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeCompanionDay(day)}
+                                    className="text-red-600 font-black text-[12px] leading-none"
+                                    title="Remover"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 flex items-start gap-2">
+                          <Info size={14} className="text-blue-500 shrink-0 mt-0.5" />
+                          <p className="text-[10px] font-bold text-blue-700 leading-tight">
+                            Os horários serão iguais aos horários da demanda (ou 08:00 às 18:00 se não houver).
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-3">
+                        <button
+                          type="button"
+                          onClick={closeCompanionDatesModal}
+                          className="flex-1 py-3 bg-white border border-slate-200 rounded-xl font-black text-[10px] uppercase tracking-widest text-slate-500"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSaveCompanionDays}
+                          disabled={companionSelectedDays.length === 0}
+                          className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest ${
+                            companionSelectedDays.length === 0
+                              ? 'bg-slate-200 text-slate-400'
+                              : 'bg-slate-900 text-white hover:bg-blue-600 shadow-lg'
+                          }`}
+                        >
+                          Salvar dias
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                     <div className="grid grid-cols-1 gap-3">
                       {recommendation.suggested.length > 0 ? recommendation.suggested.map((instructor) => (
                         <div key={instructor.id} className="p-4 rounded-xl border border-slate-200 bg-white hover:border-blue-300 transition-all flex items-center justify-between group">
@@ -652,6 +892,119 @@ const Logistics: React.FC = () => {
                       </div>
                     </div>
                   )}
+
+                   {/* ✅ ACOMPANHANTES */}
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-black text-slate-800 uppercase tracking-tight">Acompanhantes</p>
+                          <p className="text-[11px] font-semibold text-slate-500">Instrutor(es) adicionais para a mesma demanda</p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!selectedDemand) return;
+                            setIsCompanionPickerOpen(true);
+                          }}
+                          className="px-3 py-2 rounded-xl text-[11px] font-black uppercase border border-slate-200 hover:bg-slate-50"
+                          disabled={!selectedDemand}
+                        >
+                          + Adicionar
+                        </button>
+                      </div>
+
+                      <div className="mt-3 space-y-2">
+                        {companionsForSelectedDemand.length === 0 ? (
+                          <div className="text-[11px] font-semibold text-slate-400 bg-slate-50 border border-slate-100 rounded-xl p-3">
+                            Nenhum acompanhante alocado.
+                          </div>
+                        ) : (
+                          companionsForSelectedDemand.map((a: any) => {
+                            const inst = instructors.find((i: any) => i.id === a.instructorId);
+                            return (
+                              <div
+                                key={a.id}
+                                className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3"
+                              >
+                                <div className="min-w-0">
+                                  <p className="text-[12px] font-black text-amber-900 truncate">{inst?.name ?? 'Instrutor'}</p>
+                                  <p className="text-[10px] font-black text-amber-700 uppercase tracking-widest">ACOMPANHANTE</p>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveCompanion(a.id)}
+                                  className="px-3 py-2 rounded-xl text-[11px] font-black uppercase text-red-600 border border-red-200 hover:bg-red-50"
+                                >
+                                  Remover
+                                </button>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  {/* ✅ PICKER DE ACOMPANHANTE (seleciona instrutor) */}
+                  {isCompanionPickerOpen && selectedDemand && (
+                    <div className="fixed inset-0 z-[120] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+                      <div className="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
+                        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-black text-slate-800 uppercase">Selecionar acompanhante</p>
+                            <p className="text-[11px] font-semibold text-slate-500">Escolha um instrutor para acompanhar</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setIsCompanionPickerOpen(false)}
+                            className="px-3 py-2 rounded-xl text-[11px] font-black uppercase border border-slate-200 hover:bg-slate-50"
+                          >
+                            Fechar
+                          </button>
+                        </div>
+
+                        <div className="p-4 max-h-[60vh] overflow-auto space-y-2">
+                          {instructors
+                            .filter((i: any) => i.status === 'ATIVO')
+                            .map((i: any) => {
+                              const isAlready = companionsForSelectedDemand.some((a: any) => a.instructorId === i.id);
+                              const isMain = selectedDemand.instructorId === i.id;
+
+                              return (
+                                <button
+                                  key={i.id}
+                                  type="button"
+                                  disabled={isAlready || isMain}
+                                  onClick={() => {
+                                    setIsCompanionPickerOpen(false);
+                                    openCompanionDatesModal(i.id);
+                                  }}
+                                  className={`w-full text-left p-3 rounded-xl border transition ${
+                                    isAlready || isMain
+                                      ? 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed'
+                                      : 'bg-white border-slate-200 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="text-[12px] font-black truncate">{i.name}</p>
+                                      {isMain && (
+                                        <p className="text-[10px] font-black uppercase tracking-widest">INSTRUTOR PRINCIPAL</p>
+                                      )}
+                                      {isAlready && (
+                                        <p className="text-[10px] font-black uppercase tracking-widest">JÁ É ACOMPANHANTE</p>
+                                      )}
+                                    </div>
+                                    <span className="text-[11px] font-black uppercase">Selecionar</span>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                    
                 </section>
               </div>
 

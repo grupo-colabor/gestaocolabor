@@ -45,10 +45,13 @@ interface UnifiedItem {
   endDate: string;
   type: AgendaType;
   title: string;
-  source: 'MANUAL' | 'DEMANDA' | 'EVENT' | 'ALLOCATION';
+  source: 'MANUAL' | 'DEMANDA' | 'EVENT' | 'ALLOCATION' | 'COMPANION';
   description?: string;
   calculatedStatus?: string;
   demandId?: string;
+  isCompanion?: boolean;
+  companionAllocationId?: string;
+
 }
 
 interface MobileResourceEvent {
@@ -115,7 +118,7 @@ const ensureDateTimeForDisplay = (s: string, kind: 'start' | 'end') => {
 
 function resolveLinkedDemand(item: UnifiedItem | null, demands: Demand[]): Demand | null {
   if (!item) return null;
-  if (item.source !== 'DEMANDA' && item.source !== 'ALLOCATION') return null;
+  if (item.source !== 'DEMANDA' && item.source !== 'ALLOCATION' && item.source !== 'COMPANION') return null;
   return demands.find(d => d.id === (item.demandId || item.id)) || null;
 }
 
@@ -126,6 +129,7 @@ const CalendarView: React.FC = () => {
     agendaItems,
     trainings,
     instructorAllocations,
+    companionAllocations,
     resourceAllocations,
     companies,
     addAgendaItem,
@@ -135,8 +139,9 @@ const CalendarView: React.FC = () => {
     updateDemand,
     hasScheduleConflict,
     removeInstructorAllocation,
+    removeCompanionAllocation,
     addInstructorAllocation,
-    updateInstructorAllocation, // ✅ ALTERAÇÃO: agora usamos update no DnD
+    updateInstructorAllocation, 
     removeResourceAllocation,
     hasResourceConflict,
     setNotification
@@ -269,8 +274,8 @@ const CalendarView: React.FC = () => {
   const agendaByDay = useMemo(() => {
     const map: Record<string, UnifiedItem> = {};
     const demandsWithExplicitAllocations = new Set(instructorAllocations.map(a => a.demandId));
+    const demandsWithCompanions = new Set(companionAllocations.map(a => a.demandId));
 
-    // MANUAIS
     agendaItems.forEach(item => {
       const { start, end } = getDayBoundsForIteration(item.startDate, item.endDate);
       const cursor = new Date(start);
@@ -295,7 +300,7 @@ const CalendarView: React.FC = () => {
       if (!d || d.status === 'CANCELADA') return;
       
 
-      // ✅ Base sempre é o período do ALLOCATION (não a demanda inteira)
+ 
     const allocStart = ensureDateTimeForDisplay(a.startDate, 'start');
     const allocEnd = ensureDateTimeForDisplay(a.endDate, 'end');
 
@@ -339,8 +344,6 @@ const CalendarView: React.FC = () => {
 
 
 
-
-
       const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
       while (cursor <= end) {
@@ -360,10 +363,70 @@ const CalendarView: React.FC = () => {
       }
 });
 
+// PRIORIDADE 1.5: CompanionAllocations (instrutor acompanhante)
+companionAllocations.forEach(ca => {
+  const d = demands.find(dm => dm.id === ca.demandId);
+  if (!d || d.status === 'CANCELADA') return;
+
+  // Período sempre baseado no companion allocation
+  let displayStart = ensureDateTimeForDisplay(ca.startDate, 'start');
+  let displayEnd = ensureDateTimeForDisplay(ca.endDate, 'end');
+
+  // HÍBRIDO: mostra apenas prática, mas respeita o split do companion allocation
+  if (d.modality === 'HIBRIDO' && d.practiceStartDate && d.practiceEndDate) {
+    const practiceStart = ensureDateTimeForDisplay(d.practiceStartDate, 'start');
+    const practiceEnd = ensureDateTimeForDisplay(d.practiceEndDate, 'end');
+
+    const startDate = parseAnyToDate(displayStart);
+    const endDate = parseAnyToDate(displayEnd);
+    const pStartDate = parseAnyToDate(practiceStart);
+    const pEndDate = parseAnyToDate(practiceEnd);
+
+    displayStart = startDate > pStartDate ? displayStart : practiceStart;
+    displayEnd = endDate < pEndDate ? displayEnd : practiceEnd;
+
+    if (parseAnyToDate(displayStart) > parseAnyToDate(displayEnd)) return;
+  }
+
+  const { start, end } = getDayBoundsForIteration(displayStart, displayEnd);
+  const cursor = new Date(start);
+
+  const training = trainings.find(t => t.id === d.trainingId);
+  const company = companies.find(c => c.id === d.companyId);
+
+  const base = formatDemandLabel({
+    trainingNr: training?.nr,
+    companyName: company?.name,
+    startDate: ensureDateTimeForDisplay(ca.startDate, 'start'),
+    endDate: ensureDateTimeForDisplay(ca.endDate, 'end')
+  });
+
+  const formattedTitle = `${d.id} • ${base}`;
+  const cStatus = calculateDemandStatus({ ...d, cancelled: false });
+
+  while (cursor <= end) {
+    map[`${ca.instructorId}-${formatDateKey(cursor)}`] = {
+      id: ca.id, // id do companion allocation
+      instructorId: ca.instructorId,
+      startDate: displayStart,
+      endDate: displayEnd,
+      type: 'TREINAMENTO',
+      title: formattedTitle,
+      source: 'COMPANION',
+      description: d.trainingLocal,
+      calculatedStatus: cStatus,
+      demandId: d.id,
+      isCompanion: true,
+      companionAllocationId: ca.id
+    };
+    cursor.setDate(cursor.getDate() + 1);
+  }
+});
+
 
     // PRIORIDADE 2: Demandas sem Allocation (Instrutor único / Legado)
     demands
-      .filter(d => d.status !== 'CANCELADA' && !!d.instructorId && !demandsWithExplicitAllocations.has(d.id))
+      .filter( d => d.status !== 'CANCELADA' && !!d.instructorId && !demandsWithExplicitAllocations.has(d.id) && !demandsWithCompanions.has(d.id))
       .forEach(d => {
         // 🔥 Se for HÍBRIDO e existir prática definida, a agenda deve mostrar APENAS a prática
         const effectiveStart =
@@ -400,7 +463,13 @@ const CalendarView: React.FC = () => {
       });
 
     return map;
-  }, [agendaItems, instructorAllocations, demands, trainings, companies, buildDemandTitle]);
+  }, [agendaItems, instructorAllocations, companionAllocations, demands, trainings, companies, buildDemandTitle]);
+
+  const hasCompanionForDemand = (demandId?: string) => {
+  if (!demandId) return false;
+  return companionAllocations.some(ca => ca.demandId === demandId);
+};
+
 
   const handleDragStart = (e: React.DragEvent, item: UnifiedItem) => {
     if (isCoordinator) {
@@ -639,29 +708,37 @@ const CalendarView: React.FC = () => {
 
   ctmAllocs.forEach(a => removeResourceAllocation(a.id));
 };
+ 
+const removeCompanionsForDemandIfAny = (demandId: string) => {
+  const comps = companionAllocations.filter(ca => ca.demandId === demandId);
+  comps.forEach(ca => removeCompanionAllocation(ca.id));
+};
 
   const handleRemoveAction = () => {
   if (!activeItem) return;
 
-  // ✅ Se for uma demanda (ou allocation) e existir CTM ligado a ela, remove junto
+  // ✅ Se for uma demanda (ou allocation) e existir CTM / acompanhantes ligados, remove junto
   if (activeItem.source === 'DEMANDA' || activeItem.source === 'ALLOCATION') {
     const demandId = activeItem.demandId || activeItem.id; // DEMANDA usa id, ALLOCATION usa demandId
     removeCTMForDemandIfAny(demandId);
+    removeCompanionsForDemandIfAny(demandId);
   }
 
+
   // fluxo atual (sem inventar nada novo)
-  if (isMobileContext && activeItem) {
+  if (isMobileContext) {
     removeResourceAllocation(activeItem.id);
   } else if (activeItem.source === 'DEMANDA') {
     deallocateInstructor(activeItem.id);
   } else if (activeItem.source === 'ALLOCATION') {
     removeInstructorAllocation(activeItem.id);
   } else {
-    removeAgendaItem(activeItem.id);
+    removeAgendaItem(activeItem.id); // MANUAL (ou qualquer outro que caia aqui)
   }
 
   setIsModalOpen(false);
 };
+
 
 
   const handleRemoveMobileEvent = () => {
@@ -780,65 +857,162 @@ const CalendarView: React.FC = () => {
                     }`}
 
                     >
-                    {cellItem && (
-                      <div
-                        draggable={!isCoordinator && (cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION')}
-                        onDragStart={!isCoordinator ? e => handleDragStart(e, cellItem.data) : undefined}
-                        className={`w-full h-full rounded-lg border shadow-sm p-1 flex flex-col items-center justify-center text-center overflow-hidden transition-all active:scale-95 ${
-                          AGENDA_STYLING[cellItem.data.type]?.bg || 'bg-gray-100'
-                        } ${AGENDA_STYLING[cellItem.data.type]?.text || 'text-gray-600'} ${
-                          AGENDA_STYLING[cellItem.data.type]?.border || 'border-gray-200'
-                        }`}
-                      >
-                        <div className="flex flex-col items-center justify-center w-full leading-tight">
-                          {/* Linha principal */}
-                          <span className="text-[9px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-2">
-                            {cellItem.data.title}
+                  {cellItem && (
+                    <div
+                      draggable={
+                        !isCoordinator &&
+                        (cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION')
+                      }
+                      onDragStart={!isCoordinator ? e => handleDragStart(e, cellItem.data) : undefined}
+                      className={(() => {
+                        const anyData = cellItem.data as any;
+
+                        const isCompanion =
+                          !!anyData?.isCompanion ||
+                          anyData?.role === 'COMPANION' ||
+                          anyData?.kind === 'COMPANION' ||
+                          anyData?.allocationType === 'COMPANION' ||
+                          anyData?.source === 'COMPANION';
+
+                        const baseBg = AGENDA_STYLING[cellItem.data.type]?.bg || 'bg-gray-100';
+                        const baseText = AGENDA_STYLING[cellItem.data.type]?.text || 'text-gray-600';
+                        const baseBorder = AGENDA_STYLING[cellItem.data.type]?.border || 'border-gray-200';
+
+                        // ✅ Companion: força VERDE
+                        const companionBg = 'bg-emerald-600';
+                        const companionText = 'text-white';
+                        const companionBorder = 'border-emerald-700';
+
+                        return `w-full h-full rounded-lg border shadow-sm p-1 flex flex-col items-center justify-center text-center overflow-hidden transition-all active:scale-95 relative ${
+                          isCompanion ? companionBg : baseBg
+                        } ${isCompanion ? companionText : baseText} ${
+                          isCompanion ? companionBorder : baseBorder
+                        }`;
+                      })()}
+                    >
+                      {/* ✅ BOTÃO REMOVER (somente acompanhante) */}
+                      {(() => {
+                        const anyData = cellItem.data as any;
+
+                        const isCompanion =
+                          !!anyData?.isCompanion ||
+                          anyData?.role === 'COMPANION' ||
+                          anyData?.kind === 'COMPANION' ||
+                          anyData?.allocationType === 'COMPANION' ||
+                          anyData?.source === 'COMPANION';
+
+                        if (!isCompanion) return null;
+
+                        // precisa ser o ID da companionAllocation
+                        const companionAllocationId = anyData?.id || anyData?.allocationId;
+                        if (!companionAllocationId) return null;
+
+                        return (
+                          <button
+                            type="button"
+                            title="Remover acompanhante"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              removeCompanionAllocation(companionAllocationId);
+                              setNotification?.({ type: 'success', message: 'Acompanhante removido da agenda.' });
+                            }}
+                            className="absolute top-1 right-1 w-5 h-5 rounded-md bg-black/20 hover:bg-black/35 text-white flex items-center justify-center text-[12px] font-black leading-none"
+                          >
+                            ×
+                          </button>
+                        );
+                      })()}
+
+                      {(() => {
+                        const anyData = cellItem.data as any;
+
+                        const isCompanion =
+                          !!anyData?.isCompanion ||
+                          anyData?.role === 'COMPANION' ||
+                          anyData?.kind === 'COMPANION' ||
+                          anyData?.allocationType === 'COMPANION' ||
+                          anyData?.source === 'COMPANION';
+
+                        if (!isCompanion) return null;
+
+                        return (
+                          <div className="w-full mb-1 flex justify-center">
+                            <span className="px-2 py-[2px] rounded-md text-[8px] font-black uppercase tracking-widest bg-white/20 text-white border border-white/25">
+                              ACOMPANHANTE
+                            </span>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Linha principal */}
+                      <span className="text-[9px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-2">
+                        {cellItem.data.title}
+                      </span>
+
+                      {/* Linha secundária: ID SAP / Pedido Cliente */}
+                      {(() => {
+                        const demandId =
+                          cellItem.data.source === 'ALLOCATION'
+                            ? cellItem.data.demandId
+                            : cellItem.data.demandId || cellItem.data.id;
+
+                        const demand = demands.find(d => d.id === demandId);
+                        if (!demand?.clientDemandId) return null;
+
+                        return (
+                          <span className="text-[9px] font-semibold text-white/85 tracking-tight mt-0.5">
+                            {demand.clientDemandId}
                           </span>
+                        );
+                      })()}
 
-                          {/* Linha secundária: ID SAP / Pedido Cliente */}
-                          {(() => {
-                            const demandId =
-                              cellItem.data.source === 'ALLOCATION'
-                                ? cellItem.data.demandId
-                                : cellItem.data.demandId || cellItem.data.id;
+                      {/* ACOMPANHANTE (badge no card principal) */}
+                      {(cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION') &&
+                        (() => {
+                          const demandId =
+                            cellItem.data.source === 'ALLOCATION'
+                              ? cellItem.data.demandId
+                              : cellItem.data.demandId || cellItem.data.id;
 
-                            const demand = demands.find(d => d.id === demandId);
-                            if (!demand?.clientDemandId) return null;
+                          const hasCompanion = hasCompanionForDemand(demandId);
+                          if (!hasCompanion) return null;
 
-                            return (
-                              <span className="text-[9px] font-semibold text-white/85 tracking-tight mt-0.5">
-                                {demand.clientDemandId}
+                          return (
+                            <span className="flex items-center justify-center opacity-80 leading-none">
+                              <span className="text-[7px] font-black uppercase tracking-tight">
+                                C/ ACOMPANHANTE
                               </span>
+                            </span>
+                          );
+                        })()}
+
+                      {/* CTM */}
+                      {(cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION') &&
+                        (() => {
+                          const demandId =
+                            cellItem.data.source === 'ALLOCATION'
+                              ? cellItem.data.demandId
+                              : cellItem.data.demandId || cellItem.data.id;
+
+                          const hasCTM =
+                            !!demandId &&
+                            resourceAllocations.some(
+                              a => a.resourceType === 'CENTRO_TREINAMENTO_MOVEL' && a.demandId === demandId
                             );
-                          })()}
-                        </div>
 
-                        {/* CTM */}
-                        {(cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION') &&
-                          (() => {
-                            const demandId =
-                              cellItem.data.source === 'ALLOCATION'
-                                ? cellItem.data.demandId
-                                : cellItem.data.demandId || cellItem.data.id;
+                          if (!hasCTM) return null;
 
-                            const hasCTM =
-                              !!demandId &&
-                              resourceAllocations.some(
-                                a => a.resourceType === 'CENTRO_TREINAMENTO_MOVEL' && a.demandId === demandId
-                              );
+                          return (
+                            <span className="mt-0.5 flex items-center justify-center gap-1 opacity-80 pt-[1px]">
+                              <Truck size={10} strokeWidth={2.75} />
+                              <span className="text-[7px] font-black uppercase tracking-tight">CTM</span>
+                            </span>
+                          );
+                        })()}
+                    </div>
+                  )}
 
-                            if (!hasCTM) return null;
-
-                            return (
-                              <span className="mt-0.5 flex items-center justify-center gap-1 opacity-80 pt-[1px]">
-                                <Truck size={10} strokeWidth={2.75} />
-                                <span className="text-[7px] font-black uppercase tracking-tight">CTM</span>
-                              </span>
-                            );
-                          })()}
-                      </div>
-                    )}
 
                     </td>
 

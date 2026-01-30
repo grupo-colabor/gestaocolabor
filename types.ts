@@ -120,6 +120,14 @@ export interface InstructorAllocation {
   endDate: string;
 }
 
+export interface CompanionAllocation {
+  id: string;
+  demandId: string;
+  instructorId: string;
+  startDate: string;
+  endDate: string;
+}
+
 export interface LogisticAllocation {
   id: string;
   demandId: string;

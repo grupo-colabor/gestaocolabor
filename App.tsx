@@ -37,7 +37,8 @@ import type {
   Measurement,
   InstructorAllocation,
   LogisticAllocation,
-  EvidenceData
+  EvidenceData,
+  CompanionAllocation,
 } from './types';
 
 import {
@@ -94,6 +95,12 @@ import {
   replaceInstructorAllocationsForDemand
 } from './services/instructorAllocations';
 
+import {
+  fetchCompanionAllocations,
+  insertCompanionAllocation,
+  deleteCompanionAllocationById
+} from './services/companionAllocations';
+
 
 
 // ✅ Supabase client (precisa existir em ./lib/supabase)
@@ -117,6 +124,9 @@ interface AppState {
   operationalBases: OperationalBases;
   notification: { message: string; type: 'info' | 'success' | 'error' } | null;
   nextDemandNumber: number;
+  companionAllocations: CompanionAllocation[];
+  addCompanionAllocation: (a: CompanionAllocation) => void;
+  removeCompanionAllocation: (id: string) => void;
 
   // ✅ Evidências (GLOBAL)
   evidenceStore: Record<string, EvidenceData>;
@@ -218,6 +228,12 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // ✅ Auth mode (não mistura mock + supabase)
   const AUTH_MODE = (import.meta.env.VITE_AUTH_MODE || 'mock') as 'mock' | 'supabase';
 
+  const [notification, setNotification] = useState<{
+  message: string;
+  type: 'info' | 'success' | 'error';
+} | null>(null);
+
+  const { user, loading } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [regions] = useState<Region[]>(MOCK_REGIONS);
   const [areas] = useState<Area[]>(MOCK_AREAS);
@@ -239,6 +255,99 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 );
   const [instructorAllocations, setInstructorAllocations] = useState<InstructorAllocation[]>([]);
   const [resourceAllocations, setResourceAllocations] = useState<LogisticAllocation[]>([]);
+  const [companionAllocations, setCompanionAllocations] = useState<CompanionAllocation[]>([]);
+  const addCompanionAllocation = useCallback((a: CompanionAllocation) => {
+  // 1) Atualiza local (otimista)
+  setCompanionAllocations(prev => [...prev, a]);
+
+  // 2) Se não for supabase, acabou
+  if (AUTH_MODE !== 'supabase') return;
+
+  // 3) Se estiver sem sessão, não salva (mantém padrão do seu app)
+  if (!user) {
+    setNotification({
+      message: 'Aguarde a sessão carregar para salvar o acompanhante.',
+      type: 'info'
+    });
+    return;
+  }
+
+  // 4) Persiste no banco
+  (async () => {
+    try {
+      const created = await insertCompanionAllocation({
+        demand_id: a.demandId,
+        instructor_id: a.instructorId,
+        start_date: a.startDate,
+        end_date: a.endDate
+      });
+
+      // 5) Garante state com ID real do banco
+      const mapped: CompanionAllocation = {
+        id: created.id,
+        demandId: created.demand_id,
+        instructorId: created.instructor_id,
+        startDate: created.start_date,
+        endDate: created.end_date
+      };
+
+      setCompanionAllocations(prev => {
+        // remove o “placeholder” local se você tiver colocado id temporário
+        const withoutLocal = prev.filter(x => x.id !== a.id);
+        return [...withoutLocal, mapped];
+      });
+
+      // opcional (mais seguro): sync do banco
+      // await syncCompanionAllocationsFromDb();
+    } catch (e) {
+      console.error('[CompanionAllocations] insert error', e);
+
+      // rollback local (remove o que foi adicionado)
+      setCompanionAllocations(prev => prev.filter(x => x.id !== a.id));
+
+      setNotification({
+        message: 'Erro ao salvar acompanhante no banco.',
+        type: 'error'
+      });
+    }
+  })();
+}, [AUTH_MODE, user, setNotification]);
+
+const removeCompanionAllocation = useCallback((id: string) => {
+  // 1) Remove local
+  setCompanionAllocations(prev => prev.filter(x => x.id !== id));
+
+  // 2) Se não for supabase, acabou
+  if (AUTH_MODE !== 'supabase') return;
+
+  if (!user) {
+    setNotification({
+      message: 'Aguarde a sessão carregar para remover o acompanhante.',
+      type: 'info'
+    });
+    return;
+  }
+
+  // 3) Remove do banco
+  (async () => {
+    try {
+      await deleteCompanionAllocationById(id);
+
+      // opcional: sync pra garantir
+      // await syncCompanionAllocationsFromDb();
+    } catch (e) {
+      console.error('[CompanionAllocations] delete error', e);
+      setNotification({
+        message: 'Erro ao remover acompanhante no banco.',
+        type: 'error'
+      });
+
+      // opcional: em caso de erro, você pode re-sincronizar do banco:
+      // await syncCompanionAllocationsFromDb();
+    }
+  })();
+}, [AUTH_MODE, user, setNotification]);
+  
   const [operationalBases, setOperationalBases] = useState<OperationalBases>({
   aprovadores: [],
   analistas: [],
@@ -286,19 +395,12 @@ useEffect(() => {
 }, []);
 
 
-
-  const [notification, setNotification] = useState<{
-    message: string;
-    type: 'info' | 'success' | 'error';
-  } | null>(null);
-
   const [nextDemandNumber, setNextDemandNumber] = useState<number>(6301);
 
   // ✅ Evidências (GLOBAL)
   const [evidenceStore, setEvidenceStore] = useState<Record<string, EvidenceData>>({});
 
-  // ✅ respeitar loading para evitar chamadas no meio da troca de sessão/aba
-  const { user, loading } = useAuth();
+
 
  function mapMeasurementFromDb(row: any) {
   return {
@@ -584,6 +686,38 @@ const syncInstructorAllocationsFromDb = useCallback(async () => {
   }
 }, [AUTH_MODE, demands, mapInstructorAllocationFromDb]);
 
+  const mapCompanionAllocationFromDb = useCallback((row: any): CompanionAllocation => {
+  return {
+    id: row.id,
+    demandId: row.demand_id,
+    instructorId: row.instructor_id,
+    startDate: row.start_date,
+    endDate: row.end_date
+  } as CompanionAllocation;
+}, []);
+
+const syncCompanionAllocationsFromDb = useCallback(async () => {
+  if (AUTH_MODE !== 'supabase') return;
+
+  try {
+    const rows = await fetchCompanionAllocations();
+
+    // ✅ se demandas ainda não carregaram, só mapeia
+    if (demands.length === 0) {
+      setCompanionAllocations((rows || []).map(mapCompanionAllocationFromDb));
+      return;
+    }
+
+    // ✅ filtra órfãos (se existir)
+    const demandIds = new Set(demands.map(d => d.id));
+    const valid = (rows || []).filter(r => demandIds.has(r.demand_id));
+
+    setCompanionAllocations(valid.map(mapCompanionAllocationFromDb));
+  } catch (e) {
+    console.error('[CompanionAllocations] sync error', e);
+  }
+}, [AUTH_MODE, demands, mapCompanionAllocationFromDb]);
+
 
   // ======================================================
   // ✅ DEMANDAS (SUPABASE) — mappers + sync
@@ -756,7 +890,8 @@ const updateEvidence = useCallback(
       console.error('[Evidences] update exception', e);
     }
   },
-  [AUTH_MODE]
+  [AUTH_MODE, mapEvidenceToDbPatch, mapEvidenceFromDb]
+
 );
 
   // Auto-clear notification
@@ -849,6 +984,16 @@ useEffect(() => {
 
     syncInstructorAllocationsFromDb();
   }, [AUTH_MODE, user, loading, demands.length, syncInstructorAllocationsFromDb]);
+
+  useEffect(() => {
+    if (AUTH_MODE !== 'supabase') return;
+    if (loading) return;
+    if (!user) return;
+
+    if (demands.length === 0) return;
+
+    syncCompanionAllocationsFromDb();
+  }, [AUTH_MODE, user, loading, demands.length, syncCompanionAllocationsFromDb]);
 
   // ✅ Carregar Medições do Supabase (fonte da verdade)
   useEffect(() => {
@@ -2166,10 +2311,11 @@ const removeAgendaItem = useCallback(
       notification,
       nextDemandNumber,
       setNextDemandNumber,
+      addCompanionAllocation,
+      removeCompanionAllocation,
       setNotification,
       setHybridPracticePeriod,
-
-      // ✅ Evidências (GLOBAL)
+      companionAllocations,
       evidenceStore,
       setEvidenceStore,
       getEvidenceAutoStatus,
@@ -2249,6 +2395,7 @@ const removeAgendaItem = useCallback(
       isCompanyFullLogistics,
       setHybridPracticePeriod,
       updateEvidence,
+      companionAllocations,
     ]
   );
 

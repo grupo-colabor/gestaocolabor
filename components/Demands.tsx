@@ -110,7 +110,7 @@ const canPerformAction = (
 const Demands: React.FC = () => {
   const { 
     demands, companies, trainings, regions, instructors, operationalBases,
-    measurements, agendaItems, instructorAllocations, resourceAllocations,
+    measurements, agendaItems, instructorAllocations, resourceAllocations,companionAllocations,
     updateDemand, addDemand, deleteDemand, deallocateInstructor, recommendInstructors,
     updateMeasurement, removeAgendaItem, hasResourceConflict,
     addInstructorAllocation, removeInstructorAllocation, addResourceAllocation, removeResourceAllocation, hasScheduleConflict, setNotification
@@ -1772,6 +1772,52 @@ const endLocal = usePractice
     return principalInstructorByDemandId[formDemand.id];
   }, [formDemand.id, principalInstructorByDemandId]);
 
+  // ✅ Instrutor Principal 2 = segundo instrutor único na divisão (por ordem de início)
+  const principalInstructor2Id = useMemo(() => {
+  if (!formDemand.id) return undefined;
+
+  const allocs = instructorAllocations
+    .filter(a => a.demandId === formDemand.id && a.instructorId && a.startDate)
+    .slice()
+    .sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)));
+
+  const seen = new Set<string>();
+  const orderedUnique: string[] = [];
+
+  for (const a of allocs) {
+    const id = a.instructorId;
+    if (!id) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    orderedUnique.push(id);
+    if (orderedUnique.length >= 2) break;
+  }
+
+  // [0] = principal 1, [1] = principal 2
+  return orderedUnique[1];
+}, [formDemand.id, instructorAllocations]);
+
+  // ✅ Acompanhante(s) da demanda atual (vem da tabela/estrutura de companionAllocations)
+const companionInstructorIds = useMemo(() => {
+  if (!formDemand.id) return [];
+
+  const ids = (companionAllocations || [])
+    .filter((c: any) => c.demandId === formDemand.id)
+    .map((c: any) => c.instructorId)
+    .filter(Boolean) as string[];
+
+  // ✅ remove duplicados mantendo a ordem (fica 1 nome só, e 2+ só se forem diferentes)
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    unique.push(id);
+  }
+
+  return unique;
+}, [formDemand.id, companionAllocations]);
+
 
   // ✅ FIX: manter formDemand sincronizado com o estado global da demanda
 // (especialmente instructorId, que muda quando você remove/altera alocações)
@@ -2215,7 +2261,29 @@ const endLocal = usePractice
                                   </span>
                                 </div>
                                 <div className="md:col-span-3">
-                                   <DataViewField label="Instrutor Principal" value={getInstructorName(formDemand.instructorId)} icon={UserCheck} />
+                                 <div className="md:col-span-3 space-y-3">
+                                <DataViewField
+                                  label="Instrutor Principal"
+                                  value={getInstructorName(formDemand.instructorId)}
+                                  icon={UserCheck}
+                                />
+
+                                {principalInstructor2Id && (
+                                  <DataViewField
+                                    label="Instrutor Principal 2"
+                                    value={getInstructorName(principalInstructor2Id)}
+                                    icon={UserCheck}
+                                  />
+                                )}
+
+                                {companionInstructorIds.length > 0 && (
+                                  <DataViewField
+                                    label="Instrutor Acompanhante"
+                                    value={companionInstructorIds.map(id => getInstructorName(id)).join(' • ')}
+                                    icon={UserCheck}
+                                  />
+                                )}
+                              </div>
                                 </div>
                                 
                                 <div className="md:col-span-3 border-t border-slate-50 pt-4">

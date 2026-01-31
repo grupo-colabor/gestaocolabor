@@ -2109,58 +2109,92 @@ const removeAgendaItem = useCallback(
     [companies]
   );
 
-  const hasScheduleConflict = useCallback(
-    (
-      instructorId: string,
-      startDate: string,
-      endDate: string,
-      excludeDemandId?: string,
-      excludeAgendaItemId?: string,
-      excludeAllocationId?: string
-    ): boolean => {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
+const hasScheduleConflict = useCallback(
+  (
+    instructorId: string,
+    startDate: string,
+    endDate: string,
+    excludeDemandId?: string,
+    excludeAgendaItemId?: string,
+    excludeAllocationId?: string
+  ): boolean => {
 
-      const demandConflict = demands.some(d => {
-        if (excludeDemandId && d.id === excludeDemandId) return false;
-        if (d.instructorId !== instructorId) return false;
-        if (d.status === 'CANCELADA') return false;
+    // --- Helpers locais (evita bug de UTC com "YYYY-MM-DD") ---
+    const toDateOnly = (v?: string) => {
+      if (!v) return '';
+      return v.includes('T') ? v.split('T')[0] : v;
+    };
 
-        const hasExplicitAllocation = instructorAllocations.some(a => a.demandId === d.id);
-        if (hasExplicitAllocation) return false;
+    const toDayStart = (v?: string) => {
+      const d = toDateOnly(v);
+      if (!d) return null;
+      return new Date(`${d}T00:00:00`);
+    };
 
-        const eff = getEffectiveDemandRange(d);
-        const dStart = new Date(eff.start);
-        const dEnd = new Date(eff.end);
-        return start <= dEnd && end >= dStart;
-      });
+    const toDayEnd = (v?: string) => {
+      const d = toDateOnly(v);
+      if (!d) return null;
+      return new Date(`${d}T23:59:59`);
+    };
 
-      if (demandConflict) return true;
+    const overlapsByDay = (aStart?: string, aEnd?: string, bStart?: string, bEnd?: string) => {
+      const as = toDayStart(aStart);
+      const ae = toDayEnd(aEnd);
+      const bs = toDayStart(bStart);
+      const be = toDayEnd(bEnd);
 
-      const allocationConflict = instructorAllocations.some(a => {
-        if (excludeAllocationId && a.id === excludeAllocationId) return false;
-        if (a.instructorId !== instructorId) return false;
+      if (!as || !ae || !bs || !be) return false;
 
-        const aStart = new Date(a.startDate);
-        const aEnd = new Date(a.endDate);
-        return start <= aEnd && end >= aStart;
-      });
+      // Sobreposição por dia (inclusivo)
+      return as <= be && ae >= bs;
+    };
 
-      if (allocationConflict) return true;
+    // Normaliza o período que está tentando alocar para "dia completo"
+    const reqStart = toDateOnly(startDate);
+    const reqEnd = toDateOnly(endDate);
 
-      const agendaConflict = agendaItems.some(item => {
-        if (excludeAgendaItemId && item.id === excludeAgendaItemId) return false;
-        if (item.instructorId !== instructorId) return false;
+    // 1) Conflito com DEMANDAS do instrutor (sem alocação explícita)
+    const demandConflict = demands.some(d => {
+      if (excludeDemandId && d.id === excludeDemandId) return false;
+      if (d.instructorId !== instructorId) return false;
+      if (d.status === 'CANCELADA') return false;
 
-        const iStart = new Date(item.startDate);
-        const iEnd = new Date(item.endDate);
-        return start <= iEnd && end >= iStart;
-      });
+      const hasExplicitAllocation = instructorAllocations.some(a => a.demandId === d.id);
+      if (hasExplicitAllocation) return false;
 
-      return agendaConflict;
-    },
-    [demands, instructorAllocations, agendaItems, getEffectiveDemandRange]
-  );
+      const eff = getEffectiveDemandRange(d);
+
+      // ✅ conflito por DIA
+      return overlapsByDay(reqStart, reqEnd, eff.start, eff.end);
+    });
+
+    if (demandConflict) return true;
+
+    // 2) Conflito com ALOCAÇÕES explícitas do instrutor
+    const allocationConflict = instructorAllocations.some(a => {
+      if (excludeAllocationId && a.id === excludeAllocationId) return false;
+      if (a.instructorId !== instructorId) return false;
+
+      // ✅ conflito por DIA
+      return overlapsByDay(reqStart, reqEnd, a.startDate, a.endDate);
+    });
+
+    if (allocationConflict) return true;
+
+    // 3) Conflito com itens de AGENDA do instrutor
+    const agendaConflict = agendaItems.some(item => {
+      if (excludeAgendaItemId && item.id === excludeAgendaItemId) return false;
+      if (item.instructorId !== instructorId) return false;
+
+      // ✅ conflito por DIA
+      return overlapsByDay(reqStart, reqEnd, item.startDate, item.endDate);
+    });
+
+    return agendaConflict;
+  },
+  [demands, instructorAllocations, agendaItems, getEffectiveDemandRange]
+);
+
 
   const hasResourceConflict = useCallback(
     (

@@ -102,6 +102,8 @@ export interface Instructor {
   skills: InstructorSkill[];
   observations?: string;
   email?: string;
+  residenceLocation?: string;     
+  coverageLocations?: string[];   
 }
 
 export interface Schedule {
@@ -266,6 +268,7 @@ export type OperationalBaseKey =
   | 'hoteis'
   | 'locadoras'
   | 'tiposTreinamento'
+  | 'locaisTreinamento'
   | 'matriculadores';
 
 export interface OperationalBases {
@@ -274,6 +277,7 @@ export interface OperationalBases {
   matriculadores: string[];
   corredores: string[];
   localidades: string[];
+  locaisTreinamento: string[];
   hoteis: string[];
   locadoras: string[];
   tiposTreinamento: string[];

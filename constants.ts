@@ -308,6 +308,7 @@ export const INITIAL_OPERATIONAL_BASES: OperationalBases = {
     "Marlon", "Mylene", "Natalia", "Rafaela", "Ricelly", "Suamya", "Talita",
     "Thiago", "Trayce", "Tap Eletro", "Rosirene", "Empresa PSM", "Empresa ISQ"
   ],
+  matriculadores: [], 
   corredores: [
     "Ferrovia/MA", "Porto/Ferrovia", "S11D", "Serra Norte", "Sudeste",
     "Sul/Portos Sul", "Tap Eletro", "Salobo", "Aperam"
@@ -318,6 +319,8 @@ export const INITIAL_OPERATIONAL_BASES: OperationalBases = {
     "Canaã", "Village", "São Luis", "Rio de Janeiro", "Intendente Câmara",
     "Capanema", "Belo Horizonte", "Salobo", "Praia Mole", "Governador Valadares", "Timoteo"
   ],
+  locaisTreinamento: [],
+
   hoteis: [
     "Hotel providência", "Iron flat", "IT Itabira", "Não Solicitado",
     "Pousada das Nascentes", "Santos Dumont", "Urbanos", "JOB",

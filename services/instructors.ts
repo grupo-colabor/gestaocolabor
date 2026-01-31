@@ -12,6 +12,8 @@ export type InstructorRow = {
   email: string | null;
   region: string | null;
   is_active: boolean | null;
+  residence_location: string | null;
+  coverage_locations: string[] | null;
 };
 
 export type InstructorTrainingRow = {
@@ -23,7 +25,7 @@ export type InstructorTrainingRow = {
 export async function fetchInstructors(): Promise<InstructorRow[]> {
   const { data, error } = await supabase
     .from('instructors')
-    .select('id, full_name, email, region, is_active')
+    .select('id, full_name, email, region, is_active, residence_location, coverage_locations')
     .order('full_name', { ascending: true });
 
   if (error) throw error;

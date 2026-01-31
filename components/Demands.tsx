@@ -1862,13 +1862,15 @@ const companionInstructorIds = useMemo(() => {
         </div>
       )}
 
-      <DataList id="aprovadores-list" items={operationalBases.aprovadores} />
-      <DataList id="analistas-list" items={operationalBases.analistas} />
-      <DataList id="corredores-list" items={operationalBases.corredores} />
-      <DataList id="localidades-list" items={operationalBases.localidades} />
-      <DataList id="hoteis-list" items={operationalBases.hoteis} />
-      <DataList id="agencias-list" items={operationalBases.localidades} />
-      <DataList id="matriculadores-list" items={operationalBases.matriculadores} />
+    <DataList id="aprovadores-list" items={operationalBases.aprovadores ?? []} />
+    <DataList id="analistas-list" items={operationalBases.analistas ?? []} />
+    <DataList id="corredores-list" items={operationalBases.corredores ?? []} />
+    <DataList id="localidades-list" items={operationalBases.localidades ?? []} />
+    <DataList id="locais-treinamento-list" items={operationalBases.locaisTreinamento ?? []} />
+    <DataList id="hoteis-list" items={operationalBases.hoteis ?? []} />
+    <DataList id="agencias-list" items={operationalBases.localidades ?? []} />
+    <DataList id="matriculadores-list" items={operationalBases.matriculadores ?? []} />
+
 
       <div className="flex flex-col space-y-4 no-print">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -2188,16 +2190,17 @@ const companionInstructorIds = useMemo(() => {
                                   Local do Treinamento {formDemand.modality === 'ONLINE' ? '' : '*'}
                                 </label>
 
-                                <input
-                                  list="localidades-list"
-                                  className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${
-                                    formDemand.modality === 'ONLINE' ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''
-                                  }`}
-                                  value={formDemand.modality === 'ONLINE' ? '' : (formDemand.trainingLocal || '')}
-                                  onChange={(e) => setFormDemand({ ...formDemand, trainingLocal: e.target.value })}
-                                  placeholder={formDemand.modality === 'ONLINE' ? 'N/A (ONLINE)' : 'Ex: Brucutu, Vitória...'}
-                                  disabled={formDemand.modality === 'ONLINE'}
-                                />
+                              <input
+                                list="locais-treinamento-list"
+                                className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${
+                                  formDemand.modality === 'ONLINE' ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''
+                                }`}
+                                value={formDemand.modality === 'ONLINE' ? '' : (formDemand.trainingLocal || '')}
+                                onChange={(e) => setFormDemand({ ...formDemand, trainingLocal: e.target.value })}
+                                placeholder={formDemand.modality === 'ONLINE' ? 'N/A (ONLINE)' : 'Ex: Brucutu, Vitória...'}
+                                disabled={formDemand.modality === 'ONLINE'}
+                              />
+
                               </div>
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Região</label><select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" value={formDemand.regionId} onChange={(e) => setFormDemand({...formDemand, regionId: e.target.value})}><option value="">Selecione...</option>{regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></div>
                               <div>

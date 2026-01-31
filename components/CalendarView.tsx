@@ -153,7 +153,7 @@ const CalendarView: React.FC = () => {
   const [mobileResourceEvents, setMobileResourceEvents] = useState<MobileResourceEvent[]>([]);
   const [activeMobileEvent, setActiveMobileEvent] = useState<MobileResourceEvent | null>(null);
   const [isMobileContext, setIsMobileContext] = useState(false);
-  const [extraInfo, setExtraInfo] = useState<Record<string, { coverage: string; residence: string }>>({});
+  
 
   const [currentDate, setCurrentDate] = useState<Date>(() => {
     const now = new Date();
@@ -620,31 +620,36 @@ companionAllocations.forEach(ca => {
     }
   };
 
-  const handleSaveManual = () => {
-    if (!selectedSlot) return;
+const handleSaveManual = async () => {
+  if (!selectedSlot) return;
 
-    const startDateStr = `${formatDateKey(selectedSlot.date)}T${formStartTime}`;
-    const endDateStr = `${formEndDate}T${formEndTime}`;
+  const startDateStr = `${formatDateKey(selectedSlot.date)}T${formStartTime}`;
+  const endDateStr = `${formEndDate}T${formEndTime}`;
 
-    if (hasScheduleConflict(selectedSlot.instructorId, startDateStr, endDateStr)) {
-      setNotification({ message: 'Não é possível registrar este período, pois já existe outro registro cadastrado.', type: 'error' });
-      return;
-    }
+  if (hasScheduleConflict(selectedSlot.instructorId, startDateStr, endDateStr)) {
+    setNotification({ message: 'Não é possível registrar este período, pois já existe outro registro cadastrado.', type: 'error' });
+    return;
+  }
 
-    const item: AgendaItem = {
-      id: `AG-${Date.now()}`,
-      instructorId: selectedSlot.instructorId,
-      startDate: startDateStr,
-      endDate: endDateStr,
-      type: formType as AgendaType,
-      title: formType,
-      source: 'MANUAL',
-      description: formDescription
-    };
-
-    addAgendaItem(item);
-    setIsModalOpen(false);
+  const item: AgendaItem = {
+    id: `AG-${Date.now()}`,
+    instructorId: selectedSlot.instructorId,
+    startDate: startDateStr,
+    endDate: endDateStr,
+    type: formType as AgendaType,
+    title: formType,
+    source: 'MANUAL',
+    description: formDescription
   };
+
+  try {
+    await addAgendaItem(item); // ✅ aqui é a diferença
+    setIsModalOpen(false);
+  } catch (e) {
+    setNotification({ type: 'error', message: 'Falha ao salvar registro manual (agenda_items). Veja o console/erros do Supabase.' });
+  }
+};
+
 
   const handleSaveMobile = () => {
     if (!selectedSlot || !formEndDate || !formDescription.trim()) return;
@@ -768,18 +773,47 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="min-w-max w-full text-sm border-collapse">
+          <table className="min-w-max w-full text-sm border-separate border-spacing-0">
             <thead>
               <tr className="bg-slate-50 border-b border-gray-200">
-                <th className="p-4 border-r border-gray-200 text-left min-w-[200px] font-black text-[10px] uppercase tracking-widest text-slate-400 sticky left-0 z-30 bg-slate-50">
-                  Instrutor
-                </th>
-                <th className="px-2 py-4 border-r border-gray-200 text-left w-[85px] min-w-[85px] font-black text-[8px] uppercase tracking-tighter text-slate-400 bg-slate-50 leading-tight">
-                  Localidade
-                </th>
-                <th className="px-2 py-4 border-r border-gray-200 text-left w-[85px] min-w-[85px] font-black text-[8px] uppercase tracking-tighter text-slate-400 bg-slate-50 leading-tight">
-                  Local (Residência)
-                </th>
+                <th
+              className="
+                p-4 text-left w-[200px] min-w-[200px]
+                font-black text-[10px] uppercase tracking-widest text-slate-400
+                sticky left-0 z-50 bg-slate-50
+                relative overflow-hidden
+                after:content-[''] after:absolute after:top-0 after:right-0 after:h-full after:w-px after:bg-gray-200
+              "
+            >
+              Instrutor
+            </th>
+            <th
+              className="
+                px-2 py-4 text-left
+                w-[90px] min-w-[90px] max-w-[90px] box-border
+                font-black text-[8px] uppercase tracking-tighter text-slate-400 leading-tight
+                sticky left-[200px] z-50 bg-slate-50
+                relative overflow-hidden
+                after:content-[''] after:absolute after:top-0 after:right-0 after:h-full after:w-px after:bg-gray-200
+                before:content-[''] before:absolute before:left-0 before:bottom-0 before:w-full before:h-px before:bg-gray-200
+              "
+            >
+              Local
+            </th>
+            <th
+              className="
+                px-2 py-4 text-left
+                w-[120px] min-w-[120px] max-w-[120px] box-border
+                font-black text-[8px] uppercase tracking-tighter text-slate-400 leading-tight
+                sticky left-[290px] z-50 bg-slate-50
+                relative overflow-hidden
+                after:content-[''] after:absolute after:top-0 after:right-0 after:h-full after:w-px after:bg-gray-200
+                before:content-[''] before:absolute before:left-0 before:bottom-0 before:w-full before:h-px before:bg-gray-200
+              "
+            >
+              Atende
+            </th>
+
                 {daysInView.map((day, idx) => (
                   <th
                     key={idx}
@@ -802,46 +836,69 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                   key={instructor.id}
                   className="border-b border-gray-100 last:border-0 hover:bg-slate-50/10 transition-colors"
                 >
-                  {/* COLUNA INSTRUTOR (ajustada p/ auto-height) */}
-                  <td className="p-3 border-r border-gray-100 font-bold text-slate-700 bg-white sticky left-0 z-20 shadow-sm align-top">
-                    <div className="h-full flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-black text-[10px] border border-blue-100">
-                        {instructor.name.charAt(0)}
-                      </div>
-                      <span className="truncate max-w-[140px] font-bold text-slate-600">{instructor.name}</span>
+
+                 {/* COLUNA INSTRUTOR (ajustada p/ auto-height) */}
+                <td
+                  className="
+                    p-3 font-bold text-slate-700 bg-white
+                    sticky left-0 z-50
+                    w-[200px] min-w-[200px] max-w-[200px] box-border
+                    align-middle
+                    relative overflow-hidden
+                    after:content-[''] after:absolute after:top-0 after:right-0 after:h-full after:w-px after:bg-gray-200
+                    before:content-[''] before:absolute before:left-0 before:bottom-0 before:w-full before:h-px before:bg-gray-100
+                  "
+                >
+                  <div className="h-full flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-black text-[10px] border border-blue-100">
+                      {instructor.name.charAt(0)}
                     </div>
-                  </td>
+                    <span className="truncate max-w-[140px] font-bold text-slate-600">{instructor.name}</span>
+                  </div>
+                </td>
 
-                  <td className="px-1 py-2 border-r border-gray-100 bg-white align-top">
-                    <input
-                      type="text"
-                      placeholder="Atende..."
-                      className="w-full text-[9px] font-bold p-0.5 border border-transparent rounded bg-transparent outline-none focus:border-blue-300"
-                      value={extraInfo[instructor.id]?.coverage || ''}
-                      onChange={e =>
-                        setExtraInfo({
-                          ...extraInfo,
-                          [instructor.id]: { ...extraInfo[instructor.id], coverage: e.target.value }
-                        })
-                      }
-                    />
-                  </td>
+                {/* 1) LOCAL (RESIDÊNCIA) - primeiro */}
+               <td
+                className="
+                  px-2 py-2 bg-white align-middle
+                  sticky left-[200px] z-40
+                  w-[90px] min-w-[90px] max-w-[90px] box-border
+                  relative overflow-hidden
+                  after:content-[''] after:absolute after:top-0 after:right-0 after:h-full after:w-px after:bg-gray-200
+                  before:content-[''] before:absolute before:left-0 before:bottom-0 before:w-full before:h-px before:bg-gray-100
+                "
+              >
+                <div
+                  className="w-full text-[14px] font-bold text-slate-600 whitespace-nowrap overflow-hidden text-ellipsis"
+                  title={instructor.residenceLocation || ''}
+                >
+                  {instructor.residenceLocation ? instructor.residenceLocation : '—'}
+                </div>
+              </td>
 
-                  <td className="px-1 py-2 border-r border-gray-100 bg-white align-top">
-                    <input
-                      type="text"
-                      placeholder="Reside..."
-                      className="w-full text-[9px] font-bold p-0.5 border border-transparent rounded bg-transparent outline-none focus:border-blue-300"
-                      value={extraInfo[instructor.id]?.residence || ''}
-                      onChange={e =>
-                        setExtraInfo({
-                          ...extraInfo,
-                          [instructor.id]: { ...extraInfo[instructor.id], residence: e.target.value }
-                        })
-                      }
-                    />
-                  </td>
-                    {daysInView.map(day => {
+                {/* 2) LOCALIDADE (ATENDE) - depois */}
+                <td
+                className="
+                  px-2 py-2 bg-white align-middle
+                  sticky left-[290px] z-40
+                  w-[120px] min-w-[120px] max-w-[120px] box-border
+                  relative overflow-hidden
+                  after:content-[''] after:absolute after:top-0 after:right-0 after:h-full after:w-px after:bg-gray-200
+                  before:content-[''] before:absolute before:left-0 before:bottom-0 before:w-full before:h-px before:bg-gray-100
+                "
+              >
+                <div
+                  className="w-full text-[11px] font-bold text-slate-600 whitespace-nowrap overflow-hidden text-ellipsis"
+                  title={(instructor.coverageLocations || []).join(', ')}
+                >
+                  {(instructor.coverageLocations && instructor.coverageLocations.length > 0)
+                    ? instructor.coverageLocations.join(', ')
+                    : '—'}
+                </div>
+              </td>
+
+
+                  {daysInView.map(day => {
                       const dateKey = `${instructor.id}-${formatDateKey(day)}`;
                       const item = agendaByDay[dateKey];
                       const cellItem = item ? { type: 'INSTRUCTOR_EVENT', data: item } : null;
@@ -852,9 +909,10 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                       onClick={() => handleCellClick(instructor, day)}
                       onDragOver={e => e.preventDefault()}
                       onDrop={e => handleDrop(e, instructor.id)}
-                      className={`p-1 border-r border-gray-100 h-16 cursor-pointer transition-all ${
+                    className={`p-1 border-r border-b border-gray-100 h-16 cursor-pointer transition-all ${
                       day.getDay() % 6 === 0 ? 'bg-slate-50/50' : ''
                     }`}
+
 
                     >
                   {cellItem && (
@@ -1021,20 +1079,26 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                   </tr>
                 ))}
               {/* Linha Centro Móvel */}
-              <tr className="bg-slate-50 border-t-2 border-slate-200 border-b border-gray-100">
-               <td className="p-4 border-r border-gray-100 font-black text-[11px] text-amber-700 bg-[#fffbeb] sticky left-0 z-20 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600 border border-amber-200 shadow-sm">
-                  <Truck size={18} />
+            <tr className="bg-slate-50 border-t-2 border-slate-200">
+              {/* COLUNA "INSTRUTOR" DO CTM */}
+              <td className="p-4 border-r border-b border-gray-200 font-black text-[11px] text-amber-700 bg-[#fffbeb] sticky left-0 z-30 w-[200px] min-w-[200px] align-middle">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600 border border-amber-200 shadow-sm">
+                    <Truck size={18} />
+                  </div>
+                  <span className="uppercase tracking-tight leading-tight">Centro Móvel</span>
                 </div>
-                <span className="uppercase tracking-tight leading-tight">
-                  Centro Móvel
-                </span>
-              </div>
-            </td>
-                <td className="p-4 border-r border-gray-100 bg-white"></td>
-                <td className="p-4 border-r border-gray-100 bg-white"></td>
+              </td>
 
+              {/* COLUNA LOCAL (CTM) — igual à dos instrutores */}
+              <td className="p-4 border-r border-b border-gray-200 bg-[#fffbeb] sticky left-[200px] z-20 w-[85px] min-w-[85px]">
+                {/* vazio */}
+              </td>
+
+              {/* COLUNA ATENDE (CTM) — igual à dos instrutores */}
+              <td className="p-4 border-r border-b border-gray-200 bg-[#fffbeb] sticky left-[285px] z-20 w-[85px] min-w-[85px]">
+                {/* vazio */}
+              </td>
                 {daysInView.map(day => {
                   const key = formatDateKey(day);
                   const item = mobileAgendaByDay[key];
@@ -1045,9 +1109,9 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                       <td
                     key={`mobile-${key}`}
                     onClick={() => handleMobileCellClick(day)}
-                    className={`p-1 border-r border-gray-100 relative cursor-pointer overflow-hidden transition-all align-top ${
-                      day.getDay() % 6 === 0 ? 'bg-slate-50/50' : ''
-                    }`}
+                    className={`p-1 border-r border-b border-gray-100 relative cursor-pointer overflow-hidden transition-all align-top ${
+                    day.getDay() % 6 === 0 ? 'bg-slate-50/50' : ''
+                  }`}
                       />
                     );
 
@@ -1057,9 +1121,9 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                   <td
                     key={`mobile-${key}`}
                     onClick={() => handleMobileCellClick(day)}
-                    className={`p-1 border-r border-gray-100 relative cursor-pointer overflow-hidden transition-all align-top ${
-                      day.getDay() % 6 === 0 ? 'bg-slate-50/50' : ''
-                    }`}
+                   className={`p-1 border-r border-b border-gray-100 relative cursor-pointer overflow-hidden transition-all align-top ${
+                    day.getDay() % 6 === 0 ? 'bg-slate-50/50' : ''
+                  }`}
                     >
                       <div
                         className={`w-full min-h-[72px] rounded-lg border-2 p-1 flex flex-col items-center justify-center text-center overflow-hidden transition-all active:scale-95 leading-tight ${

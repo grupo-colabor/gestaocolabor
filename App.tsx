@@ -354,6 +354,7 @@ const removeCompanionAllocation = useCallback((id: string) => {
   matriculadores: [],
   corredores: [],
   localidades: [],
+  locaisTreinamento: [],
   hoteis: [],
   locadoras: [],
   tiposTreinamento: [],
@@ -378,6 +379,7 @@ useEffect(() => {
       analistas: [],
       matriculadores: [],
       corredores: [],
+      locaisTreinamento: [],
       localidades: [],
       hoteis: [],
       locadoras: [],
@@ -571,7 +573,9 @@ const syncEvidencesFromDb = useCallback(async () => {
           trainingId: s.training_id,
           level: mapDbLevelToApp(s.level)
         })),
-        observations: ''
+        observations: '',
+        residenceLocation: row.residence_location ?? '',
+        coverageLocations: Array.isArray(row.coverage_locations) ? row.coverage_locations : [],
       };
     },
     [mapDbLevelToApp, regions]
@@ -1631,6 +1635,7 @@ const addAgendaItem = useCallback(
     } catch (e) {
       console.error('addAgendaItem error:', e);
       setNotification({ message: 'Erro ao salvar registro na agenda.', type: 'error' });
+      throw e;
     }
   },
   [AUTH_MODE, syncAgendaItemsFromDb, setNotification]

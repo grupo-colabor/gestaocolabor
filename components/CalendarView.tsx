@@ -25,7 +25,12 @@ import { formatDemandLabel } from '../domain/demandStatus';
 const AGENDA_STYLING: Record<string, { bg: string; text: string; border: string }> = {
   FOLGA: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
   INDISPONIVEL: { bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200' },
-  ESCRITORIO: { bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' },
+  FERIAS: { bg: 'bg-teal-50', text: 'text-teal-700', border: 'border-teal-200' },
+  ESCRITORIO_ALPHAVILLE: { bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' },
+  ESCRITORIO_BH: { bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' },
+  ESCRITORIO_VITORIA: { bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' },
+  HOME_OFFICE: { bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200' },
+  EXTERNO: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
   DESCANSO: { bg: 'bg-sky-50', text: 'text-sky-700', border: 'border-sky-200' },
   OUTRO: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
   TREINAMENTO: { bg: 'bg-blue-600', text: 'text-white', border: 'border-blue-700' },
@@ -35,7 +40,37 @@ const AGENDA_STYLING: Record<string, { bg: string; text: string; border: string 
   RESERVADO: { bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200' }
 };
 
-const AGENDA_TYPES: AgendaType[] = ['FOLGA', 'ESCRITORIO', 'INDISPONIVEL', 'DESCANSO', 'OUTRO'];
+const AGENDA_TYPES: AgendaType[] = [
+  'FOLGA',
+  'INDISPONIVEL',
+  'FERIAS',
+  'DESCANSO',
+  'OUTRO',
+  'ESCRITORIO_ALPHAVILLE',
+  'ESCRITORIO_BH',
+  'ESCRITORIO_VITORIA',
+  'HOME_OFFICE',
+  'EXTERNO'
+];
+
+const AGENDA_LABELS: Record<string, string> = {
+  FOLGA: 'FOLGA',
+  INDISPONIVEL: 'INDISPONÍVEL',
+  FERIAS: 'FÉRIAS',
+  DESCANSO: 'DESCANSO',
+  OUTRO: 'OUTRO',
+
+  ESCRITORIO: 'ESCRITÓRIO',
+  ESCRITORIO_ALPHAVILLE: 'ESCRITÓRIO ALPHAVILLE',
+  ESCRITORIO_BH: 'ESCRITÓRIO BH',
+  ESCRITORIO_VITORIA: 'ESCRITÓRIO VITÓRIA',
+
+  HOME_OFFICE: 'HOME OFFICE',
+  EXTERNO: 'EXTERNO'
+};
+
+const getAgendaLabel = (t: string) => AGENDA_LABELS[t] ?? t;
+
 const MOBILE_AGENDA_TYPES = ['MANUTENÇÃO', 'DESLOCAMENTO', 'EVENTO', 'RESERVADO'];
 
 interface UnifiedItem {
@@ -757,7 +792,7 @@ const handleSaveManual = async () => {
     startDate: startDateStr,
     endDate: endDateStr,
     type: formType as AgendaType,
-    title: formType,
+    title: getAgendaLabel(formType),
     source: 'MANUAL',
     description: formDescription
   };
@@ -800,7 +835,7 @@ const handleSaveManual = async () => {
 
     const newEvent: MobileResourceEvent = {
       id: `MOBILE-${Date.now()}`,
-      title: formType,
+      title: getAgendaLabel(formType),
       startDate: startDateTime,
       endDate: endDateTime,
       description: formDescription
@@ -1720,7 +1755,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                           formType === type ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-400 border-slate-100'
                         }`}
                       >
-                        {type}
+                        {getAgendaLabel(type)}
                       </button>
                     ))}
                   </div>

@@ -23,7 +23,20 @@ export type TrainingCategory =
   | 'Técnicos Solda'
   | 'Treinamentos Comportamentais';
 
-export type AgendaType = 'TREINAMENTO' | 'FOLGA' | 'DESCANSO' | 'INDISPONIVEL' | 'ESCRITORIO' | 'OUTRO';
+export type AgendaType =
+  | 'TREINAMENTO'
+  | 'FOLGA'
+  | 'INDISPONIVEL'
+  | 'FERIAS'
+  | 'DESCANSO'
+  | 'OUTRO'
+  | 'ESCRITORIO' // mantém por compatibilidade com registros antigos
+  | 'ESCRITORIO_ALPHAVILLE'
+  | 'ESCRITORIO_BH'
+  | 'ESCRITORIO_VITORIA'
+  | 'HOME_OFFICE'
+  | 'EXTERNO';
+
 
 export type TransportType = 'Carro Alugado' | 'Carro Próprio' | 'N/A' | null;
 export type RentalCompany = 'Localiza' | 'Movida' | 'Outro';

@@ -59,7 +59,8 @@ const BASE_LABELS: Record<OperationalBaseKey, string> = {
   hoteis: 'Hotéis',
   locadoras: 'Empresas de Locação',
   tiposTreinamento: 'Tipos de Treinamento',
-  matriculadores: 'Matriculadores'
+  matriculadores: 'Matriculadores',
+  funcoesAgenda: 'Funções da Agenda',
 };
 
 const Registrations: React.FC = () => {
@@ -119,6 +120,8 @@ const Registrations: React.FC = () => {
     observations: string;
     residenceLocation: string;
     coverageLocations: string[];
+    agendaRole: string;
+    operationalNotes: string;
   }>({
     name: '',
     email: '',
@@ -128,6 +131,8 @@ const Registrations: React.FC = () => {
     observations: '',
     residenceLocation: '',
     coverageLocations: [],
+    agendaRole: 'Instrutor',
+    operationalNotes: ''
   });
 
   const [tempSkill, setTempSkill] = useState<{ trainingId: string; level: number }>({
@@ -235,7 +240,8 @@ const Registrations: React.FC = () => {
   // --- Instructor Handlers ---
   const handleOpenInstructorCreateModal = () => {
     setEditingInstructorId(null);
-    setInstructorFormData({ name: '', email: '', status: 'ATIVO', regionIds: [], skills: [], observations: '', residenceLocation: '', coverageLocations: []});
+    setInstructorFormData({ name: '', email: '', status: 'ATIVO', regionIds: [], skills: [], observations: '', residenceLocation: '', coverageLocations: [], agendaRole: 'Instrutor',
+});
     setTempSkill({ trainingId: '', level: 3 });
 
     // ✅ garante que sempre abre “destravado”
@@ -255,8 +261,9 @@ const Registrations: React.FC = () => {
       observations: instructor.observations || '',
       residenceLocation: instructor.residenceLocation || '',
       coverageLocations: Array.isArray(instructor.coverageLocations) ? instructor.coverageLocations : [],
-
-    });
+      agendaRole: (instructor as any).agendaRole || 'Instrutor',
+      operationalNotes: instructor.operationalNotes || '',
+      });
 
     setTempSkill({ trainingId: '', level: 3 });
 
@@ -354,6 +361,7 @@ const Registrations: React.FC = () => {
           regionIds: instructorFormData.regionIds,
           skills: instructorFormData.skills,
           observations: instructorFormData.observations,
+          agendaRole: instructorFormData.agendaRole,
         };
         (fallback as any).email = instructorFormData.email;
 
@@ -386,6 +394,8 @@ const Registrations: React.FC = () => {
               is_active: isActive,
               residence_location: instructorFormData.residenceLocation || null,
               coverage_locations: instructorFormData.coverageLocations,
+              agenda_role: instructorFormData.agendaRole || null,
+              operational_notes: instructorFormData.operationalNotes || null,
             })
             .eq('id', editingInstructorId)
             .select('id')
@@ -409,6 +419,7 @@ const Registrations: React.FC = () => {
               is_active: isActive,
               residence_location: instructorFormData.residenceLocation || null,
               coverage_locations: instructorFormData.coverageLocations,
+              agenda_role: instructorFormData.agendaRole || null,
             })
             .select('id')
             .single(),
@@ -1072,6 +1083,23 @@ const handleRemoveBaseItem = async (item: string) => {
                   </div>
                 </div>
               </section>
+              
+              {/*Função Agenda */}
+              <div className="md:col-span-3">
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                  Função
+                </label>
+
+                <select
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  value={instructorFormData.agendaRole}
+                  onChange={(e) => setInstructorFormData({ ...instructorFormData, agendaRole: e.target.value })}
+                >
+                  {(operationalBases.funcoesAgenda || []).map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
 
               {/* Regiões de Atuação */}
               <section>
@@ -1239,15 +1267,23 @@ const handleRemoveBaseItem = async (item: string) => {
               </section>
 
               {/* Observações */}
-              <section>
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">Notas Operacionais</h3>
-                <textarea
-                  className="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-500 h-28 resize-none shadow-inner bg-slate-50/50"
-                  value={instructorFormData.observations}
-                  onChange={(e) => setInstructorFormData({ ...instructorFormData, observations: e.target.value })}
-                  placeholder="Informações adicionais, restrições, observações de RH ou especialidades..."
-                />
-              </section>
+            <section>
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                Notas Operacionais
+              </h3>
+
+              <textarea
+                className="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-500 h-28 resize-none shadow-inner bg-slate-50/50"
+                value={instructorFormData.operationalNotes}
+                onChange={(e) =>
+                  setInstructorFormData({
+                    ...instructorFormData,
+                    operationalNotes: e.target.value,
+                  })
+                }
+                placeholder="Informações adicionais, restrições, observações de RH ou especialidades..."
+              />
+            </section>
             </div>
 
             <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-end space-x-3">

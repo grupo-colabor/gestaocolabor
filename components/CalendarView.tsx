@@ -144,7 +144,8 @@ const CalendarView: React.FC = () => {
     updateInstructorAllocation, 
     removeResourceAllocation,
     hasResourceConflict,
-    setNotification
+    setNotification,
+   operationalBases,
   } = useApp();
 
   const { profile } = useAuth();
@@ -174,6 +175,58 @@ const CalendarView: React.FC = () => {
   const [formDescription, setFormDescription] = useState('');
   const [modalObs, setModalObs] = useState('');
 
+  // =========================
+// FILTERS (Agenda)
+// =========================
+const [filterRole, setFilterRole] = useState<string>('TODOS');
+const [filterTrainingId, setFilterTrainingId] = useState<string>('TODOS'); // filtra CARDS por trainingId da demanda
+const [filterTrainingLocal, setFilterTrainingLocal] = useState<string>(''); // input livre (local do treinamento)
+const [filterDateFrom, setFilterDateFrom] = useState<string>(''); // YYYY-MM-DD
+const [filterDateTo, setFilterDateTo] = useState<string>('');   // YYYY-MM-DD
+
+const [showAdvanced, setShowAdvanced] = useState(false);
+
+// Avançados
+const [filterName, setFilterName] = useState<string>(''); // busca por nome
+const [filterRegionId, setFilterRegionId] = useState<string>('TODOS'); // filtra LINHAS por região
+const [filterCoverageLocation, setFilterCoverageLocation] = useState<string>('TODOS'); // filtra LINHAS por "Atende"
+const [filterRecordType, setFilterRecordType] = useState<string>('TODOS'); // filtra CARDS por tipo/origem
+
+const normalize = (s: string) =>
+  (s || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+const intersectsRange = (startStr: string, endStr: string, from?: string, to?: string) => {
+  if (!from && !to) return true;
+
+  const aStart = dayStart(parseAnyToDate(startStr));
+  const aEnd = dayStart(parseAnyToDate(endStr));
+
+  const rStart = from ? dayStart(parseAnyToDate(from)) : null;
+  const rEnd = to ? dayStart(parseAnyToDate(to)) : null;
+
+  if (rStart && aEnd < rStart) return false;
+  if (rEnd && aStart > rEnd) return false;
+  return true;
+};
+
+// pega a Demand associada ao card quando for DEMANDA/ALLOCATION/COMPANION
+const getDemandFromItem = (item: any): Demand | null => {
+  if (!item) return null;
+
+  const demandId =
+    item.source === 'ALLOCATION' || item.source === 'COMPANION'
+      ? item.demandId
+      : item.demandId || item.id;
+
+  if (!demandId) return null;
+  return demands.find(d => d.id === demandId) || null;
+};
+
   const formatDateKey = (date: Date) => {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -194,15 +247,32 @@ const CalendarView: React.FC = () => {
   [trainings, companies]
 );
 
-
-
-
   const daysInView = useMemo(() => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const daysCount = new Date(year, month + 1, 0).getDate();
-    return Array.from({ length: daysCount }, (_, i) => new Date(year, month, i + 1));
-  }, [currentDate]);
+  // Se tiver range (De/Até), renderiza exatamente o range (inclusive)
+  if (filterDateFrom && filterDateTo) {
+    const start = dayStart(parseAnyToDate(filterDateFrom));
+    const end = dayStart(parseAnyToDate(filterDateTo));
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return [];
+
+    const dir = start <= end ? 1 : -1;
+    const days: Date[] = [];
+    const cursor = new Date(start);
+
+    while ((dir === 1 && cursor <= end) || (dir === -1 && cursor >= end)) {
+      days.push(new Date(cursor));
+      cursor.setDate(cursor.getDate() + dir);
+    }
+    return days;
+  }
+
+  // Default: mês atual como já era
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+  const daysCount = new Date(year, month + 1, 0).getDate();
+  return Array.from({ length: daysCount }, (_, i) => new Date(year, month, i + 1));
+}, [currentDate, filterDateFrom, filterDateTo]);
+
 
   /** =========================
    *  1) CENTRO MÓVEL (CTM)
@@ -362,8 +432,7 @@ const CalendarView: React.FC = () => {
         cursor.setDate(cursor.getDate() + 1);
       }
 });
-
-// PRIORIDADE 1.5: CompanionAllocations (instrutor acompanhante)
+  // PRIORIDADE 1.5: CompanionAllocations (instrutor acompanhante)
 companionAllocations.forEach(ca => {
   const d = demands.find(dm => dm.id === ca.demandId);
   if (!d || d.status === 'CANCELADA') return;
@@ -464,6 +533,57 @@ companionAllocations.forEach(ca => {
 
     return map;
   }, [agendaItems, instructorAllocations, companionAllocations, demands, trainings, companies, buildDemandTitle]);
+
+  const trainingCountInRange = useMemo(() => {
+    // conta DEMANDAS únicas no range, respeitando filtroTrainingId/local
+    const ids = new Set<string>();
+
+    // percorre todos os items do agendaByDay (que é por dia), mas evita duplicar por demandId
+    Object.values(agendaByDay).forEach((item: any) => {
+      if (!item) return;
+
+      // só treinamento
+      if (item.type !== 'TREINAMENTO') return;
+
+      // range
+      if (!intersectsRange(item.startDate, item.endDate, filterDateFrom || undefined, filterDateTo || undefined)) return;
+
+      const demand = getDemandFromItem(item);
+      if (!demand) return;
+
+      // filtros
+      if (filterTrainingId !== 'TODOS' && demand.trainingId !== filterTrainingId) return;
+      if (filterTrainingLocal) {
+        const local = normalize(demand.trainingLocal || '');
+        const selected = normalize(filterTrainingLocal);
+        if (local !== selected) return;
+      }
+
+
+      ids.add(demand.id);
+    });
+
+    return ids.size;
+  }, [agendaByDay, filterDateFrom, filterDateTo, filterTrainingId, filterTrainingLocal]);
+
+  const trainingLocations = useMemo(() => {
+  const baseList = (operationalBases?.locaisTreinamento || []).filter(Boolean);
+
+  // fallback opcional (eu recomendo)
+  const fromDemands = demands
+    .map(d => (d.trainingLocal || '').trim())
+    .filter(Boolean);
+
+  // une + remove duplicados (normalizado)
+  const map = new Map<string, string>();
+  [...baseList, ...fromDemands].forEach(loc => {
+    const key = normalize(loc);
+    if (!map.has(key)) map.set(key, loc);
+  });
+
+  return Array.from(map.values()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}, [operationalBases?.locaisTreinamento, demands]);
+
 
   const hasCompanionForDemand = (demandId?: string) => {
   if (!demandId) return false;
@@ -771,6 +891,180 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
         </div>
       </div>
 
+    {/* =========================
+    FILTER BAR
+   ========================= */}
+<div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 no-print">
+  <div className="flex flex-col gap-3">
+
+    {/* Linha principal */}
+    <div className="flex flex-col lg:flex-row gap-3 lg:items-end">
+      {/* Função */}
+      <div className="w-full lg:w-56">
+        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+          Função
+        </label>
+        <select
+          className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+          value={filterRole}
+          onChange={(e) => setFilterRole(e.target.value)}
+        >
+          <option value="TODOS">Todos</option>
+          {operationalBases?.funcoesAgenda?.map((r: string) => (
+            <option key={r} value={r}>{r}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Treinamento (filtra CARDS por demanda.trainingId) */}
+      <div className="w-full lg:w-72">
+        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+          Treinamento (registros)
+        </label>
+        <select
+          className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+          value={filterTrainingId}
+          onChange={(e) => setFilterTrainingId(e.target.value)}
+        >
+          <option value="TODOS">Todos</option>
+          {trainings
+            .filter(t => t.status === 'ATIVO')
+            .map(t => (
+              <option key={t.id} value={t.id}>
+                {t.nr ? `${t.nr} — ` : ''}{t.name}
+              </option>
+            ))}
+        </select>
+      </div>
+
+      {/* Local do treinamento */}
+      <div className="w-full lg:flex-1">
+      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+        Local do treinamento (registros)
+      </label>
+
+      <select
+        className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+        value={filterTrainingLocal}
+        onChange={(e) => setFilterTrainingLocal(e.target.value)}
+      >
+        <option value="">Todos</option>
+        {trainingLocations.map(loc => (
+          <option key={loc} value={loc}>{loc}</option>
+        ))}
+      </select>
+    </div>
+
+
+      {/* Período */}
+      <div className="w-full lg:w-[320px]">
+        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+          Período (De/Até)
+        </label>
+        <div className="flex gap-2">
+          <input
+            type="date"
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+            value={filterDateFrom}
+            onChange={(e) => setFilterDateFrom(e.target.value)}
+          />
+          <input
+            type="date"
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+            value={filterDateTo}
+            onChange={(e) => setFilterDateTo(e.target.value)}
+          />
+        </div>
+      </div>
+    </div>
+
+    {/* Avançados */}
+    <div className="flex items-center justify-between">
+      <button
+        type="button"
+        onClick={() => setShowAdvanced(v => !v)}
+        className="text-[11px] font-black uppercase tracking-widest text-slate-500 hover:text-slate-800"
+      >
+        {showAdvanced ? 'Ocultar filtros avançados' : 'Mostrar filtros avançados'}
+      </button>
+    <div className="text-[11px] font-bold text-slate-500">
+      Treinamentos no período (após filtros): <span className="text-slate-800">{trainingCountInRange}</span>
+    </div>
+
+      <button
+        type="button"
+        onClick={() => {
+          setFilterRole('TODOS');
+          setFilterTrainingId('TODOS');
+          setFilterTrainingLocal('');
+          setFilterDateFrom('');
+          setFilterDateTo('');
+          setFilterName('');
+          setFilterRegionId('TODOS');
+          setFilterCoverageLocation('TODOS');
+          setFilterRecordType('TODOS');
+        }}
+        className="text-[11px] font-black uppercase tracking-widest text-red-500 hover:text-red-700"
+      >
+        Limpar filtros
+      </button>
+    </div>
+
+    {showAdvanced && (
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
+        {/* Nome */}
+        <div>
+          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+            Buscar pessoa
+          </label>
+          <input
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Nome..."
+            value={filterName}
+            onChange={(e) => setFilterName(e.target.value)}
+          />
+        </div>
+
+        
+
+        {/* Atende */}
+        <div>
+          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+            Localidade (Atende)
+          </label>
+          <select
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+            value={filterCoverageLocation}
+            onChange={(e) => setFilterCoverageLocation(e.target.value)}
+          >
+            <option value="TODOS">Todas</option>
+            {(operationalBases?.localidades || []).map((loc: string) => (
+              <option key={loc} value={loc}>{loc}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Tipo de registro */}
+        <div>
+          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+            Tipo de registro (cards)
+          </label>
+          <select
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+            value={filterRecordType}
+            onChange={(e) => setFilterRecordType(e.target.value)}
+          >
+            <option value="TODOS">Todos</option>
+            <option value="TREINAMENTO">Treinamentos</option>
+            <option value="MANUAL">Registros manuais</option>
+            <option value="ACOMPANHANTE">Acompanhantes</option>
+          </select>
+        </div>
+      </div>
+    )}
+  </div>
+</div>
+
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-max w-full text-sm border-separate border-spacing-0">
@@ -829,9 +1123,26 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
             </thead>
 
             <tbody>
-              {instructors
-                .filter(i => i.status === 'ATIVO')
-                .map(instructor => (
+            {instructors
+              .filter(i => i.status === 'ATIVO')
+              .filter(i => {
+                // Função (linha)
+                const role = (i as any).agendaRole || 'INSTRUTOR';
+                if (filterRole !== 'TODOS' && role !== filterRole) return false;
+
+                // Buscar nome
+                if (filterName && !normalize(i.name).includes(normalize(filterName))) return false;
+
+                // Atende (coverage)
+                if (filterCoverageLocation !== 'TODOS') {
+                  const cov = Array.isArray((i as any).coverageLocations) ? (i as any).coverageLocations : [];
+                  if (!cov.includes(filterCoverageLocation)) return false;
+                }
+
+                return true;
+              })
+              .map(instructor => (
+
                 <tr
                   key={instructor.id}
                   className="border-b border-gray-100 last:border-0 hover:bg-slate-50/10 transition-colors"
@@ -839,23 +1150,30 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
 
                  {/* COLUNA INSTRUTOR (ajustada p/ auto-height) */}
                 <td
-                  className="
-                    p-3 font-bold text-slate-700 bg-white
-                    sticky left-0 z-50
-                    w-[200px] min-w-[200px] max-w-[200px] box-border
-                    align-middle
-                    relative overflow-hidden
-                    after:content-[''] after:absolute after:top-0 after:right-0 after:h-full after:w-px after:bg-gray-200
-                    before:content-[''] before:absolute before:left-0 before:bottom-0 before:w-full before:h-px before:bg-gray-100
-                  "
-                >
-                  <div className="h-full flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-black text-[10px] border border-blue-100">
-                      {instructor.name.charAt(0)}
-                    </div>
-                    <span className="truncate max-w-[140px] font-bold text-slate-600">{instructor.name}</span>
+                className="
+                  p-3 font-bold text-slate-700 bg-white
+                  sticky left-0 z-50
+                  w-[200px] min-w-[200px] max-w-[200px] box-border
+                  align-middle
+                  relative overflow-hidden
+                  after:content-[''] after:absolute after:top-0 after:right-0 after:h-full after:w-px after:bg-gray-200
+                  before:content-[''] before:absolute before:left-0 before:bottom-0 before:w-full before:h-px before:bg-gray-100
+                "
+              >
+                <div className="h-full flex items-center">
+                  <div className="min-w-0 flex flex-col leading-tight">
+                    <span className="truncate max-w-[180px] font-bold text-slate-600">
+                      {instructor.name}
+                    </span>
+
+                    {instructor.agendaRole && (
+                      <span className="mt-0.5 inline-flex w-fit px-2 py-[2px] rounded-md text-[8px] font-black uppercase tracking-widest bg-slate-100 text-slate-600 border border-slate-200">
+                        {instructor.agendaRole}
+                      </span>
+                    )}
                   </div>
-                </td>
+                </div>
+              </td>
 
                 {/* 1) LOCAL (RESIDÊNCIA) - primeiro */}
                <td
@@ -901,7 +1219,45 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                   {daysInView.map(day => {
                       const dateKey = `${instructor.id}-${formatDateKey(day)}`;
                       const item = agendaByDay[dateKey];
-                      const cellItem = item ? { type: 'INSTRUCTOR_EVENT', data: item } : null;
+                      // ======== CARD FILTERS ========
+                      let shouldHideCard = false;
+
+                      if (item) {
+                        // 1) Período (range) -> filtra cards por interseção com De/Até
+                        if (filterDateFrom || filterDateTo) {
+                          if (!intersectsRange(item.startDate, item.endDate, filterDateFrom || undefined, filterDateTo || undefined)) {
+                            shouldHideCard = true;
+                          }
+                        }
+
+                        // 2) Tipo de registro (avançado)
+                        if (!shouldHideCard && filterRecordType !== 'TODOS') {
+                          if (filterRecordType === 'MANUAL' && item.source !== 'MANUAL') shouldHideCard = true;
+                          if (filterRecordType === 'ACOMPANHANTE' && item.source !== 'COMPANION') shouldHideCard = true;
+                          if (filterRecordType === 'TREINAMENTO' && (item.type !== 'TREINAMENTO')) shouldHideCard = true;
+                        }
+
+                        // 3) Treinamento / Local do Treinamento (filtram só registros de demanda/alocação/companion)
+                        if (!shouldHideCard && (filterTrainingId !== 'TODOS' || filterTrainingLocal.trim())) {
+                          const demand = getDemandFromItem(item);
+
+                          // se não for card de demanda/alocação, some quando o user está filtrando treinamento/local
+                          if (!demand) {
+                            shouldHideCard = true;
+                          } else {
+                            if (filterTrainingId !== 'TODOS' && demand.trainingId !== filterTrainingId) {
+                              shouldHideCard = true;
+                            }
+
+                          if (!shouldHideCard && filterTrainingLocal) {
+                            const local = normalize(demand.trainingLocal || '');
+                            const selected = normalize(filterTrainingLocal);
+                            if (local !== selected) shouldHideCard = true;
+                          }
+                          }
+                        }
+                      }
+                      const cellItem = item && !shouldHideCard ? { type: 'INSTRUCTOR_EVENT', data: item } : null;
 
                       return (
                     <td

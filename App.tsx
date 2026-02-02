@@ -348,7 +348,7 @@ const removeCompanionAllocation = useCallback((id: string) => {
   })();
 }, [AUTH_MODE, user, setNotification]);
   
-  const [operationalBases, setOperationalBases] = useState<OperationalBases>({
+const [operationalBases, setOperationalBases] = useState<OperationalBases>({
   aprovadores: [],
   analistas: [],
   matriculadores: [],
@@ -358,6 +358,7 @@ const removeCompanionAllocation = useCallback((id: string) => {
   hoteis: [],
   locadoras: [],
   tiposTreinamento: [],
+  funcoesAgenda: [],
 });
 
 useEffect(() => {
@@ -384,6 +385,7 @@ useEffect(() => {
       hoteis: [],
       locadoras: [],
       tiposTreinamento: [],
+      funcoesAgenda: [],
     };
 
     for (const row of rows) {
@@ -576,44 +578,61 @@ const syncEvidencesFromDb = useCallback(async () => {
         observations: '',
         residenceLocation: row.residence_location ?? '',
         coverageLocations: Array.isArray(row.coverage_locations) ? row.coverage_locations : [],
+        agendaRole: row.agenda_role || 'Instrutor',
+        operationalNotes: row.operational_notes ?? '',
+
       };
     },
     [mapDbLevelToApp, regions]
   );
 
   const syncInstructorsFromDb = useCallback(async () => {
-    try {
-      const [instructorRows, pivotRows] = await Promise.all([
-        fetchInstructors(),
-        fetchInstructorTrainings()
-      ]);
+  try {
+    const [instructorRows, pivotRows] = await Promise.all([
+      fetchInstructors(),         
+      fetchInstructorTrainings()
+    ]);
 
-      const pivotsByInstructor = new Map<
-        string,
-        Array<{ training_id: string; level: string | null }>
-      >();
+    const pivotsByInstructor = new Map<
+      string,
+      Array<{ training_id: string; level: string | null }>
+    >();
 
-      for (const p of pivotRows) {
-        const list = pivotsByInstructor.get(p.instructor_id) || [];
-        list.push({ training_id: p.training_id, level: p.level });
-        pivotsByInstructor.set(p.instructor_id, list);
-      }
-
-      const mapped = instructorRows.map((r: any) =>
-        mapInstructorFromDb(r, pivotsByInstructor.get(r.id) || [])
-      );
-
-      setInstructors(mapped);
-    } catch (e) {
-      console.error('Erro ao sincronizar instructors:', e);
-      // No modo Supabase, NÃO voltar pro hardcode (pra não confundir)
-      setInstructors([]);
-      setNotification({
-        message: 'Falha ao sincronizar instrutores do banco.',
-        type: 'error'
-      });
+    for (const p of pivotRows) {
+      const list = pivotsByInstructor.get(p.instructor_id) || [];
+      list.push({ training_id: p.training_id, level: p.level });
+      pivotsByInstructor.set(p.instructor_id, list);
     }
-  }, [mapInstructorFromDb]);
+
+    const mapped = instructorRows.map((r: any) => {
+      const inst = mapInstructorFromDb(r, pivotsByInstructor.get(r.id) || []);
+
+      // ✅ Garante que SEMPRE exista um valor (evita quebrar UI / filtros)
+      // Se vier null/undefined do banco, seta como "Instrutor"
+      return {
+        ...inst,
+        agendaRole: (inst as any).agendaRole ?? r?.agenda_role ?? 'Instrutor'
+      };
+    });
+
+    setInstructors(mapped);
+  } catch (e) {
+    console.error('Erro ao sincronizar instructors:', e);
+    // No modo Supabase, NÃO voltar pro hardcode (pra não confundir)
+    setInstructors([]);
+    setNotification({
+      message: 'Falha ao sincronizar instrutores do banco.',
+      type: 'error'
+    });
+  }
+}, [
+  fetchInstructors,
+  fetchInstructorTrainings,
+  mapInstructorFromDb,
+  setInstructors,
+  setNotification
+]);
+
 
   const mapResourceAllocationFromDb = useCallback((row: any): LogisticAllocation => {
   return {
@@ -2435,6 +2454,8 @@ const hasScheduleConflict = useCallback(
       setHybridPracticePeriod,
       updateEvidence,
       companionAllocations,
+      operationalBases,
+      setOperationalBases,
     ]
   );
 

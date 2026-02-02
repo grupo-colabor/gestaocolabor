@@ -329,7 +329,8 @@ export const INITIAL_OPERATIONAL_BASES: OperationalBases = {
     "Premium", "Pousada dos elefantes", "Dom Henrique", "Benvenuto"
   ],
   locadoras: ["Localiza", "Movida", "Outro"],
-  tiposTreinamento: ["Hibrido", "Online", "Presencial", "Tutoria"]
+  tiposTreinamento: ["Hibrido", "Online", "Presencial", "Tutoria"],
+  funcoesAgenda: ['Instrutor', 'Coordenador', 'Motorista'],
 };
 
 export const HISTORICAL_MATRICULADORES = ["Bernardo", "Micaelle", "Tallita", "Yara"];

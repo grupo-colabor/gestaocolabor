@@ -17,7 +17,7 @@ export async function fetchTrainings(): Promise<TrainingRow[]> {
 
   const { data, error } = await supabase
     .from("trainings")
-    .select("id, name, nr, category, area_id, hours, modality, status, created_at")
+    .select("id, name, nr, category, area_id, hours, modality, status, description_short, created_at")
     .order("name", { ascending: true });
 
   if (error) throw error;

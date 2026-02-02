@@ -103,7 +103,9 @@ export interface Instructor {
   observations?: string;
   email?: string;
   residenceLocation?: string;     
-  coverageLocations?: string[];   
+  coverageLocations?: string[];  
+  agendaRole?: string;
+  operationalNotes?: string;
 }
 
 export interface Schedule {
@@ -269,6 +271,7 @@ export type OperationalBaseKey =
   | 'locadoras'
   | 'tiposTreinamento'
   | 'locaisTreinamento'
+  | 'funcoesAgenda'
   | 'matriculadores';
 
 export interface OperationalBases {
@@ -281,6 +284,7 @@ export interface OperationalBases {
   hoteis: string[];
   locadoras: string[];
   tiposTreinamento: string[];
+  funcoesAgenda: string[];
 }
 
 // --- EVIDÊNCIAS ---

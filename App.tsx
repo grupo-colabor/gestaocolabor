@@ -510,7 +510,8 @@ const syncEvidencesFromDb = useCallback(async () => {
       area_id: null,
       hours: t.hours ?? 0,
       modality: cleanOrNull(t.modality),
-      status: cleanOrNull(t.status)
+      status: cleanOrNull(t.status),
+      description_short: cleanOrNull((t as any).descriptionShort),
     };
   }, []);
 
@@ -524,9 +525,7 @@ const syncEvidencesFromDb = useCallback(async () => {
       hours: row.hours ?? 0,
       modality: row.modality ?? 'PRESENCIAL',
       status: row.status ?? 'ATIVO',
-
-      // Campos que NÃO existem hoje na tabela (defaults locais)
-      descriptionShort: '',
+      descriptionShort: row.description_short ?? '',
       descriptionDetailed: '',
       prerequisites: '',
       targetAudience: '',

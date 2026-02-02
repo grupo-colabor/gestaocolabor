@@ -9,6 +9,7 @@ export type TrainingRow = {
   hours: number | null;
   modality: string | null;
   status: string | null;
+  description_short: string | null;
   created_at: string;
 };
 

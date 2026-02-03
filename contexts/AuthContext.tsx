@@ -183,9 +183,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         { reason }
       );
 
-      try {
-        await supabase.auth.signOut();
-      } catch {}
+      try { supabase.auth.signOut(); } catch {}
+
 
       setUser(null);
       setProfile(null);
@@ -196,9 +195,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   } catch (e) {
     console.error('[Auth] ensureSession exception', e, { reason });
 
-     try {
-      await supabase.auth.signOut();
-    } catch {}
+    try { supabase.auth.signOut(); } catch {}
 
     setUser(null);
     setProfile(null);
@@ -266,16 +263,16 @@ const loadSession = async () => {
           '[Auth] profile não carregou. Fazendo logout para evitar loading infinito.'
         );
 
-        try {
-          await supabase.auth.signOut();
-        } catch {}
+        // NÃO aguarda signOut (pode travar se rede/extensão bloquear)
+    try { supabase.auth.signOut(); } catch {}
 
-        safeSet(() => {
-          setUser(null);
-          setProfile(null);
-        });
+    safeSet(() => {
+      setUser(null);
+      setProfile(null);
+    });
 
-        return;
+    return;
+
       }
 
       safeSet(() => setProfile(p));
@@ -285,15 +282,13 @@ const loadSession = async () => {
   } catch (e) {
     console.error('[Auth] loadSession exception', e);
 
-    // ✅ se deu ruim/travou, limpa tudo e tenta sair pra não ficar sessão "meia viva"
-    try {
-      await supabase.auth.signOut();
-    } catch {}
+   try { supabase.auth.signOut(); } catch {}
 
     safeSet(() => {
       setUser(null);
       setProfile(null);
     });
+
   } finally {
     safeSet(() => {
       setLoading(false);
@@ -323,7 +318,7 @@ loadSession();
 
         if (!p) {
           console.warn('[Auth] profile não carregou no onAuthStateChange. Fazendo logout.');
-          await supabase.auth.signOut();
+          try { supabase.auth.signOut(); } catch {}
           safeSet(() => {
             setUser(null);
             setProfile(null);

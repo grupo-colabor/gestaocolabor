@@ -164,34 +164,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   try {
     setLoading(true);
 
-    const { data, error } = await supabase.auth.getSession();
-    if (error) console.error('[Auth] ensureSession getSession error', error, { reason });
+const { data, error } = await withTimeout(supabase.auth.getSession(), 15000);
 
-    const sessionUser = data.session?.user ?? null;
-    setUser(sessionUser);
+const sessionUser = data.session?.user ?? null;
+setUser(sessionUser);
 
-    if (!sessionUser) {
-      setProfile(null);
-      return;
-    }
+if (!sessionUser) {
+  setProfile(null);
+  return;
+}
 
-    const p = await loadOrCreateProfile(sessionUser);
+const p = await withTimeout(loadOrCreateProfile(sessionUser), 15000);
 
-    if (!p) {
-      console.warn(
-        '[Auth] profile não carregou no ensureSessionAndProfile. Fazendo logout para evitar loading infinito.',
-        { reason }
-      );
+if (!p) {
+  console.warn('[Auth] profile não carregou no ensureSessionAndProfile. Logout.', { reason });
+  try { supabase.auth.signOut(); } catch {}
+  setUser(null);
+  setProfile(null);
+  return;
+}
 
-      try { supabase.auth.signOut(); } catch {}
+setProfile(p);
 
 
-      setUser(null);
-      setProfile(null);
-      return;
-    }
-
-    setProfile(p);
   } catch (e) {
     console.error('[Auth] ensureSession exception', e, { reason });
 
@@ -204,7 +199,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshingRef.current = false;
   }
 }
-
+  const withTimeout = <T,>(p: Promise<T>, ms = 15000): Promise<T> =>
+  Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error('timeout')), ms)
+    ),
+  ]);
 
   /* =========================
      Sessão inicial + listener (SUPABASE)
@@ -230,14 +231,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let mounted = true;
     const safeSet = (fn: () => void) => mounted && fn();
 
-    // helper: timeout pra não travar a UI pra sempre
-const withTimeout = <T,>(p: Promise<T>, ms = 8000): Promise<T> =>
-  Promise.race([
-    p,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error('timeout')), ms)
-    ),
-  ]);
 
 const loadSession = async () => {
   safeSet(() => {
@@ -314,7 +307,7 @@ loadSession();
 
       safeSet(() => setLoading(true));
       try {
-        const p = await loadOrCreateProfile(sessionUser);
+        const p = await withTimeout(loadOrCreateProfile(sessionUser), 15000);
 
         if (!p) {
           console.warn('[Auth] profile não carregou no onAuthStateChange. Fazendo logout.');

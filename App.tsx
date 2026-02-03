@@ -2563,7 +2563,7 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { notification, setNotification } = useApp();
-  const { user, profile, initializing, loading } = useAuth();
+  const { user, profile, initializing, loading, signOut } = useAuth();
 
 
   useEffect(() => {

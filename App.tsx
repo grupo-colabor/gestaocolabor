@@ -212,6 +212,13 @@ interface AppState {
   ) => boolean;
 }
 
+const getDefaultViewForRole = (role?: string | null) => {
+  if (role === 'coordenador') return 'calendar';
+  if (role === 'analista') return 'dashboard';
+  if (role === 'admin') return 'dashboard';
+  return 'calendar'; // fallback seguro
+};
+
 const AppContext = createContext<AppState | null>(null);
 
 export const useApp = () => {
@@ -970,10 +977,12 @@ useEffect(() => {
 
   // ✅ Carregar treinamentos do Supabase (fonte da verdade)
   useEffect(() => {
+    if (AUTH_MODE !== 'supabase') return;
     if (loading) return;
     if (!user) return;
     syncTrainingsFromDb();
-  }, [user, loading, syncTrainingsFromDb]);
+  }, [AUTH_MODE, user, loading, syncTrainingsFromDb]);
+
 
   // ✅ Carregar Instrutores do Supabase (fonte da verdade)
   useEffect(() => {
@@ -2554,25 +2563,54 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { notification, setNotification } = useApp();
-  const { profile } = useAuth();
+  const { profile, initializing, loading } = useAuth();
+
 
   useEffect(() => {
-    if (!profile?.role) return;
+  if (!profile?.role) return;
 
-    if (profile.role === 'coordenador') setCurrentView('calendar');
-    if (profile.role === 'analista') setCurrentView('dashboard');
-    if (profile.role === 'admin') setCurrentView('dashboard');
-  }, [profile?.role]);
+  // se a view atual não é permitida, joga pra default do papel
+  if (!canAccessView(profile.role, currentView)) {
+    setCurrentView(getDefaultViewForRole(profile.role));
+  }
+}, [profile?.role, currentView]);
 
-  const renderContent = () => {
+// ⛔️ BLOQUEIA RENDERIZAÇÃO ATÉ AUTH ESTAR PRONTA
+if (initializing || loading) {
+  return (
+    <div className="p-6">
+      <p>Carregando sessão...</p>
+    </div>
+  );
+}
+
+// ✅ se tem sessão mas ainda não carregou perfil, espera
+if (!profile) {
+  return (
+    <div className="p-6">
+      <p>Carregando perfil...</p>
+    </div>
+  );
+}
+
+
+const renderContent = () => {
     if (!canAccessView(profile?.role, currentView)) {
-      return (
-        <div className="p-6">
-          <h2 className="text-lg font-semibold text-red-600">Acesso não autorizado</h2>
-          <p>Você não tem permissão para acessar esta área.</p>
-        </div>
-      );
-    }
+  return (
+    <div className="p-6">
+      <h2 className="text-lg font-semibold text-red-600">Acesso não autorizado</h2>
+      <p>Você não tem permissão para acessar esta área.</p>
+
+      <button
+        className="mt-4 rounded bg-slate-900 px-4 py-2 text-white"
+        onClick={() => setCurrentView(getDefaultViewForRole(profile?.role))}
+      >
+        Voltar para minha área
+      </button>
+    </div>
+  );
+}
+
 
     switch (currentView) {
       case 'demands':

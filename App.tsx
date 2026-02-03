@@ -2575,8 +2575,8 @@ const App: React.FC = () => {
   }
 }, [profile?.role, currentView]);
 
-// ⛔️ BLOQUEIA RENDERIZAÇÃO ATÉ AUTH ESTAR PRONTA
-if (initializing || loading) {
+// ✅ BLOQUEIA SÓ A INICIALIZAÇÃO DO AUTH
+if (initializing) {
   return (
     <div className="p-6">
       <p>Carregando sessão...</p>
@@ -2584,15 +2584,14 @@ if (initializing || loading) {
   );
 }
 
-// ✅ se tem sessão mas ainda não carregou perfil, espera
-if (!profile) {
+// ✅ se tem sessão mas ainda está carregando profile, mostra loading de profile (sem travar o app inteiro)
+if (loading && !profile) {
   return (
     <div className="p-6">
       <p>Carregando perfil...</p>
     </div>
   );
 }
-
 
 const renderContent = () => {
     if (!canAccessView(profile?.role, currentView)) {

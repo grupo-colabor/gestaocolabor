@@ -223,11 +223,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         safeSet(() => setUser(sessionUser));
 
         if (sessionUser) {
-          const p = await loadOrCreateProfile(sessionUser);
-          safeSet(() => setProfile(p));
-        } else {
-          safeSet(() => setProfile(null));
-        }
+      const p = await loadOrCreateProfile(sessionUser);
+
+      if (!p) {
+        // ⚠️ Não conseguiu obter/criar profile => não trava a UI
+        console.warn('[Auth] profile não carregou. Fazendo logout para evitar loading infinito.');
+        await supabase.auth.signOut();
+        safeSet(() => {
+          setUser(null);
+          setProfile(null);
+        });
+        return;
+      }
+
+      safeSet(() => setProfile(p));
+    } else {
+      safeSet(() => setProfile(null));
+    }
+
       } catch (e) {
         console.error('[Auth] loadSession exception', e);
         safeSet(() => {
@@ -259,10 +272,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       safeSet(() => setLoading(true));
       try {
         const p = await loadOrCreateProfile(sessionUser);
+
+        if (!p) {
+          console.warn('[Auth] profile não carregou no onAuthStateChange. Fazendo logout.');
+          await supabase.auth.signOut();
+          safeSet(() => {
+            setUser(null);
+            setProfile(null);
+          });
+          return;
+        }
+
         safeSet(() => setProfile(p));
       } finally {
         safeSet(() => setLoading(false));
       }
+
     });
 
     return () => {

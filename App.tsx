@@ -2563,7 +2563,7 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { notification, setNotification } = useApp();
-  const { profile, initializing, loading } = useAuth();
+  const { user, profile, initializing, loading } = useAuth();
 
 
   useEffect(() => {
@@ -2584,14 +2584,15 @@ if (initializing) {
   );
 }
 
-// ✅ se tem sessão mas ainda está carregando profile, mostra loading de profile (sem travar o app inteiro)
-if (loading && !profile) {
+// ✅ Só espera perfil se EXISTE sessão
+if (user && !profile) {
   return (
     <div className="p-6">
       <p>Carregando perfil...</p>
     </div>
   );
 }
+
 
 const renderContent = () => {
     if (!canAccessView(profile?.role, currentView)) {

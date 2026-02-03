@@ -156,34 +156,58 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * (quando volta foco/visibilidade, ou se algo ficar stale)
    */
   async function ensureSessionAndProfile(reason: string) {
-    if (AUTH_MODE !== 'supabase') return;
-    if (!supabase) return;
-    if (refreshingRef.current) return;
+  if (AUTH_MODE !== 'supabase') return;
+  if (!supabase) return;
+  if (refreshingRef.current) return;
 
-    refreshingRef.current = true;
-    try {
-      setLoading(true);
+  refreshingRef.current = true;
+  try {
+    setLoading(true);
 
-      const { data, error } = await supabase.auth.getSession();
-      if (error) console.error('[Auth] ensureSession getSession error', error, { reason });
+    const { data, error } = await supabase.auth.getSession();
+    if (error) console.error('[Auth] ensureSession getSession error', error, { reason });
 
-      const sessionUser = data.session?.user ?? null;
-      setUser(sessionUser);
+    const sessionUser = data.session?.user ?? null;
+    setUser(sessionUser);
 
-      if (!sessionUser) {
-        setProfile(null);
-        return;
-      }
-
-      const p = await loadOrCreateProfile(sessionUser);
-      setProfile(p);
-    } catch (e) {
-      console.error('[Auth] ensureSession exception', e, { reason });
-    } finally {
-      setLoading(false);
-      refreshingRef.current = false;
+    if (!sessionUser) {
+      setProfile(null);
+      return;
     }
+
+    const p = await loadOrCreateProfile(sessionUser);
+
+    if (!p) {
+      console.warn(
+        '[Auth] profile não carregou no ensureSessionAndProfile. Fazendo logout para evitar loading infinito.',
+        { reason }
+      );
+
+      try {
+        await supabase.auth.signOut();
+      } catch {}
+
+      setUser(null);
+      setProfile(null);
+      return;
+    }
+
+    setProfile(p);
+  } catch (e) {
+    console.error('[Auth] ensureSession exception', e, { reason });
+
+     try {
+      await supabase.auth.signOut();
+    } catch {}
+
+    setUser(null);
+    setProfile(null);
+  } finally {
+    setLoading(false);
+    refreshingRef.current = false;
   }
+}
+
 
   /* =========================
      Sessão inicial + listener (SUPABASE)
@@ -209,30 +233,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let mounted = true;
     const safeSet = (fn: () => void) => mounted && fn();
 
-    const loadSession = async () => {
-      safeSet(() => {
-        setLoading(true);
-        setInitializing(true);
-      });
+    // helper: timeout pra não travar a UI pra sempre
+const withTimeout = <T,>(p: Promise<T>, ms = 8000): Promise<T> =>
+  Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error('timeout')), ms)
+    ),
+  ]);
 
-      try {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) console.error('[Auth] getSession error', error);
+const loadSession = async () => {
+  safeSet(() => {
+    setLoading(true);
+    setInitializing(true);
+  });
 
-        const sessionUser = data.session?.user ?? null;
-        safeSet(() => setUser(sessionUser));
+  try {
+    // ✅ getSession com timeout
+    const { data, error } = await withTimeout(supabase.auth.getSession(), 8000);
+    if (error) console.error('[Auth] getSession error', error);
 
-        if (sessionUser) {
-      const p = await loadOrCreateProfile(sessionUser);
+    const sessionUser = data.session?.user ?? null;
+    safeSet(() => setUser(sessionUser));
+
+    if (sessionUser) {
+      // ✅ loadOrCreateProfile com timeout
+      const p = await withTimeout(loadOrCreateProfile(sessionUser), 8000);
 
       if (!p) {
         // ⚠️ Não conseguiu obter/criar profile => não trava a UI
-        console.warn('[Auth] profile não carregou. Fazendo logout para evitar loading infinito.');
-        await supabase.auth.signOut();
+        console.warn(
+          '[Auth] profile não carregou. Fazendo logout para evitar loading infinito.'
+        );
+
+        try {
+          await supabase.auth.signOut();
+        } catch {}
+
         safeSet(() => {
           setUser(null);
           setProfile(null);
         });
+
         return;
       }
 
@@ -240,22 +282,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else {
       safeSet(() => setProfile(null));
     }
+  } catch (e) {
+    console.error('[Auth] loadSession exception', e);
 
-      } catch (e) {
-        console.error('[Auth] loadSession exception', e);
-        safeSet(() => {
-          setUser(null);
-          setProfile(null);
-        });
-      } finally {
-        safeSet(() => {
-          setLoading(false);
-          setInitializing(false);
-        });
-      }
-    };
+    // ✅ se deu ruim/travou, limpa tudo e tenta sair pra não ficar sessão "meia viva"
+    try {
+      await supabase.auth.signOut();
+    } catch {}
 
-    loadSession();
+    safeSet(() => {
+      setUser(null);
+      setProfile(null);
+    });
+  } finally {
+    safeSet(() => {
+      setLoading(false);
+      setInitializing(false);
+    });
+  }
+};
+
+loadSession();
+
 
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const sessionUser = session?.user ?? null;

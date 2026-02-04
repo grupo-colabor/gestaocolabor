@@ -2593,6 +2593,22 @@ if (user && !profile) {
   );
 }
 
+// ✅ FAILSAFE: user existe, mas profile não carregou (e não está mais carregando)
+if (user && !profile && !loading) {
+  return (
+    <div className="p-6">
+      <h2 className="text-lg font-semibold text-red-600">Não foi possível carregar seu perfil</h2>
+      <p className="mt-2">Clique para sair e entrar novamente.</p>
+      <button
+        className="mt-4 rounded bg-slate-900 px-4 py-2 text-white"
+        onClick={() => signOut()}
+      >
+        Sair
+      </button>
+    </div>
+  );
+}
+
 
 const renderContent = () => {
     if (!canAccessView(profile?.role, currentView)) {

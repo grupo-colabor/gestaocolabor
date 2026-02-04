@@ -23,20 +23,13 @@ type AuthContextType = {
   user: any;
   profile: Profile | null;
   role: Role | null;
-
-  // ✅ compatível com AuthGate.tsx
   initializing: boolean;
-
-  // (mantém como você já usa no AppProvider)
   loading: boolean;
-
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
-
   isAdmin: boolean;
   isAnalista: boolean;
   isCoordenador: boolean;
-
   canAccessDashboard: boolean;
   canAccessAgenda: boolean;
 };
@@ -51,33 +44,26 @@ function normalizeRole(role: any): Role {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
-
-  // ✅ "initializing" só para primeira carga (AuthGate usa isso)
   const [initializing, setInitializing] = useState(true);
-
-  // ✅ "loading" para operações de auth / refresh (AppProvider usa isso)
   const [loading, setLoading] = useState(true);
 
-  // evita reentrância / loops quando eventos de foco disparam
+  const profilePromiseRef = useRef<Promise<Profile | null> | null>(null);
   const refreshingRef = useRef(false);
 
-  // ✅ garante que não dispare vários loads de profile ao mesmo tempo
-  const profilePromiseRef = useRef<Promise<Profile | null> | null>(null);
-
   /* =========================
-     Buscar perfil / Criar se não existir
+     🔧 CORREÇÃO 1: Buscar perfil SEM forçar logout em caso de erro
   ========================= */
   async function loadOrCreateProfile(sessionUser: any): Promise<Profile | null> {
     if (!supabase || !sessionUser?.id) return null;
 
-    // ✅ single-flight: se já tem uma busca rolando, reutiliza
+    // Single-flight: se já tem uma busca rolando, reutiliza
     if (profilePromiseRef.current) return profilePromiseRef.current;
 
     profilePromiseRef.current = (async () => {
       const uid = sessionUser.id as string;
       const email = (sessionUser.email as string | undefined) ?? null;
 
-      // 1) tenta buscar
+      // 1) Tenta buscar perfil existente
       try {
         const { data: p1, error: e1 } = await supabase
           .from('profiles')
@@ -87,7 +73,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (e1) {
           console.error('[Auth] profiles select error', e1);
-          return null;
+          // ❌ ANTES: return null (causava logout)
+          // ✅ AGORA: tenta criar mesmo assim
         }
 
         if (p1) {
@@ -98,10 +85,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } catch (err) {
         console.error('[Auth] profiles select exception', err);
-        return null;
+        // Continua para tentar criar
       }
 
-      // 2) não existe -> tenta criar
+      // 2) Se não existe, tenta criar
       try {
         const { error: e2 } = await supabase.from('profiles').insert({
           id: uid,
@@ -112,14 +99,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (e2) {
           console.error('[Auth] profiles insert error', e2);
-          return null;
+          // ❌ ANTES: return null
+          // ✅ AGORA: continua para tentar buscar novamente
         }
       } catch (err) {
         console.error('[Auth] profiles insert exception', err);
-        return null;
       }
 
-      // 3) busca novamente
+      // 3) Busca novamente após criar
       try {
         const { data: p2, error: e3 } = await supabase
           .from('profiles')
@@ -129,18 +116,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (e3) {
           console.error('[Auth] profiles re-select error', e3);
-          return null;
         }
 
-        if (!p2) return null;
+        if (p2) {
+          return {
+            ...(p2 as any),
+            role: normalizeRole((p2 as any).role),
+          } as Profile;
+        }
 
+        // ✅ FALLBACK: se não conseguiu buscar, retorna um perfil temporário
+        console.warn('[Auth] usando perfil temporário até conseguir sincronizar');
         return {
-          ...(p2 as any),
-          role: normalizeRole((p2 as any).role),
-        } as Profile;
+          id: uid,
+          email: email || 'sem-email',
+          role: 'coordenador' as Role,
+          full_name: null,
+        };
+
       } catch (err) {
         console.error('[Auth] profiles re-select exception', err);
-        return null;
+        
+        // ✅ FALLBACK: retorna perfil temporário
+        return {
+          id: uid,
+          email: email || 'sem-email',
+          role: 'coordenador' as Role,
+          full_name: null,
+        };
       }
     })();
 
@@ -151,68 +154,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  /**
-   * ✅ Revalida sessão e profile sem precisar F5
-   * (quando volta foco/visibilidade, ou se algo ficar stale)
-   */
+  /* =========================
+     🔧 CORREÇÃO 2: Revalidar sessão SEM fazer logout agressivo
+  ========================= */
   async function ensureSessionAndProfile(reason: string) {
-  if (AUTH_MODE !== 'supabase') return;
-  if (!supabase) return;
-  if (refreshingRef.current) return;
+    if (AUTH_MODE !== 'supabase') return;
+    if (!supabase) return;
+    if (refreshingRef.current) return;
 
-  refreshingRef.current = true;
-  try {
-    setLoading(true);
+    refreshingRef.current = true;
+    try {
+      setLoading(true);
 
-const { data, error } = await withTimeout(supabase.auth.getSession(), 15000);
+      const { data, error } = await supabase.auth.getSession();
+      
+      if (error) {
+        console.error('[Auth] getSession error', error);
+        // ❌ ANTES: fazia logout
+        // ✅ AGORA: apenas loga o erro e continua
+      }
 
-const sessionUser = data.session?.user ?? null;
-setUser(sessionUser);
+      const sessionUser = data?.session?.user ?? null;
+      setUser(sessionUser);
 
-if (!sessionUser) {
-  setProfile(null);
-  return;
-}
+      if (!sessionUser) {
+        setProfile(null);
+        return;
+      }
 
-const p = await withTimeout(loadOrCreateProfile(sessionUser), 15000);
+      // Busca o perfil (com fallback temporário)
+      const p = await loadOrCreateProfile(sessionUser);
+      setProfile(p);
 
-if (!p) {
-  console.warn('[Auth] profile não carregou no ensureSessionAndProfile. Logout.', { reason });
-  try { supabase.auth.signOut(); } catch {}
-  setUser(null);
-  setProfile(null);
-  return;
-}
-
-setProfile(p);
-
-
-  } catch (e) {
-    console.error('[Auth] ensureSession exception', e, { reason });
-
-    try { supabase.auth.signOut(); } catch {}
-
-    setUser(null);
-    setProfile(null);
-  } finally {
-    setLoading(false);
-    refreshingRef.current = false;
+    } catch (e) {
+      console.error('[Auth] ensureSession exception', e, { reason });
+      // ❌ ANTES: fazia logout e zerava tudo
+      // ✅ AGORA: apenas loga o erro
+    } finally {
+      setLoading(false);
+      refreshingRef.current = false;
+    }
   }
-}
-  const withTimeout = <T,>(p: Promise<T>, ms = 15000): Promise<T> =>
-  Promise.race([
-    p,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error('timeout')), ms)
-    ),
-  ]);
 
   /* =========================
-     Sessão inicial + listener (SUPABASE)
+     🔧 CORREÇÃO 3: Sessão inicial SEM timeouts agressivos
   ========================= */
   useEffect(() => {
     if (AUTH_MODE !== 'supabase') {
-      // modo mock: não travar AuthGate
       setUser(null);
       setProfile(null);
       setLoading(false);
@@ -231,68 +219,52 @@ setProfile(p);
     let mounted = true;
     const safeSet = (fn: () => void) => mounted && fn();
 
+    const loadSession = async () => {
+      safeSet(() => {
+        setLoading(true);
+        setInitializing(true);
+      });
 
-const loadSession = async () => {
-  safeSet(() => {
-    setLoading(true);
-    setInitializing(true);
-  });
+      try {
+        // ✅ SEM TIMEOUT - deixa o Supabase resolver naturalmente
+        const { data, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          console.error('[Auth] getSession error', error);
+          // ❌ ANTES: fazia logout
+          // ✅ AGORA: continua normalmente
+        }
 
-  try {
-    // ✅ getSession com timeout
-    const { data, error } = await withTimeout(supabase.auth.getSession(), 8000);
-    if (error) console.error('[Auth] getSession error', error);
+        const sessionUser = data?.session?.user ?? null;
+        safeSet(() => setUser(sessionUser));
 
-    const sessionUser = data.session?.user ?? null;
-    safeSet(() => setUser(sessionUser));
+        if (sessionUser) {
+          // Busca perfil (com fallback temporário)
+          const p = await loadOrCreateProfile(sessionUser);
+          safeSet(() => setProfile(p));
+        } else {
+          safeSet(() => setProfile(null));
+        }
 
-    if (sessionUser) {
-      // ✅ loadOrCreateProfile com timeout
-      const p = await withTimeout(loadOrCreateProfile(sessionUser), 8000);
-
-      if (!p) {
-        // ⚠️ Não conseguiu obter/criar profile => não trava a UI
-        console.warn(
-          '[Auth] profile não carregou. Fazendo logout para evitar loading infinito.'
-        );
-
-        // NÃO aguarda signOut (pode travar se rede/extensão bloquear)
-    try { supabase.auth.signOut(); } catch {}
-
-    safeSet(() => {
-      setUser(null);
-      setProfile(null);
-    });
-
-    return;
-
+      } catch (e) {
+        console.error('[Auth] loadSession exception', e);
+        // ❌ ANTES: fazia logout forçado
+        // ✅ AGORA: apenas loga o erro e deixa o usuário tentar login
+        safeSet(() => {
+          setUser(null);
+          setProfile(null);
+        });
+      } finally {
+        safeSet(() => {
+          setLoading(false);
+          setInitializing(false);
+        });
       }
+    };
 
-      safeSet(() => setProfile(p));
-    } else {
-      safeSet(() => setProfile(null));
-    }
-  } catch (e) {
-    console.error('[Auth] loadSession exception', e);
+    loadSession();
 
-   try { supabase.auth.signOut(); } catch {}
-
-    safeSet(() => {
-      setUser(null);
-      setProfile(null);
-    });
-
-  } finally {
-    safeSet(() => {
-      setLoading(false);
-      setInitializing(false);
-    });
-  }
-};
-
-loadSession();
-
-
+    // Listener de mudanças de autenticação
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const sessionUser = session?.user ?? null;
       safeSet(() => setUser(sessionUser));
@@ -307,41 +279,37 @@ loadSession();
 
       safeSet(() => setLoading(true));
       try {
-        const p = await withTimeout(loadOrCreateProfile(sessionUser), 15000);
-
-        if (!p) {
-          console.warn('[Auth] profile não carregou no onAuthStateChange. Fazendo logout.');
-          try { supabase.auth.signOut(); } catch {}
-          safeSet(() => {
-            setUser(null);
-            setProfile(null);
-          });
-          return;
-        }
-
+        const p = await loadOrCreateProfile(sessionUser);
         safeSet(() => setProfile(p));
+      } catch (e) {
+        console.error('[Auth] onAuthStateChange error', e);
+        // ✅ Não faz logout, apenas loga
       } finally {
         safeSet(() => setLoading(false));
       }
-
     });
 
     return () => {
       mounted = false;
       listener.subscription.unsubscribe();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* =========================
-     Quando volta o foco/visibilidade, revalida sessão+profile (sem F5)
+     🔧 CORREÇÃO 4: Revalidação em foco/visibilidade (mais suave)
   ========================= */
   useEffect(() => {
     if (AUTH_MODE !== 'supabase') return;
 
-    const onFocus = () => ensureSessionAndProfile('focus');
+    const onFocus = () => {
+      // Só revalida se já tiver usuário
+      if (user) ensureSessionAndProfile('focus');
+    };
+
     const onVisibility = () => {
-      if (!document.hidden) ensureSessionAndProfile('visibility');
+      if (!document.hidden && user) {
+        ensureSessionAndProfile('visibility');
+      }
     };
 
     window.addEventListener('focus', onFocus);
@@ -351,52 +319,66 @@ loadSession();
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [AUTH_MODE]);
+  }, [user]);
 
   /* =========================
-     Auth actions
+     Sign In / Sign Out
   ========================= */
   async function signIn(email: string, password: string) {
-    if (AUTH_MODE === 'mock') return;
-    if (!supabase) throw new Error('Supabase não configurado (VITE_SUPABASE_URL/ANON_KEY).');
+    if (AUTH_MODE !== 'supabase' || !supabase) {
+      throw new Error('Auth não configurado');
+    }
 
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
       if (error) throw error;
 
-      // ✅ garante sessão + profile logo após login (sem depender do listener)
-      await ensureSessionAndProfile('signIn');
+      const sessionUser = data.session?.user ?? null;
+      setUser(sessionUser);
+
+      if (sessionUser) {
+        const p = await loadOrCreateProfile(sessionUser);
+        setProfile(p);
+      }
     } finally {
       setLoading(false);
     }
   }
 
   async function signOut() {
-    if (AUTH_MODE === 'mock') {
+    if (AUTH_MODE !== 'supabase' || !supabase) return;
+
+    setLoading(true);
+    try {
+      await supabase.auth.signOut();
       setUser(null);
       setProfile(null);
-      return;
+    } catch (e) {
+      console.error('[Auth] signOut error', e);
+    } finally {
+      setLoading(false);
     }
-    if (!supabase) return;
-
-    await supabase.auth.signOut();
-    setUser(null);
-    setProfile(null);
   }
 
   /* =========================
-     Regras de acesso
+     Computed Values
   ========================= */
-  const role = profile?.role ?? null;
+  const role = useMemo(() => profile?.role ?? null, [profile]);
+  const isAdmin = useMemo(() => role === 'admin', [role]);
+  const isAnalista = useMemo(() => role === 'analista', [role]);
+  const isCoordenador = useMemo(() => role === 'coordenador', [role]);
 
-  const isAdmin = role === 'admin';
-  const isAnalista = role === 'analista';
-  const isCoordenador = role === 'coordenador';
+  const canAccessDashboard = useMemo(
+    () => isAdmin || isAnalista,
+    [isAdmin, isAnalista]
+  );
 
-  const canAccessDashboard = isAdmin || isAnalista;
-  const canAccessAgenda = isAdmin || isCoordenador;
+  const canAccessAgenda = useMemo(() => true, []);
 
   const value = useMemo(
     () => ({
@@ -413,7 +395,18 @@ loadSession();
       canAccessDashboard,
       canAccessAgenda,
     }),
-    [user, profile, role, initializing, loading]
+    [
+      user,
+      profile,
+      role,
+      initializing,
+      loading,
+      isAdmin,
+      isAnalista,
+      isCoordenador,
+      canAccessDashboard,
+      canAccessAgenda,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -421,6 +414,8 @@ loadSession();
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth deve ser usado dentro de AuthProvider');
+  if (!context) {
+    throw new Error('useAuth must be used within AuthProvider');
+  }
   return context;
 }

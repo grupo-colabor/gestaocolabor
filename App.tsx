@@ -170,6 +170,9 @@ interface AppState {
   updateResourceAllocation: (a: LogisticAllocation) => void;
   removeResourceAllocation: (id: string) => void;
 
+  // Instructor Current Location
+  updateInstructorCurrentLocation: (instructorId: string, location: string) => Promise<void>;
+
   // Operational Bases Actions
   updateOperationalBase: (key: OperationalBaseKey, newList: string[]) => Promise<void>;
 
@@ -583,7 +586,7 @@ const syncEvidencesFromDb = useCallback(async () => {
         })),
         observations: '',
         residenceLocation: row.residence_location ?? '',
-        coverageLocations: Array.isArray(row.coverage_locations) ? row.coverage_locations : [],
+        currentLocation: Array.isArray(row.coverage_locations) ? (row.coverage_locations[0] || '') : (row.coverage_locations || ''),
         agendaRole: row.agenda_role || 'Instrutor',
         operationalNotes: row.operational_notes ?? '',
 
@@ -1550,6 +1553,29 @@ const addDemand = useCallback(
     setInstructors(prev => prev.map(item => (item.id === i.id ? i : item)));
   }, []);
 
+  const updateInstructorCurrentLocation = useCallback(async (instructorId: string, location: string) => {
+    // Optimistic update
+    setInstructors(prev => prev.map(inst =>
+      inst.id === instructorId ? { ...inst, currentLocation: location || '' } : inst
+    ));
+
+    if (AUTH_MODE !== 'supabase') return;
+
+    try {
+      const { error } = await supabase
+        .from('instructors')
+        .update({ coverage_locations: location ? [location] : [] })
+        .eq('id', instructorId);
+
+      if (error) throw error;
+    } catch (e: any) {
+      console.error('[Instructor] updateCurrentLocation error', e);
+      // Rollback: re-sync from DB
+      await syncInstructorsFromDb();
+      setNotification({ message: 'Erro ao atualizar localidade do instrutor.', type: 'error' });
+    }
+  }, [syncInstructorsFromDb, setNotification]);
+
   const addCompany = useCallback((c: Company) => {
     setCompanies(prev => [...prev, c]);
   }, []);
@@ -2393,6 +2419,7 @@ const hasScheduleConflict = useCallback(
       cancelDemand,
       addInstructor,
       updateInstructor,
+      updateInstructorCurrentLocation,
       addCompany,
       updateCompany,
       addTraining,
@@ -2438,6 +2465,7 @@ const hasScheduleConflict = useCallback(
       cancelDemand,
       addInstructor,
       updateInstructor,
+      updateInstructorCurrentLocation,
       addCompany,
       updateCompany,
       addTraining,

@@ -181,6 +181,7 @@ const CalendarView: React.FC = () => {
     hasResourceConflict,
     setNotification,
    operationalBases,
+   updateInstructorCurrentLocation,
   } = useApp();
 
   const { profile } = useAuth();
@@ -224,7 +225,7 @@ const [showAdvanced, setShowAdvanced] = useState(false);
 // Avançados
 const [filterName, setFilterName] = useState<string>(''); // busca por nome
 const [filterRegionId, setFilterRegionId] = useState<string>('TODOS'); // filtra LINHAS por região
-const [filterCoverageLocation, setFilterCoverageLocation] = useState<string>('TODOS'); // filtra LINHAS por "Atende"
+const [filterCoverageLocation, setFilterCoverageLocation] = useState<string>('TODOS'); // filtra LINHAS por "Atendendo"
 const [filterRecordType, setFilterRecordType] = useState<string>('TODOS'); // filtra CARDS por tipo/origem
 
 const normalize = (s: string) =>
@@ -1062,10 +1063,10 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
 
         
 
-        {/* Atende */}
+        {/* Atendendo */}
         <div>
           <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-            Localidade (Atende)
+            Localidade (Atendendo)
           </label>
           <select
             className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
@@ -1140,7 +1141,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                 before:content-[''] before:absolute before:left-0 before:bottom-0 before:w-full before:h-px before:bg-gray-200
               "
             >
-              Atende
+              Atendendo
             </th>
 
                 {daysInView.map((day, idx) => (
@@ -1168,10 +1169,9 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                 // Buscar nome
                 if (filterName && !normalize(i.name).includes(normalize(filterName))) return false;
 
-                // Atende (coverage)
+                // Atendendo (currentLocation)
                 if (filterCoverageLocation !== 'TODOS') {
-                  const cov = Array.isArray((i as any).coverageLocations) ? (i as any).coverageLocations : [];
-                  if (!cov.includes(filterCoverageLocation)) return false;
+                  if ((i.currentLocation || '') !== filterCoverageLocation) return false;
                 }
 
                 return true;
@@ -1229,7 +1229,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                 </div>
               </td>
 
-                {/* 2) LOCALIDADE (ATENDE) - depois */}
+                {/* 2) LOCALIDADE (ATENDENDO) - dropdown */}
                 <td
                 className="
                   px-2 py-2 bg-white align-middle
@@ -1240,14 +1240,18 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                   before:content-[''] before:absolute before:left-0 before:bottom-0 before:w-full before:h-px before:bg-gray-100
                 "
               >
-                <div
-                  className="w-full text-[11px] font-bold text-slate-600 whitespace-nowrap overflow-hidden text-ellipsis"
-                  title={(instructor.coverageLocations || []).join(', ')}
+                <select
+                  value={instructor.currentLocation || ''}
+                  onChange={(e) => updateInstructorCurrentLocation(instructor.id, e.target.value)}
+                  disabled={isCoordinator}
+                  className="w-full text-[11px] font-bold text-slate-600 bg-transparent border border-slate-200 rounded-lg px-1.5 py-1 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer disabled:cursor-default disabled:opacity-70"
+                  title={instructor.currentLocation || 'Selecionar localidade'}
                 >
-                  {(instructor.coverageLocations && instructor.coverageLocations.length > 0)
-                    ? instructor.coverageLocations.join(', ')
-                    : '—'}
-                </div>
+                  <option value="">—</option>
+                  {(operationalBases?.localidades || []).map((loc: string) => (
+                    <option key={loc} value={loc}>{loc}</option>
+                  ))}
+                </select>
               </td>
 
 

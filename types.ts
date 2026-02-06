@@ -116,7 +116,7 @@ export interface Instructor {
   observations?: string;
   email?: string;
   residenceLocation?: string;     
-  coverageLocations?: string[];  
+  currentLocation?: string;
   agendaRole?: string;
   operationalNotes?: string;
 }

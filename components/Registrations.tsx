@@ -119,7 +119,6 @@ const Registrations: React.FC = () => {
     skills: InstructorSkill[];
     observations: string;
     residenceLocation: string;
-    coverageLocations: string[];
     agendaRole: string;
     operationalNotes: string;
   }>({
@@ -130,7 +129,6 @@ const Registrations: React.FC = () => {
     skills: [],
     observations: '',
     residenceLocation: '',
-    coverageLocations: [],
     agendaRole: 'Instrutor',
     operationalNotes: ''
   });
@@ -240,8 +238,7 @@ const Registrations: React.FC = () => {
   // --- Instructor Handlers ---
   const handleOpenInstructorCreateModal = () => {
     setEditingInstructorId(null);
-    setInstructorFormData({ name: '', email: '', status: 'ATIVO', regionIds: [], skills: [], observations: '', residenceLocation: '', coverageLocations: [], agendaRole: 'Instrutor',
-});
+    setInstructorFormData({ name: '', email: '', status: 'ATIVO', regionIds: [], skills: [], observations: '', residenceLocation: '', agendaRole: 'Instrutor', operationalNotes: '' });
     setTempSkill({ trainingId: '', level: 3 });
 
     // ✅ garante que sempre abre “destravado”
@@ -260,7 +257,6 @@ const Registrations: React.FC = () => {
       skills: [...instructor.skills.map(s => ({ ...s }))],
       observations: instructor.observations || '',
       residenceLocation: instructor.residenceLocation || '',
-      coverageLocations: Array.isArray(instructor.coverageLocations) ? instructor.coverageLocations : [],
       agendaRole: (instructor as any).agendaRole || 'Instrutor',
       operationalNotes: instructor.operationalNotes || '',
       });
@@ -280,18 +276,6 @@ const Registrations: React.FC = () => {
         return { ...prev, regionIds: prev.regionIds.filter(id => id !== regionId) };
       }
       return { ...prev, regionIds: [...prev.regionIds, regionId] };
-    });
-  };
-
-    const toggleCoverageLocation = (loc: string) => {
-    setInstructorFormData(prev => {
-      const exists = prev.coverageLocations.includes(loc);
-      return {
-        ...prev,
-        coverageLocations: exists
-          ? prev.coverageLocations.filter(x => x !== loc)
-          : [...prev.coverageLocations, loc]
-      };
     });
   };
 
@@ -393,7 +377,6 @@ const Registrations: React.FC = () => {
               region: dbRegion,
               is_active: isActive,
               residence_location: instructorFormData.residenceLocation || null,
-              coverage_locations: instructorFormData.coverageLocations,
               agenda_role: instructorFormData.agendaRole || null,
               operational_notes: instructorFormData.operationalNotes || null,
             })
@@ -418,7 +401,6 @@ const Registrations: React.FC = () => {
               region: dbRegion,
               is_active: isActive,
               residence_location: instructorFormData.residenceLocation || null,
-              coverage_locations: instructorFormData.coverageLocations,
               agenda_role: instructorFormData.agendaRole || null,
             })
             .select('id')
@@ -1148,36 +1130,6 @@ const handleRemoveBaseItem = async (item: string) => {
                     </select>
                   </div>
 
-                  {/* Atende (multi) */}
-                  <div className="md:col-span-7">
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">
-                      Localidade (Atende) — múltipla
-                    </label>
-
-                    <div className="flex flex-wrap gap-2">
-                      {operationalBases.localidades.map((loc) => {
-                        const selected = instructorFormData.coverageLocations.includes(loc);
-                        return (
-                          <button
-                            key={loc}
-                            type="button"
-                            onClick={() => toggleCoverageLocation(loc)}
-                            className={`px-3 py-2 text-[10px] font-black rounded-lg border-2 transition-all uppercase
-                              ${selected
-                                ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                                : 'bg-white text-slate-400 border-slate-100 hover:border-slate-300'}`}
-                            title={loc}
-                          >
-                            {loc}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    <div className="mt-2 text-[11px] text-slate-500">
-                      Selecionados: <span className="font-semibold">{instructorFormData.coverageLocations.length}</span>
-                    </div>
-                  </div>
                 </div>
               </section>
 

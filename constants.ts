@@ -319,6 +319,9 @@ export const INITIAL_OPERATIONAL_BASES: OperationalBases = {
     "Canaã", "Village", "São Luis", "Rio de Janeiro", "Intendente Câmara",
     "Capanema", "Belo Horizonte", "Salobo", "Praia Mole", "Governador Valadares", "Timoteo"
   ],
+  locaisAgencia: [
+    "ES", "MA", "MG", "PA"
+  ],
   locaisTreinamento: [],
 
   hoteis: [

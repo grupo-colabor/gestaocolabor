@@ -1868,7 +1868,7 @@ const companionInstructorIds = useMemo(() => {
     <DataList id="localidades-list" items={operationalBases.localidades ?? []} />
     <DataList id="locais-treinamento-list" items={operationalBases.locaisTreinamento ?? []} />
     <DataList id="hoteis-list" items={operationalBases.hoteis ?? []} />
-    <DataList id="agencias-list" items={operationalBases.localidades ?? []} />
+    <DataList id="agencias-list" items={operationalBases.locaisAgencia ?? []} />
     <DataList id="matriculadores-list" items={operationalBases.matriculadores ?? []} />
 
 

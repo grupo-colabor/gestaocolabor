@@ -28,7 +28,8 @@ import {
   Award,
   Target,
   Settings,
-  AlertCircle
+  AlertCircle,
+  Search
 } from 'lucide-react';
 import { SKILL_LABELS } from '../constants';
 import { supabase } from '../lib/supabase';
@@ -55,6 +56,7 @@ const BASE_LABELS: Record<OperationalBaseKey, string> = {
   analistas: 'Analistas',
   corredores: 'Corredores',
   localidades: 'Localidades',
+  locaisAgencia: 'Locais da Agência',
   locaisTreinamento: 'Local de Treinamento',
   hoteis: 'Hotéis',
   locadoras: 'Empresas de Locação',
@@ -138,6 +140,11 @@ const Registrations: React.FC = () => {
     level: 3
   });
 
+  // --- Search State ---
+  const [searchCompanies, setSearchCompanies] = useState('');
+  const [searchTrainings, setSearchTrainings] = useState('');
+  const [searchInstructors, setSearchInstructors] = useState('');
+
   // --- Operational Bases Management State ---
   const [activeBaseKey, setActiveBaseKey] = useState<OperationalBaseKey>('aprovadores');
   const [newBaseItem, setNewBaseItem] = useState('');
@@ -150,6 +157,47 @@ const Registrations: React.FC = () => {
       setIsInstructorSubmitting(false);
     }
   }, [isInstructorModalOpen]);
+
+  // --- Função de normalização para pesquisa ---
+  const normalize = (str: string) =>
+    (str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  // --- Dados filtrados ---
+  const filteredCompanies = companies.filter(c => {
+    if (!searchCompanies.trim()) return true;
+    const term = normalize(searchCompanies);
+    return (
+      normalize(c.name).includes(term) ||
+      normalize(c.razaoSocial).includes(term) ||
+      normalize(c.cnpj || '').includes(term) ||
+      normalize(c.address?.cidade || '').includes(term) ||
+      normalize(c.address?.estado || '').includes(term)
+    );
+  });
+
+  const filteredTrainings = trainings.filter(t => {
+    if (!searchTrainings.trim()) return true;
+    const term = normalize(searchTrainings);
+    return (
+      normalize(t.name).includes(term) ||
+      normalize(t.nr || '').includes(term) ||
+      normalize(t.category || '').includes(term)
+    );
+  });
+
+  const filteredInstructors = instructors.filter(i => {
+    if (!searchInstructors.trim()) return true;
+    const term = normalize(searchInstructors);
+    const regionNames = i.regionIds.map(rid => regions.find(r => r.id === rid)?.name || '').join(' ');
+    const skillNames = i.skills.map(s => trainings.find(t => t.id === s.trainingId)?.name || '').join(' ');
+    return (
+      normalize(i.name).includes(term) ||
+      normalize(i.email || '').includes(term) ||
+      normalize(regionNames).includes(term) ||
+      normalize(skillNames).includes(term) ||
+      normalize(i.residenceLocation || '').includes(term)
+    );
+  });
 
   // ✅ Aceita PromiseLike (inclui PostgrestBuilder do Supabase) e converte pra Promise real
   const withTimeout = async <T,>(
@@ -550,18 +598,37 @@ const handleRemoveBaseItem = async (item: string) => {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 min-h-[500px]">
         {activeTab === 'companies' && (
           <div>
-            <div className="flex justify-between items-center mb-6">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
               <h2 className="text-lg font-bold text-gray-700">Empresas / Clientes</h2>
-              <button
-                type="button"
-                onClick={handleOpenCompanyCreateModal}
-                className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-800 flex items-center transition shadow-sm font-bold"
-              >
-                <Plus size={18} className="mr-2" /> Nova Empresa
-              </button>
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                <div className="relative flex-1 sm:flex-initial">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                  <input
+                    type="text"
+                    placeholder="Pesquisar empresa..."
+                    value={searchCompanies}
+                    onChange={(e) => setSearchCompanies(e.target.value)}
+                    className="w-full sm:w-64 pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleOpenCompanyCreateModal}
+                  className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-800 flex items-center transition shadow-sm font-bold whitespace-nowrap"
+                >
+                  <Plus size={18} className="mr-2" /> Nova Empresa
+                </button>
+              </div>
             </div>
+            {filteredCompanies.length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <Search size={48} className="mx-auto mb-4 opacity-50" />
+                <p className="font-medium">Nenhuma empresa encontrada</p>
+                <p className="text-sm">Tente buscar por outro termo</p>
+              </div>
+            ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {companies.map(company => (
+              {filteredCompanies.map(company => (
                 <div key={company.id} className="border border-gray-200 p-4 rounded-xl flex items-start space-x-4 hover:shadow-md transition-all bg-white relative group">
                   <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-600 font-bold text-lg border border-gray-200">
                     <Building2 size={24} />
@@ -587,21 +654,41 @@ const handleRemoveBaseItem = async (item: string) => {
                 </div>
               ))}
             </div>
+            )}
           </div>
         )}
 
         {activeTab === 'trainings' && (
           <div>
-            <div className="flex justify-between items-center mb-6">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
               <h2 className="text-lg font-bold text-gray-700">Catálogo de Treinamentos</h2>
-              <button
-                type="button"
-                onClick={handleOpenTrainingCreateModal}
-                className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-800 flex items-center transition shadow-sm font-bold"
-              >
-                <Plus size={18} className="mr-2" /> + Novo Treinamento
-              </button>
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                <div className="relative flex-1 sm:flex-initial">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                  <input
+                    type="text"
+                    placeholder="Pesquisar treinamento..."
+                    value={searchTrainings}
+                    onChange={(e) => setSearchTrainings(e.target.value)}
+                    className="w-full sm:w-64 pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleOpenTrainingCreateModal}
+                  className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-800 flex items-center transition shadow-sm font-bold whitespace-nowrap"
+                >
+                  <Plus size={18} className="mr-2" /> + Novo Treinamento
+                </button>
+              </div>
             </div>
+            {filteredTrainings.length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <Search size={48} className="mx-auto mb-4 opacity-50" />
+                <p className="font-medium">Nenhum treinamento encontrado</p>
+                <p className="text-sm">Tente buscar por outro termo</p>
+              </div>
+            ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
@@ -616,7 +703,7 @@ const handleRemoveBaseItem = async (item: string) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {trainings.map(t => (
+                  {filteredTrainings.map(t => (
                     <tr key={t.id} className="hover:bg-gray-50 transition-colors group">
                       <td className="p-4">
                         <div className="font-bold text-gray-800">{t.name}</div>
@@ -645,6 +732,7 @@ const handleRemoveBaseItem = async (item: string) => {
                 </tbody>
               </table>
             </div>
+            )}
           </div>
         )}
 
@@ -759,18 +847,37 @@ const handleRemoveBaseItem = async (item: string) => {
         {/* Instrutores */}
         {activeTab === 'instructors' && (
           <div>
-            <div className="flex justify-between items-center mb-6">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
               <h2 className="text-lg font-bold text-gray-700">Base de Instrutores</h2>
-              <button
-                type="button"
-                onClick={handleOpenInstructorCreateModal}
-                className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-800 flex items-center transition shadow-sm font-bold"
-              >
-                <UserPlus size={18} className="mr-2" /> + Novo Instrutor
-              </button>
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                <div className="relative flex-1 sm:flex-initial">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                  <input
+                    type="text"
+                    placeholder="Pesquisar instrutor..."
+                    value={searchInstructors}
+                    onChange={(e) => setSearchInstructors(e.target.value)}
+                    className="w-full sm:w-64 pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleOpenInstructorCreateModal}
+                  className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-800 flex items-center transition shadow-sm font-bold whitespace-nowrap"
+                >
+                  <UserPlus size={18} className="mr-2" /> + Novo Instrutor
+                </button>
+              </div>
             </div>
+            {filteredInstructors.length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <Search size={48} className="mx-auto mb-4 opacity-50" />
+                <p className="font-medium">Nenhum instrutor encontrado</p>
+                <p className="text-sm">Tente buscar por outro termo</p>
+              </div>
+            ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {instructors.map(inst => (
+              {filteredInstructors.map(inst => (
                 <div key={inst.id} className="border border-gray-200 p-4 rounded-xl flex items-start space-x-4 hover:shadow-md transition-all bg-white relative group">
                   <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-lg border border-blue-200">
                     {inst.name.charAt(0)}
@@ -805,6 +912,7 @@ const handleRemoveBaseItem = async (item: string) => {
                 </div>
               ))}
             </div>
+            )}
           </div>
         )}
 

@@ -280,6 +280,7 @@ export type OperationalBaseKey =
   | 'analistas'
   | 'corredores'
   | 'localidades'
+  | 'locaisAgencia'
   | 'hoteis'
   | 'locadoras'
   | 'tiposTreinamento'
@@ -293,6 +294,7 @@ export interface OperationalBases {
   matriculadores: string[];
   corredores: string[];
   localidades: string[];
+  locaisAgencia: string[];
   locaisTreinamento: string[];
   hoteis: string[];
   locadoras: string[];

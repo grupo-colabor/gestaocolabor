@@ -225,12 +225,12 @@ const Registrations: React.FC = () => {
     setIsCompanyModalOpen(true);
   };
 
-  const handleSaveCompany = () => {
+  const handleSaveCompany = async () => {
     if (!companyFormData.razaoSocial || !companyFormData.name) return alert('Razão Social e Nome Fantasia são obrigatórios.');
     if (editingCompanyId) {
-      updateCompany(companyFormData as Company);
+      await updateCompany(companyFormData as Company);
     } else {
-      addCompany({ ...(companyFormData as Company), id: `COMP-${Date.now()}` });
+      await addCompany(companyFormData as Company);
     }
     setIsCompanyModalOpen(false);
   };

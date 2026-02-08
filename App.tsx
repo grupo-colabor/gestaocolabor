@@ -39,6 +39,9 @@ import type {
   LogisticAllocation,
   EvidenceData,
   CompanionAllocation,
+  Segment,
+  Status,
+  LogisticsType,
 } from './types';
 
 import {
@@ -59,7 +62,7 @@ import MeasurementView from './components/Measurement';
 import Evidences from './components/Evidences';
 import AuthGate from './components/AuthGate';
 import { fetchTrainings } from './services/trainings';
-import { fetchCompanies } from './services/companies';
+import { fetchCompanies, insertCompany, updateCompanyById, CompanyRow } from './services/companies';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { fetchInstructors, fetchInstructorTrainings } from './services/instructors';
 import { fetchMeasurements, upsertMeasurementByDemandId } from './services/measurements';
@@ -145,8 +148,8 @@ interface AppState {
   cancelDemand: (demandId: string) => void;
   addInstructor: (i: Instructor) => void;
   updateInstructor: (i: Instructor) => void;
-  addCompany: (c: Company) => void;
-  updateCompany: (c: Company) => void;
+  addCompany: (c: Company) => Promise<void>;
+  updateCompany: (c: Company) => Promise<void>;
   addTraining: (t: Training) => void;
   updateTraining: (t: Training) => void;
   reloadInstructors: () => Promise<void>;
@@ -935,6 +938,22 @@ const updateEvidence = useCallback(
   }, [notification]);
 
   // ✅ Carregar empresas do Supabase
+  // Mapper Company: DB → App
+  const mapCompanyFromDb = useCallback((row: CompanyRow): Company => ({
+    id: row.id,
+    name: row.name || '',
+    razaoSocial: row.razao_social || '',
+    cnpj: row.cnpj || undefined,
+    segment: (row.segment as Segment) || 'Outros',
+    status: (row.status as Status) || 'ATIVO',
+    logisticsType: (row.logistics_type as LogisticsType) || 'SIMPLIFICADA',
+    address: {
+      cidade: row.cidade || undefined,
+      estado: row.estado || undefined,
+    },
+    observations: row.observations || undefined,
+  }), []);
+
   useEffect(() => {
     if (AUTH_MODE !== 'supabase') return;
     if (loading) return;
@@ -943,12 +962,12 @@ const updateEvidence = useCallback(
     (async () => {
       try {
         const data = await fetchCompanies();
-        setCompanies(data as any);
+        setCompanies(data.map(mapCompanyFromDb));
       } catch (e) {
         console.error('Erro ao carregar companies:', e);
       }
     })();
-  }, [AUTH_MODE, user, loading]);
+  }, [AUTH_MODE, user, loading, mapCompanyFromDb]);
 
   // ✅ Carregar Agenda do Supabase (fonte da verdade)
   useEffect(() => {
@@ -1576,13 +1595,60 @@ const addDemand = useCallback(
     }
   }, [syncInstructorsFromDb, setNotification]);
 
-  const addCompany = useCallback((c: Company) => {
-    setCompanies(prev => [...prev, c]);
-  }, []);
+  const addCompany = useCallback(async (c: Company) => {
+    if (AUTH_MODE !== 'supabase') {
+      setCompanies(prev => [...prev, { ...c, id: `COMP-${Date.now()}` }]);
+      return;
+    }
 
-  const updateCompany = useCallback((c: Company) => {
+    try {
+      const payload = {
+        name: c.name,
+        razao_social: c.razaoSocial || null,
+        cnpj: c.cnpj || null,
+        segment: c.segment || 'Outros',
+        status: c.status || 'ATIVO',
+        logistics_type: c.logisticsType || 'SIMPLIFICADA',
+        cidade: c.address?.cidade || null,
+        estado: c.address?.estado || null,
+        observations: c.observations || null,
+      };
+
+      const saved = await insertCompany(payload);
+      setCompanies(prev => [...prev, mapCompanyFromDb(saved)]);
+      setNotification({ message: 'Empresa criada com sucesso!', type: 'success' });
+    } catch (e: any) {
+      console.error('[Company] insert error', e);
+      setNotification({ message: `Erro ao criar empresa: ${e?.message || 'ver console'}`, type: 'error' });
+    }
+  }, [AUTH_MODE, mapCompanyFromDb, setNotification]);
+
+  const updateCompany = useCallback(async (c: Company) => {
+    // Optimistic update
     setCompanies(prev => prev.map(item => (item.id === c.id ? c : item)));
-  }, []);
+
+    if (AUTH_MODE !== 'supabase') return;
+
+    try {
+      const payload = {
+        name: c.name,
+        razao_social: c.razaoSocial || null,
+        cnpj: c.cnpj || null,
+        segment: c.segment || 'Outros',
+        status: c.status || 'ATIVO',
+        logistics_type: c.logisticsType || 'SIMPLIFICADA',
+        cidade: c.address?.cidade || null,
+        estado: c.address?.estado || null,
+        observations: c.observations || null,
+      };
+
+      await updateCompanyById(c.id, payload);
+      setNotification({ message: 'Empresa atualizada com sucesso!', type: 'success' });
+    } catch (e: any) {
+      console.error('[Company] update error', e);
+      setNotification({ message: `Erro ao atualizar empresa: ${e?.message || 'ver console'}`, type: 'error' });
+    }
+  }, [AUTH_MODE, setNotification]);
 
   // ✅ Treinamentos (mock vs supabase)
   const addTraining = useCallback(

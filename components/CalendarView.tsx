@@ -1102,15 +1102,17 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
 </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="overflow-x-auto">
+        {/* Container com scroll horizontal E vertical - max-height para ativar sticky */}
+        <div className="overflow-auto max-h-[calc(100vh-280px)]">
           <table className="min-w-max w-full text-sm border-separate border-spacing-0">
-            <thead>
-              <tr className="bg-slate-50 border-b border-gray-200">
+            {/* ✅ STICKY HEADER - fica fixo no topo durante scroll vertical */}
+            <thead className="sticky top-0 z-[60]">
+              <tr className="bg-slate-50 border-b border-gray-200 shadow-[0_2px_4px_rgba(0,0,0,0.06)]">
                 <th
               className="
                 p-4 text-left w-[200px] min-w-[200px]
                 font-black text-[10px] uppercase tracking-widest text-slate-400
-                sticky left-0 z-50 bg-slate-50
+                sticky left-0 z-[70] bg-slate-50
                 relative overflow-hidden
                 after:content-[''] after:absolute after:top-0 after:right-0 after:h-full after:w-px after:bg-gray-200
               "
@@ -1122,7 +1124,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                 px-2 py-4 text-left
                 w-[90px] min-w-[90px] max-w-[90px] box-border
                 font-black text-[8px] uppercase tracking-tighter text-slate-400 leading-tight
-                sticky left-[200px] z-50 bg-slate-50
+                sticky left-[200px] z-[70] bg-slate-50
                 relative overflow-hidden
                 after:content-[''] after:absolute after:top-0 after:right-0 after:h-full after:w-px after:bg-gray-200
                 before:content-[''] before:absolute before:left-0 before:bottom-0 before:w-full before:h-px before:bg-gray-200
@@ -1135,7 +1137,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                 px-2 py-4 text-left
                 w-[120px] min-w-[120px] max-w-[120px] box-border
                 font-black text-[8px] uppercase tracking-tighter text-slate-400 leading-tight
-                sticky left-[290px] z-50 bg-slate-50
+                sticky left-[290px] z-[70] bg-slate-50
                 relative overflow-hidden
                 after:content-[''] after:absolute after:top-0 after:right-0 after:h-full after:w-px after:bg-gray-200
                 before:content-[''] before:absolute before:left-0 before:bottom-0 before:w-full before:h-px before:bg-gray-200
@@ -1147,7 +1149,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                 {daysInView.map((day, idx) => (
                   <th
                     key={idx}
-                    className={`p-2 border-r border-gray-100 min-w-[75px] text-center ${day.getDay() % 6 === 0 ? 'bg-slate-100/40' : ''}`}
+                    className={`p-2 border-r border-gray-100 min-w-[75px] text-center ${day.getDay() % 6 === 0 ? 'bg-slate-100' : 'bg-slate-50'}`}
                   >
                     <div className="text-[9px] font-black text-slate-400 uppercase leading-none mb-1">
                       {day.toLocaleDateString('pt-BR', { weekday: 'short' })}

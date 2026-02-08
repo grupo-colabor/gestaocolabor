@@ -1150,12 +1150,10 @@ const addDemand = useCallback(
   async (d: Demand): Promise<{ id: string } | null> => {
     // ✅ MOCK MODE
     if (AUTH_MODE !== 'supabase') {
-      let seq = 0;
-
-      setNextDemandNumber(prev => {
-        seq = prev;
-        return prev + 1;
-      });
+      // Usa o valor atual do estado diretamente (evita race condition)
+      const seq = nextDemandNumber;
+      // Incrementa para a próxima demanda
+      setNextDemandNumber(prev => prev + 1);
 
       const nextId = `DEM-${seq}`;
 
@@ -1212,11 +1210,10 @@ const addDemand = useCallback(
     }
 
     try {
-      let seq = 0;
-      setNextDemandNumber(prev => {
-        seq = prev;
-        return prev + 1;
-      });
+      // Usa o valor atual do estado diretamente (evita race condition)
+      const seq = nextDemandNumber;
+      // Incrementa para a próxima demanda
+      setNextDemandNumber(prev => prev + 1);
 
       const nextId = `DEM-${seq}`;
 
@@ -1289,6 +1286,7 @@ const addDemand = useCallback(
     AUTH_MODE,
     loading,
     user,
+    nextDemandNumber,
     sanitizeHybridPracticePeriod,
     mapDemandToDb,
     syncDemandsFromDb,
@@ -1843,6 +1841,10 @@ const removeAgendaItem = useCallback(
   );
   /**
    * ADD INSTRUCTOR ALLOCATION WITH AUTOMATIC SPLIT
+   *
+   * Regra de negócio: cada DIA só pode pertencer a UM instrutor dentro da mesma demanda.
+   * Ao adicionar uma nova alocação, os dias que se sobrepõem são removidos de qualquer
+   * instrutor que os possuía anteriormente e passam para o novo instrutor.
    */
   const addInstructorAllocation = useCallback(
     (newAlloc: InstructorAllocation) => {
@@ -1854,28 +1856,39 @@ const removeAgendaItem = useCallback(
           )}:${z(d.getMinutes())}`;
         };
 
-        const nStart = new Date(newAlloc.startDate);
-        const nEnd = new Date(newAlloc.endDate);
-        const nStartTime = nStart.getTime();
-        const nEndTime = nEnd.getTime();
+        // ✅ Normaliza para comparação por DIA (ignora horas)
+        const toDateOnly = (dateStr: string) => {
+          const d = new Date(dateStr);
+          return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        };
+
+        const nStartDay = toDateOnly(newAlloc.startDate);
+        const nEndDay = toDateOnly(newAlloc.endDate);
 
         const adjusted: InstructorAllocation[] = [];
 
         prev.forEach(old => {
+          // Mantém alocações de outras demandas
           if (old.demandId !== newAlloc.demandId) {
             adjusted.push(old);
             return;
           }
 
-          const oStart = new Date(old.startDate);
-          const oEnd = new Date(old.endDate);
-          const oStartTime = oStart.getTime();
-          const oEndTime = oEnd.getTime();
+          const oStartDay = toDateOnly(old.startDate);
+          const oEndDay = toDateOnly(old.endDate);
 
-          if (nStartTime <= oStartTime && nEndTime >= oEndTime) return;
+          // ✅ CASO 1: Nova alocação cobre completamente a antiga (remove a antiga)
+          // Ex: old = 09-10, new = 09-13 → remove old completamente
+          if (nStartDay <= oStartDay && nEndDay >= oEndDay) {
+            // Remove completamente - não adiciona ao adjusted
+            return;
+          }
 
-          if (nStartTime > oStartTime && nEndTime < oEndTime) {
-            const p1End = new Date(nStart);
+          // ✅ CASO 2: Nova alocação está no MEIO da antiga (split em duas partes)
+          // Ex: old = 09-13, new = 11-12 → old vira 09-10 + 13-13
+          if (nStartDay > oStartDay && nEndDay < oEndDay) {
+            // Parte 1: do início da antiga até o dia ANTES da nova
+            const p1End = new Date(newAlloc.startDate);
             p1End.setDate(p1End.getDate() - 1);
             p1End.setHours(18, 0, 0, 0);
 
@@ -1885,7 +1898,8 @@ const removeAgendaItem = useCallback(
               endDate: fmt(p1End)
             });
 
-            const p2Start = new Date(nEnd);
+            // Parte 2: do dia DEPOIS da nova até o fim da antiga
+            const p2Start = new Date(newAlloc.endDate);
             p2Start.setDate(p2Start.getDate() + 1);
             p2Start.setHours(8, 0, 0, 0);
 
@@ -1897,30 +1911,41 @@ const removeAgendaItem = useCallback(
             return;
           }
 
-          if (nStartTime > oStartTime && nStartTime <= oEndTime) {
-            const trimmedEnd = new Date(nStart);
+          // ✅ CASO 3: Nova alocação sobrepõe o FINAL da antiga
+          // Ex: old = 09-12, new = 11-14 → old vira 09-10
+          if (nStartDay > oStartDay && nStartDay <= oEndDay) {
+            const trimmedEnd = new Date(newAlloc.startDate);
             trimmedEnd.setDate(trimmedEnd.getDate() - 1);
             trimmedEnd.setHours(18, 0, 0, 0);
 
-            adjusted.push({
-              ...old,
-              endDate: fmt(trimmedEnd)
-            });
+            // Só adiciona se restar pelo menos 1 dia
+            if (toDateOnly(fmt(trimmedEnd)) >= oStartDay) {
+              adjusted.push({
+                ...old,
+                endDate: fmt(trimmedEnd)
+              });
+            }
             return;
           }
 
-          if (nEndTime >= oStartTime && nEndTime < oEndTime) {
-            const trimmedStart = new Date(nEnd);
+          // ✅ CASO 4: Nova alocação sobrepõe o INÍCIO da antiga
+          // Ex: old = 09-12, new = 07-10 → old vira 11-12
+          if (nEndDay >= oStartDay && nEndDay < oEndDay) {
+            const trimmedStart = new Date(newAlloc.endDate);
             trimmedStart.setDate(trimmedStart.getDate() + 1);
             trimmedStart.setHours(8, 0, 0, 0);
 
-            adjusted.push({
-              ...old,
-              startDate: fmt(trimmedStart)
-            });
+            // Só adiciona se restar pelo menos 1 dia
+            if (toDateOnly(fmt(trimmedStart)) <= oEndDay) {
+              adjusted.push({
+                ...old,
+                startDate: fmt(trimmedStart)
+              });
+            }
             return;
           }
 
+          // ✅ CASO 5: Sem sobreposição - mantém a alocação
           adjusted.push(old);
         });
 

@@ -109,6 +109,9 @@ import {
 // ✅ Supabase client (precisa existir em ./lib/supabase)
 import { supabase } from './lib/supabase';
 
+// ✅ Hook para sincronização em tempo real
+import { useRealtimeSync } from './hooks/useRealtimeSync';
+
 /* ======================================================
    CONTEXT
 ====================================================== */
@@ -1104,8 +1107,54 @@ useEffect(() => {
       }));
       setMeasurements(initialMeasurements);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks-exhaustive-deps
   }, []);
+
+  /* =========================
+     ✅ REALTIME SYNC - Atualização automática entre usuários
+     Monitora mudanças nas tabelas principais e sincroniza
+  ========================= */
+  const realtimeEnabled = AUTH_MODE === 'supabase' && !loading && !!user;
+
+  // Demandas - tabela principal
+  useRealtimeSync({
+    table: 'demands',
+    onSync: syncDemandsFromDb,
+    enabled: realtimeEnabled,
+    debounceMs: 500
+  });
+
+  // Agenda Items - calendário/agenda
+  useRealtimeSync({
+    table: 'agenda_items',
+    onSync: syncAgendaItemsFromDb,
+    enabled: realtimeEnabled,
+    debounceMs: 500
+  });
+
+  // Alocações de instrutores
+  useRealtimeSync({
+    table: 'instructor_allocations',
+    onSync: syncInstructorAllocationsFromDb,
+    enabled: realtimeEnabled && demands.length > 0,
+    debounceMs: 500
+  });
+
+  // Alocações de recursos (CTM)
+  useRealtimeSync({
+    table: 'resource_allocations',
+    onSync: syncResourceAllocationsFromDb,
+    enabled: realtimeEnabled && demands.length > 0,
+    debounceMs: 500
+  });
+
+  // Acompanhantes
+  useRealtimeSync({
+    table: 'companion_allocations',
+    onSync: syncCompanionAllocationsFromDb,
+    enabled: realtimeEnabled && demands.length > 0,
+    debounceMs: 500
+  });
 
   const normalizeDate = useCallback((dateStr?: string) => {
     if (!dateStr) return null;

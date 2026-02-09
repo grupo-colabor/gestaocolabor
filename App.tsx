@@ -375,43 +375,75 @@ const [operationalBases, setOperationalBases] = useState<OperationalBases>({
   funcoesAgenda: [],
 });
 
+// ✅ Carregar Bases Operacionais do Supabase - aguarda sessão
 useEffect(() => {
+  if (AUTH_MODE !== 'supabase') return;
+  if (loading) return;  // ✅ Aguarda auth terminar de carregar
+  if (!user) return;    // ✅ Só carrega se tiver sessão
+
+  console.log('[OperationalBases] iniciando fetch (user logado)');
+
   (async () => {
-    const { data, error } = await supabase
-      .from('operational_bases_items')
-      .select('base_key, value')
-      .order('value');
+    // ✅ Retry logic para bases operacionais
+    let attempts = 0;
+    const maxAttempts = 3;
 
-    if (error) {
-      console.error('[OperationalBases] fetch error', error);
-      return;
-    }
+    while (attempts < maxAttempts) {
+      attempts++;
+      try {
+        const { data, error } = await supabase
+          .from('operational_bases_items')
+          .select('base_key, value')
+          .order('value');
 
-    const rows = (data ?? []) as Array<{ base_key: OperationalBaseKey; value: string }>;
+        if (error) {
+          console.error(`[OperationalBases] fetch attempt ${attempts} error`, error);
+          if (attempts < maxAttempts) {
+            await new Promise(r => setTimeout(r, 1000));
+            continue;
+          }
+          return;
+        }
 
-    const grouped: OperationalBases = {
-      aprovadores: [],
-      analistas: [],
-      matriculadores: [],
-      corredores: [],
-      localidades: [],
-      locaisAgencia: [],
-      locaisTreinamento: [],
-      hoteis: [],
-      locadoras: [],
-      tiposTreinamento: [],
-      funcoesAgenda: [],
-    };
+        const rows = (data ?? []) as Array<{ base_key: OperationalBaseKey; value: string }>;
 
-    for (const row of rows) {
-      if (grouped[row.base_key as OperationalBaseKey]) {
-        grouped[row.base_key as OperationalBaseKey].push(row.value);
+        const grouped: OperationalBases = {
+          aprovadores: [],
+          analistas: [],
+          matriculadores: [],
+          corredores: [],
+          localidades: [],
+          locaisAgencia: [],
+          locaisTreinamento: [],
+          hoteis: [],
+          locadoras: [],
+          tiposTreinamento: [],
+          funcoesAgenda: [],
+        };
+
+        for (const row of rows) {
+          if (grouped[row.base_key as OperationalBaseKey]) {
+            grouped[row.base_key as OperationalBaseKey].push(row.value);
+          }
+        }
+
+        console.log('[OperationalBases] carregadas com sucesso', {
+          localidades: grouped.localidades.length,
+          corredores: grouped.corredores.length
+        });
+
+        setOperationalBases(grouped);
+        return; // sucesso, sai do loop
+
+      } catch (e) {
+        console.error(`[OperationalBases] fetch attempt ${attempts} exception`, e);
+        if (attempts < maxAttempts) {
+          await new Promise(r => setTimeout(r, 1000));
+        }
       }
     }
-
-    setOperationalBases(grouped);
   })();
-}, []);
+}, [AUTH_MODE, user, loading]);
 
 
   const [nextDemandNumber, setNextDemandNumber] = useState<number>(6301);

@@ -161,39 +161,58 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   if (refreshingRef.current) return;
 
   refreshingRef.current = true;
+  console.log('[Auth] ensureSessionAndProfile: iniciando...', { reason });
+
   try {
     setLoading(true);
 
-const { data, error } = await withTimeout(supabase.auth.getSession(), 15000);
+    const { data, error } = await withTimeout(supabase.auth.getSession(), 15000);
 
-const sessionUser = data.session?.user ?? null;
-setUser(sessionUser);
+    if (error) {
+      console.warn('[Auth] ensureSession getSession error (não faz logout)', error, { reason });
+      // ⚠️ NÃO faz logout por erro de getSession - pode ser transiente
+      return;
+    }
 
-if (!sessionUser) {
-  setProfile(null);
-  return;
-}
+    const sessionUser = data.session?.user ?? null;
+    setUser(sessionUser);
 
-const p = await withTimeout(loadOrCreateProfile(sessionUser), 15000);
+    if (!sessionUser) {
+      console.log('[Auth] ensureSession: sem sessão válida', { reason });
+      setProfile(null);
+      return;
+    }
 
-if (!p) {
-  console.warn('[Auth] profile não carregou no ensureSessionAndProfile. Logout.', { reason });
-  try { supabase.auth.signOut(); } catch {}
-  setUser(null);
-  setProfile(null);
-  return;
-}
+    // ✅ Retry logic para profile
+    let p: Profile | null = null;
+    let attempts = 0;
+    const maxAttempts = 2;
 
-setProfile(p);
+    while (!p && attempts < maxAttempts) {
+      attempts++;
+      try {
+        p = await withTimeout(loadOrCreateProfile(sessionUser), 15000);
+      } catch (profileErr) {
+        console.warn(`[Auth] ensureSession profile attempt ${attempts} failed`, profileErr, { reason });
+        if (attempts < maxAttempts) {
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      }
+    }
 
+    if (!p) {
+      // ⚠️ NÃO faz logout! Apenas loga warning
+      console.warn('[Auth] profile não carregou no ensureSessionAndProfile. Mantendo sessão.', { reason });
+      // Mantém o user logado, apenas sem profile temporariamente
+      return;
+    }
+
+    console.log('[Auth] ensureSession: profile OK', { role: p.role, reason });
+    setProfile(p);
 
   } catch (e) {
-    console.error('[Auth] ensureSession exception', e, { reason });
-
-    try { supabase.auth.signOut(); } catch {}
-
-    setUser(null);
-    setProfile(null);
+    console.error('[Auth] ensureSession exception (não faz logout)', e, { reason });
+    // ⚠️ NÃO faz logout por exception - pode ser transiente
   } finally {
     setLoading(false);
     refreshingRef.current = false;
@@ -233,60 +252,80 @@ setProfile(p);
 
 
 const loadSession = async () => {
+  console.log('[Auth] loadSession: iniciando...');
   safeSet(() => {
     setLoading(true);
     setInitializing(true);
   });
 
   try {
-    // ✅ getSession com timeout
-    const { data, error } = await withTimeout(supabase.auth.getSession(), 8000);
-    if (error) console.error('[Auth] getSession error', error);
+    // ✅ getSession com timeout mais generoso (15s)
+    const { data, error } = await withTimeout(supabase.auth.getSession(), 15000);
+
+    console.log('[Auth] loadSession: getSession result', {
+      hasSession: !!data?.session,
+      error: error?.message
+    });
+
+    if (error) {
+      console.error('[Auth] getSession error', error);
+      // ⚠️ NÃO faz logout por erro de getSession - apenas limpa estado local
+      safeSet(() => {
+        setUser(null);
+        setProfile(null);
+      });
+      return;
+    }
 
     const sessionUser = data.session?.user ?? null;
     safeSet(() => setUser(sessionUser));
 
     if (sessionUser) {
-      // ✅ loadOrCreateProfile com timeout
-      const p = await withTimeout(loadOrCreateProfile(sessionUser), 8000);
+      // ✅ loadOrCreateProfile com timeout mais generoso (15s) e retry
+      let p: Profile | null = null;
+      let attempts = 0;
+      const maxAttempts = 2;
 
-      if (!p) {
-        // ⚠️ Não conseguiu obter/criar profile => não trava a UI
-        console.warn(
-          '[Auth] profile não carregou. Fazendo logout para evitar loading infinito.'
-        );
-
-        // NÃO aguarda signOut (pode travar se rede/extensão bloquear)
-    try { supabase.auth.signOut(); } catch {}
-
-    safeSet(() => {
-      setUser(null);
-      setProfile(null);
-    });
-
-    return;
-
+      while (!p && attempts < maxAttempts) {
+        attempts++;
+        try {
+          p = await withTimeout(loadOrCreateProfile(sessionUser), 15000);
+        } catch (profileErr) {
+          console.warn(`[Auth] loadOrCreateProfile attempt ${attempts} failed`, profileErr);
+          if (attempts < maxAttempts) {
+            await new Promise(r => setTimeout(r, 1000)); // espera 1s antes de retry
+          }
+        }
       }
 
+      if (!p) {
+        // ⚠️ Profile não carregou, mas NÃO faz logout!
+        // Apenas loga warning - o usuário pode tentar refresh manual
+        console.warn('[Auth] profile não carregou após retries. Mantendo sessão, mas sem profile.');
+        safeSet(() => setProfile(null));
+        // NÃO faz signOut() - deixa o usuário tentar novamente
+        return;
+      }
+
+      console.log('[Auth] loadSession: profile carregado', { role: p.role });
       safeSet(() => setProfile(p));
     } else {
+      console.log('[Auth] loadSession: sem sessão válida');
       safeSet(() => setProfile(null));
     }
   } catch (e) {
     console.error('[Auth] loadSession exception', e);
-
-   try { supabase.auth.signOut(); } catch {}
-
+    // ⚠️ NÃO faz logout por exception - apenas limpa estado local
     safeSet(() => {
       setUser(null);
       setProfile(null);
     });
-
   } finally {
     safeSet(() => {
       setLoading(false);
       setInitializing(false);
     });
+    console.log('[Auth] loadSession: finalizado');
   }
 };
 
@@ -294,6 +333,8 @@ loadSession();
 
 
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      console.log('[Auth] onAuthStateChange:', _event, { hasSession: !!session });
+
       const sessionUser = session?.user ?? null;
       safeSet(() => setUser(sessionUser));
 
@@ -307,18 +348,31 @@ loadSession();
 
       safeSet(() => setLoading(true));
       try {
-        const p = await withTimeout(loadOrCreateProfile(sessionUser), 15000);
+        // ✅ Retry logic para profile
+        let p: Profile | null = null;
+        let attempts = 0;
+        const maxAttempts = 2;
+
+        while (!p && attempts < maxAttempts) {
+          attempts++;
+          try {
+            p = await withTimeout(loadOrCreateProfile(sessionUser), 15000);
+          } catch (profileErr) {
+            console.warn(`[Auth] onAuthStateChange profile attempt ${attempts} failed`, profileErr);
+            if (attempts < maxAttempts) {
+              await new Promise(r => setTimeout(r, 1000));
+            }
+          }
+        }
 
         if (!p) {
-          console.warn('[Auth] profile não carregou no onAuthStateChange. Fazendo logout.');
-          try { supabase.auth.signOut(); } catch {}
-          safeSet(() => {
-            setUser(null);
-            setProfile(null);
-          });
+          // ⚠️ NÃO faz logout! Apenas loga warning e mantém sessão
+          console.warn('[Auth] profile não carregou no onAuthStateChange. Mantendo sessão sem profile.');
+          safeSet(() => setProfile(null));
           return;
         }
 
+        console.log('[Auth] onAuthStateChange: profile carregado', { role: p.role });
         safeSet(() => setProfile(p));
       } finally {
         safeSet(() => setLoading(false));

@@ -1,11 +1,20 @@
 // Supabase Edge Function para criar usuários de forma segura
 // Deploy: supabase functions deploy create-user
+//
+// Variáveis de ambiente necessárias (já disponíveis automaticamente):
+// - SUPABASE_URL
+// - SUPABASE_ANON_KEY
+// - SUPABASE_SERVICE_ROLE_KEY
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
+// CORS headers - permitir todas as origens para desenvolvimento
+// Em produção, considere restringir para seu domínio específico
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Max-Age': '86400', // 24 horas
 }
 
 interface CreateUserRequest {
@@ -15,141 +24,204 @@ interface CreateUserRequest {
   full_name?: string
 }
 
+// Helper para criar resposta com CORS
+function jsonResponse(data: object, status: number = 200) {
+  return new Response(
+    JSON.stringify(data),
+    {
+      status,
+      headers: {
+        ...corsHeaders,
+        'Content-Type': 'application/json',
+      }
+    }
+  )
+}
+
 Deno.serve(async (req) => {
-  // Handle CORS preflight
+  // Log da requisição para debug
+  console.log(`[create-user] ${req.method} request received`)
+
+  // Handle CORS preflight (OPTIONS)
   if (req.method === 'OPTIONS') {
+    console.log('[create-user] Handling CORS preflight')
     return new Response('ok', { headers: corsHeaders })
+  }
+
+  // Apenas POST é permitido
+  if (req.method !== 'POST') {
+    return jsonResponse({ error: 'Método não permitido' }, 405)
   }
 
   try {
     // 1. Verificar autenticação do chamador
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: 'Token de autenticação não fornecido' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      console.log('[create-user] No auth header')
+      return jsonResponse({ error: 'Token de autenticação não fornecido' }, 401)
     }
 
-    // 2. Criar cliente Supabase com o token do usuário para verificar permissões
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    // 2. Obter variáveis de ambiente
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')
+    const supabaseServiceKey = Deno.env.get('SERVICE_ROLE_KEY')
 
+    if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceKey) {
+      console.error('[create-user] Missing environment variables')
+      return jsonResponse({ error: 'Configuração do servidor incompleta' }, 500)
+    }
+
+    // 3. Criar cliente Supabase com o token do usuário para verificar permissões
     const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } }
+      global: { headers: { Authorization: authHeader } },
+      auth: { persistSession: false }
     })
 
-    // 3. Verificar se o usuário chamador é admin
+    // 4. Verificar se o usuário chamador está autenticado
     const { data: { user: callerUser }, error: userError } = await supabaseClient.auth.getUser()
-    if (userError || !callerUser) {
-      return new Response(
-        JSON.stringify({ error: 'Usuário não autenticado' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+
+    if (userError) {
+      console.log('[create-user] Auth error:', userError.message)
+      return jsonResponse({ error: 'Token inválido ou expirado' }, 401)
     }
 
-    // Buscar profile do chamador para verificar role
+    if (!callerUser) {
+      console.log('[create-user] No user found')
+      return jsonResponse({ error: 'Usuário não autenticado' }, 401)
+    }
+
+    console.log('[create-user] Caller user:', callerUser.email)
+
+    // 5. Buscar profile do chamador para verificar se é admin
     const { data: callerProfile, error: profileError } = await supabaseClient
       .from('profiles')
       .select('role')
       .eq('id', callerUser.id)
       .single()
 
-    if (profileError || !callerProfile || callerProfile.role !== 'admin') {
-      return new Response(
-        JSON.stringify({ error: 'Apenas administradores podem criar usuários' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    if (profileError) {
+      console.log('[create-user] Profile error:', profileError.message)
+      return jsonResponse({ error: 'Erro ao verificar permissões' }, 500)
     }
 
-    // 4. Parsear body da requisição
-    const body: CreateUserRequest = await req.json()
+    if (!callerProfile || callerProfile.role !== 'admin') {
+      console.log('[create-user] Not admin. Role:', callerProfile?.role)
+      return jsonResponse({ error: 'Apenas administradores podem criar usuários' }, 403)
+    }
+
+    console.log('[create-user] Admin verified, proceeding...')
+
+    // 6. Parsear body da requisição
+    let body: CreateUserRequest
+    try {
+      body = await req.json()
+    } catch (e) {
+      return jsonResponse({ error: 'Body inválido' }, 400)
+    }
+
     const { email, password, role, full_name } = body
 
-    // Validações básicas
+    // 7. Validações básicas
     if (!email || !password || !role) {
-      return new Response(
-        JSON.stringify({ error: 'Email, senha e role são obrigatórios' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return jsonResponse({ error: 'Email, senha e role são obrigatórios' }, 400)
     }
 
+    // Validar email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(email)) {
+      return jsonResponse({ error: 'E-mail inválido' }, 400)
+    }
+
+    // Validar role
     if (!['admin', 'analista', 'coordenador'].includes(role)) {
-      return new Response(
-        JSON.stringify({ error: 'Role inválido. Use: admin, analista ou coordenador' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return jsonResponse({ error: 'Role inválido. Use: admin, analista ou coordenador' }, 400)
     }
 
+    // Validar senha
     if (password.length < 6) {
-      return new Response(
-        JSON.stringify({ error: 'Senha deve ter pelo menos 6 caracteres' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return jsonResponse({ error: 'Senha deve ter pelo menos 6 caracteres' }, 400)
     }
 
-    // 5. Criar usuário usando service role (pode criar usuários)
+    // 8. Criar cliente admin usando service role (pode criar usuários)
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { autoRefreshToken: false, persistSession: false }
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
     })
+
+    // 9. Criar usuário no Auth
+    console.log('[create-user] Creating user:', email)
 
     const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
-      email_confirm: true, // Já confirma o email
-      user_metadata: { full_name }
+      email_confirm: true, // Já confirma o email automaticamente
+      user_metadata: {
+        full_name: full_name || null
+      }
     })
 
     if (createError) {
-      console.error('Erro ao criar usuário:', createError)
-      return new Response(
-        JSON.stringify({ error: createError.message }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      console.error('[create-user] Create user error:', createError.message)
+
+      // Traduzir erros comuns
+      if (createError.message.includes('already been registered')) {
+        return jsonResponse({ error: 'Este e-mail já está cadastrado' }, 400)
+      }
+
+      return jsonResponse({ error: createError.message }, 400)
     }
 
-    // 6. Criar/atualizar profile com o role
+    if (!newUser.user) {
+      return jsonResponse({ error: 'Erro ao criar usuário' }, 500)
+    }
+
+    console.log('[create-user] User created in Auth:', newUser.user.id)
+
+    // 10. Criar profile com o role definido
     const { error: profileInsertError } = await supabaseAdmin
       .from('profiles')
       .upsert({
-        id: newUser.user!.id,
+        id: newUser.user.id,
         email: email,
         role: role,
         full_name: full_name || null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'id'
       })
 
     if (profileInsertError) {
-      console.error('Erro ao criar profile:', profileInsertError)
+      console.error('[create-user] Profile insert error:', profileInsertError.message)
+
       // Tentar deletar o usuário criado se o profile falhar
-      await supabaseAdmin.auth.admin.deleteUser(newUser.user!.id)
-      return new Response(
-        JSON.stringify({ error: 'Erro ao criar perfil do usuário' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      try {
+        await supabaseAdmin.auth.admin.deleteUser(newUser.user.id)
+        console.log('[create-user] Rolled back user creation')
+      } catch (deleteError) {
+        console.error('[create-user] Failed to rollback:', deleteError)
+      }
+
+      return jsonResponse({ error: 'Erro ao criar perfil do usuário' }, 500)
     }
 
-    // 7. Retornar sucesso
-    return new Response(
-      JSON.stringify({
-        success: true,
-        user: {
-          id: newUser.user!.id,
-          email: newUser.user!.email,
-          role: role,
-          full_name: full_name
-        }
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    console.log('[create-user] Profile created successfully')
+
+    // 11. Retornar sucesso
+    return jsonResponse({
+      success: true,
+      user: {
+        id: newUser.user.id,
+        email: newUser.user.email,
+        role: role,
+        full_name: full_name || null
+      }
+    })
 
   } catch (error) {
-    console.error('Erro na função create-user:', error)
-    return new Response(
-      JSON.stringify({ error: 'Erro interno do servidor' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    console.error('[create-user] Unexpected error:', error)
+    return jsonResponse({ error: 'Erro interno do servidor' }, 500)
   }
 })

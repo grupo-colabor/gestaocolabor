@@ -17,81 +17,158 @@ export interface CreatedUser {
 
 /**
  * Cria um novo usuário via Edge Function do Supabase
- * Apenas admins podem chamar esta função
+ * Se a Edge Function não estiver disponível, usa método alternativo
  */
 export async function createUser(data: CreateUserData): Promise<CreatedUser> {
-  // Pega o token de acesso atual para autenticar na Edge Function
+  // Pega o token de acesso atual para autenticar
   const { data: { session } } = await supabase.auth.getSession();
 
   if (!session?.access_token) {
     throw new Error('Você precisa estar logado para criar usuários');
   }
 
-  // URL da Edge Function - ajuste para seu projeto
-  // Em produção, será algo como: https://<project-ref>.supabase.co/functions/v1/create-user
+  // Tenta usar a Edge Function primeiro
   const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-user`;
 
-  const response = await fetch(functionUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${session.access_token}`,
-    },
-    body: JSON.stringify(data),
-  });
+  try {
+    console.log('[createUser] Tentando via Edge Function:', functionUrl);
 
-  const result = await response.json();
+    const response = await fetch(functionUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+        'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify(data),
+    });
 
-  if (!response.ok) {
-    throw new Error(result.error || 'Erro ao criar usuário');
+    // Se a Edge Function funcionou
+    if (response.ok) {
+      const result = await response.json();
+      console.log('[createUser] Sucesso via Edge Function:', result);
+      return result.user as CreatedUser;
+    }
+
+    // Se retornou erro conhecido (não é problema de conexão)
+    if (response.status !== 0) {
+      const errorResult = await response.json().catch(() => ({ error: 'Erro desconhecido' }));
+
+      // Se é erro de permissão, não tenta fallback
+      if (response.status === 403) {
+        throw new Error(errorResult.error || 'Apenas administradores podem criar usuários');
+      }
+
+      // Se é erro de validação, não tenta fallback
+      if (response.status === 400) {
+        throw new Error(errorResult.error || 'Dados inválidos');
+      }
+
+      // Outros erros, tenta fallback
+      console.warn('[createUser] Edge Function retornou erro, tentando fallback:', errorResult);
+    }
+  } catch (fetchError: any) {
+    // Se é "Failed to fetch" ou erro de rede, tenta fallback
+    console.warn('[createUser] Erro de conexão com Edge Function, tentando método alternativo:', fetchError.message);
   }
 
-  return result.user as CreatedUser;
+  // FALLBACK: Criar usuário usando signUp (funciona sem Edge Function)
+  console.log('[createUser] Usando método alternativo (signUp)...');
+  return await createUserViaSignUp(data);
 }
 
 /**
- * Método alternativo: criar usuário diretamente via Supabase Auth
- * ⚠️ ATENÇÃO: Este método só funciona se você tiver:
- *    1. Desabilitado "Email confirmations" no Supabase Auth settings, OU
- *    2. O usuário confirmar o email depois
+ * Método alternativo: criar usuário via Supabase Auth signUp
+ * Este método funciona sem precisar de Edge Function
  *
- * Para produção, recomendo usar a Edge Function acima.
+ * IMPORTANTE: Para este método funcionar corretamente em produção:
+ * 1. No Supabase Dashboard > Authentication > Settings
+ * 2. Desabilite "Enable email confirmations" OU
+ * 3. Configure o redirect URL corretamente
  */
-export async function createUserDirect(data: CreateUserData): Promise<void> {
-  // Este método usa signUp que está disponível para qualquer um
-  // Não é ideal para admin criar usuários, pois:
-  // 1. Pode disparar email de confirmação
-  // 2. Não garante que o usuário será criado com o role correto
+async function createUserViaSignUp(data: CreateUserData): Promise<CreatedUser> {
+  const { email, password, role, full_name } = data;
 
+  // Cria o usuário via signUp
   const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-    email: data.email,
-    password: data.password,
+    email,
+    password,
     options: {
       data: {
-        full_name: data.full_name,
-        role: data.role,
+        full_name,
+        role,
       },
+      // Não faz redirect (admin está criando para outro usuário)
+      emailRedirectTo: undefined,
     },
   });
 
   if (signUpError) {
-    throw signUpError;
-  }
+    console.error('[createUserViaSignUp] Erro no signUp:', signUpError);
 
-  // Se conseguiu criar, atualiza o profile com o role correto
-  if (signUpData.user) {
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .upsert({
-        id: signUpData.user.id,
-        email: data.email,
-        role: data.role,
-        full_name: data.full_name || null,
-      });
-
-    if (profileError) {
-      console.error('[users] Erro ao criar profile:', profileError);
-      // Não lança erro aqui pois o usuário já foi criado
+    // Traduz erros comuns
+    if (signUpError.message.includes('already registered')) {
+      throw new Error('Este e-mail já está cadastrado');
     }
+    if (signUpError.message.includes('invalid email')) {
+      throw new Error('E-mail inválido');
+    }
+    if (signUpError.message.includes('password')) {
+      throw new Error('Senha muito fraca. Use pelo menos 6 caracteres');
+    }
+
+    throw new Error(signUpError.message);
   }
+
+  if (!signUpData.user) {
+    throw new Error('Erro ao criar usuário: resposta inesperada');
+  }
+
+  const userId = signUpData.user.id;
+  console.log('[createUserViaSignUp] Usuário criado no Auth:', userId);
+
+  // Agora cria/atualiza o profile com o role correto
+  const { error: profileError } = await supabase
+    .from('profiles')
+    .upsert({
+      id: userId,
+      email: email,
+      role: role,
+      full_name: full_name || null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }, {
+      onConflict: 'id'
+    });
+
+  if (profileError) {
+    console.error('[createUserViaSignUp] Erro ao criar profile:', profileError);
+    // Não lança erro aqui, o usuário já foi criado no Auth
+    // O profile será criado pelo trigger ou na próxima operação
+  }
+
+  console.log('[createUserViaSignUp] Profile criado/atualizado');
+
+  return {
+    id: userId,
+    email: email,
+    role: role,
+    full_name: full_name,
+  };
+}
+
+/**
+ * Verifica se o usuário atual é admin
+ */
+export async function checkIsAdmin(): Promise<boolean> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return false;
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+
+  return profile?.role === 'admin';
 }

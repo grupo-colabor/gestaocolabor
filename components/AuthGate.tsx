@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import Login from "./Login";
 
@@ -7,14 +7,37 @@ type Props = { children: ReactNode };
 /**
  * AuthGate - Controla acesso ao app baseado no estado de autenticação
  *
- * IMPORTANTE: Nunca mostra Login enquanto estiver verificando sessão.
- * Isso evita o "flash" de login ao fazer F5 com sessão válida.
+ * REGRAS:
+ * 1. NUNCA mostra Login enquanto `initializing === true`
+ * 2. Só mostra Login quando `initializing === false` E `user === null`
+ * 3. Loga todas as decisões para diagnóstico
  */
 export default function AuthGate({ children }: Props) {
-  const { user, initializing } = useAuth();
+  const { user, initializing, loading } = useAuth();
+  const lastDecisionRef = useRef<string>('');
 
-  // ✅ Enquanto estiver inicializando auth, mostra loading elegante
-  // NUNCA mostra Login antes de confirmar que não há sessão
+  // Log de decisões para diagnóstico
+  useEffect(() => {
+    const decision = initializing
+      ? 'LOADING'
+      : user
+        ? 'AUTHENTICATED'
+        : 'SHOW_LOGIN';
+
+    // Só loga se a decisão mudou
+    if (decision !== lastDecisionRef.current) {
+      const timestamp = new Date().toISOString().slice(11, 23);
+      console.log(`[AuthGate] [${timestamp}] Decisão: ${decision}`, {
+        initializing,
+        hasUser: !!user,
+        loading,
+        userId: user?.id?.slice(0, 8),
+      });
+      lastDecisionRef.current = decision;
+    }
+  }, [initializing, user, loading]);
+
+  // ✅ Estado 1: Inicializando - mostra loading
   if (initializing) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -28,12 +51,11 @@ export default function AuthGate({ children }: Props) {
     );
   }
 
-  // ✅ Só mostra Login DEPOIS de confirmar que não há sessão válida
+  // ✅ Estado 2: Sem usuário - mostra Login
   if (!user) {
-    console.log('[AuthGate] Sem sessão válida, mostrando Login');
     return <Login />;
   }
 
-  // ✅ Usuário autenticado, mostra o app
+  // ✅ Estado 3: Usuário autenticado - mostra o app
   return <>{children}</>;
 }

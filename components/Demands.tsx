@@ -79,8 +79,10 @@ import { upsertMeasurementByDemandId } from '../services/measurements';
 import {
   uploadAndUpsertDemandPdf,
   getDemandDocumentSignedUrl,
-  fetchDemandDocumentsByDemandId
+  fetchDemandDocumentsByDemandId,
+  markDemandDocumentAsNA
 } from '../services/demandDocuments';
+
 
 
 import { upsertLogisticByDemandId, fetchLogisticByDemandId } from '../services/logistics';
@@ -232,8 +234,11 @@ const [filter, setFilter] = useState('');
     instructorRelease: File | null;
   }>({ classList: null, instructorRelease: null });
 
-  // Docs já salvos no banco (para VIEW)
-  const [dbDocs, setDbDocs] = useState<Record<string, { name: string; path: string }>>({});
+  // Docs já salvos no banco (para VIEW) + N/A
+  const [dbDocs, setDbDocs] = useState<
+    Record<string, { name: string; path: string | null; is_na?: boolean }>
+  >({});
+
 
 
 
@@ -277,6 +282,53 @@ const [filter, setFilter] = useState('');
       alert(`Erro ao baixar PDF: ${err?.message || err}`);
     }
   };
+
+  // ✅ PASSO 5.3 — Marcar documento como N/A
+const markDocAsNA = async (docType: 'LISTA_TURMA' | 'LIBERACAO_INSTRUTOR') => {
+  if (!formDemand?.id) {
+    alert('ID da demanda não encontrado.');
+    return;
+  }
+
+  // Se tiver PDF pendente no form, não deixa (evita incoerência)
+  if (docType === 'LISTA_TURMA' && pendingPdfs.classList) {
+    alert('Remova o PDF selecionado antes de marcar como N/A.');
+    return;
+  }
+  if (docType === 'LIBERACAO_INSTRUTOR' && pendingPdfs.instructorRelease) {
+    alert('Remova o PDF selecionado antes de marcar como N/A.');
+    return;
+  }
+
+  try {
+    const res = await markDemandDocumentAsNA(formDemand.id, docType);
+    if (res?.error) throw res.error;
+
+    // Recarrega docs para refletir N/A na tela
+  const docs = await fetchDemandDocumentsByDemandId(formDemand.id);
+  const mapped: Record<string, { name: string; path: string | null; is_na?: boolean }> = {};
+
+  for (const d of docs as any[]) {
+    mapped[d.doc_type] = {
+      name: d.file_name || d.doc_type,
+      path: d.file_path ?? null,
+      is_na: !!d.is_na
+    };
+  }
+
+  setDbDocs(mapped);
+
+
+    setNotification?.({
+      type: 'success',
+      message: `${docType === 'LISTA_TURMA' ? 'Lista da Turma' : 'Liberação do Instrutor'} marcada como N/A.`
+    });
+  } catch (e: any) {
+    console.error(e);
+    alert(e?.message || 'Erro ao marcar como N/A');
+  }
+};
+
 
   // --- LÓGICA DE RECOMENDAÇÃO (SOMENTE LEITURA) ---
   const recommendedInstructors = useMemo(() => {
@@ -372,14 +424,16 @@ const filteredDemands = useMemo(() => {
           if (currentStatus !== advancedFilters.status) return false;
         }
       }
-
       if (advancedFilters.instructorId) {
+        const principalId = principalInstructorByDemandId[d.id]; // ✅ considera alocações
+
         if (advancedFilters.instructorId === 'unallocated') {
-          if (d.instructorId) return false;
+          if (principalId) return false; // se tem principal, não é "sem instrutor"
         } else {
-          if (d.instructorId !== advancedFilters.instructorId) return false;
+          if (principalId !== advancedFilters.instructorId) return false;
         }
       }
+
 
       if (advancedFilters.startDate && d.startDate.split('T')[0] < advancedFilters.startDate) return false;
       if (advancedFilters.endDate && d.startDate.split('T')[0] > advancedFilters.endDate) return false;
@@ -468,11 +522,13 @@ const filteredDemands = useMemo(() => {
     });
     });
 }, [
-  demands,
+ demands,
   filter,
   advancedFilters,
   companies,
   trainings,
+  regions,
+  instructors,
   isCoordinator,
   sort,
   principalInstructorByDemandId,
@@ -528,12 +584,15 @@ useEffect(() => {
     // 1) Documentos
     try {
       const docs = await fetchDemandDocumentsByDemandId(formDemand.id);
-      const mapped: Record<string, { name: string; path: string }> = {};
+      const mapped: Record<string, { name: string; path: string | null; is_na?: boolean }> = {};
 
-      for (const d of docs) {
-        mapped[d.doc_type] = { name: d.file_name || d.doc_type, path: d.file_path };
-      }
-
+      for (const d of docs as any[]) {
+        mapped[d.doc_type] = {
+          name: d.file_name || d.doc_type,
+          path: d.file_path ?? null,
+          is_na: !!d.is_na,
+        };
+}
       setDbDocs(mapped);
     } catch (e) {
       // silencioso (mas garante vazio)
@@ -1145,26 +1204,21 @@ const handleSave = async () => {
 
 
   try {
-    // Validação de datas (Início <= Fim) — segura
+    // ✅ Validação de datas SEM timezone (datetime-local ordena corretamente)
     if (formDemand.startDate && formDemand.endDate) {
-      const sIso = toIsoFromAnyDateSafe(formDemand.startDate);
-      const eIso = toIsoFromAnyDateSafe(formDemand.endDate);
-      if (sIso && eIso) {
-        const start = new Date(sIso);
-        const end = new Date(eIso);
-        if (start > end) {
-          setResourceError('A data de início não pode ser maior que a data de fim.');
-          setTimeout(() => setResourceError(null), 4000);
-          return;
-        }
+      if (String(formDemand.startDate) > String(formDemand.endDate)) {
+        setResourceError('A data de início não pode ser maior que a data de fim.');
+        setTimeout(() => setResourceError(null), 4000);
+        return;
       }
     }
+
 
     // ✅ ONLINE: não pode gerar pendência de logística / local
     const sanitizedDemand: Demand = {
       ...(formDemand as Demand),
 
-      // ✅ FIX: salvar datas sempre como ISO (timestamptz estável)
+      // ✅ Mantém datetime-local (YYYY-MM-DDTHH:mm) sem conversão de timezone
       // (evita sumir hora / input quebrar quando volta do Supabase)
       startDate: (formDemand.startDate || '') as any,
       endDate: (formDemand.endDate || '') as any,
@@ -1334,21 +1388,20 @@ const handleSave = async () => {
         releaseUploaded = true;
       }
 
-      // Atualiza flags na logística (se subiu algum)
-      if (classUploaded || releaseUploaded) {
-        await upsertLogisticByDemandId(demandId, {
-          has_class_list_pdf: classUploaded ? true : undefined,
-          has_release_pdf: releaseUploaded ? true : undefined
-        });
-      }
-
       // Recarrega docs para aparecer no VIEW
       if (classUploaded || releaseUploaded) {
         const docs = await fetchDemandDocumentsByDemandId(demandId);
-        const mapped: Record<string, { name: string; path: string }> = {};
-        for (const d of docs) {
-          mapped[d.doc_type] = { name: d.file_name || d.doc_type, path: d.file_path };
+
+        const mapped: Record<string, { name: string; path: string | null; is_na?: boolean }> = {};
+
+        for (const d of docs as any[]) {
+          mapped[d.doc_type] = {
+            name: d.file_name || d.doc_type,
+            path: d.file_path ?? null,
+            is_na: !!d.is_na,
+          };
         }
+
         setDbDocs(mapped);
       }
 
@@ -1557,12 +1610,24 @@ const endLocal = usePractice
       return;
     }
 
+    // ✅ FIX: Adicionar horário para evitar deslocamento de timezone
+    // Usa o mesmo padrão do Logistics.tsx (buildDateTime)
+    // Formato: "YYYY-MM-DDTHH:mm" é interpretado como hora LOCAL
+    const buildDateTimeLocal = (date: string, fallbackTime: string) => {
+      if (!date) return '';
+      const dateOnly = date.split('T')[0]; // Garante apenas a parte da data
+      return `${dateOnly}T${fallbackTime}`;
+    };
+
+    const startDateTime = buildDateTimeLocal(resourceForm.startDate, '08:00');
+    const endDateTime = buildDateTimeLocal(resourceForm.endDate, '18:00');
+
     const newAllocation: LogisticAllocation = {
       id: `RES-${Date.now()}`,
       demandId: formDemand.id!,
       resourceType: 'CENTRO_TREINAMENTO_MOVEL',
-      startDate: resourceForm.startDate,
-      endDate: resourceForm.endDate
+      startDate: startDateTime,
+      endDate: endDateTime
     };
 
     addResourceAllocation(newAllocation);
@@ -1983,49 +2048,49 @@ const companionInstructorIds = useMemo(() => {
                 className="p-4 cursor-pointer select-none"
                 onClick={() => toggleSort('id')}
               >
-                ID {sort.key === 'id' && (sort.direction === 'asc' ? '↑' : '↓')}
+                ID {sort.key === 'id' && (sort.dir === 'asc' ? '↑' : '↓')}
               </th>
 
               <th
                 className="p-4 cursor-pointer select-none"
                 onClick={() => toggleSort('company')}
               >
-                Empresa {sort.key === 'company' && (sort.direction === 'asc' ? '↑' : '↓')}
+                Empresa {sort.key === 'company' && (sort.dir === 'asc' ? '↑' : '↓')}
               </th>
 
               <th
                 className="p-4 cursor-pointer select-none"
                 onClick={() => toggleSort('training')}
               >
-                Treinamento {sort.key === 'training' && (sort.direction === 'asc' ? '↑' : '↓')}
+                Treinamento {sort.key === 'training' && (sort.dir === 'asc' ? '↑' : '↓')}
               </th>
 
               <th
                 className="p-4 cursor-pointer select-none"
                 onClick={() => toggleSort('region')}
               >
-                Região {sort.key === 'region' && (sort.direction === 'asc' ? '↑' : '↓')}
+                Região {sort.key === 'region' && (sort.dir === 'asc' ? '↑' : '↓')}
               </th>
 
               <th
                 className="p-4 cursor-pointer select-none"
                 onClick={() => toggleSort('startDate')}
               >
-                Data Início {sort.key === 'startDate' && (sort.direction === 'asc' ? '↑' : '↓')}
+                Data Início {sort.key === 'startDate' && (sort.dir === 'asc' ? '↑' : '↓')}
               </th>
 
               <th
                 className="p-4 cursor-pointer select-none"
                 onClick={() => toggleSort('instructor')}
               >
-                Instrutor {sort.key === 'instructor' && (sort.direction === 'asc' ? '↑' : '↓')}
+                Instrutor {sort.key === 'instructor' && (sort.dir === 'asc' ? '↑' : '↓')}
               </th>
 
               <th
                 className="p-4 text-center cursor-pointer select-none"
                 onClick={() => toggleSort('status')}
               >
-                Status {sort.key === 'status' && (sort.direction === 'asc' ? '↑' : '↓')}
+                Status {sort.key === 'status' && (sort.dir === 'asc' ? '↑' : '↓')}
               </th>
 
               <th className="p-4 text-center">Ações</th>
@@ -2467,8 +2532,8 @@ const companionInstructorIds = useMemo(() => {
                                   <DataViewField label="Local da Agência" value={formDemand.rentalAgencyLocation} icon={MapPin} />
                                   <DataViewField label="Localizador" value={formDemand.rentalLocator} icon={Tag} />
                                   <DataViewField label="Categoria" value={formDemand.carCategory} icon={Tag} />
-                                  <DataViewField label="Check-in" value={formDemand.rentalCheckIn ? new Date(formDemand.rentalCheckIn).toLocaleString() : ''} icon={Clock} />
-                                  <DataViewField label="Check-out" value={formDemand.rentalCheckOut ? new Date(formDemand.rentalCheckOut).toLocaleString() : ''} icon={Clock} />
+                                  <DataViewField label="Check-in" value={formDemand.rentalCheckIn ? formatDateTime(formDemand.rentalCheckIn) : '---'} icon={Clock} />
+                                  <DataViewField label="Check-out" value={formDemand.rentalCheckOut ? formatDateTime(formDemand.rentalCheckOut) : '---'} icon={Clock} />
                                 </div>
                               )}
                             </div>
@@ -2598,14 +2663,15 @@ const companionInstructorIds = useMemo(() => {
                       <DataViewField label="Hotel" value={formDemand.hotelName} icon={Building2} />
                       <DataViewField
                         label="Check-in"
-                        value={formDemand.hotelCheckIn ? new Date(formDemand.hotelCheckIn).toLocaleDateString() : ''}
+                        value={formDemand.hotelCheckIn ? formatDateOnlySafe(formDemand.hotelCheckIn) : '---'}
                         icon={Calendar}
                       />
                       <DataViewField
                         label="Check-out"
-                        value={formDemand.hotelCheckOut ? new Date(formDemand.hotelCheckOut).toLocaleDateString() : ''}
+                        value={formDemand.hotelCheckOut ? formatDateOnlySafe(formDemand.hotelCheckOut) : '---'}
                         icon={Calendar}
                       />
+
                       <DataViewField label="Pagamento" value={formDemand.hotelPayment} icon={Tag} />
                     </div>
                   )}
@@ -2677,7 +2743,7 @@ const companionInstructorIds = useMemo(() => {
                                       </div>
                                     </div>
                                   )}
-                                </div>
+                               </div>
 
 
                               {/* Liberação do Instrutor */}
@@ -2719,21 +2785,76 @@ const companionInstructorIds = useMemo(() => {
                               </div>
                             </div>
                           ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                               <DataViewField
-                                label="Lista da Turma"
-                                value={dbDocs['LISTA_TURMA']?.name}
-                                isPdf={true}
-                                onDownload={() => downloadSavedPdf('LISTA_TURMA')}
-                              />
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {(() => {
+                              const lista = dbDocs['LISTA_TURMA'];
+                              const liberacao = dbDocs['LIBERACAO_INSTRUTOR'];
 
-                              <DataViewField
-                                label="Liberação do Instrutor"
-                                value={dbDocs['LIBERACAO_INSTRUTOR']?.name}
-                                isPdf={true}
-                                onDownload={() => downloadSavedPdf('LIBERACAO_INSTRUTOR')}
-                              />
-                            </div>
+                              const listaValue = lista?.is_na ? 'N/A' : (lista?.name || '---');
+                              const liberacaoValue = liberacao?.is_na ? 'N/A' : (liberacao?.name || '---');
+
+                              const canDownloadLista = !!lista?.path && !lista?.is_na;
+                              const canDownloadLiberacao = !!liberacao?.path && !liberacao?.is_na;
+
+                              return (
+                                <>
+                                  <DataViewField
+                                    label="Lista da Turma"
+                                    value={listaValue}
+                                    isPdf={canDownloadLista}
+                                    onDownload={canDownloadLista ? () => downloadSavedPdf('LISTA_TURMA') : undefined}
+                                  />
+                                      {!lista?.path && !lista?.is_na && (
+                                      <button
+                                      onClick={() => markDocAsNA('LISTA_TURMA')}
+                                      className="
+                                        mt-2
+                                        flex items-center justify-center gap-2
+                                        px-4 py-2
+                                        rounded-xl
+                                        border border-red-300
+                                        text-red-600
+                                        text-[11px]
+                                        font-black uppercase tracking-widest
+                                        transition-all
+                                        hover:bg-red-50
+                                        hover:border-red-400
+                                      "
+                                    >
+                                      N/A
+                                    </button>
+                                    )}
+
+                                  <DataViewField
+                                    label="Liberação do Instrutor"
+                                    value={liberacaoValue}
+                                    isPdf={canDownloadLiberacao}
+                                    onDownload={canDownloadLiberacao ? () => downloadSavedPdf('LIBERACAO_INSTRUTOR') : undefined}
+                                  />
+                                  {!liberacao?.path && !liberacao?.is_na && (
+                                      <button
+                                      onClick={() => markDocAsNA('LIBERACAO_INSTRUTOR')}
+                                      className="
+                                        mt-2
+                                        flex items-center justify-center gap-2
+                                        px-4 py-2
+                                        rounded-xl
+                                        border border-red-300
+                                        text-red-600
+                                        text-[11px]
+                                        font-black uppercase tracking-widest
+                                        transition-all
+                                        hover:bg-red-50
+                                        hover:border-red-400
+                                      "
+                                    >
+                                     N/A
+                                    </button>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
                           )}
                         </div>
                       )}

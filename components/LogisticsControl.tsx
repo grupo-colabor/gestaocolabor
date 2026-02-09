@@ -27,14 +27,26 @@ import {
 // ✅ Supabase client (para buscar demand_documents em lote)
 import { supabase } from '../lib/supabase';
 
+import type { DemandDocType } from '../services/demandDocuments';
+
 type ViewMode = 'WEEK' | 'MONTH';
 
-// Doc types que existem no seu fluxo atual
-type DemandDocType = 'LISTA_TURMA' | 'LIBERACAO_INSTRUTOR';
+
 
 type DemandDocumentRowMini = {
   demand_id: string;
   doc_type: DemandDocType;
+  file_path: string | null;
+  is_na: boolean | null;
+};
+
+
+
+type DemandDocument = {
+  demand_id: string;
+  doc_type: DemandDocType;
+  file_path?: string;
+  is_na?: boolean;
 };
 
 const LogisticsControl: React.FC = () => {
@@ -51,8 +63,9 @@ const LogisticsControl: React.FC = () => {
   const [logisticsByDemandId, setLogisticsByDemandId] = useState<Record<string, LogisticAllocationRow>>({});
   // ✅ mapa docs: demand_id -> flags de PDFs
   const [docsByDemandId, setDocsByDemandId] = useState<
-    Record<string, { has_class_list_pdf: boolean; has_release_pdf: boolean }>
+  Record<string, { has_class_list_pdf: boolean; has_release_pdf: boolean }>
   >({});
+
 
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -219,24 +232,44 @@ const LogisticsControl: React.FC = () => {
       // 2) demand_documents (PDFs)
       const { data: docsData, error: docsErr } = await supabase
         .from('demand_documents')
-        .select('demand_id, doc_type');
+        .select('demand_id, doc_type, file_path, is_na');
 
-      const docsMap: Record<string, { has_class_list_pdf: boolean; has_release_pdf: boolean }> = {};
 
-      if (docsErr) {
-        console.error('[LogisticsControl] demand_documents error:', docsErr);
-      } else {
-        for (const row of (docsData as DemandDocumentRowMini[]) || []) {
-          const demandId = normId(row?.demand_id);
-          if (!demandId) continue;
+    const docsMap: Record<
+      string,
+      {
+        has_class_list_pdf: boolean;
+        has_release_pdf: boolean;
+      }
+    > = {};
 
-          if (!docsMap[demandId]) {
-            docsMap[demandId] = { has_class_list_pdf: false, has_release_pdf: false };
-          }
-          if (row.doc_type === 'LISTA_TURMA') docsMap[demandId].has_class_list_pdf = true;
-          if (row.doc_type === 'LIBERACAO_INSTRUTOR') docsMap[demandId].has_release_pdf = true;
+    if (docsErr) {
+      console.error('[LogisticsControl] demand_documents error:', docsErr);
+    } else {
+      for (const row of (docsData as DemandDocumentRowMini[]) || []) {
+        const demandId = normId(row?.demand_id);
+        if (!demandId) continue;
+
+        if (!docsMap[demandId]) {
+          docsMap[demandId] = {
+            has_class_list_pdf: false,
+            has_release_pdf: false,
+          };
+        }
+
+        // ✅ concluído se tem PDF OU está marcado como N/A
+        const isCompleted = !!row.file_path || row.is_na === true;
+
+        if (row.doc_type === 'LISTA_TURMA' && isCompleted) {
+          docsMap[demandId].has_class_list_pdf = true;
+        }
+
+        if (row.doc_type === 'LIBERACAO_INSTRUTOR' && isCompleted) {
+          docsMap[demandId].has_release_pdf = true;
         }
       }
+    }
+
 
       // 3) Atualiza logistic_allocations somente após docsMap estar pronto
       const updates: Promise<any>[] = [];

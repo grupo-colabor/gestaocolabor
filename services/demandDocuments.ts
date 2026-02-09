@@ -2,6 +2,55 @@ import { supabase } from '../lib/supabase';
 
 export type DemandDocType = 'LISTA_TURMA' | 'LIBERACAO_INSTRUTOR';
 
+export async function markDemandDocumentAsNA(
+  demandId: string,
+  docType: 'LISTA_TURMA' | 'LIBERACAO_INSTRUTOR'
+) {
+  // 1) verifica se já existe doc e se tem PDF
+  const { data: existing, error: e1 } = await supabase
+    .from('demand_documents')
+    .select('id, file_path')
+    .eq('demand_id', demandId)
+    .eq('doc_type', docType)
+    .maybeSingle();
+
+  if (e1) return { error: e1 };
+
+  if (existing?.file_path) {
+    return { error: new Error('Não é possível marcar como N/A quando já existe PDF anexado.') };
+  }
+
+  // 2) upsert (se existir, update; se não, insert)
+  if (existing?.id) {
+    const { error: e2 } = await supabase
+      .from('demand_documents')
+      .update({
+        is_na: true,
+        file_path: null,
+        file_name: null,
+        mime_type: null
+      })
+      .eq('id', existing.id);
+
+    if (e2) return { error: e2 };
+    return { error: null };
+  }
+
+  const { error: e3 } = await supabase
+    .from('demand_documents')
+    .insert({
+      demand_id: demandId,
+      doc_type: docType,
+      is_na: true,
+      file_path: null,
+      file_name: null,
+      mime_type: null
+    });
+
+  if (e3) return { error: e3 };
+  return { error: null };
+}
+
 export type DemandDocumentRow = {
   id: string; // uuid
   demand_id: string; // DEM-xxxx

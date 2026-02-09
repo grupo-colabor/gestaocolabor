@@ -29,14 +29,25 @@ import {
   Target,
   Settings,
   AlertCircle,
-  Search
+  Search,
+  LogOut,
+  Save,
+  Loader2,
+  Users,
+  Shield,
+  Mail,
+  Key,
+  UserCheck
 } from 'lucide-react';
 import { SKILL_LABELS } from '../constants';
 import { supabase } from '../lib/supabase';
 import { AUTH_MODE } from '../config/authMode';
 import { deleteOperationalBaseItem } from '../services/operationalBases';
+import { useAuth, type Role } from '../contexts/AuthContext';
+import { fetchMyProfile, updateMyProfile, fetchAllProfiles, type ProfileData } from '../services/profiles';
+import { createUser } from '../services/users';
 
-type Tab = 'companies' | 'trainings' | 'instructors' | 'bases' | 'settings';
+type Tab = 'companies' | 'trainings' | 'instructors' | 'bases' | 'settings' | 'profile' | 'users';
 
 const SEGMENTS: Segment[] = ['Indústria', 'Comércio', 'Serviços', 'Educação', 'Saúde', 'Outros'];
 
@@ -151,12 +162,150 @@ const Registrations: React.FC = () => {
   const [editingBaseIdx, setEditingBaseIdx] = useState<number | null>(null);
   const [editBaseValue, setEditBaseValue] = useState('');
 
+  // --- Auth Context ---
+  const { profile, isAdmin, signOut } = useAuth();
+
+  // --- Profile Tab State ---
+  const [profileFormData, setProfileFormData] = useState<{ full_name: string }>({ full_name: '' });
+  const [isProfileLoading, setIsProfileLoading] = useState(false);
+  const [isProfileSaving, setIsProfileSaving] = useState(false);
+  const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // --- Users Tab State (Admin only) ---
+  const [allUsers, setAllUsers] = useState<ProfileData[]>([]);
+  const [isUsersLoading, setIsUsersLoading] = useState(false);
+  const [newUserForm, setNewUserForm] = useState<{
+    email: string;
+    password: string;
+    confirmPassword: string;
+    role: Role;
+    full_name: string;
+  }>({
+    email: '',
+    password: '',
+    confirmPassword: '',
+    role: 'coordenador',
+    full_name: ''
+  });
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const [userMessage, setUserMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   // ✅ sempre que abrir/fechar o modal, reseta o submitting
   useEffect(() => {
     if (isInstructorModalOpen) {
       setIsInstructorSubmitting(false);
     }
   }, [isInstructorModalOpen]);
+
+  // ✅ Carregar dados do perfil quando abrir a aba Perfil
+  useEffect(() => {
+    if (activeTab === 'profile' && AUTH_MODE === 'supabase') {
+      loadMyProfile();
+    }
+  }, [activeTab]);
+
+  // ✅ Carregar lista de usuários quando abrir a aba Usuários (Admin)
+  useEffect(() => {
+    if (activeTab === 'users' && isAdmin && AUTH_MODE === 'supabase') {
+      loadAllUsers();
+    }
+  }, [activeTab, isAdmin]);
+
+  // --- Handlers da aba Perfil ---
+  const loadMyProfile = async () => {
+    setIsProfileLoading(true);
+    setProfileMessage(null);
+    try {
+      const myProfile = await fetchMyProfile();
+      if (myProfile) {
+        setProfileFormData({ full_name: myProfile.full_name || '' });
+      }
+    } catch (err: any) {
+      console.error('[Registrations] loadMyProfile error:', err);
+      setProfileMessage({ type: 'error', text: 'Erro ao carregar perfil' });
+    } finally {
+      setIsProfileLoading(false);
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    setIsProfileSaving(true);
+    setProfileMessage(null);
+    try {
+      await updateMyProfile({ full_name: profileFormData.full_name || null });
+      setProfileMessage({ type: 'success', text: 'Perfil atualizado com sucesso!' });
+    } catch (err: any) {
+      console.error('[Registrations] handleSaveProfile error:', err);
+      setProfileMessage({ type: 'error', text: err.message || 'Erro ao salvar perfil' });
+    } finally {
+      setIsProfileSaving(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (confirm('Tem certeza que deseja sair?')) {
+      await signOut();
+    }
+  };
+
+  // --- Handlers da aba Usuários (Admin) ---
+  const loadAllUsers = async () => {
+    setIsUsersLoading(true);
+    try {
+      const users = await fetchAllProfiles();
+      setAllUsers(users);
+    } catch (err: any) {
+      console.error('[Registrations] loadAllUsers error:', err);
+    } finally {
+      setIsUsersLoading(false);
+    }
+  };
+
+  const validateNewUserForm = (): string | null => {
+    if (!newUserForm.email.trim()) return 'E-mail é obrigatório';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newUserForm.email)) return 'E-mail inválido';
+    if (!newUserForm.password) return 'Senha é obrigatória';
+    if (newUserForm.password.length < 6) return 'Senha deve ter pelo menos 6 caracteres';
+    if (newUserForm.password !== newUserForm.confirmPassword) return 'As senhas não coincidem';
+    return null;
+  };
+
+  const handleCreateUser = async () => {
+    const validationError = validateNewUserForm();
+    if (validationError) {
+      setUserMessage({ type: 'error', text: validationError });
+      return;
+    }
+
+    setIsCreatingUser(true);
+    setUserMessage(null);
+
+    try {
+      await createUser({
+        email: newUserForm.email.trim(),
+        password: newUserForm.password,
+        role: newUserForm.role,
+        full_name: newUserForm.full_name.trim() || undefined
+      });
+
+      setUserMessage({ type: 'success', text: `Usuário ${newUserForm.email} criado com sucesso!` });
+      setNewUserForm({
+        email: '',
+        password: '',
+        confirmPassword: '',
+        role: 'coordenador',
+        full_name: ''
+      });
+
+      // Recarrega a lista de usuários
+      await loadAllUsers();
+    } catch (err: any) {
+      console.error('[Registrations] handleCreateUser error:', err);
+      setUserMessage({ type: 'error', text: err.message || 'Erro ao criar usuário' });
+    } finally {
+      setIsCreatingUser(false);
+    }
+  };
 
   // --- Função de normalização para pesquisa ---
   const normalize = (str: string) =>
@@ -569,6 +718,7 @@ const handleRemoveBaseItem = async (item: string) => {
 
       {/* Tab Navigation */}
       <div className="flex flex-wrap gap-1 bg-white p-1 rounded-xl shadow-sm border border-gray-200 w-fit">
+        {/* Abas principais */}
         {(['companies', 'trainings', 'instructors', 'bases', 'settings'] as Tab[]).map((tab) => (
           <button
             key={tab}
@@ -592,6 +742,39 @@ const handleRemoveBaseItem = async (item: string) => {
              tab === 'bases' ? 'Bases Operacionais' : 'Configurações'}
           </button>
         ))}
+
+        {/* Separador visual */}
+        <div className="w-px bg-gray-200 mx-1 self-stretch" />
+
+        {/* Aba Usuários (apenas Admin) */}
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('users')}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${
+              activeTab === 'users'
+                ? 'bg-purple-600 text-white shadow-md'
+                : 'text-purple-600 hover:text-purple-800 hover:bg-purple-50'
+            }`}
+          >
+            <Users size={16} />
+            Usuários
+          </button>
+        )}
+
+        {/* Aba Perfil */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('profile')}
+          className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${
+            activeTab === 'profile'
+              ? 'bg-green-600 text-white shadow-md'
+              : 'text-green-600 hover:text-green-800 hover:bg-green-50'
+          }`}
+        >
+          <UserCheck size={16} />
+          Meu Perfil
+        </button>
       </div>
 
       {/* Content Area */}
@@ -964,6 +1147,308 @@ const handleRemoveBaseItem = async (item: string) => {
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- ABA PERFIL --- */}
+        {activeTab === 'profile' && (
+          <div className="animate-fade-in max-w-2xl">
+            <div className="mb-8">
+              <h2 className="text-lg font-bold text-gray-700 flex items-center gap-2">
+                <UserCheck className="text-green-600" size={24} />
+                Meu Perfil
+              </h2>
+              <p className="text-sm text-gray-500">Visualize e edite suas informações pessoais.</p>
+            </div>
+
+            {isProfileLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="animate-spin text-green-600" size={32} />
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {/* Informações do Usuário */}
+                <div className="bg-green-50 p-6 rounded-2xl border border-green-200">
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className="w-16 h-16 rounded-full bg-green-600 flex items-center justify-center text-white text-2xl font-bold shadow-lg">
+                      {(profileFormData.full_name || profile?.email || 'U').charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-gray-800">{profileFormData.full_name || 'Nome não definido'}</p>
+                      <p className="text-xs text-gray-500">{profile?.email}</p>
+                      <span className={`inline-block mt-1 text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                        profile?.role === 'admin' ? 'bg-purple-100 text-purple-700' :
+                        profile?.role === 'analista' ? 'bg-blue-100 text-blue-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
+                        {profile?.role || 'coordenador'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Formulário de Edição */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                        Nome Completo
+                      </label>
+                      <input
+                        type="text"
+                        value={profileFormData.full_name}
+                        onChange={(e) => setProfileFormData({ ...profileFormData, full_name: e.target.value })}
+                        placeholder="Seu nome completo"
+                        className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-green-500 outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                        E-mail
+                      </label>
+                      <input
+                        type="email"
+                        value={profile?.email || ''}
+                        disabled
+                        className="w-full px-4 py-3 border border-gray-100 rounded-xl text-sm bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                      <p className="text-[10px] text-gray-400 mt-1">O e-mail não pode ser alterado.</p>
+                    </div>
+                  </div>
+
+                  {/* Mensagem de Feedback */}
+                  {profileMessage && (
+                    <div className={`mt-4 p-3 rounded-xl flex items-center gap-2 ${
+                      profileMessage.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                    }`}>
+                      {profileMessage.type === 'success' ? <Check size={16} /> : <AlertCircle size={16} />}
+                      <span className="text-sm font-medium">{profileMessage.text}</span>
+                    </div>
+                  )}
+
+                  {/* Botão Salvar */}
+                  <div className="mt-6">
+                    <button
+                      type="button"
+                      onClick={handleSaveProfile}
+                      disabled={isProfileSaving}
+                      className={`px-6 py-3 rounded-xl font-bold text-sm flex items-center gap-2 transition-all ${
+                        isProfileSaving
+                          ? 'bg-gray-400 cursor-not-allowed text-white'
+                          : 'bg-green-600 hover:bg-green-700 text-white shadow-md hover:shadow-lg'
+                      }`}
+                    >
+                      {isProfileSaving ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          Salvando...
+                        </>
+                      ) : (
+                        <>
+                          <Save size={16} />
+                          Salvar Alterações
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Botão Sair */}
+                <div className="bg-red-50 p-6 rounded-2xl border border-red-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-bold text-red-800">Encerrar Sessão</h3>
+                      <p className="text-xs text-red-600 mt-1">Você será desconectado do sistema.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleLogout}
+                      className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-sm flex items-center gap-2 transition-all shadow-md hover:shadow-lg"
+                    >
+                      <LogOut size={16} />
+                      Sair
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* --- ABA USUÁRIOS (ADMIN ONLY) --- */}
+        {activeTab === 'users' && isAdmin && (
+          <div className="animate-fade-in">
+            <div className="mb-8">
+              <h2 className="text-lg font-bold text-gray-700 flex items-center gap-2">
+                <Users className="text-purple-600" size={24} />
+                Gerenciar Usuários
+              </h2>
+              <p className="text-sm text-gray-500">Crie e gerencie usuários do sistema.</p>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Formulário de Criação */}
+              <div className="bg-purple-50 p-6 rounded-2xl border border-purple-200">
+                <h3 className="text-sm font-black text-purple-800 uppercase tracking-tight mb-4 flex items-center gap-2">
+                  <UserPlus size={18} />
+                  Criar Novo Usuário
+                </h3>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                      <Mail size={12} className="inline mr-1" />
+                      E-mail *
+                    </label>
+                    <input
+                      type="email"
+                      value={newUserForm.email}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, email: e.target.value })}
+                      placeholder="usuario@empresa.com"
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                      <User size={12} className="inline mr-1" />
+                      Nome Completo
+                    </label>
+                    <input
+                      type="text"
+                      value={newUserForm.full_name}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, full_name: e.target.value })}
+                      placeholder="Nome do usuário (opcional)"
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                      <Key size={12} className="inline mr-1" />
+                      Senha *
+                    </label>
+                    <input
+                      type="password"
+                      value={newUserForm.password}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
+                      placeholder="Mínimo 6 caracteres"
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                      <Key size={12} className="inline mr-1" />
+                      Confirmar Senha *
+                    </label>
+                    <input
+                      type="password"
+                      value={newUserForm.confirmPassword}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, confirmPassword: e.target.value })}
+                      placeholder="Repita a senha"
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                      <Shield size={12} className="inline mr-1" />
+                      Função (Role) *
+                    </label>
+                    <select
+                      value={newUserForm.role}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, role: e.target.value as Role })}
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                    >
+                      <option value="coordenador">Coordenador</option>
+                      <option value="analista">Analista</option>
+                      <option value="admin">Administrador</option>
+                    </select>
+                    <p className="text-[10px] text-gray-400 mt-1">
+                      Admin: acesso total | Analista: dashboard + demandas | Coordenador: agenda
+                    </p>
+                  </div>
+
+                  {/* Mensagem de Feedback */}
+                  {userMessage && (
+                    <div className={`p-3 rounded-xl flex items-center gap-2 ${
+                      userMessage.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                    }`}>
+                      {userMessage.type === 'success' ? <Check size={16} /> : <AlertCircle size={16} />}
+                      <span className="text-sm font-medium">{userMessage.text}</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleCreateUser}
+                    disabled={isCreatingUser}
+                    className={`w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all ${
+                      isCreatingUser
+                        ? 'bg-gray-400 cursor-not-allowed text-white'
+                        : 'bg-purple-600 hover:bg-purple-700 text-white shadow-md hover:shadow-lg'
+                    }`}
+                  >
+                    {isCreatingUser ? (
+                      <>
+                        <Loader2 size={16} className="animate-spin" />
+                        Criando...
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus size={16} />
+                        Criar Usuário
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Lista de Usuários */}
+              <div className="bg-white p-6 rounded-2xl border border-gray-200">
+                <h3 className="text-sm font-black text-gray-800 uppercase tracking-tight mb-4 flex items-center gap-2">
+                  <Users size={18} />
+                  Usuários Cadastrados ({allUsers.length})
+                </h3>
+
+                {isUsersLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="animate-spin text-purple-600" size={32} />
+                  </div>
+                ) : allUsers.length === 0 ? (
+                  <div className="text-center py-12 text-gray-400">
+                    <Users size={48} className="mx-auto mb-4 opacity-50" />
+                    <p className="font-medium">Nenhum usuário encontrado</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                    {allUsers.map((user) => (
+                      <div
+                        key={user.id}
+                        className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100 hover:border-purple-200 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-bold">
+                            {(user.full_name || user.email || 'U').charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-gray-800">{user.full_name || 'Nome não definido'}</p>
+                            <p className="text-xs text-gray-500">{user.email}</p>
+                          </div>
+                        </div>
+                        <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-full ${
+                          user.role === 'admin' ? 'bg-purple-100 text-purple-700' :
+                          user.role === 'analista' ? 'bg-blue-100 text-blue-700' :
+                          'bg-gray-100 text-gray-700'
+                        }`}>
+                          {user.role}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -164,11 +164,13 @@ const [isExportDemandsOpen, setIsExportDemandsOpen] = useState(false);
     companyId: '',
     regionId: '',
     trainingId: '',
-    instructorId: '', 
+    instructorId: '',
     status: '',
     startDate: '',
-    endDate: ''
+    endDate: '',
+    trainingLocal: ''
   });
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'CREATE' | 'EDIT' | null>(null);
@@ -440,6 +442,8 @@ const filteredDemands = useMemo(() => {
       if (advancedFilters.startDate && d.startDate.split('T')[0] < advancedFilters.startDate) return false;
       if (advancedFilters.endDate && d.startDate.split('T')[0] > advancedFilters.endDate) return false;
 
+      if (advancedFilters.trainingLocal && (d.trainingLocal || '') !== advancedFilters.trainingLocal) return false;
+
       return true;
     })
     .sort((a, b) => {
@@ -681,10 +685,11 @@ useEffect(() => {
       companyId: '',
       regionId: '',
       trainingId: '',
-      instructorId: '', 
+      instructorId: '',
       status: '',
       startDate: '',
-      endDate: ''
+      endDate: '',
+      trainingLocal: ''
     });
   };
 
@@ -1959,12 +1964,13 @@ const companionInstructorIds = useMemo(() => {
           )}
             </div>
         </div>
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+          {/* Header */}
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <Filter size={14} /> Filtros de Pesquisa Avançada
+              <Filter size={14} /> Filtros
             </h3>
-            <button 
+            <button
               onClick={clearFilters}
               className="text-[10px] font-black text-slate-400 hover:text-red-500 uppercase tracking-widest flex items-center gap-1.5 transition-colors"
             >
@@ -1972,14 +1978,16 @@ const companionInstructorIds = useMemo(() => {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          {/* ===== LINHA PRINCIPAL (sempre visível) ===== */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Busca */}
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-tight">Buscar ID ou Palavra-Chave</label>
               <div className="relative">
                 <Search className="absolute left-3 top-2.5 text-slate-300" size={16} />
-                <input 
-                  type="text" 
-                  placeholder="ID, Cliente, NR..." 
+                <input
+                  type="text"
+                  placeholder="ID, Cliente, NR..."
                   className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
@@ -1987,9 +1995,10 @@ const companionInstructorIds = useMemo(() => {
               </div>
             </div>
 
+            {/* Empresa */}
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-tight">Empresa / Cliente</label>
-              <select 
+              <select
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                 value={advancedFilters.companyId}
                 onChange={(e) => setAdvancedFilters({...advancedFilters, companyId: e.target.value})}
@@ -1999,9 +2008,10 @@ const companionInstructorIds = useMemo(() => {
               </select>
             </div>
 
+            {/* Treinamento */}
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-tight">Treinamento</label>
-              <select 
+              <select
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                 value={advancedFilters.trainingId}
                 onChange={(e) => setAdvancedFilters({...advancedFilters, trainingId: e.target.value})}
@@ -2011,36 +2021,103 @@ const companionInstructorIds = useMemo(() => {
               </select>
             </div>
 
+            {/* Período */}
             <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-tight">Instrutor</label>
-              <select 
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                value={advancedFilters.instructorId}
-                onChange={(e) => setAdvancedFilters({...advancedFilters, instructorId: e.target.value})}
-              >
-                <option value="">Qualquer Instrutor</option>
-                <option value="unallocated">Sem Instrutor Alocado</option>
-                {instructors.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-              </select>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-tight">Status da Demanda</label>
-              <select 
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                value={advancedFilters.status}
-                onChange={(e) => setAdvancedFilters({...advancedFilters, status: e.target.value})}
-              >
-                <option value="">Todos os Status</option>
-                <option value="NOVA">Nova</option>
-                <option value="PENDENTE">Pendente</option>
-                <option value="ALOCADA">Alocada</option>
-                <option value="EM_ANDAMENTO">Em Andamento</option>
-                <option value="CONCLUIDA">Concluída</option>
-                <option value="CANCELADA">Cancelada</option>
-              </select>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-tight">Período (De / Até)</label>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="date"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={advancedFilters.startDate}
+                  onChange={(e) => setAdvancedFilters({...advancedFilters, startDate: e.target.value})}
+                />
+                <input
+                  type="date"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={advancedFilters.endDate}
+                  onChange={(e) => setAdvancedFilters({...advancedFilters, endDate: e.target.value})}
+                />
+              </div>
             </div>
           </div>
+
+          {/* ===== TOGGLE AVANÇADOS ===== */}
+          <button
+            onClick={() => setShowAdvancedFilters(prev => !prev)}
+            className="text-[10px] font-black text-blue-600 hover:text-blue-700 uppercase tracking-widest flex items-center gap-1.5 transition-colors"
+          >
+            {showAdvancedFilters ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            {showAdvancedFilters ? 'Ocultar filtros avançados' : 'Mostrar filtros avançados'}
+          </button>
+
+          {/* ===== FILTROS AVANÇADOS (ocultos por padrão) ===== */}
+          {showAdvancedFilters && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pt-2 border-t border-slate-100">
+              {/* Instrutor */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-tight">Instrutor</label>
+                <select
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={advancedFilters.instructorId}
+                  onChange={(e) => setAdvancedFilters({...advancedFilters, instructorId: e.target.value})}
+                >
+                  <option value="">Qualquer Instrutor</option>
+                  <option value="unallocated">Sem Instrutor Alocado</option>
+                  {instructors.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                </select>
+              </div>
+
+              {/* Status */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-tight">Status da Demanda</label>
+                <select
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={advancedFilters.status}
+                  onChange={(e) => setAdvancedFilters({...advancedFilters, status: e.target.value})}
+                >
+                  <option value="">Todos os Status</option>
+                  <option value="NOVA">Nova</option>
+                  <option value="PENDENTE">Pendente</option>
+                  <option value="ALOCADA">Alocada</option>
+                  <option value="EM_ANDAMENTO">Em Andamento</option>
+                  <option value="CONCLUIDA">Concluída</option>
+                  <option value="CANCELADA">Cancelada</option>
+                </select>
+              </div>
+
+              {/* Região */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-tight">Região</label>
+                <select
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={advancedFilters.regionId}
+                  onChange={(e) => setAdvancedFilters({...advancedFilters, regionId: e.target.value})}
+                >
+                  <option value="">Todas as Regiões</option>
+                  {regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+              </div>
+
+              {/* Unidade / Local */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-tight">Unidade / Local</label>
+                <select
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={advancedFilters.trainingLocal}
+                  onChange={(e) => setAdvancedFilters({...advancedFilters, trainingLocal: e.target.value})}
+                >
+                  <option value="">Todos os Locais</option>
+                  {Array.from(new Set(
+                    demands
+                      .map(d => (d.trainingLocal || '').trim())
+                      .filter(Boolean)
+                  ) as Set<string>).sort().map(loc => (
+                    <option key={loc} value={loc}>{loc}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

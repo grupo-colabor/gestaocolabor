@@ -194,8 +194,15 @@ const CalendarView: React.FC = () => {
 
   const [currentDate, setCurrentDate] = useState<Date>(() => {
     const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
+    // Início na segunda-feira da semana atual
+    const dayOfWeek = now.getDay(); // 0=dom, 1=seg, ..., 6=sab
+    const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday);
+    return monday;
   });
+
+  const [viewMode, setViewMode] = useState<'week' | 'month'>('week');
+  const [showViewPicker, setShowViewPicker] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'VIEW' | 'CREATE' | 'EDIT'>('VIEW');
@@ -271,8 +278,14 @@ const getDemandFromItem = (item: any): Demand | null => {
     return `${y}-${m}-${d}`;
   };
 
-  const handlePrevMonth = () => setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
-  const handleNextMonth = () => setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+  const handlePrev = () => setCurrentDate(prev => {
+    if (viewMode === 'month') return new Date(prev.getFullYear(), prev.getMonth() - 1, 1);
+    const d = new Date(prev); d.setDate(d.getDate() - 7); return d;
+  });
+  const handleNext = () => setCurrentDate(prev => {
+    if (viewMode === 'month') return new Date(prev.getFullYear(), prev.getMonth() + 1, 1);
+    const d = new Date(prev); d.setDate(d.getDate() + 7); return d;
+  });
   
   const buildDemandTitle = React.useCallback(
   (d: Demand) => {
@@ -303,12 +316,19 @@ const getDemandFromItem = (item: any): Demand | null => {
     return days;
   }
 
-  // Default: mês atual como já era
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
-  const daysCount = new Date(year, month + 1, 0).getDate();
-  return Array.from({ length: daysCount }, (_, i) => new Date(year, month, i + 1));
-}, [currentDate, filterDateFrom, filterDateTo]);
+  // Default: semana ou mês conforme viewMode
+  if (viewMode === 'month') {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const daysCount = new Date(year, month + 1, 0).getDate();
+    return Array.from({ length: daysCount }, (_, i) => new Date(year, month, i + 1));
+  }
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(currentDate);
+    d.setDate(currentDate.getDate() + i);
+    return d;
+  });
+}, [currentDate, filterDateFrom, filterDateTo, viewMode]);
 
 
   /** =========================
@@ -915,16 +935,61 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
           <h1 className="text-2xl font-bold text-gray-800">Agenda de Instrutores</h1>
           <p className="text-sm text-gray-500">Suporte a múltiplos instrutores e controle de alocação por períodos.</p>
         </div>
-        <div className="flex items-center space-x-1 bg-white rounded-xl p-1 border border-gray-200 shadow-sm">
-          <button onClick={handlePrevMonth} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition">
+        <div className="flex items-center space-x-1 bg-white rounded-xl p-1 border border-gray-200 shadow-sm relative">
+          <button onClick={handlePrev} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition">
             <ChevronLeft size={18} />
           </button>
-          <div className="px-6 py-2 text-sm font-bold text-gray-800 capitalize min-w-[150px] text-center">
-            {currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+          <div
+            onClick={() => setShowViewPicker(prev => !prev)}
+            className="px-6 py-2 text-sm font-bold text-gray-800 capitalize min-w-[220px] text-center cursor-pointer hover:bg-gray-50 rounded-lg transition select-none"
+            title="Clique para alternar Semana / Mês"
+          >
+            {viewMode === 'week' ? (
+              <>
+                {currentDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
+                {' — '}
+                {(() => { const sun = new Date(currentDate); sun.setDate(sun.getDate() + 6); return sun.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }); })()}
+              </>
+            ) : (
+              currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+            )}
           </div>
-          <button onClick={handleNextMonth} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition">
+          <button onClick={handleNext} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition">
             <ChevronRight size={18} />
           </button>
+
+          {/* Picker Semana / Mês */}
+          {showViewPicker && (
+            <div className="absolute top-full mt-1 right-0 bg-white rounded-xl shadow-lg border border-gray-200 z-[80] overflow-hidden">
+              <button
+                onClick={() => {
+                  if (viewMode !== 'week') {
+                    const now = new Date();
+                    const dow = now.getDay();
+                    const diff = dow === 0 ? -6 : 1 - dow;
+                    setCurrentDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff));
+                  }
+                  setViewMode('week');
+                  setShowViewPicker(false);
+                }}
+                className={`w-full px-5 py-2.5 text-xs font-bold text-left transition ${viewMode === 'week' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                Semana
+              </button>
+              <button
+                onClick={() => {
+                  if (viewMode !== 'month') {
+                    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth(), 1));
+                  }
+                  setViewMode('month');
+                  setShowViewPicker(false);
+                }}
+                className={`w-full px-5 py-2.5 text-xs font-bold text-left transition ${viewMode === 'month' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                Mês
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

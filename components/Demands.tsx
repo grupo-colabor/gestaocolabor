@@ -86,6 +86,7 @@ import {
 
 
 import { upsertLogisticByDemandId, fetchLogisticByDemandId } from '../services/logistics';
+import ExportDemandsModal from './ExportDemandsModal';
 
 
 
@@ -130,6 +131,7 @@ const Demands: React.FC = () => {
   const canDeleteDemand = isAdmin || isAnalyst;
 
 const [filter, setFilter] = useState('');
+const [isExportDemandsOpen, setIsExportDemandsOpen] = useState(false);
   type SortKey =
     | 'id'
     | 'company'
@@ -1940,14 +1942,22 @@ const companionInstructorIds = useMemo(() => {
       <div className="flex flex-col space-y-4 no-print">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <h1 className="text-2xl font-bold text-gray-800">Gestão de Demandas</h1>
-            {canPerformAction(profile?.role, 'create_demand') && (
-          <button
-            onClick={handleOpenCreate}
-            className="bg-gray-900 hover:bg-gray-800 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center space-x-2 whitespace-nowrap shadow-md"
-          >
-            <Plus size={18} /> <span className="hidden sm:inline">Nova Demanda</span>
-          </button>
-        )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsExportDemandsOpen(true)}
+                className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center space-x-2 whitespace-nowrap shadow-md"
+              >
+                <FileDown size={18} /> <span className="hidden sm:inline">Exportar Demandas (Excel)</span>
+              </button>
+              {canPerformAction(profile?.role, 'create_demand') && (
+            <button
+              onClick={handleOpenCreate}
+              className="bg-gray-900 hover:bg-gray-800 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center space-x-2 whitespace-nowrap shadow-md"
+            >
+              <Plus size={18} /> <span className="hidden sm:inline">Nova Demanda</span>
+            </button>
+          )}
+            </div>
         </div>
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
           <div className="flex items-center justify-between">
@@ -3167,6 +3177,18 @@ const companionInstructorIds = useMemo(() => {
               </div>
           </div>
       )}
+
+      {/* ===== MODAL EXPORTAÇÃO DE DEMANDAS (Excel) ===== */}
+      <ExportDemandsModal
+        isOpen={isExportDemandsOpen}
+        onClose={() => setIsExportDemandsOpen(false)}
+        demands={demands}
+        companies={companies}
+        trainings={trainings}
+        regions={regions}
+        instructors={instructors}
+        instructorAllocations={instructorAllocations}
+      />
     </div>
   );
 };

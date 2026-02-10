@@ -226,6 +226,7 @@ const [showAdvanced, setShowAdvanced] = useState(false);
 const [filterName, setFilterName] = useState<string>(''); // busca por nome
 const [filterRegionId, setFilterRegionId] = useState<string>('TODOS'); // filtra LINHAS por região
 const [filterCoverageLocation, setFilterCoverageLocation] = useState<string>('TODOS'); // filtra LINHAS por "Atendendo"
+const [filterResidenceLocation, setFilterResidenceLocation] = useState<string>('TODOS'); // filtra LINHAS por LOCAL (residência)
 const [filterRecordType, setFilterRecordType] = useState<string>('TODOS'); // filtra CARDS por tipo/origem
 
 const normalize = (s: string) =>
@@ -1063,6 +1064,28 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
 
         
 
+        {/* LOCAL (residência) */}
+        <div>
+          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+            Local (UF/Região)
+          </label>
+          <select
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+            value={filterResidenceLocation}
+            onChange={(e) => setFilterResidenceLocation(e.target.value)}
+          >
+            <option value="TODOS">Todos</option>
+            {Array.from(new Set(
+              instructors
+                .filter(i => i.status === 'ATIVO' && i.residenceLocation)
+                .map(i => i.residenceLocation!.trim())
+                .filter(Boolean)
+            )).sort().map((loc) => (
+              <option key={loc} value={loc}>{loc}</option>
+            ))}
+          </select>
+        </div>
+
         {/* Atendendo */}
         <div>
           <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
@@ -1170,6 +1193,11 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
 
                 // Buscar nome
                 if (filterName && !normalize(i.name).includes(normalize(filterName))) return false;
+
+                // LOCAL (residenceLocation)
+                if (filterResidenceLocation !== 'TODOS') {
+                  if ((i.residenceLocation || '').trim() !== filterResidenceLocation) return false;
+                }
 
                 // Atendendo (currentLocation)
                 if (filterCoverageLocation !== 'TODOS') {

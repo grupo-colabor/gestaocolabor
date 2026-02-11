@@ -1523,6 +1523,31 @@ const addDemand = useCallback(
 
     (async () => {
       try {
+        // 🔥 Limpa arquivos de evidências do Storage (bucket: evidences)
+        try {
+          const { data: evidenceFiles } = await supabase.storage.from('evidences').list(`demands/${id}`, { limit: 500 });
+          if (evidenceFiles && evidenceFiles.length > 0) {
+            // lista subpastas (attendance, certificate, photos)
+            for (const item of evidenceFiles) {
+              if (item.id === null || item.name === '.emptyFolderPlaceholder') continue;
+              const { data: subFiles } = await supabase.storage.from('evidences').list(`demands/${id}/${item.name}`, { limit: 500 });
+              if (subFiles && subFiles.length > 0) {
+                const paths = subFiles.map(f => `demands/${id}/${item.name}/${f.name}`);
+                await supabase.storage.from('evidences').remove(paths);
+              }
+            }
+          }
+        } catch (e) { console.error('[deleteDemand] erro ao limpar evidências do storage:', e); }
+
+        // 🔥 Limpa arquivos de medição do Storage (bucket: measurement-attachments)
+        try {
+          const { data: measFiles } = await supabase.storage.from('measurement-attachments').list(`measurements/${id}`, { limit: 500 });
+          if (measFiles && measFiles.length > 0) {
+            const paths = measFiles.map(f => `measurements/${id}/${f.name}`);
+            await supabase.storage.from('measurement-attachments').remove(paths);
+          }
+        } catch (e) { console.error('[deleteDemand] erro ao limpar medições do storage:', e); }
+
         const { data, error } = await deleteDemandById(id);
 
         if (error) {

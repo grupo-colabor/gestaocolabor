@@ -946,17 +946,10 @@ const pendingLogisticsDemands = useMemo(() => {
 
     return (
       <div className="space-y-6 animate-fade-in">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <KPICard title="Total em Despesas" value={totalCosts} isCurrency icon={DollarSign} colorClass="bg-amber-50 text-amber-600" />
           <KPICard title="Ticket Médio/Demanda" value={totalCosts / (filteredDemands.length || 1)} isCurrency icon={Zap} colorClass="bg-blue-50 text-blue-600" />
           <KPICard title="Medições Pendentes" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'CONCLUIDA' && measurements.find(m => m.demandId === d.id)?.status === 'NAO_INICIADA').length} icon={Clock} colorClass="bg-orange-50 text-orange-600" />
-          <div className="bg-slate-900 p-6 rounded-2xl shadow-xl flex items-center justify-between group hover:scale-[1.02] transition-transform cursor-pointer">
-            <div>
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Exportar Fechamento</p>
-              <h3 className="text-sm font-bold text-white uppercase tracking-tight">Relatório DOCX</h3>
-            </div>
-            <Download className="text-blue-400 group-hover:animate-bounce" />
-          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

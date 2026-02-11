@@ -930,7 +930,7 @@ const handleRemoveBaseItem = async (item: string) => {
             <div className="flex flex-col lg:flex-row gap-6 flex-1">
               {/* Menu Lateral da Base */}
               <div className="w-full lg:w-64 space-y-1">
-                {(Object.keys(BASE_LABELS) as OperationalBaseKey[]).map((key) => (
+                {(Object.keys(BASE_LABELS) as OperationalBaseKey[]).filter(key => key !== 'tiposTreinamento').map((key) => (
                   <button
                     key={key}
                     type="button"
@@ -1578,8 +1578,7 @@ const handleRemoveBaseItem = async (item: string) => {
                     <select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={trainingFormData.modality} onChange={(e) => setTrainingFormData({ ...trainingFormData, modality: e.target.value as Modality })}>
                       <option value="PRESENCIAL">Presencial</option>
                       <option value="HIBRIDO">Híbrido</option>
-                      <option value="ONLINE">100% Online</option>
-                      <option value="TUTORIA">Tutoria</option>
+                      <option value="ONLINE">Online</option>
                     </select>
                   </div>
 

@@ -533,8 +533,18 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
     });
   };
 
-  const handleRemoveOtherExpense = (id: string) => {
+  const handleRemoveOtherExpense = async (id: string) => {
     if (!selectedMeasurement) return;
+
+    // 🔥 Remove arquivos do storage antes de limpar do state
+    const attachmentsToRemove = selectedMeasurement.attachments.filter(a => a.otherId === id);
+    for (const att of attachmentsToRemove) {
+      if (att.path && att.bucket) {
+        const { error } = await supabase.storage.from(att.bucket).remove([att.path]);
+        if (error) console.error('[Storage] erro ao deletar arquivo de despesa extra:', error);
+      }
+    }
+
     setSelectedMeasurement({
       ...selectedMeasurement,
       otherExpenses: selectedMeasurement.otherExpenses.filter(o => o.id !== id),

@@ -159,7 +159,8 @@ export interface Demand {
   companyId: string;
   regionId: string;
   trainingId: string;
-  trainingLocal?: string; 
+  trainingLocal?: string;
+  demandState?: string; // Estado (UF) da demanda — ex: ES, MG, MA
   modality: Modality;
   startDate: string;
   endDate: string;

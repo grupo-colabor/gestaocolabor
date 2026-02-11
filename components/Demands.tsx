@@ -210,6 +210,7 @@ const [isExportDemandsOpen, setIsExportDemandsOpen] = useState(false);
     trainingId: '',
     regionId: '',
     trainingLocal: '',
+    demandState: '',
     modality: 'PRESENCIAL',
     startDate: '', 
     endDate: '',   
@@ -359,6 +360,7 @@ const markDocAsNA = async (docType: 'LISTA_TURMA' | 'LIBERACAO_INSTRUTOR') => {
   // ✅ Local só é obrigatório se NÃO for ONLINE
   const needsLocal = formDemand.modality !== 'ONLINE';
   if (needsLocal && !formDemand.trainingLocal) return false;
+  if (!formDemand.demandState) return false;
 
   const hasStartTime = formDemand.startDate!.includes('T');
   const hasEndTime = formDemand.endDate!.includes('T');
@@ -888,6 +890,7 @@ ${b('📘 INFORMAÇÕES GERAIS')}
 • Modalidade: ${formDemand.modality}
 • Região: ${getRegionName(formDemand.regionId!)}
 • Corredor: ${formDemand.corredor || 'Não informado'}
+• Estado: ${formDemand.demandState || 'Não informado'}
 • Solicitante: ${formDemand.requester || 'Não informado'}
 
 ${b('🚗 LOGÍSTICA — LOCOMOÇÃO')}
@@ -994,6 +997,7 @@ ${formDemand.observations || 'N/A'}
           new Paragraph({ children: [new TextRun({ text: "📅 Período: ", bold: true }), new TextRun(`${formatDateTime(formDemand.startDate)} até ${formatDateTime(formDemand.endDate)}`)] }),
           new Paragraph({ children: [new TextRun({ text: "📍 Local / Unidade: ", bold: true }), new TextRun(formDemand.modality === 'ONLINE' ? 'N/A' : (formDemand.trainingLocal || 'N/A'))] }),
           new Paragraph({ children: [new TextRun({ text: "🏢 Corredor: ", bold: true }), new TextRun(formDemand.corredor || 'Não informado')] }),
+          new Paragraph({ children: [new TextRun({ text: "📌 Estado: ", bold: true }), new TextRun(formDemand.demandState || 'Não informado')] }),
           new Paragraph({ children: [new TextRun({ text: "🌎 Região: ", bold: true }), new TextRun(getRegionName(formDemand.regionId!))] }),
           new Paragraph({ children: [new TextRun({ text: "🧑‍💼 Solicitante: ", bold: true }), new TextRun(formDemand.requester || 'Não informado')] }),
 
@@ -2365,6 +2369,19 @@ const companionInstructorIds = useMemo(() => {
                                 placeholder="Selecione ou digite..."
                               />
                             </div>
+                              <div>
+                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Estado *</label>
+                              <select
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                                value={formDemand.demandState || ''}
+                                onChange={(e) => setFormDemand({ ...formDemand, demandState: e.target.value })}
+                              >
+                                <option value="">Selecione...</option>
+                                {(operationalBases.localidades ?? []).map((loc: string) => (
+                                  <option key={loc} value={loc}>{loc}</option>
+                                ))}
+                              </select>
+                            </div>
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tipo de Atendimento</label><input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-slate-100 text-slate-700 font-bold" value={formDemand.modality || '---'} readOnly /><p className="text-[10px] text-slate-400 mt-1">Campo automático (puxado do Treinamento).</p></div>
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Solicitante</label><input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={formDemand.requester || ''} onChange={(e) => setFormDemand({...formDemand, requester: e.target.value})} /></div>
                               
@@ -2407,6 +2424,7 @@ const companionInstructorIds = useMemo(() => {
                                 <DataViewField label="Fim" value={formatDateTime(formDemand.endDate)} icon={Calendar} />
                                 <DataViewField label="Região" value={getRegionName(formDemand.regionId!)} icon={MapPin} />
                                 <DataViewField label="Corredor" value={formDemand.corredor} icon={MapPin} />
+                                <DataViewField label="Estado" value={formDemand.demandState} icon={MapPin} />
                                 <DataViewField label="Modalidade" value={formDemand.modality} icon={Info} />
                                 <DataViewField label="Solicitante" value={formDemand.requester} icon={User} />
                                 <div className="flex flex-col space-y-1">

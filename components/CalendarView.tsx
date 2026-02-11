@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../App';
 import {
   ChevronLeft,
@@ -1154,7 +1155,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
         {/* Atendendo */}
         <div>
           <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-            Localidade (Atendendo)
+            Localidade (Estado)
           </label>
           <select
             className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
@@ -1209,7 +1210,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
             </th>
             <th
               className="
-                px-2 py-4 text-left
+                px-2 py-4 text-center
                 w-[90px] min-w-[90px] max-w-[90px] box-border
                 font-black text-[8px] uppercase tracking-tighter text-slate-400 leading-tight
                 sticky left-[200px] z-[70] bg-slate-50
@@ -1219,19 +1220,6 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
               "
             >
               Local
-            </th>
-            <th
-              className="
-                px-2 py-4 text-left
-                w-[120px] min-w-[120px] max-w-[120px] box-border
-                font-black text-[8px] uppercase tracking-tighter text-slate-400 leading-tight
-                sticky left-[290px] z-[70] bg-slate-50
-                relative overflow-hidden
-                after:content-[''] after:absolute after:top-0 after:right-0 after:h-full after:w-px after:bg-gray-200
-                before:content-[''] before:absolute before:left-0 before:bottom-0 before:w-full before:h-px before:bg-gray-200
-              "
-            >
-              Atendendo
             </th>
 
                 {daysInView.map((day, idx) => (
@@ -1264,9 +1252,14 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                   if ((i.residenceLocation || '').trim() !== filterResidenceLocation) return false;
                 }
 
-                // Atendendo (currentLocation)
+                // Localidade (Estado da Demanda)
                 if (filterCoverageLocation !== 'TODOS') {
-                  if ((i.currentLocation || '') !== filterCoverageLocation) return false;
+                  const hasDemandInState = demands.some(d =>
+                    (d.instructorId === i.id || instructorAllocations.some(a => a.demandId === d.id && a.instructorId === i.id)) &&
+                    d.status !== 'CANCELADA' &&
+                    (d.demandState || '').trim() === filterCoverageLocation
+                  );
+                  if (!hasDemandInState) return false;
                 }
 
                 return true;
@@ -1308,7 +1301,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                 {/* 1) LOCAL (RESIDÊNCIA) - primeiro */}
                <td
                 className="
-                  px-2 py-2 bg-white align-middle
+                  px-2 py-2 bg-white align-middle text-center
                   sticky left-[200px] z-40
                   w-[90px] min-w-[90px] max-w-[90px] box-border
                   relative overflow-hidden
@@ -1317,38 +1310,12 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                 "
               >
                 <div
-                  className="w-full text-[14px] font-bold text-slate-600 whitespace-nowrap overflow-hidden text-ellipsis"
+                  className="w-full text-[14px] font-bold text-slate-600"
                   title={instructor.residenceLocation || ''}
                 >
                   {instructor.residenceLocation ? instructor.residenceLocation : '—'}
                 </div>
               </td>
-
-                {/* 2) LOCALIDADE (ATENDENDO) - dropdown */}
-                <td
-                className="
-                  px-2 py-2 bg-white align-middle
-                  sticky left-[290px] z-40
-                  w-[120px] min-w-[120px] max-w-[120px] box-border
-                  relative overflow-hidden
-                  after:content-[''] after:absolute after:top-0 after:right-0 after:h-full after:w-px after:bg-gray-200
-                  before:content-[''] before:absolute before:left-0 before:bottom-0 before:w-full before:h-px before:bg-gray-100
-                "
-              >
-                <select
-                  value={instructor.currentLocation || ''}
-                  onChange={(e) => updateInstructorCurrentLocation(instructor.id, e.target.value)}
-                  disabled={isCoordinator}
-                  className="w-full text-[11px] font-bold text-slate-600 bg-transparent border border-slate-200 rounded-lg px-1.5 py-1 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer disabled:cursor-default disabled:opacity-70"
-                  title={instructor.currentLocation || 'Selecionar localidade'}
-                >
-                  <option value="">—</option>
-                  {(operationalBases?.localidades || []).map((loc: string) => (
-                    <option key={loc} value={loc}>{loc}</option>
-                  ))}
-                </select>
-              </td>
-
 
                   {daysInView.map(day => {
                       const dateKey = `${instructor.id}-${formatDateKey(day)}`;
@@ -1643,8 +1610,8 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
       </div>
 
       {/* MODAL EVENTO LOCAL CTM */}
-      {activeMobileEvent && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in no-print">
+      {activeMobileEvent && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in no-print">
           <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-[720px] max-h-[85vh] overflow-hidden flex flex-col animate-scale-up">
             <div className="p-6 pb-4 flex justify-between items-start border-b border-slate-100">
               <div>
@@ -1711,11 +1678,11 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
 
       {/* MODAL PRINCIPAL */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in no-print">
+      {isModalOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in no-print">
           <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-sm max-h-[90vh] flex flex-col animate-scale-up">
             <div className="p-7 pb-4 flex justify-between items-start">
               <div>
@@ -1828,6 +1795,23 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                       <label className="text-[8px] font-black text-slate-400 uppercase">LOCAL DO TREINAMENTO</label>
                     </div>
                     <p className="text-xs font-bold text-slate-700">{linked?.trainingLocal || 'Não informado'}</p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <MapPin size={12} className="text-slate-400" />
+                        <label className="text-[8px] font-black text-slate-400 uppercase">ESTADO</label>
+                      </div>
+                      <p className="text-xs font-bold text-slate-700">{linked?.demandState || 'Não informado'}</p>
+                    </div>
+                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <MapPin size={12} className="text-slate-400" />
+                        <label className="text-[8px] font-black text-slate-400 uppercase">CORREDOR</label>
+                      </div>
+                      <p className="text-xs font-bold text-slate-700">{linked?.corredor || 'Não informado'}</p>
+                    </div>
                   </div>
 
                   <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 min-h-[90px]">
@@ -1950,7 +1934,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
     </div>
   );
 };

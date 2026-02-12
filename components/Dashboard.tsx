@@ -51,6 +51,7 @@ const Dashboard: React.FC = () => {
   const [showNoInstructorTooltip, setShowNoInstructorTooltip] = useState(false);
   const [showNoMeasurementTooltip, setShowNoMeasurementTooltip] = useState(false);
   const [showCancelledList, setShowCancelledList] = useState(false);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const today = new Date();
 
   // ✅ Supabase (controle logístico): demand_id -> logistic_allocations
@@ -102,7 +103,10 @@ const Dashboard: React.FC = () => {
     endDate: '',
     companyId: '',
     regionId: '',
-    status: ''
+    status: '',
+    trainingLocal: '',
+    corredor: '',
+    demandState: ''
   });
 
   // --- Lógica de Mês/Ano ---
@@ -119,6 +123,19 @@ const Dashboard: React.FC = () => {
     });
     return Array.from(unique.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [demands]);
+
+  // --- Opções dinâmicas para filtros avançados ---
+  const availableTrainingLocals = useMemo(() =>
+    [...new Set(demands.map(d => d.trainingLocal).filter((v): v is string => !!v && v !== 'N/A'))].sort(),
+  [demands]);
+
+  const availableCorredores = useMemo(() =>
+    [...new Set(demands.map(d => d.corredor).filter((v): v is string => !!v))].sort(),
+  [demands]);
+
+  const availableStates = useMemo(() =>
+    [...new Set(demands.map(d => d.demandState).filter((v): v is string => !!v))].sort(),
+  [demands]);
 
   const handleMonthFilterChange = (val: string) => {
     if (!val) {
@@ -187,6 +204,9 @@ const Dashboard: React.FC = () => {
       if (filters.companyId && d.companyId !== filters.companyId) return false;
       if (filters.regionId && d.regionId !== filters.regionId) return false;
       if (filters.status && currentStatus !== filters.status) return false;
+      if (filters.trainingLocal && (d.trainingLocal ?? '') !== filters.trainingLocal) return false;
+      if (filters.corredor && (d.corredor ?? '') !== filters.corredor) return false;
+      if (filters.demandState && (d.demandState ?? '') !== filters.demandState) return false;
 
       return true;
     });
@@ -343,6 +363,25 @@ const pendingLogisticsDemands = useMemo(() => {
       name: r.name,
       value: filteredDemands.filter(d => d.regionId === r.id).length
     })).sort((a, b) => b.value - a.value);
+
+    // --- Dados para insights Local/Corredor/UF ---
+    const buildTop = (extract: (d: Demand) => string, limit = 10) => {
+      const counts: Record<string, number> = {};
+      filteredDemands.forEach(d => {
+        const v = (extract(d) ?? '').trim();
+        if (!v) return;
+        counts[v] = (counts[v] || 0) + 1;
+      });
+      const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+      if (sorted.length <= limit) return sorted.map(([name, value]) => ({ name, value }));
+      const top = sorted.slice(0, limit);
+      const othersSum = sorted.slice(limit).reduce((s, [, v]) => s + v, 0);
+      return [...top.map(([name, value]) => ({ name, value })), { name: 'Outros', value: othersSum }];
+    };
+
+    const localData = buildTop(d => d.trainingLocal ?? '');
+    const corredorData = buildTop(d => d.corredor ?? '');
+    const ufData = buildTop(d => d.demandState ?? '');
 
     // REGRAS DE ALERTA OPERACIONAIS
     const noInstructorDemands = filteredDemands.filter(d => {
@@ -642,6 +681,78 @@ const pendingLogisticsDemands = useMemo(() => {
                 </ResponsiveContainer>
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem dados regionais</div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* --- INSIGHTS: Local / Corredor / UF --- */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Volume por Local do Treinamento */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-80 flex flex-col">
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex justify-between">
+              <span>Volume por Local</span>
+              <MapPin size={14} />
+            </h3>
+            <div className="flex-1 min-h-0">
+              {localData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={localData} layout="vertical" margin={{ left: 10, right: 10, top: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#F1F5F9" />
+                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 9 }} />
+                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 'bold' }} width={80} />
+                    <Tooltip cursor={{ fill: '#F8FAFC' }} />
+                    <Bar dataKey="value" fill="#3B82F6" radius={[0, 4, 4, 0]} barSize={16} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem dados</div>
+              )}
+            </div>
+          </div>
+
+          {/* Volume por Corredor */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-80 flex flex-col">
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex justify-between">
+              <span>Volume por Corredor</span>
+              <Truck size={14} />
+            </h3>
+            <div className="flex-1 min-h-0">
+              {corredorData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={corredorData} layout="vertical" margin={{ left: 10, right: 10, top: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#F1F5F9" />
+                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 9 }} />
+                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 'bold' }} width={80} />
+                    <Tooltip cursor={{ fill: '#F8FAFC' }} />
+                    <Bar dataKey="value" fill="#10B981" radius={[0, 4, 4, 0]} barSize={16} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem dados</div>
+              )}
+            </div>
+          </div>
+
+          {/* Volume por UF */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-80 flex flex-col">
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex justify-between">
+              <span>Volume por Estado (UF)</span>
+              <Target size={14} />
+            </h3>
+            <div className="flex-1 min-h-0">
+              {ufData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={ufData} layout="vertical" margin={{ left: 10, right: 10, top: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#F1F5F9" />
+                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 9 }} />
+                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 'bold' }} width={40} />
+                    <Tooltip cursor={{ fill: '#F8FAFC' }} />
+                    <Bar dataKey="value" fill="#F59E0B" radius={[0, 4, 4, 0]} barSize={16} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem dados</div>
               )}
             </div>
           </div>
@@ -1023,61 +1134,103 @@ const pendingLogisticsDemands = useMemo(() => {
       </div>
 
       {/* Filtros Globais */}
-      <div className="bg-white p-4 rounded-[1.5rem] shadow-sm border border-slate-200 flex flex-wrap gap-4 items-end">
-        <div className="min-w-[160px]">
-          <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Calendar size={10} /> Período (Mês/Ano)</label>
-          <select
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white capitalize"
-            value={getMonthSelectorValue()}
-            onChange={(e) => handleMonthFilterChange(e.target.value)}
-          >
-            <option value="">Todos</option>
-            {availableMonths.map(([key, label]) => (
-              <option key={key} value={key}>{label}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex-1 min-w-[200px]">
-          <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Calendar size={10} /> Intervalo Customizado</label>
-          <div className="flex gap-2">
-            <input type="date" className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner bg-slate-50/50" value={filters.startDate} onChange={e => setFilters(prev => ({ ...prev, startDate: e.target.value }))} />
-            <input type="date" className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner bg-slate-50/50" value={filters.endDate} onChange={e => setFilters(prev => ({ ...prev, endDate: e.target.value }))} />
+      <div className="bg-white p-4 rounded-[1.5rem] shadow-sm border border-slate-200">
+        <div className="flex flex-wrap gap-4 items-end">
+          <div className="min-w-[160px]">
+            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Calendar size={10} /> Período (Mês/Ano)</label>
+            <select
+              className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white capitalize"
+              value={getMonthSelectorValue()}
+              onChange={(e) => handleMonthFilterChange(e.target.value)}
+            >
+              <option value="">Todos</option>
+              {availableMonths.map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
           </div>
+
+          <div className="flex-1 min-w-[200px]">
+            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Calendar size={10} /> Intervalo Customizado</label>
+            <div className="flex gap-2">
+              <input type="date" className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner bg-slate-50/50" value={filters.startDate} onChange={e => setFilters(prev => ({ ...prev, startDate: e.target.value }))} />
+              <input type="date" className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner bg-slate-50/50" value={filters.endDate} onChange={e => setFilters(prev => ({ ...prev, endDate: e.target.value }))} />
+            </div>
+          </div>
+
+          <div className="min-w-[160px]">
+            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Building2 size={10} /> Empresa</label>
+            <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.companyId} onChange={e => setFilters(prev => ({ ...prev, companyId: e.target.value }))}>
+              <option value="">Todas</option>
+              {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+
+          <div className="min-w-[160px]">
+            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><MapPin size={10} /> Região</label>
+            <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.regionId} onChange={e => setFilters(prev => ({ ...prev, regionId: e.target.value }))}>
+              <option value="">Todas</option>
+              {regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </div>
+
+          <div className="min-w-[160px]">
+            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Filter size={10} /> Status (Real)</label>
+            <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.status} onChange={e => setFilters(prev => ({ ...prev, status: e.target.value }))}>
+              <option value="">Todos</option>
+              {Object.entries(STATUS_LABELS).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            onClick={() => setFilters({ startDate: '', endDate: '', companyId: '', regionId: '', status: '', trainingLocal: '', corredor: '', demandState: '' })}
+            className="px-4 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-red-500 transition-colors"
+          >
+            Limpar
+          </button>
         </div>
 
-        <div className="min-w-[160px]">
-          <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Building2 size={10} /> Empresa</label>
-          <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.companyId} onChange={e => setFilters(prev => ({ ...prev, companyId: e.target.value }))}>
-            <option value="">Todas</option>
-            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </div>
-
-        <div className="min-w-[160px]">
-          <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><MapPin size={10} /> Região</label>
-          <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.regionId} onChange={e => setFilters(prev => ({ ...prev, regionId: e.target.value }))}>
-            <option value="">Todas</option>
-            {regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
-        </div>
-
-        <div className="min-w-[160px]">
-          <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Filter size={10} /> Status (Real)</label>
-          <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.status} onChange={e => setFilters(prev => ({ ...prev, status: e.target.value }))}>
-            <option value="">Todos</option>
-            {Object.entries(STATUS_LABELS).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
-            ))}
-          </select>
-        </div>
-
+        {/* Toggle Filtros Avançados */}
         <button
-          onClick={() => setFilters({ startDate: '', endDate: '', companyId: '', regionId: '', status: '' })}
-          className="px-4 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-red-500 transition-colors"
+          onClick={() => setShowAdvancedFilters(prev => !prev)}
+          className="mt-3 text-[10px] font-black text-blue-600 uppercase tracking-widest hover:text-blue-800 transition-colors flex items-center gap-1"
         >
-          Limpar
+          {showAdvancedFilters ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          {showAdvancedFilters ? 'Ocultar Filtros Avançados' : 'Mostrar Filtros Avançados'}
+          {(filters.trainingLocal || filters.corredor || filters.demandState) && (
+            <span className="ml-1 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[8px]">Ativo</span>
+          )}
         </button>
+
+        {showAdvancedFilters && (
+          <div className="flex flex-wrap gap-4 items-end mt-3 pt-3 border-t border-slate-100">
+            <div className="min-w-[160px]">
+              <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><MapPin size={10} /> Local do Treinamento</label>
+              <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.trainingLocal} onChange={e => setFilters(prev => ({ ...prev, trainingLocal: e.target.value }))}>
+                <option value="">Todos</option>
+                {availableTrainingLocals.map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
+
+            <div className="min-w-[160px]">
+              <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Truck size={10} /> Corredor</label>
+              <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.corredor} onChange={e => setFilters(prev => ({ ...prev, corredor: e.target.value }))}>
+                <option value="">Todos</option>
+                {availableCorredores.map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
+
+            <div className="min-w-[160px]">
+              <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Target size={10} /> Estado (UF)</label>
+              <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.demandState} onChange={e => setFilters(prev => ({ ...prev, demandState: e.target.value }))}>
+                <option value="">Todos</option>
+                {availableStates.map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="min-h-[500px]">

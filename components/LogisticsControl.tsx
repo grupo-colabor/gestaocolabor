@@ -16,6 +16,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { calculateDemandStatus } from '../domain/demandStatus';
+import { demandIntersectsRange } from '../domain/demandDays';
 
 // ✅ Supabase (controle logístico)
 import {
@@ -349,11 +350,10 @@ const LogisticsControl: React.FC = () => {
 
         if (!matchesSearch) return false;
 
-        // 📅 Filtro de período
-        const dStart = new Date(d.startDate);
-        const dEnd = new Date(d.endDate);
-
-        return dStart <= periodBounds.end && dEnd >= periodBounds.start;
+        // 📅 Filtro de período — suporta dias específicos
+        const fromStr = periodBounds.start.toISOString().slice(0, 10);
+        const toStr = periodBounds.end.toISOString().slice(0, 10);
+        return demandIntersectsRange(d, fromStr, toStr);
       })
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
   }, [demands, filterText, periodBounds, companies, trainings]);

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ImageRun } from 'docx';
 import { calculateDemandStatus } from '../domain/demandStatus';
+import { demandIntersectsRange } from '../domain/demandDays';
 import { supabase } from '../lib/supabase';
 
 const STAGE_LABELS: Record<MeasurementStatus, string> = {
@@ -202,8 +203,10 @@ const MeasurementView: React.FC = () => {
       if (!matchesText) return false;
       if (advancedFilters.companyId && d.companyId !== advancedFilters.companyId) return false;
       if (advancedFilters.status && m.status !== advancedFilters.status) return false;
-      if (advancedFilters.startDate && d.startDate < advancedFilters.startDate) return false;
-      if (advancedFilters.endDate && d.startDate > advancedFilters.endDate) return false;
+      // ✅ Filtro por período: suporta dias específicos
+      if (advancedFilters.startDate || advancedFilters.endDate) {
+        if (!demandIntersectsRange(d, advancedFilters.startDate || undefined, advancedFilters.endDate || undefined)) return false;
+      }
       return true;
     }).sort((a, b) => {
         const d1 = demands.find(dm => dm.id === a.demandId);
@@ -227,8 +230,10 @@ const MeasurementView: React.FC = () => {
       
       if (exportFilters.status && currentDemandStatus !== exportFilters.status) return false;
       
-      if (exportFilters.startDate && d.startDate < exportFilters.startDate) return false;
-      if (exportFilters.endDate && d.startDate > exportFilters.endDate) return false;
+      // ✅ Filtro por período (export): suporta dias específicos
+      if (exportFilters.startDate || exportFilters.endDate) {
+        if (!demandIntersectsRange(d, exportFilters.startDate || undefined, exportFilters.endDate || undefined)) return false;
+      }
 
       return true;
     }).sort((a, b) => {

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Demand } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
+import { demandIntersectsRange } from '../domain/demandDays';
 import {
   fetchLogisticAllocations,
   LogisticAllocationRow
@@ -176,16 +177,11 @@ const Dashboard: React.FC = () => {
   // --- Processamento de Dados Base ---
   const filteredDemands = useMemo(() => {
     return demands.filter(d => {
-      const start = filters.startDate ? new Date(filters.startDate) : null;
-      const end = filters.endDate ? new Date(filters.endDate) : null;
-      const dStart = new Date(d.startDate);
       const currentStatus = getCalculatedStatus(d);
 
-      if (start && dStart < start) return false;
-      if (end) {
-        const endDay = new Date(end);
-        endDay.setHours(23, 59, 59, 999);
-        if (dStart > endDay) return false;
+      // ✅ Filtro por período: usa demandIntersectsRange para suportar dias específicos
+      if (filters.startDate || filters.endDate) {
+        if (!demandIntersectsRange(d, filters.startDate || undefined, filters.endDate || undefined)) return false;
       }
 
       if (filters.companyId && d.companyId !== filters.companyId) return false;

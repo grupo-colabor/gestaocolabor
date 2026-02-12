@@ -21,6 +21,7 @@ import { AgendaItem, AgendaType, Demand, Instructor } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDemandLabel } from '../domain/demandStatus';
+import { isDemandDay } from '../domain/demandDays';
 
 // Configuração visual para cada tipo de compromisso
 const AGENDA_STYLING: Record<string, { bg: string; text: string; border: string }> = {
@@ -475,18 +476,21 @@ const getDemandFromItem = (item: any): Demand | null => {
       const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
       while (cursor <= end) {
-        map[`${a.instructorId}-${formatDateKey(cursor)}`] = {
-          id: a.id,
-          instructorId: a.instructorId,
-          startDate: displayStart,  // ✅ agora reflete prática no híbrido
-          endDate: displayEnd,      // ✅ agora reflete prática no híbrido
-          type: 'TREINAMENTO',
-          title: formattedTitle,
-          source: 'ALLOCATION',
-          description: d.trainingLocal,
-          calculatedStatus: cStatus,
-          demandId: d.id
-        };
+        // ✅ DIAS ESPECÍFICOS: pula dias que não fazem parte da demanda
+        if (isDemandDay(d, cursor)) {
+          map[`${a.instructorId}-${formatDateKey(cursor)}`] = {
+            id: a.id,
+            instructorId: a.instructorId,
+            startDate: displayStart,
+            endDate: displayEnd,
+            type: 'TREINAMENTO',
+            title: formattedTitle,
+            source: 'ALLOCATION',
+            description: d.trainingLocal,
+            calculatedStatus: cStatus,
+            demandId: d.id
+          };
+        }
         cursor.setDate(cursor.getDate() + 1);
       }
 });
@@ -532,20 +536,23 @@ companionAllocations.forEach(ca => {
   const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
   while (cursor <= end) {
-    map[`${ca.instructorId}-${formatDateKey(cursor)}`] = {
-      id: ca.id, // id do companion allocation
-      instructorId: ca.instructorId,
-      startDate: displayStart,
-      endDate: displayEnd,
-      type: 'TREINAMENTO',
-      title: formattedTitle,
-      source: 'COMPANION',
-      description: d.trainingLocal,
-      calculatedStatus: cStatus,
-      demandId: d.id,
-      isCompanion: true,
-      companionAllocationId: ca.id
-    };
+    // ✅ DIAS ESPECÍFICOS: pula dias que não fazem parte da demanda
+    if (isDemandDay(d, cursor)) {
+      map[`${ca.instructorId}-${formatDateKey(cursor)}`] = {
+        id: ca.id,
+        instructorId: ca.instructorId,
+        startDate: displayStart,
+        endDate: displayEnd,
+        type: 'TREINAMENTO',
+        title: formattedTitle,
+        source: 'COMPANION',
+        description: d.trainingLocal,
+        calculatedStatus: cStatus,
+        demandId: d.id,
+        isCompanion: true,
+        companionAllocationId: ca.id
+      };
+    }
     cursor.setDate(cursor.getDate() + 1);
   }
 });
@@ -573,18 +580,21 @@ companionAllocations.forEach(ca => {
         const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
         while (cursor <= end) {
-          map[`${d.instructorId}-${formatDateKey(cursor)}`] = {
-            id: d.id,
-            instructorId: d.instructorId!,
-            startDate: effectiveStart,
-            endDate: effectiveEnd,
-            type: 'TREINAMENTO',
-            title: formattedTitle,
-            source: 'DEMANDA',
-            description: d.trainingLocal,
-            calculatedStatus: cStatus,
-            demandId: d.id
-          };
+          // ✅ DIAS ESPECÍFICOS: pula dias que não fazem parte da demanda
+          if (isDemandDay(d, cursor)) {
+            map[`${d.instructorId}-${formatDateKey(cursor)}`] = {
+              id: d.id,
+              instructorId: d.instructorId!,
+              startDate: effectiveStart,
+              endDate: effectiveEnd,
+              type: 'TREINAMENTO',
+              title: formattedTitle,
+              source: 'DEMANDA',
+              description: d.trainingLocal,
+              calculatedStatus: cStatus,
+              demandId: d.id
+            };
+          }
           cursor.setDate(cursor.getDate() + 1);
         }
       });

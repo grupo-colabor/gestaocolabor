@@ -12,6 +12,7 @@ import * as XLSX from 'xlsx';
 
 import { Demand, Company, Training, Region, Instructor, InstructorAllocation } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
+import { demandIntersectsRange } from '../domain/demandDays';
 
 /* ========== STATUS STYLING (idêntico ao Measurement.tsx) ========== */
 const STATUS_STYLING: Record<string, string> = {
@@ -117,8 +118,10 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
         if (calcStatus !== filters.status) return false;
       }
 
-      if (filters.startDate && d.startDate < filters.startDate) return false;
-      if (filters.endDate && d.startDate > filters.endDate) return false;
+      // ✅ Filtro por período: suporta dias específicos
+      if (filters.startDate || filters.endDate) {
+        if (!demandIntersectsRange(d, filters.startDate || undefined, filters.endDate || undefined)) return false;
+      }
 
       if (filters.search) {
         const term = normalize(filters.search);
@@ -171,6 +174,8 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
       'Região': getRegionName(d.regionId),
       'Data Início': formatDate(d.startDate),
       'Data Fim': formatDate(d.endDate),
+      'Modo Datas': d.dateMode === 'DIAS_ESPECIFICOS' ? 'Dias Específicos' : 'Contínuo',
+      'Dias Específicos': d.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(d.specificDates) ? d.specificDates.sort().join(', ') : '',
       'Instrutor Principal': getInstructorName(d),
       'Status': getCalculatedStatus(d).replace('_', ' '),
       'Modalidade': d.modality || '',

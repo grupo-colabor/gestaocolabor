@@ -11,6 +11,9 @@ export type DemandRow = {
   status: string;
   modality: string;
 
+  date_mode: string;              // 'CONTINUO' | 'DIAS_ESPECIFICOS'
+  specific_dates: string[] | null; // ['2026-02-12', ...] ou null
+
   start_date: string; // timestamptz (ISO string)
   end_date: string;
 
@@ -45,6 +48,7 @@ export async function fetchDemands(): Promise<DemandRow[]> {
     .from('demands')
     .select(`
       id, number, company_id, training_id, status, modality,
+      date_mode, specific_dates,
       start_date, end_date,
       practice_start_date, practice_end_date,
       region_id, training_local,

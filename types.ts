@@ -162,6 +162,8 @@ export interface Demand {
   trainingLocal?: string;
   demandState?: string; // Estado (UF) da demanda — ex: ES, MG, MA
   modality: Modality;
+  dateMode: 'CONTINUO' | 'DIAS_ESPECIFICOS';
+  specificDates?: string[]; // ['2026-02-12', '2026-02-13', ...] — só quando dateMode === 'DIAS_ESPECIFICOS'
   startDate: string;
   endDate: string;
   status: DemandStatus;

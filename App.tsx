@@ -64,6 +64,7 @@ import AuthGate from './components/AuthGate';
 import { fetchTrainings } from './services/trainings';
 import { fetchCompanies, insertCompany, updateCompanyById, CompanyRow } from './services/companies';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { isDemandDay, getDemandDays } from './domain/demandDays';
 import { fetchInstructors, fetchInstructorTrainings } from './services/instructors';
 import { fetchMeasurements, upsertMeasurementByDemandId } from './services/measurements';
 import { fetchEvidences, upsertEvidenceByDemandId } from './services/evidences';
@@ -803,6 +804,8 @@ const syncCompanionAllocationsFromDb = useCallback(async () => {
       regionId: row.region_id ?? '',
       trainingLocal: row.training_local ?? 'N/A',
       modality: row.modality ?? 'PRESENCIAL',
+      dateMode: row.date_mode ?? 'CONTINUO',
+      specificDates: Array.isArray(row.specific_dates) ? row.specific_dates : undefined,
       status: (row.status ?? 'NOVA') as DemandStatus,
       startDate: row.start_date ?? '',
       endDate: row.end_date ?? '',
@@ -834,6 +837,10 @@ const syncCompanionAllocationsFromDb = useCallback(async () => {
     region_id: cleanOrNull(d.regionId),
     training_local: cleanOrNull(d.trainingLocal),
     modality: cleanOrNull(d.modality),
+    date_mode: d.dateMode || 'CONTINUO',
+    specific_dates: d.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(d.specificDates) && d.specificDates.length > 0
+      ? d.specificDates
+      : null,
     status: cleanOrNull(d.status),
     start_date: cleanOrNull(d.startDate),
     end_date: cleanOrNull(d.endDate),
@@ -2421,9 +2428,22 @@ const hasScheduleConflict = useCallback(
       const hasExplicitAllocation = instructorAllocations.some(a => a.demandId === d.id);
       if (hasExplicitAllocation) return false;
 
-      const eff = getEffectiveDemandRange(d);
+      // ✅ DIAS ESPECÍFICOS: verificar conflito dia-a-dia
+      if (d.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(d.specificDates) && d.specificDates.length > 0) {
+        // Gera os dias do request e verifica interseção
+        const reqDays = new Set<string>();
+        const c = toDayStart(reqStart);
+        const e = toDayStart(reqEnd);
+        if (c && e) {
+          while (c <= e) {
+            reqDays.add(toDateOnly(c.toISOString()));
+            c.setDate(c.getDate() + 1);
+          }
+        }
+        return d.specificDates.some(sd => reqDays.has(sd));
+      }
 
-      // ✅ conflito por DIA
+      const eff = getEffectiveDemandRange(d);
       return overlapsByDay(reqStart, reqEnd, eff.start, eff.end);
     });
 
@@ -2434,7 +2454,22 @@ const hasScheduleConflict = useCallback(
       if (excludeAllocationId && a.id === excludeAllocationId) return false;
       if (a.instructorId !== instructorId) return false;
 
-      // ✅ conflito por DIA
+      // ✅ DIAS ESPECÍFICOS: verificar conflito apenas nos dias reais da demanda
+      const allocDemand = demands.find(dm => dm.id === a.demandId);
+      if (allocDemand && allocDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(allocDemand.specificDates) && allocDemand.specificDates.length > 0) {
+        const reqDays = new Set<string>();
+        const c = toDayStart(reqStart);
+        const e = toDayStart(reqEnd);
+        if (c && e) {
+          while (c <= e) {
+            reqDays.add(toDateOnly(c.toISOString()));
+            c.setDate(c.getDate() + 1);
+          }
+        }
+        return allocDemand.specificDates.some(sd => reqDays.has(sd));
+      }
+
+      // ✅ conflito por DIA (CONTÍNUO)
       return overlapsByDay(reqStart, reqEnd, a.startDate, a.endDate);
     });
 

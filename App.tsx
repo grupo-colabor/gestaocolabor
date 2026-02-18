@@ -117,6 +117,16 @@ import { useRealtimeSync } from './hooks/useRealtimeSync';
    CONTEXT
 ====================================================== */
 
+type View =
+  | 'dashboard'
+  | 'demands'
+  | 'calendar'
+  | 'registrations'
+  | 'logistics'
+  | 'logistics-control'
+  | 'measurement'
+  | 'evidences';
+
 interface AppState {
   companies: Company[];
   regions: Region[];
@@ -220,6 +230,12 @@ interface AppState {
     practiceStartDate: string,
     practiceEndDate: string
   ) => boolean;
+
+  // Cross-view: navegação + drawer de alocação na agenda
+  currentView: View;
+  setCurrentView: (v: View) => void;
+  calendarDrawerDemandId: string | null;
+  setCalendarDrawerDemandId: (id: string | null) => void;
 }
 
 const getDefaultViewForRole = (role?: string | null) => {
@@ -249,6 +265,10 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   message: string;
   type: 'info' | 'success' | 'error';
 } | null>(null);
+
+  // Cross-view: navegação + drawer de alocação na agenda
+  const [currentView, setCurrentView] = useState<View>('dashboard');
+  const [calendarDrawerDemandId, setCalendarDrawerDemandId] = useState<string | null>(null);
 
   const { user, loading } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -820,6 +840,7 @@ const syncCompanionAllocationsFromDb = useCallback(async () => {
       approver: row.approver ?? undefined,
       analyst: row.analyst ?? undefined,
       matriculador: row.matriculador ?? undefined,
+      confirmationStatus: (row.confirmation_status || undefined) as 'CONFIRMADO' | 'A_CONFIRMAR' | undefined,
     } as Demand;
   }, []);
 
@@ -855,6 +876,7 @@ const syncCompanionAllocationsFromDb = useCallback(async () => {
     approver: cleanOrNull((d as any).approver),
     analyst: cleanOrNull((d as any).analyst),
     matriculador: cleanOrNull((d as any).matriculador),
+    confirmation_status: cleanOrNull((d as any).confirmationStatus),
   };
 
   if (extra?.id) payload.id = extra.id;
@@ -1416,11 +1438,17 @@ const addDemand = useCallback(
       (async () => {
         try {
           const merged = sanitizeHybridPracticePeriod(d);
+
+          // ✅ Atualiza state local imediatamente para refletir na UI sem aguardar o banco
+          setDemands(prev => prev.map(item => item.id !== merged.id ? item : merged));
+
           const payload = mapDemandToDb(merged);
 
           const { error } = await updateDemandById(merged.id, payload);
           if (error) {
             console.error('Erro update demand:', error);
+            // Reverte o state local em caso de erro no banco
+            setDemands(prev => prev.map(item => item.id !== merged.id ? item : d));
             setNotification({
               message: `Erro ao atualizar demanda: ${error.message}`,
               type: 'error'
@@ -1428,7 +1456,6 @@ const addDemand = useCallback(
             return;
           }
 
-          await syncDemandsFromDb();
           setNotification({ message: 'Demanda atualizada com sucesso.', type: 'success' });
         } catch (e) {
           console.error('Erro ao atualizar demanda:', e);
@@ -2676,7 +2703,11 @@ const hasScheduleConflict = useCallback(
       deallocateInstructor,
       hasScheduleConflict,
       hasResourceConflict,
-      isCompanyFullLogistics
+      isCompanyFullLogistics,
+      currentView,
+      setCurrentView,
+      calendarDrawerDemandId,
+      setCalendarDrawerDemandId
     }),
     [
       companies,
@@ -2728,6 +2759,8 @@ const hasScheduleConflict = useCallback(
       companionAllocations,
       operationalBases,
       setOperationalBases,
+      currentView,
+      calendarDrawerDemandId,
     ]
   );
 
@@ -2737,16 +2770,6 @@ const hasScheduleConflict = useCallback(
 /* ======================================================
    APP LAYOUT
 ====================================================== */
-
-type View =
-  | 'dashboard'
-  | 'demands'
-  | 'calendar'
-  | 'registrations'
-  | 'logistics'
-  | 'logistics-control'
-  | 'measurement'
-  | 'evidences';
 
 type Action =
   | 'create_demand'
@@ -2824,9 +2847,8 @@ const canAccessView = (role: string | undefined, view: View) => {
 };
 
 const App: React.FC = () => {
-  const [currentView, setCurrentView] = useState<View>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const { notification, setNotification } = useApp();
+  const { notification, setNotification, currentView, setCurrentView } = useApp();
   const { user, profile, initializing, loading, signOut } = useAuth();
 
 

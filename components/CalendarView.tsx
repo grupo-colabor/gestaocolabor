@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../App';
 import {
@@ -15,13 +15,15 @@ import {
   GraduationCap,
   Tag,
   MapPin,
-  MessageSquare
+  MessageSquare,
+  UserPlus
 } from 'lucide-react';
 import { AgendaItem, AgendaType, Demand, Instructor } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDemandLabel } from '../domain/demandStatus';
 import { isDemandDay } from '../domain/demandDays';
+import AllocationDrawer, { type DrawerState, type AllocationPreview } from './AllocationDrawer';
 
 // Configuração visual para cada tipo de compromisso
 const AGENDA_STYLING: Record<string, { bg: string; text: string; border: string }> = {
@@ -184,6 +186,8 @@ const CalendarView: React.FC = () => {
     setNotification,
    operationalBases,
    updateInstructorCurrentLocation,
+   calendarDrawerDemandId,
+   setCalendarDrawerDemandId,
   } = useApp();
 
   const { profile } = useAuth();
@@ -192,7 +196,13 @@ const CalendarView: React.FC = () => {
   const [mobileResourceEvents, setMobileResourceEvents] = useState<MobileResourceEvent[]>([]);
   const [activeMobileEvent, setActiveMobileEvent] = useState<MobileResourceEvent | null>(null);
   const [isMobileContext, setIsMobileContext] = useState(false);
-  
+
+  // ===== ALLOCATION DRAWER STATE =====
+  const [allocationMode, setAllocationMode] = useState(false);
+  const [drawerState, setDrawerState] = useState<DrawerState>('closed');
+  const [drawerSelectedDemandId, setDrawerSelectedDemandId] = useState<string | null>(null);
+  const [previewItems, setPreviewItems] = useState<AllocationPreview[]>([]);
+  const [drawerCompanionMode, setDrawerCompanionMode] = useState(false);
 
   const [currentDate, setCurrentDate] = useState<Date>(() => {
     const now = new Date();
@@ -808,6 +818,50 @@ companionAllocations.forEach(ca => {
     }
   };
 
+  // ===== AUTO-NAVEGAÇÃO PARA DEMANDA (Drawer) =====
+  const handleNavigateToDemandDates = useCallback((demand: Demand) => {
+    const startKey = demand.startDate.split('T')[0];
+    const demandStart = parseLocalDateOnly(startKey);
+    const dayOfWeek = demandStart.getDay();
+    const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const monday = new Date(demandStart);
+    monday.setDate(demandStart.getDate() + diffToMonday);
+    setCurrentDate(monday);
+    setFilterDateFrom('');
+    setFilterDateTo('');
+    setViewMode('week');
+  }, []);
+
+  // ===== EFEITO CROSS-VIEW (vindo do Logistics) =====
+  useEffect(() => {
+    if (calendarDrawerDemandId) {
+      const demand = demands.find(d => d.id === calendarDrawerDemandId);
+      if (demand) {
+        setAllocationMode(true);
+        setDrawerSelectedDemandId(demand.id);
+        setDrawerState('collapsed');
+        handleNavigateToDemandDates(demand);
+      }
+      setCalendarDrawerDemandId(null);
+    }
+  }, [calendarDrawerDemandId, demands, setCalendarDrawerDemandId, handleNavigateToDemandDates]);
+
+  // Função para entrar/sair do modo alocação
+  const toggleAllocationMode = useCallback(() => {
+    if (allocationMode) {
+      // Saindo: fecha drawer, limpa previews
+      setAllocationMode(false);
+      setDrawerState('closed');
+      setPreviewItems([]);
+      setDrawerSelectedDemandId(null);
+      setDrawerCompanionMode(false);
+    } else {
+      // Entrando: ativa fullscreen + abre drawer
+      setAllocationMode(true);
+      setDrawerState('expanded');
+    }
+  }, [allocationMode]);
+
 const handleSaveManual = async () => {
   if (!selectedSlot) return;
 
@@ -940,13 +994,55 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 no-print">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Agenda de Instrutores</h1>
-          <p className="text-sm text-gray-500">Suporte a múltiplos instrutores e controle de alocação por períodos.</p>
+    <div className={`${
+      allocationMode
+        ? 'fixed inset-0 z-[95] bg-[#F8FAFC] flex flex-col overflow-hidden'
+        : 'space-y-6'
+    }`}>
+      {/* ===== HEADER BAR ===== */}
+      <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 no-print ${
+        allocationMode ? 'px-4 pt-3 pb-2 bg-white border-b border-slate-200 shadow-sm shrink-0' : ''
+      }`}>
+        <div className="flex items-center gap-4">
+          {allocationMode && (
+            <button
+              onClick={toggleAllocationMode}
+              className="p-2 hover:bg-slate-100 rounded-xl text-slate-500 transition"
+              title="Voltar à agenda normal"
+            >
+              <ChevronLeft size={20} />
+            </button>
+          )}
+          <div>
+            <h1 className={`font-bold text-gray-800 ${allocationMode ? 'text-lg' : 'text-2xl'}`}>
+              {allocationMode ? 'Alocação Inteligente' : 'Agenda de Instrutores'}
+            </h1>
+            {!allocationMode && (
+              <p className="text-sm text-gray-500">Suporte a múltiplos instrutores e controle de alocação por períodos.</p>
+            )}
+          </div>
         </div>
-        <div className="flex items-center space-x-1 bg-white rounded-xl p-1 border border-gray-200 shadow-sm relative">
+        <div className="flex items-center gap-3">
+          {/* Botão Alocar Instrutor */}
+          {!isCoordinator && (
+            <button
+              onClick={toggleAllocationMode}
+              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm flex items-center gap-1.5 ${
+                allocationMode
+                  ? 'bg-red-500 text-white hover:bg-red-600'
+                  : 'bg-slate-900 text-white hover:bg-blue-600'
+              }`}
+            >
+              {allocationMode ? (
+                <><X size={14} /> SAIR DA ALOCAÇÃO</>
+              ) : (
+                <><UserPlus size={14} /> ALOCAR INSTRUTOR</>
+              )}
+            </button>
+          )}
+
+          {/* Navegação de semanas */}
+          <div className="flex items-center space-x-1 bg-white rounded-xl p-1 border border-gray-200 shadow-sm relative">
           <button onClick={handlePrev} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition">
             <ChevronLeft size={18} />
           </button>
@@ -1002,11 +1098,13 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
             </div>
           )}
         </div>
+        </div>{/* fecha flex items-center gap-3 */}
       </div>
 
     {/* =========================
-    FILTER BAR
+    FILTER BAR (oculto em modo alocação)
    ========================= */}
+{!allocationMode && (
 <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 no-print">
   <div className="flex flex-col gap-3">
 
@@ -1199,10 +1297,17 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
     )}
   </div>
 </div>
+)}
 
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+      <div className={`bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden ${
+        allocationMode ? 'flex-1 min-h-0' : ''
+      }`}>
         {/* Container com scroll horizontal E vertical - max-height para ativar sticky */}
-        <div className="overflow-auto max-h-[calc(100vh-280px)]">
+        <div className={`overflow-auto transition-all duration-300 ${
+          allocationMode
+            ? 'max-h-[calc(100vh-60px)]'
+            : 'max-h-[calc(100vh-280px)]'
+        }`}>
           <table className="min-w-max w-full text-sm border-separate border-spacing-0">
             {/* ✅ STICKY HEADER - fica fixo no topo durante scroll vertical */}
             <thead className="sticky top-0 z-[60]">
@@ -1370,13 +1475,19 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                       }
                       const cellItem = item && !shouldHideCard ? { type: 'INSTRUCTOR_EVENT', data: item } : null;
 
+                      // ===== PREVIEW CHECK =====
+                      const cellPreviews = previewItems.filter(p =>
+                        p.instructorId === instructor.id &&
+                        p.days.includes(formatDateKey(day))
+                      );
+
                       return (
                     <td
                       key={dateKey}
                       onClick={() => handleCellClick(instructor, day)}
                       onDragOver={e => e.preventDefault()}
                       onDrop={e => handleDrop(e, instructor.id)}
-                    className={`p-1 border-r border-b border-gray-100 h-16 cursor-pointer transition-all ${
+                    className={`p-1 border-r border-b border-gray-100 h-16 cursor-pointer transition-all relative ${
                       day.getDay() % 6 === 0 ? 'bg-slate-50/50' : ''
                     }`}
 
@@ -1399,9 +1510,24 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                           anyData?.allocationType === 'COMPANION' ||
                           anyData?.source === 'COMPANION';
 
-                        const baseBg = AGENDA_STYLING[cellItem.data.type]?.bg || 'bg-gray-100';
-                        const baseText = AGENDA_STYLING[cellItem.data.type]?.text || 'text-gray-600';
-                        const baseBorder = AGENDA_STYLING[cellItem.data.type]?.border || 'border-gray-200';
+                        // ✅ Verifica confirmationStatus da demanda vinculada
+                        const linkedDemandId = anyData?.demandId || anyData?.id;
+                        const linkedDemand = linkedDemandId ? demands.find((d: any) => d.id === linkedDemandId) : null;
+                        const isAConfirmar =
+                          !isCompanion &&
+                          cellItem.data.type === 'TREINAMENTO' &&
+                          linkedDemand?.confirmationStatus === 'A_CONFIRMAR';
+
+                        let baseBg = AGENDA_STYLING[cellItem.data.type]?.bg || 'bg-gray-100';
+                        let baseText = AGENDA_STYLING[cellItem.data.type]?.text || 'text-gray-600';
+                        let baseBorder = AGENDA_STYLING[cellItem.data.type]?.border || 'border-gray-200';
+
+                        // 🟡 A Confirmar: sobrescreve para amarelo
+                        if (isAConfirmar) {
+                          baseBg = 'bg-amber-400';
+                          baseText = 'text-amber-900';
+                          baseBorder = 'border-amber-500';
+                        }
 
                         // ✅ Companion: força VERDE
                         const companionBg = 'bg-emerald-600';
@@ -1538,6 +1664,40 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                     </div>
                   )}
 
+                  {/* ===== PREVIEW OVERLAY ===== */}
+                  {cellPreviews.length > 0 && (
+                    <div className={`absolute inset-0 p-0.5 flex flex-col gap-0.5 z-10 ${cellItem ? '' : ''}`}>
+                      {cellPreviews.map(preview => (
+                        <div
+                          key={preview.id}
+                          className={`w-full flex-1 rounded-lg border-2 border-dashed p-0.5 flex flex-col items-center justify-center text-center overflow-hidden transition-all ${
+                            preview.hasConflict
+                              ? 'bg-red-500/25 border-red-400 text-red-800'
+                              : preview.isException
+                              ? 'bg-amber-500/25 border-amber-400 text-amber-800'
+                              : 'bg-emerald-500/25 border-emerald-400 text-emerald-800'
+                          }`}
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <span className="text-[8px] font-black uppercase tracking-tighter line-clamp-1 leading-none">
+                            {preview.instructorName.split(' ')[0]}
+                          </span>
+                          <span className="text-[6px] font-bold uppercase opacity-70 leading-none mt-0.5">
+                            {preview.isCompanion ? 'ACOMP.' : 'PREVIEW'}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPreviewItems(prev => prev.filter(p => p.id !== preview.id));
+                            }}
+                            className="absolute top-0 right-0 w-3.5 h-3.5 rounded-full bg-black/20 hover:bg-black/40 text-white flex items-center justify-center text-[8px] font-black leading-none"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                     </td>
 
@@ -1618,6 +1778,19 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
           </table>
         </div>
       </div>
+
+      {/* ===== ALLOCATION DRAWER ===== */}
+      <AllocationDrawer
+        drawerState={drawerState}
+        setDrawerState={setDrawerState}
+        selectedDemandId={drawerSelectedDemandId}
+        setSelectedDemandId={setDrawerSelectedDemandId}
+        previewItems={previewItems}
+        setPreviewItems={setPreviewItems}
+        onNavigateToDate={handleNavigateToDemandDates}
+        companionMode={drawerCompanionMode}
+        setCompanionMode={setDrawerCompanionMode}
+      />
 
       {/* MODAL EVENTO LOCAL CTM */}
       {activeMobileEvent && createPortal(
@@ -1722,33 +1895,70 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                 const company = companies.find(c => c.id === linkedDemand.companyId);
                 const training = trainings.find(t => t.id === linkedDemand.trainingId);
 
-                return (
-                  <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 space-y-2 mb-2">
-                    <div className="flex items-center gap-2">
-                      <Tag size={14} className="text-blue-500" />
-                      <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest">
-                        DEMANDA: #{linkedDemand.id}
-                      </span>
-                    </div>
+                const confirmStatus = linkedDemand.confirmationStatus ?? 'CONFIRMADO';
 
-                    {/* ✅ ID do Cliente (SAP / Pedido / ID interno) */}
-                    {linkedDemand.clientDemandId && (
+                return (
+                  <div className="space-y-2 mb-2">
+                    {/* Bloco azul com info da demanda */}
+                    <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 space-y-2">
                       <div className="flex items-center gap-2">
-                        <Tag size={14} className="text-blue-400" />
-                        <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest">
-                          ID: {linkedDemand.clientDemandId}
+                        <Tag size={14} className="text-blue-500" />
+                        <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest">
+                          DEMANDA: #{linkedDemand.id}
                         </span>
                       </div>
-                    )}
 
-                    <div className="flex items-center gap-2">
-                      <Building size={14} className="text-blue-400" />
-                      <span className="text-xs font-bold text-slate-700">{company?.name || '---'}</span>
+                      {linkedDemand.clientDemandId && (
+                        <div className="flex items-center gap-2">
+                          <Tag size={14} className="text-blue-400" />
+                          <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest">
+                            ID: {linkedDemand.clientDemandId}
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-2">
+                        <Building size={14} className="text-blue-400" />
+                        <span className="text-xs font-bold text-slate-700">{company?.name || '---'}</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <GraduationCap size={14} className="text-blue-400" />
+                        <span className="text-xs font-medium text-slate-600">{training?.name || '---'}</span>
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <GraduationCap size={14} className="text-blue-400" />
-                      <span className="text-xs font-medium text-slate-600">{training?.name || '---'}</span>
+                    {/* ✅ SELETOR DE STATUS DE CONFIRMAÇÃO */}
+                    <div className="rounded-2xl border border-slate-200 overflow-hidden">
+                      <div className="px-4 pt-2.5 pb-1.5 bg-slate-50 border-b border-slate-100">
+                        <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                          STATUS DA DEMANDA
+                        </label>
+                      </div>
+                      <div className="flex">
+                        <button
+                          onClick={() => updateDemand({ ...linkedDemand, confirmationStatus: 'A_CONFIRMAR' })}
+                          className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-[11px] font-black uppercase tracking-wider transition-all border-r ${
+                            confirmStatus === 'A_CONFIRMAR'
+                              ? 'bg-amber-400 text-amber-900 border-amber-500'
+                              : 'bg-white text-slate-400 border-slate-100 hover:bg-amber-50 hover:text-amber-700'
+                          }`}
+                        >
+                          <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                          A Confirmar
+                        </button>
+                        <button
+                          onClick={() => updateDemand({ ...linkedDemand, confirmationStatus: 'CONFIRMADO' })}
+                          className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-[11px] font-black uppercase tracking-wider transition-all ${
+                            confirmStatus === 'CONFIRMADO'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white text-slate-400 hover:bg-blue-50 hover:text-blue-700'
+                          }`}
+                        >
+                          <span className="w-2 h-2 rounded-full bg-blue-600 shrink-0" />
+                          Confirmado
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );

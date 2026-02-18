@@ -38,6 +38,7 @@ export type DemandRow = {
   approver: string | null;
   analyst: string | null;
   matriculador: string | null;
+  confirmation_status: string | null;
 };
 
 /**
@@ -55,7 +56,8 @@ export async function fetchDemands(): Promise<DemandRow[]> {
       client_demand_id,
       instructor_id,
       requester, observations, approver, analyst, matriculador,
-      created_at, updated_at, corredor, demand_state
+      created_at, updated_at, corredor, demand_state,
+      confirmation_status
     `)
     .order('number', { ascending: false });
 

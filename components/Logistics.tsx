@@ -38,7 +38,9 @@ const Logistics: React.FC = () => {
     removeCompanionAllocation,
     updateDemand,
     setHybridPracticePeriod,
-    setNotification
+    setNotification,
+    setCalendarDrawerDemandId,
+    setCurrentView,
   } = useApp();
 
 
@@ -437,9 +439,20 @@ const handleSaveCompanionDays = () => {
           <h1 className="text-2xl font-bold text-slate-800">Orquestração Logística</h1>
           <p className="text-sm text-slate-500">Alocação inteligente baseada em disponibilidade e qualificação técnica.</p>
         </div>
-        <div className="bg-blue-50 text-blue-700 px-4 py-2 rounded-lg border border-blue-100 flex items-center text-sm font-semibold">
-          <Briefcase size={16} className="mr-2" />
-          {unallocatedDemands.length} Demandas Pendentes
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              if (selectedDemandId) setCalendarDrawerDemandId(selectedDemandId);
+              setCurrentView('calendar');
+            }}
+            className="px-4 py-2 bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-blue-600 transition-all shadow-md flex items-center gap-2"
+          >
+            <CalendarIcon size={14} /> Ver na Agenda
+          </button>
+          <div className="bg-blue-50 text-blue-700 px-4 py-2 rounded-lg border border-blue-100 flex items-center text-sm font-semibold">
+            <Briefcase size={16} className="mr-2" />
+            {unallocatedDemands.length} Demandas Pendentes
+          </div>
         </div>
       </div>
 

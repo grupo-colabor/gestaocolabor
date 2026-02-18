@@ -215,6 +215,9 @@ export interface Demand {
     instructorReleasePdf?: { name: string; base64: string };
   };
 
+  // Status de confirmação visual na agenda
+  confirmationStatus?: 'CONFIRMADO' | 'A_CONFIRMAR';
+
   // Legado / Outros
   corredor?: string;
   localizador?: string;

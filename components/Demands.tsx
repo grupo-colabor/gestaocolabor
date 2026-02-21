@@ -621,6 +621,26 @@ useEffect(() => {
       if (error) throw error;
       if (!data) return;
 
+      // Converte ISO UTC (ex: "2026-02-21T03:00:00+00:00") para "YYYY-MM-DDTHH:mm" no fuso local
+      // Necessário para que o input datetime-local exiba corretamente e o formatDateTime mostre a hora certa
+      const isoToLocalDTL = (iso: string | null | undefined): string | undefined => {
+        if (!iso) return undefined;
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return undefined;
+        const p = (n: number) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+      };
+
+      // Extrai apenas a parte "YYYY-MM-DD" de qualquer string ISO, sem conversão de fuso
+      // Necessário para que o input date exiba e salve corretamente a data de hotel
+      const isoToDateOnly = (iso: string | null | undefined): string | undefined => {
+        if (!iso) return undefined;
+        const s = String(iso).trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        if (s.includes('T')) return s.split('T')[0];
+        return undefined;
+      };
+
       // joga os campos do banco no formDemand (sem quebrar o que já está)
       setFormDemand(prev => ({
         ...prev,
@@ -663,14 +683,17 @@ useEffect(() => {
         rentalAgencyLocation: data.rental_agency_location ?? prev.rentalAgencyLocation,
         rentalLocator: data.rental_locator ?? prev.rentalLocator,
         carCategory: data.car_category ?? prev.carCategory,
-        rentalCheckIn: data.rental_check_in ?? prev.rentalCheckIn,
-        rentalCheckOut: data.rental_check_out ?? prev.rentalCheckOut,
+        // Bug fix: converte UTC para fuso local antes de guardar no estado
+        // Evita +3h no display e input datetime-local vazio ao editar
+        rentalCheckIn: isoToLocalDTL(data.rental_check_in) ?? prev.rentalCheckIn,
+        rentalCheckOut: isoToLocalDTL(data.rental_check_out) ?? prev.rentalCheckOut,
 
         // hotel
         hotelCity: data.hotel_city ?? prev.hotelCity,
         hotelName: data.hotel_name ?? prev.hotelName,
-        hotelCheckIn: data.hotel_check_in ?? prev.hotelCheckIn,
-        hotelCheckOut: data.hotel_check_out ?? prev.hotelCheckOut,
+        // Bug fix: extrai só YYYY-MM-DD para que o input date exiba e salve corretamente
+        hotelCheckIn: isoToDateOnly(data.hotel_check_in) ?? prev.hotelCheckIn,
+        hotelCheckOut: isoToDateOnly(data.hotel_check_out) ?? prev.hotelCheckOut,
         hotelPayment: data.hotel_payment ?? prev.hotelPayment,
       }));
     } catch (e) {

@@ -197,6 +197,7 @@ interface AppState {
   recommendInstructors: (demand: Demand) => {
     suggested: (Instructor & { score: number })[];
     exceptions: (Instructor & { score: number })[];
+    alreadyAllocated: (Instructor & { score: number })[];
   };
   allocateInstructor: (
     demandId: string,
@@ -2548,12 +2549,94 @@ const hasScheduleConflict = useCallback(
     (demand: Demand) => {
       const effective = getEffectiveDemandRange(demand);
 
+      // Helper local: normaliza para 'YYYY-MM-DD'
+      const toDateOnly = (v?: string) => {
+        if (!v) return '';
+        return v.includes('T') ? v.split('T')[0] : v;
+      };
+      const toDayStart = (v?: string) => {
+        const d = toDateOnly(v);
+        if (!d) return null;
+        return new Date(`${d}T00:00:00`);
+      };
+      const toDayEnd = (v?: string) => {
+        const d = toDateOnly(v);
+        if (!d) return null;
+        return new Date(`${d}T23:59:59`);
+      };
+      const overlapsByDay = (aStart?: string, aEnd?: string, bStart?: string, bEnd?: string) => {
+        const as = toDayStart(aStart);
+        const ae = toDayEnd(aEnd);
+        const bs = toDayStart(bStart);
+        const be = toDayEnd(bEnd);
+        if (!as || !ae || !bs || !be) return false;
+        return as <= be && ae >= bs;
+      };
+
+      const reqStart = toDateOnly(effective.start);
+      const reqEnd = toDateOnly(effective.end);
+
+      // Verifica conflito de ALOCAÇÃO (demandas + instructorAllocations), sem agenda
+      const hasAllocationConflict = (instructorId: string): boolean => {
+        // 1) Conflito com demandas
+        const demandConflict = demands.some((d: Demand) => {
+          if (d.id === demand.id) return false;
+          if (d.instructorId !== instructorId) return false;
+          if (d.status === 'CANCELADA') return false;
+          const hasExplicit = instructorAllocations.some((a: InstructorAllocation) => a.demandId === d.id);
+          if (hasExplicit) return false;
+          if (d.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(d.specificDates) && d.specificDates.length > 0) {
+            const reqDays = new Set<string>();
+            const c = toDayStart(reqStart);
+            const e = toDayStart(reqEnd);
+            if (c && e) {
+              while (c <= e) { reqDays.add(toDateOnly(c.toISOString())); c.setDate(c.getDate() + 1); }
+            }
+            return d.specificDates.some((sd: string) => reqDays.has(sd));
+          }
+          const eff = getEffectiveDemandRange(d);
+          return overlapsByDay(reqStart, reqEnd, eff.start, eff.end);
+        });
+        if (demandConflict) return true;
+        // 2) Conflito com alocações explícitas
+        return instructorAllocations.some((a: InstructorAllocation) => {
+          if (a.instructorId !== instructorId) return false;
+          const allocDemand = demands.find((dm: Demand) => dm.id === a.demandId);
+          if (allocDemand?.id === demand.id) return false;
+          if (allocDemand && allocDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(allocDemand.specificDates) && allocDemand.specificDates.length > 0) {
+            const reqDays = new Set<string>();
+            const c = toDayStart(reqStart);
+            const e = toDayStart(reqEnd);
+            if (c && e) {
+              while (c <= e) { reqDays.add(toDateOnly(c.toISOString())); c.setDate(c.getDate() + 1); }
+            }
+            return allocDemand.specificDates.some((sd: string) => reqDays.has(sd));
+          }
+          return overlapsByDay(reqStart, reqEnd, a.startDate, a.endDate);
+        });
+      };
+
       const activeCapableInstructors = instructors
         .filter(
           i =>
             i.status === 'ATIVO' &&
             i.skills?.some(s => s.trainingId === demand.trainingId) &&
             !hasScheduleConflict(i.id, effective.start, effective.end, demand.id)
+        )
+        .map(i => {
+          const skill = i.skills?.find(s => s.trainingId === demand.trainingId);
+          return { ...i, score: skill?.level ?? 0 };
+        })
+        .sort((a, b) => b.score - a.score);
+
+      // Instrutores com conflito de alocação (mas não de agenda) — terceira seção
+      const alreadyAllocated = instructors
+        .filter(
+          i =>
+            i.status === 'ATIVO' &&
+            i.skills?.some(s => s.trainingId === demand.trainingId) &&
+            hasScheduleConflict(i.id, effective.start, effective.end, demand.id) &&
+            hasAllocationConflict(i.id)
         )
         .map(i => {
           const skill = i.skills?.find(s => s.trainingId === demand.trainingId);
@@ -2573,10 +2656,11 @@ const hasScheduleConflict = useCallback(
             demand.regionId &&
             demand.trainingLocal !== 'N/A' &&
             !i.regionIds?.includes(demand.regionId)
-        )
+        ),
+        alreadyAllocated,
       };
     },
-    [instructors, hasScheduleConflict, getEffectiveDemandRange]
+    [instructors, hasScheduleConflict, getEffectiveDemandRange, demands, instructorAllocations]
   );
 
   const allocateInstructor = useCallback(

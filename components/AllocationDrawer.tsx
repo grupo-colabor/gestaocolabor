@@ -112,6 +112,9 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
   // Hybrid practice form
   const [hybridForm, setHybridForm] = useState({ practiceStartDate: '', practiceEndDate: '' });
 
+  // Modal de confirmação para alocar instrutor já alocado no dia
+  const [pendingForceAlloc, setPendingForceAlloc] = useState<(Instructor & { score: number }) | null>(null);
+
   // Drag-to-move state
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
@@ -193,7 +196,7 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
   );
 
   const recommendation = useMemo(() => {
-    if (!selectedDemand) return { suggested: [], exceptions: [] };
+    if (!selectedDemand) return { suggested: [], exceptions: [], alreadyAllocated: [] };
     return recommendInstructors(selectedDemand);
   }, [selectedDemand, recommendInstructors]);
 
@@ -337,6 +340,16 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
       }
     }
   }, [selectedDemand, companionMode, allocateInstructor, addCompanionAllocation, setNotification, setPreviewItems]);
+
+  const handleAllocateAnyway = useCallback((instructor: Instructor & { score: number }) => {
+    setPendingForceAlloc(instructor);
+  }, []);
+
+  const handleConfirmForceAlloc = useCallback(() => {
+    if (!pendingForceAlloc) return;
+    handleAllocateDirect(pendingForceAlloc);
+    setPendingForceAlloc(null);
+  }, [pendingForceAlloc, handleAllocateDirect]);
 
   const handleConfirmPreview = useCallback((preview: AllocationPreview) => {
     if (preview.isCompanion) {
@@ -787,7 +800,30 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
                 </div>
               )}
 
-              {recommendation.suggested.length === 0 && recommendation.exceptions.length === 0 && (
+              {/* Já alocados neste dia */}
+              {recommendation.alreadyAllocated.length > 0 && (
+                <div className="mt-2">
+                  <div className="relative mb-2">
+                    <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-amber-200" /></div>
+                    <div className="relative flex justify-center">
+                      <span className="bg-white px-2 text-[9px] font-black text-amber-600 uppercase flex items-center gap-1">
+                        <AlertTriangle size={9} className="text-amber-500" /> Já alocados neste dia ({recommendation.alreadyAllocated.length})
+                      </span>
+                    </div>
+                  </div>
+                  {recommendation.alreadyAllocated.map((inst: Instructor & { score: number }) => (
+                    <InstructorCard key={inst.id} instructor={inst} isException={false} isAlreadyAllocated={true}
+                      selectedDemand={selectedDemand} companionMode={companionMode} previewItems={previewItems}
+                      onPreview={() => {}}
+                      onAllocate={() => handleAllocateAnyway(inst)}
+                      onCompanionDays={() => { setPendingCompanionInstructorId(inst.id); setCompanionSelectedDays([]); }}
+                      hasScheduleConflict={hasScheduleConflict}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {recommendation.suggested.length === 0 && recommendation.exceptions.length === 0 && recommendation.alreadyAllocated.length === 0 && (
                 <div className="flex flex-col items-center p-6 text-center text-slate-400">
                   <Info size={28} className="mb-2 opacity-30" />
                   <p className="text-xs font-bold">Nenhum instrutor disponível.</p>
@@ -800,7 +836,41 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
     </div>
   );
 
-  return createPortal(panelJSX, document.body);
+  const modalJSX = pendingForceAlloc && selectedDemand ? (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999]">
+      <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm mx-4 w-full">
+        <div className="flex items-start gap-3 mb-5">
+          <AlertTriangle className="text-amber-500 mt-0.5 shrink-0" size={20} />
+          <p className="text-sm text-slate-700 leading-relaxed">
+            <span className="font-bold">{pendingForceAlloc.name}</span> já possui um
+            treinamento alocado no período de{' '}
+            <span className="font-bold">{formatDateBR(selectedDemand.startDate)}</span>
+            {selectedDemand.startDate.split('T')[0] !== selectedDemand.endDate.split('T')[0] && (
+              <> a <span className="font-bold">{formatDateBR(selectedDemand.endDate)}</span></>
+            )}.
+            {' '}Deseja realmente alocar mais um treinamento para ele?
+          </p>
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button onClick={() => setPendingForceAlloc(null)}
+            className="px-4 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition">
+            Cancelar
+          </button>
+          <button onClick={handleConfirmForceAlloc}
+            className="px-4 py-2 text-xs font-bold text-amber-700 border border-amber-400 rounded-lg hover:bg-amber-50 transition">
+            Confirmar mesmo assim
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  return (
+    <>
+      {createPortal(panelJSX, document.body)}
+      {modalJSX && createPortal(modalJSX, document.body)}
+    </>
+  );
 };
 
 /* ======================================================
@@ -810,6 +880,7 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
 const InstructorCard: React.FC<{
   instructor: Instructor & { score: number };
   isException: boolean;
+  isAlreadyAllocated?: boolean;
   selectedDemand: Demand;
   companionMode: boolean;
   previewItems: AllocationPreview[];
@@ -817,18 +888,20 @@ const InstructorCard: React.FC<{
   onAllocate: () => void;
   onCompanionDays: () => void;
   hasScheduleConflict: (id: string, s: string, e: string, ex?: string) => boolean;
-}> = ({ instructor, isException, selectedDemand, companionMode, previewItems, onPreview, onAllocate, onCompanionDays, hasScheduleConflict }) => {
+}> = ({ instructor, isException, isAlreadyAllocated, selectedDemand, companionMode, previewItems, onPreview, onAllocate, onCompanionDays, hasScheduleConflict }) => {
   const hasPreview = previewItems.some(p => p.instructorId === instructor.id && p.demandId === selectedDemand.id);
   const hasConflict = hasScheduleConflict(instructor.id, selectedDemand.startDate, selectedDemand.endDate, selectedDemand.id);
 
   return (
     <div className={`p-2.5 rounded-xl border transition-all flex items-center justify-between gap-2 mb-1.5 ${
+      isAlreadyAllocated ? 'border-amber-300 bg-amber-50/40 hover:border-amber-400' :
       hasConflict ? 'border-red-200 bg-red-50/30' :
       isException ? 'border-amber-200 bg-amber-50/30 hover:border-amber-300' :
       'border-slate-200 bg-white hover:border-blue-300'
     }`}>
       <div className="flex items-center gap-2.5 min-w-0">
         <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs border shadow-sm shrink-0 ${
+          isAlreadyAllocated ? 'bg-amber-100 text-amber-700 border-amber-300' :
           hasConflict ? 'bg-red-100 text-red-600 border-red-200' :
           isException ? 'bg-amber-50 text-amber-600 border-amber-200' :
           'bg-blue-100 text-blue-600 border-blue-200'
@@ -838,16 +911,24 @@ const InstructorCard: React.FC<{
         <div className="min-w-0">
           <p className="text-[11px] font-bold text-slate-800 truncate">{instructor.name}</p>
           <div className="flex items-center gap-1 mt-0.5">
-            <span className={`text-[8px] font-black uppercase px-1 py-0.5 rounded border ${
-              isException ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-blue-50 text-blue-700 border-blue-100'
-            }`}>Score: {instructor.score}</span>
-            {hasConflict && (
-              <span className="text-[8px] font-black text-red-600 flex items-center gap-0.5">
-                <AlertTriangle size={8} /> Conflito
+            {isAlreadyAllocated ? (
+              <span className="text-[8px] font-black uppercase px-1 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200 flex items-center gap-0.5">
+                <AlertTriangle size={7} /> Já alocado neste dia
               </span>
-            )}
-            {isException && !hasConflict && (
-              <span className="text-[8px] font-bold text-amber-600">Exceção</span>
+            ) : (
+              <>
+                <span className={`text-[8px] font-black uppercase px-1 py-0.5 rounded border ${
+                  isException ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-blue-50 text-blue-700 border-blue-100'
+                }`}>Score: {instructor.score}</span>
+                {hasConflict && (
+                  <span className="text-[8px] font-black text-red-600 flex items-center gap-0.5">
+                    <AlertTriangle size={8} /> Conflito
+                  </span>
+                )}
+                {isException && !hasConflict && (
+                  <span className="text-[8px] font-bold text-amber-600">Exceção</span>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -858,6 +939,11 @@ const InstructorCard: React.FC<{
           <button onClick={onCompanionDays}
             className="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[8px] uppercase rounded-lg transition shadow-sm flex items-center gap-1">
             <Users size={10} /> Dias
+          </button>
+        ) : isAlreadyAllocated ? (
+          <button onClick={onAllocate}
+            className="px-2 py-1.5 font-black text-[8px] uppercase rounded-lg transition shadow-sm flex items-center gap-1 bg-white border border-amber-400 text-amber-700 hover:bg-amber-50">
+            <UserCheck size={10} /> Alocar mesmo assim
           </button>
         ) : (
           <>

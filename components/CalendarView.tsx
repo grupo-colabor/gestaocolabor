@@ -410,8 +410,10 @@ const getDemandFromItem = (item: any): Demand | null => {
   /** =========================
    *  2) AGENDA INSTRUTORES
    *  ========================= */
-  const agendaByDay = useMemo(() => {
+  const { agendaByDay, allocByDayMulti } = useMemo(() => {
     const map: Record<string, UnifiedItem> = {};
+    // Coleta TODAS as alocações por dia (suporte a múltiplos treinos no mesmo dia)
+    const allocMulti: Record<string, UnifiedItem[]> = {};
     const demandsWithExplicitAllocations = new Set(instructorAllocations.map(a => a.demandId));
     const demandsWithCompanions = new Set(companionAllocations.map(a => a.demandId));
 
@@ -488,7 +490,8 @@ const getDemandFromItem = (item: any): Demand | null => {
       while (cursor <= end) {
         // ✅ DIAS ESPECÍFICOS: pula dias que não fazem parte da demanda
         if (isDemandDay(d, cursor)) {
-          map[`${a.instructorId}-${formatDateKey(cursor)}`] = {
+          const allocKey = `${a.instructorId}-${formatDateKey(cursor)}`;
+          const allocItem: UnifiedItem = {
             id: a.id,
             instructorId: a.instructorId,
             startDate: displayStart,
@@ -500,6 +503,12 @@ const getDemandFromItem = (item: any): Demand | null => {
             calculatedStatus: cStatus,
             demandId: d.id
           };
+          map[allocKey] = allocItem;
+          // Coleta múltiplas alocações para o mesmo dia (suporte a dois treinos no mesmo dia)
+          if (!allocMulti[allocKey]) allocMulti[allocKey] = [];
+          if (!allocMulti[allocKey].some(x => x.id === allocItem.id)) {
+            allocMulti[allocKey].push(allocItem);
+          }
         }
         cursor.setDate(cursor.getDate() + 1);
       }
@@ -609,7 +618,7 @@ companionAllocations.forEach(ca => {
         }
       });
 
-    return map;
+    return { agendaByDay: map, allocByDayMulti: allocMulti };
   }, [agendaItems, instructorAllocations, companionAllocations, demands, trainings, companies, buildDemandTitle]);
 
   const trainingCountInRange = useMemo(() => {
@@ -729,11 +738,29 @@ companionAllocations.forEach(ca => {
     }
   };
 
+  // Abre modal VIEW para um item específico de uma célula (usado por cards individuais)
+  const handleItemCardClick = (instructor: Instructor, item: UnifiedItem) => {
+    if (profile?.role === 'coordenador') return;
+    const linkedDemand =
+      item.source === 'DEMANDA' || item.source === 'ALLOCATION'
+        ? demands.find((d: Demand) => d.id === (item.demandId || item.id))
+        : null;
+    setModalInstructor(instructor);
+    setIsMobileContext(false);
+    setActiveItem(item);
+    setModalObs(linkedDemand?.observations || item.description || '');
+    setModalMode('VIEW');
+    setIsModalOpen(true);
+  };
+
   const handleCellClick = (instructor: Instructor, date: Date) => {
     if (profile?.role === 'coordenador') return;
 
     const key = `${instructor.id}-${formatDateKey(date)}`;
     const existing = agendaByDay[key];
+    // Se há múltiplas alocações neste dia, os cards individuais tratam o clique
+    const multiItems = allocByDayMulti[key] || [];
+    if (multiItems.length >= 2) return;
 
     setModalInstructor(instructor);
     setIsMobileContext(false);
@@ -1473,7 +1500,25 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                           }
                         }
                       }
-                      const cellItem = item && !shouldHideCard ? { type: 'INSTRUCTOR_EVENT', data: item } : null;
+                      // ===== MULTI-ALLOC: filtra e decide modo de renderização =====
+                      const rawAllocItems = allocByDayMulti[dateKey] || [];
+                      const filteredAllocItems = rawAllocItems.filter((ai: UnifiedItem) => {
+                        if (filterDateFrom || filterDateTo) {
+                          if (!intersectsRange(ai.startDate, ai.endDate, filterDateFrom || undefined, filterDateTo || undefined)) return false;
+                        }
+                        if (filterRecordType !== 'TODOS' && filterRecordType !== 'TREINAMENTO') return false;
+                        if (filterTrainingId !== 'TODOS' || filterTrainingLocal.trim()) {
+                          const aiDemand = getDemandFromItem(ai);
+                          if (!aiDemand) return false;
+                          if (filterTrainingId !== 'TODOS' && aiDemand.trainingId !== filterTrainingId) return false;
+                          if (filterTrainingLocal) {
+                            if (normalize(aiDemand.trainingLocal || '') !== normalize(filterTrainingLocal)) return false;
+                          }
+                        }
+                        return true;
+                      });
+                      const useMultiCard = filteredAllocItems.length >= 2;
+                      const cellItem = !useMultiCard && item && !shouldHideCard ? { type: 'INSTRUCTOR_EVENT', data: item } : null;
 
                       // ===== PREVIEW CHECK =====
                       const cellPreviews = previewItems.filter(p =>
@@ -1490,16 +1535,44 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                     className={`p-1 border-r border-b border-gray-100 h-16 cursor-pointer transition-all relative ${
                       day.getDay() % 6 === 0 ? 'bg-slate-50/50' : ''
                     }`}
-
-
                     >
+                  {/* ===== MODO MULTI-CARD: dois treinos no mesmo dia ===== */}
+                  {useMultiCard && (
+                    <div className="w-full h-full flex flex-col gap-0.5 overflow-hidden">
+                      {filteredAllocItems.map((allocItem: UnifiedItem) => {
+                        const aLinkedDemandId = allocItem.demandId || allocItem.id;
+                        const aLinkedDemand = demands.find((d: any) => d.id === aLinkedDemandId);
+                        const aIsAConfirmar = allocItem.type === 'TREINAMENTO' && aLinkedDemand?.confirmationStatus === 'A_CONFIRMAR';
+                        let aBg = AGENDA_STYLING[allocItem.type]?.bg || 'bg-gray-100';
+                        let aText = AGENDA_STYLING[allocItem.type]?.text || 'text-gray-600';
+                        let aBorder = AGENDA_STYLING[allocItem.type]?.border || 'border-gray-200';
+                        if (aIsAConfirmar) { aBg = 'bg-amber-400'; aText = 'text-amber-900'; aBorder = 'border-amber-500'; }
+                        return (
+                          <div
+                            key={allocItem.id}
+                            draggable={!isCoordinator}
+                            onDragStart={!isCoordinator ? (e: React.DragEvent) => handleDragStart(e, allocItem) : undefined}
+                            onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleItemCardClick(instructor, allocItem); }}
+                            className={`flex-1 min-h-0 w-full rounded-md border shadow-sm px-1 flex items-center justify-center text-center overflow-hidden transition-all active:scale-95 cursor-pointer ${aBg} ${aText} ${aBorder}`}
+                          >
+                            <span className="text-[8px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-1">
+                              {allocItem.title}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* ===== MODO SINGLE-CARD: comportamento original ===== */}
                   {cellItem && (
                     <div
                       draggable={
                         !isCoordinator &&
                         (cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION')
                       }
-                      onDragStart={!isCoordinator ? e => handleDragStart(e, cellItem.data) : undefined}
+                      onDragStart={!isCoordinator ? (e: React.DragEvent) => handleDragStart(e, cellItem.data) : undefined}
+                      onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleItemCardClick(instructor, cellItem.data); }}
                       className={(() => {
                         const anyData = cellItem.data as any;
 

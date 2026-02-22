@@ -57,6 +57,9 @@ const Logistics: React.FC = () => {
   });
   
   const [isCompanionPickerOpen, setIsCompanionPickerOpen] = useState(false);
+
+  // Modal de confirmação para alocar instrutor já alocado no dia
+  const [pendingForceAlloc, setPendingForceAlloc] = useState<(Instructor & { score: number }) | null>(null);
  
   // Modal de datas do acompanhante (dias avulsos)
   const [isCompanionDatesOpen, setIsCompanionDatesOpen] = useState(false);
@@ -266,7 +269,7 @@ const handleSaveCompanionDays = () => {
   }, [resourceAllocations, selectedDemandId]);
 
   const recommendation = useMemo(() => {
-    if (!selectedDemand) return { suggested: [], exceptions: [] };
+    if (!selectedDemand) return { suggested: [], exceptions: [], alreadyAllocated: [] };
     return recommendInstructors(selectedDemand);
   }, [selectedDemand, recommendInstructors]);
 
@@ -304,6 +307,16 @@ const handleSaveCompanionDays = () => {
     if (success) {
       setSelectedDemandId(null);
     }
+  };
+
+  const handleAllocateAnyway = (instructor: Instructor & { score: number }) => {
+    setPendingForceAlloc(instructor);
+  };
+
+  const handleConfirmForceAlloc = () => {
+    if (!pendingForceAlloc) return;
+    handleAllocate(pendingForceAlloc);
+    setPendingForceAlloc(null);
   };
 
   const handleOpenResourceModal = () => {
@@ -906,6 +919,52 @@ const handleSaveCompanionDays = () => {
                     </div>
                   )}
 
+                  {/* Grupo 3: Já Alocados Neste Dia */}
+                  {recommendation.alreadyAllocated.length > 0 && (
+                    <div>
+                      <div className="relative mb-6">
+                        <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                          <div className="w-full border-t border-amber-200"></div>
+                        </div>
+                        <div className="relative flex justify-center">
+                          <span className="bg-white px-4 text-xs font-black text-amber-600 uppercase tracking-widest flex items-center gap-2 border border-amber-200 rounded-full py-1">
+                            <AlertTriangle size={12} className="text-amber-500" />
+                            Já alocados neste dia
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3">
+                        {recommendation.alreadyAllocated.map((instructor: Instructor & { score: number }) => (
+                          <div key={instructor.id} className="p-4 rounded-xl border border-amber-200 bg-amber-50/40 hover:border-amber-400 transition-all flex items-center justify-between group">
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 font-black border border-amber-200 shadow-sm relative">
+                                {instructor.name.charAt(0)}
+                                <div className="absolute -top-1 -right-1 bg-amber-500 text-white rounded-full p-0.5 shadow-sm">
+                                  <AlertTriangle size={10} />
+                                </div>
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-slate-700">{instructor.name}</h4>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="text-[10px] font-black uppercase bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded border border-amber-200 flex items-center gap-1">
+                                    JÁ ALOCADO NESTE DIA <AlertTriangle size={8} />
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => handleAllocateAnyway(instructor)}
+                              className="px-6 py-2 bg-white hover:bg-amber-50 text-amber-700 border border-amber-300 font-black text-xs uppercase tracking-widest rounded-lg transition-all shadow-sm flex items-center gap-2"
+                            >
+                              <UserCheck size={14} /> Alocar mesmo assim
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                    {/* ✅ ACOMPANHANTES */}
                     <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
                       <div className="flex items-center justify-between gap-3">
@@ -1096,6 +1155,42 @@ const handleSaveCompanionDays = () => {
             <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-3">
               <button onClick={() => setIsResourceModalOpen(false)} className="flex-1 py-3 bg-white border border-slate-200 rounded-xl font-black text-[10px] uppercase tracking-widest text-slate-500">Cancelar</button>
               <button onClick={handleAddResourceAllocation} className="flex-1 py-3 bg-amber-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-amber-200">Confirmar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de confirmação: alocar instrutor já alocado no dia */}
+      {pendingForceAlloc && selectedDemand && (
+        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl border border-amber-200 shadow-2xl overflow-hidden">
+            <div className="p-6 border-b border-amber-100 flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                <AlertTriangle size={20} className="text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-800">Instrutor já alocado</h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  <span className="font-bold text-slate-700">{pendingForceAlloc.name}</span> já possui uma alocação neste período (
+                  {new Date(selectedDemand.startDate).toLocaleDateString('pt-BR')} –{' '}
+                  {new Date(selectedDemand.endDate).toLocaleDateString('pt-BR')}).
+                  Deseja alocar mesmo assim?
+                </p>
+              </div>
+            </div>
+            <div className="p-4 bg-slate-50 flex gap-3">
+              <button
+                onClick={() => setPendingForceAlloc(null)}
+                className="flex-1 py-3 bg-white border border-slate-200 rounded-xl font-black text-[10px] uppercase tracking-widest text-slate-500 hover:bg-slate-100 transition"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirmForceAlloc}
+                className="flex-1 py-3 bg-amber-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-amber-200 hover:bg-amber-700 transition"
+              >
+                Confirmar mesmo assim
+              </button>
             </div>
           </div>
         </div>

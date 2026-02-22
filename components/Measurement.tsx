@@ -2,6 +2,8 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../App';
 import { Measurement, Demand, MeasurementStatus, ExpenseCategory, Attachment, OtherExpenseItem } from '../types';
+import { usePagination } from '../hooks/usePagination';
+import Pagination from './Pagination';
 import { 
   Search, FileText, X, Filter, BarChart3, 
   ChevronDown, ChevronUp, MapPin, Truck, Home, 
@@ -214,6 +216,16 @@ const MeasurementView: React.FC = () => {
         return (d2?.startDate || '').localeCompare(d1?.startDate || '');
     });
   }, [measurements, demands, filter, advancedFilters, companies, trainings]);
+
+  const {
+    currentPage: measPage,
+    totalPages: measTotalPages,
+    itemsPerPage: measItemsPerPage,
+    paginatedItems: paginatedMeasurements,
+    startIdx: measStartIdx,
+    setCurrentPage: setMeasPage,
+    handleItemsPerPageChange: handleMeasItemsPerPage,
+  } = usePagination<Measurement>(filteredMeasurements, 'pagination:measurement');
 
   const exportableList = useMemo(() => {
     return measurements.filter(m => {
@@ -982,7 +994,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filteredMeasurements.map(m => {
+              {paginatedMeasurements.map(m => {
                 const d = demands.find(demand => demand.id === m.demandId);
                 return (
                   <tr key={m.id} className="hover:bg-gray-50 transition-colors text-sm text-gray-700">
@@ -1005,6 +1017,16 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
               })}
             </tbody>
           </table>
+          <Pagination
+            currentPage={measPage}
+            totalPages={measTotalPages}
+            totalItems={filteredMeasurements.length}
+            itemsPerPage={measItemsPerPage}
+            startIdx={measStartIdx}
+            entityLabel="medições"
+            onPageChange={setMeasPage}
+            onItemsPerPageChange={handleMeasItemsPerPage}
+          />
         </div>
       </div>
 

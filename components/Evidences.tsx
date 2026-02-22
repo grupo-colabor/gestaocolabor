@@ -15,8 +15,10 @@ import {
   Calendar
 } from 'lucide-react';
 import { calculateDemandStatus } from '../domain/demandStatus';
-import { EvidenceData } from '../types';
+import { Demand, EvidenceData } from '../types';
 import EvidenceDetails from './EvidenceDetails';
+import { usePagination } from '../hooks/usePagination';
+import Pagination from './Pagination';
 
 const Evidences: React.FC = () => {
   const { demands, companies, trainings, evidenceStore, updateEvidence } = useApp();
@@ -112,6 +114,16 @@ const getEvidenceAutoStatus = (
       })
       .sort((a, b) => b.startDate.localeCompare(a.startDate));
   }, [demands, filterId, startDateFilter, endDateFilter]);
+
+  const {
+    currentPage: evidPage,
+    totalPages: evidTotalPages,
+    itemsPerPage: evidItemsPerPage,
+    paginatedItems: paginatedActiveDemands,
+    startIdx: evidStartIdx,
+    setCurrentPage: setEvidPage,
+    handleItemsPerPageChange: handleEvidItemsPerPage,
+  } = usePagination<Demand>(activeDemands, 'pagination:evidences');
 
   const handleOpenDetails = async (id: string) => {
   // Inicializar dados se não existirem no store global
@@ -223,7 +235,7 @@ const getEvidenceAutoStatus = (
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {activeDemands.length > 0 ? activeDemands.map(demand => {
+              {activeDemands.length > 0 ? paginatedActiveDemands.map(demand => {
                 const currentStatus = calculateDemandStatus({
                 startDate: demand.startDate,
                 endDate: demand.endDate,
@@ -307,6 +319,16 @@ const getEvidenceAutoStatus = (
               )}
             </tbody>
           </table>
+          <Pagination
+            currentPage={evidPage}
+            totalPages={evidTotalPages}
+            totalItems={activeDemands.length}
+            itemsPerPage={evidItemsPerPage}
+            startIdx={evidStartIdx}
+            entityLabel="demandas"
+            onPageChange={setEvidPage}
+            onItemsPerPageChange={handleEvidItemsPerPage}
+          />
         </div>
       </div>
     </div>

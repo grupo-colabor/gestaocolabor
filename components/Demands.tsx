@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { usePagination } from '../hooks/usePagination';
+import Pagination from './Pagination';
 
 import { useApp } from '../App';
 
@@ -550,6 +552,16 @@ const filteredDemands = useMemo(() => {
   principalInstructorByDemandId,
 ]);
 
+
+  const {
+    currentPage: demandPage,
+    totalPages: demandTotalPages,
+    itemsPerPage: demandItemsPerPage,
+    paginatedItems: paginatedDemands,
+    startIdx: demandStartIdx,
+    setCurrentPage: setDemandPage,
+    handleItemsPerPageChange: handleDemandItemsPerPage,
+  } = usePagination<Demand>(filteredDemands, 'pagination:demands');
 
   // ✅ Mantém o instructorId do modal alinhado ao instrutor principal calculado
   // Só sincroniza enquanto estiver em VIEW (não atrapalha edição no FORM)
@@ -2242,7 +2254,7 @@ const companionInstructorIds = useMemo(() => {
 
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filteredDemands.length > 0 ? filteredDemands.map(demand => {
+              {filteredDemands.length > 0 ? paginatedDemands.map(demand => {
                 const currentStatus = calculateDemandStatus({
                   startDate: demand.startDate,
                   endDate: demand.endDate,
@@ -2289,6 +2301,16 @@ const companionInstructorIds = useMemo(() => {
               )}
             </tbody>
           </table>
+          <Pagination
+            currentPage={demandPage}
+            totalPages={demandTotalPages}
+            totalItems={filteredDemands.length}
+            itemsPerPage={demandItemsPerPage}
+            startIdx={demandStartIdx}
+            entityLabel="demandas"
+            onPageChange={setDemandPage}
+            onItemsPerPageChange={handleDemandItemsPerPage}
+          />
         </div>
       </div>
 

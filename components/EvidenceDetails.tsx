@@ -17,7 +17,8 @@ import {
   Clock,
   Download,
   DownloadCloud,
-  User
+  User,
+  Tag
 } from 'lucide-react';
 import { Demand, Company, Training, EvidenceData, EvidenceFile } from '../types';
 import { useApp } from '../App';
@@ -382,7 +383,7 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
 
       {/* Info Demanda */}
       <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden">
-        <div className="p-6 grid grid-cols-1 md:grid-cols-5 gap-6">
+        <div className={`p-6 grid grid-cols-1 gap-6 ${demand.clientDemandId ? 'md:grid-cols-6' : 'md:grid-cols-5'}`}>
           <div className="space-y-1">
             <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Empresa</span>
             <div className="flex items-center gap-2">
@@ -424,6 +425,16 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
               <p className="text-sm font-bold text-slate-700">{demand.trainingLocal || 'N/A'}</p>
             </div>
           </div>
+
+          {demand.clientDemandId && (
+            <div className="space-y-1">
+              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">ID SAP / Pedido</span>
+              <div className="flex items-center gap-2">
+                <Tag size={14} className="text-slate-300" />
+                <p className="text-sm font-bold text-slate-700">{demand.clientDemandId}</p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

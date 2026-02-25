@@ -52,7 +52,8 @@ import {
   FilePlus,
   FileCheck,
   UserPlus,
-  Users
+  Users,
+  AlertTriangle
 } from 'lucide-react';
 
 import {
@@ -185,6 +186,7 @@ const [isExportDemandsOpen, setIsExportDemandsOpen] = useState(false);
     startDate: '',
     endDate: ''
   });
+  const [pendingConflictAllocation, setPendingConflictAllocation] = useState<InstructorAllocation | null>(null);
 
   // Resource Modal State (CTM)
   const [isResourceModalOpen, setIsResourceModalOpen] = useState(false);
@@ -1622,13 +1624,6 @@ const endLocal = usePractice
 
 
 
-    // 2. Validar conflito de agenda do instrutor (usa comparação exata de data/hora)
-    if (hasScheduleConflict(allocationForm.instructorId, startIso, endIso)) {
-      setResourceError("O instrutor selecionado já possui um compromisso neste período.");
-      setTimeout(() => setResourceError(null), 4000);
-      return;
-    }
-
     // PERSISTÊNCIA NO ESTADO GLOBAL
     const newAllocation: InstructorAllocation = {
       id: `ALOC-${Date.now()}`,
@@ -1638,9 +1633,23 @@ const endLocal = usePractice
       endDate: endIso
     };
 
+    // 2. Validar conflito de agenda do instrutor — em vez de bloquear, abre modal de confirmação
+    if (hasScheduleConflict(allocationForm.instructorId, startIso, endIso)) {
+      setPendingConflictAllocation(newAllocation);
+      return;
+    }
+
     addInstructorAllocation(newAllocation);
-    
+
     // LIMPEZA E FECHAMENTO
+    setAllocationForm({ instructorId: '', startDate: '', endDate: '' });
+    setIsAllocationModalOpen(false);
+  };
+
+  const handleConfirmConflictAllocation = () => {
+    if (!pendingConflictAllocation) return;
+    addInstructorAllocation(pendingConflictAllocation);
+    setPendingConflictAllocation(null);
     setAllocationForm({ instructorId: '', startDate: '', endDate: '' });
     setIsAllocationModalOpen(false);
   };
@@ -3331,6 +3340,39 @@ const companionInstructorIds = useMemo(() => {
             <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-3">
               <button onClick={() => setIsAllocationModalOpen(false)} className="flex-1 py-3 bg-white border border-slate-200 rounded-xl font-black text-[10px] uppercase tracking-widest text-slate-500">Cancelar</button>
               <button onClick={handleAddAllocation} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-blue-200">Confirmar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE CONFIRMAÇÃO DE CONFLITO DE INSTRUTOR */}
+      {pendingConflictAllocation && (
+        <div className="fixed inset-0 z-[220] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl border border-amber-200 shadow-2xl overflow-hidden">
+            <div className="p-6 border-b border-amber-100 flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                <AlertTriangle size={20} className="text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-800">Instrutor já alocado</h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  <span className="font-bold text-slate-700">{getInstructorName(pendingConflictAllocation.instructorId)}</span> já possui uma alocação neste período. Deseja alocar mesmo assim?
+                </p>
+              </div>
+            </div>
+            <div className="p-4 bg-slate-50 flex gap-3">
+              <button
+                onClick={() => setPendingConflictAllocation(null)}
+                className="flex-1 py-3 bg-white border border-slate-200 rounded-xl font-black text-[10px] uppercase tracking-widest text-slate-500 hover:bg-slate-100 transition"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirmConflictAllocation}
+                className="flex-1 py-3 bg-amber-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-amber-200 hover:bg-amber-700 transition"
+              >
+                Confirmar mesmo assim
+              </button>
             </div>
           </div>
         </div>

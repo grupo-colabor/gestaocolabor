@@ -21,13 +21,17 @@ import { usePagination } from '../hooks/usePagination';
 import Pagination from './Pagination';
 
 const Evidences: React.FC = () => {
-  const { demands, companies, trainings, evidenceStore, updateEvidence } = useApp();
+  const { demands, companies, trainings, instructors, instructorAllocations, evidenceStore, updateEvidence } = useApp();
 
 
   // Estado para os filtros
   const [filterId, setFilterId] = useState('');
   const [startDateFilter, setStartDateFilter] = useState('');
   const [endDateFilter, setEndDateFilter] = useState('');
+  const [filterCompanyId, setFilterCompanyId] = useState('');
+  const [filterTrainingId, setFilterTrainingId] = useState('');
+  const [filterInstructorId, setFilterInstructorId] = useState('');
+  const [filterLocal, setFilterLocal] = useState('');
 
   // Estado para gerenciar qual demanda está sendo visualizada (null = lista)
   const [selectedDemandId, setSelectedDemandId] = useState<string | null>(null);
@@ -93,6 +97,33 @@ const getEvidenceAutoStatus = (
   return isComplete ? 'COMPLETA' : 'PENDENTE';
 };
 
+  // Opções derivadas dos dados para os dropdowns
+  const companyOptions = useMemo(() => {
+    const ids = Array.from(new Set<string>(demands.filter((d: Demand) => d.status !== 'CANCELADA').map((d: Demand) => d.companyId)));
+    return ids.map((id: string) => ({ id, name: getCompanyName(id) })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [demands, companies]);
+
+  const trainingOptions = useMemo(() => {
+    const ids = Array.from(new Set<string>(demands.filter((d: Demand) => d.status !== 'CANCELADA').map((d: Demand) => d.trainingId)));
+    return ids.map((id: string) => ({ id, name: getTrainingName(id) })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [demands, trainings]);
+
+  const instructorOptions = useMemo(() => {
+    const ids = new Set<string>();
+    demands.filter((d: Demand) => d.status !== 'CANCELADA').forEach((d: Demand) => {
+      if (d.instructorId) ids.add(d.instructorId);
+      instructorAllocations.filter((a: { demandId: string; instructorId: string }) => a.demandId === d.id).forEach((a: { instructorId: string }) => ids.add(a.instructorId));
+    });
+    return [...ids].map((id: string) => {
+      const inst = instructors.find((i: { id: string; name: string }) => i.id === id);
+      return { id, name: inst?.name || 'N/A' };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+  }, [demands, instructors, instructorAllocations]);
+
+  const localOptions = useMemo(() =>
+    [...new Set<string>(demands.filter((d: Demand) => d.status !== 'CANCELADA').map((d: Demand) => d.trainingLocal as string).filter((v: string) => !!v && v !== 'N/A'))].sort(),
+  [demands]);
+
   // Filtrar demandas com base nos inputs e status (não canceladas)
   const activeDemands = useMemo(() => {
     return demands
@@ -103,17 +134,26 @@ const getEvidenceAutoStatus = (
         if (!matchesId) return false;
 
         // Filtro por Período (Interseção)
-        // Regra: demand.startDate <= filterEndDate AND demand.endDate >= filterStartDate
         const dStart = d.startDate.split('T')[0];
         const dEnd = d.endDate.split('T')[0];
-
         if (startDateFilter && dEnd < startDateFilter) return false;
         if (endDateFilter && dStart > endDateFilter) return false;
+
+        // Novos filtros
+        if (filterCompanyId && d.companyId !== filterCompanyId) return false;
+        if (filterTrainingId && d.trainingId !== filterTrainingId) return false;
+        if (filterLocal && (d.trainingLocal || '') !== filterLocal) return false;
+
+        if (filterInstructorId) {
+          const allocs = instructorAllocations.filter(a => a.demandId === d.id);
+          const hasInstructor = allocs.some(a => a.instructorId === filterInstructorId) || d.instructorId === filterInstructorId;
+          if (!hasInstructor) return false;
+        }
 
         return true;
       })
       .sort((a, b) => b.startDate.localeCompare(a.startDate));
-  }, [demands, filterId, startDateFilter, endDateFilter]);
+  }, [demands, filterId, startDateFilter, endDateFilter, filterCompanyId, filterTrainingId, filterInstructorId, filterLocal, instructorAllocations]);
 
   const {
     currentPage: evidPage,
@@ -181,42 +221,90 @@ const getEvidenceAutoStatus = (
              </h3>
           </div>
           
-          <div className="flex flex-col md:flex-row items-center gap-4 w-full lg:justify-end">
-            {/* Filtro por ID */}
-            <div className="relative w-full md:w-64">
-              <Search className="absolute left-3 top-2.5 text-slate-300" size={16} />
-              <input 
-                type="text" 
-                placeholder="Buscar por ID da demanda" 
-                className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner"
-                value={filterId}
-                onChange={(e) => setFilterId(e.target.value)}
-              />
+          <div className="flex flex-col gap-3 w-full lg:w-auto">
+            {/* Linha 1: ID + Período */}
+            <div className="flex flex-col md:flex-row items-center gap-3 w-full lg:justify-end">
+              <div className="relative w-full md:w-56">
+                <Search className="absolute left-3 top-2.5 text-slate-300" size={16} />
+                <input
+                  type="text"
+                  placeholder="Buscar por ID da demanda"
+                  className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner"
+                  value={filterId}
+                  onChange={(e) => setFilterId(e.target.value)}
+                />
+              </div>
+              <div className="flex items-center gap-2 w-full md:w-auto">
+                <div className="relative flex-1 md:w-36">
+                  <Calendar className="absolute left-3 top-2.5 text-slate-300" size={14} />
+                  <input
+                    type="date"
+                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner"
+                    value={startDateFilter}
+                    onChange={(e) => setStartDateFilter(e.target.value)}
+                    title="Data Inicial"
+                  />
+                </div>
+                <span className="text-slate-300 font-bold">-</span>
+                <div className="relative flex-1 md:w-36">
+                  <Calendar className="absolute left-3 top-2.5 text-slate-300" size={14} />
+                  <input
+                    type="date"
+                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner"
+                    value={endDateFilter}
+                    onChange={(e) => setEndDateFilter(e.target.value)}
+                    title="Data Final"
+                  />
+                </div>
+              </div>
             </div>
 
-            {/* Filtros de Data */}
-            <div className="flex items-center gap-2 w-full md:w-auto">
-              <div className="relative flex-1 md:w-40">
-                <Calendar className="absolute left-3 top-2.5 text-slate-300" size={14} />
-                <input 
-                  type="date" 
-                  className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner"
-                  value={startDateFilter}
-                  onChange={(e) => setStartDateFilter(e.target.value)}
-                  title="Data Inicial"
-                />
-              </div>
-              <span className="text-slate-300 font-bold">-</span>
-              <div className="relative flex-1 md:w-40">
-                <Calendar className="absolute left-3 top-2.5 text-slate-300" size={14} />
-                <input 
-                  type="date" 
-                  className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner"
-                  value={endDateFilter}
-                  onChange={(e) => setEndDateFilter(e.target.value)}
-                  title="Data Final"
-                />
-              </div>
+            {/* Linha 2: Empresa, Treinamento, Instrutor, Local + Limpar */}
+            <div className="flex flex-col md:flex-row items-center gap-3 w-full lg:justify-end">
+              <select
+                className="w-full md:w-44 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner text-slate-600"
+                value={filterCompanyId}
+                onChange={(e) => setFilterCompanyId(e.target.value)}
+              >
+                <option value="">Empresa</option>
+                {companyOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+
+              <select
+                className="w-full md:w-56 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner text-slate-600"
+                value={filterTrainingId}
+                onChange={(e) => setFilterTrainingId(e.target.value)}
+              >
+                <option value="">Treinamento</option>
+                {trainingOptions.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+
+              <select
+                className="w-full md:w-44 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner text-slate-600"
+                value={filterInstructorId}
+                onChange={(e) => setFilterInstructorId(e.target.value)}
+              >
+                <option value="">Instrutor</option>
+                {instructorOptions.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+              </select>
+
+              <select
+                className="w-full md:w-44 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner text-slate-600"
+                value={filterLocal}
+                onChange={(e) => setFilterLocal(e.target.value)}
+              >
+                <option value="">Local</option>
+                {localOptions.map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+
+              {(filterId || startDateFilter || endDateFilter || filterCompanyId || filterTrainingId || filterInstructorId || filterLocal) && (
+                <button
+                  onClick={() => { setFilterId(''); setStartDateFilter(''); setEndDateFilter(''); setFilterCompanyId(''); setFilterTrainingId(''); setFilterInstructorId(''); setFilterLocal(''); }}
+                  className="shrink-0 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-blue-600 transition whitespace-nowrap px-3 py-2"
+                >
+                  Limpar filtros
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -93,6 +93,8 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
     regionId: '',
     status: '',
     search: '',
+    trainingLocal: '',
+    corredor: '',
   });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -106,6 +108,8 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
       if (filters.companyId && d.companyId !== filters.companyId) return false;
       if (filters.trainingId && d.trainingId !== filters.trainingId) return false;
       if (filters.regionId && d.regionId !== filters.regionId) return false;
+      if (filters.trainingLocal && (d.trainingLocal || '') !== filters.trainingLocal) return false;
+      if (filters.corredor && (d.corredor || '') !== filters.corredor) return false;
 
       if (filters.instructorId) {
         const allocs = instructorAllocations.filter(a => a.demandId === d.id);
@@ -154,7 +158,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
   };
 
   const resetFilters = () => {
-    setFilters({ startDate: '', endDate: '', companyId: '', trainingId: '', instructorId: '', regionId: '', status: '', search: '' });
+    setFilters({ startDate: '', endDate: '', companyId: '', trainingId: '', instructorId: '', regionId: '', status: '', search: '', trainingLocal: '', corredor: '' });
     setSelectedIds(new Set());
   };
 
@@ -180,6 +184,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
       'Status': getCalculatedStatus(d).replace('_', ' '),
       'Modalidade': d.modality || '',
       'Local do Treinamento': d.trainingLocal || '',
+      'Corredor': d.corredor || '',
       'Aprovador': d.approver || '',
       'Analista': d.analyst || '',
       'Transporte': d.transportType || '',
@@ -236,6 +241,14 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
       return { id, name: inst?.name || 'N/A' };
     }).sort((a, b) => a.name.localeCompare(b.name));
   }, [demands, instructors, instructorAllocations]);
+
+  const trainingLocalOptions = useMemo(() =>
+    [...new Set(demands.map((d: Demand) => d.trainingLocal).filter((v: string | undefined): v is string => !!v && v !== 'N/A'))].sort(),
+  [demands]);
+
+  const corredorOptions = useMemo(() =>
+    [...new Set(demands.map((d: Demand) => d.corredor).filter((v: string | undefined): v is string => !!v))].sort(),
+  [demands]);
 
   /* ---------- render ---------- */
   if (!isOpen) return null;
@@ -307,6 +320,24 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
                 <select className="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.regionId} onChange={e => setFilters({ ...filters, regionId: e.target.value })}>
                   <option value="">Todas</option>
                   {regionOptions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+              </div>
+
+              {/* Local de Treinamento */}
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Local de Treinamento</label>
+                <select className="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.trainingLocal} onChange={e => setFilters({ ...filters, trainingLocal: e.target.value })}>
+                  <option value="">Todos</option>
+                  {trainingLocalOptions.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+
+              {/* Corredor */}
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Corredor</label>
+                <select className="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.corredor} onChange={e => setFilters({ ...filters, corredor: e.target.value })}>
+                  <option value="">Todos</option>
+                  {corredorOptions.map(v => <option key={v} value={v}>{v}</option>)}
                 </select>
               </div>
 

@@ -9,7 +9,7 @@ import {
   ChevronDown, ChevronUp, MapPin, Truck, Home, 
   Calendar, Check, AlertCircle, Building, 
   Tag, Info, BookOpen, Clock, Mail, MessageCircle, 
-  FileDown, Upload, Trash2, ExternalLink, User, Plus, Paperclip, DollarSign, Wallet, CheckSquare, Square
+  FileDown, Upload, Trash2, ExternalLink, User, Plus, Paperclip, DollarSign, Wallet, CheckSquare, Square, RotateCcw
 } from 'lucide-react';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ImageRun } from 'docx';
 import { calculateDemandStatus } from '../domain/demandStatus';
@@ -343,6 +343,14 @@ const totals = useMemo(() => {
   const classHours = Number((selectedMeasurement?.expenses as any)?.classHours ?? 0) || 0;
   const hourRate = Number((selectedMeasurement?.expenses as any)?.hourRate ?? 0) || 0;
   const hourClassTotal = classHours * hourRate;
+
+  // Horas padrão do treinamento vinculado à medição selecionada (para reset e comparação)
+  const _selDemand = demands.find(d => d.id === selectedMeasurement?.demandId);
+  const _selTraining = _selDemand ? trainings.find(tr => tr.id === _selDemand.trainingId) : null;
+  const trainingDefaultHours = typeof _selTraining?.hours === 'number'
+    ? _selTraining.hours
+    : Number((_selTraining as any)?.hours) || 0;
+  const isClassHoursEdited = !!selectedMeasurement && classHours !== trainingDefaultHours;
 
 
   const exportSummary = useMemo(() => {
@@ -1300,20 +1308,56 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                 <DollarSign size={14} className="text-emerald-500" /> Hora/Aula
               </h3>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Horas do Treinamento */}
                 <div>
                   <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">
                     Horas do Treinamento
                   </label>
-                  <input
-                    type="number"
-                    className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none bg-slate-50"
-                    value={classHours}
-                    disabled
-                  />
-                  <p className="text-[10px] text-slate-400 mt-1">Puxado do Treinamento</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.5"
+                      className="flex-1 border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                      value={classHours}
+                      onChange={(e) => {
+                        const val = Number(e.target.value || 0);
+                        setSelectedMeasurement({
+                          ...selectedMeasurement!,
+                          expenses: {
+                            ...selectedMeasurement!.expenses,
+                            classHours: val,
+                          } as any,
+                        });
+                      }}
+                    />
+                    {isClassHoursEdited && (
+                      <button
+                        type="button"
+                        title="Restaurar valor do treinamento"
+                        onClick={() => setSelectedMeasurement({
+                          ...selectedMeasurement!,
+                          expenses: {
+                            ...selectedMeasurement!.expenses,
+                            classHours: trainingDefaultHours,
+                          } as any,
+                        })}
+                        className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
+                      >
+                        <RotateCcw size={14} />
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[10px] mt-1">
+                    {isClassHoursEdited
+                      ? <span className="text-amber-500 font-bold">Editado manualmente</span>
+                      : <span className="text-slate-400">Puxado do Treinamento</span>
+                    }
+                  </p>
                 </div>
 
+                {/* Valor Hora/Aula */}
                 <div>
                   <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">
                     Valor Hora/Aula (manual)
@@ -1324,21 +1368,21 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                     className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                     value={hourRate}
                     onChange={(e) => {
-                    const val = Number(e.target.value || 0);
-
-                    setSelectedMeasurement({
-                      ...selectedMeasurement,
-                      expenses: {
-                        ...selectedMeasurement.expenses, // mantém breakfast/lunch/dinner etc
-                        hourRate: val,                   // atualiza hourRate
-                      } as any,
-                    });
-                  }}
+                      const val = Number(e.target.value || 0);
+                      setSelectedMeasurement({
+                        ...selectedMeasurement,
+                        expenses: {
+                          ...selectedMeasurement.expenses,
+                          hourRate: val,
+                        } as any,
+                      });
+                    }}
                   />
                 </div>
 
+                {/* Total Hora/Aula */}
                 <div className="text-right">
-                  <span className="block text-[10px] font-black text-slate-300 uppercase tracking-widest">
+                  <span className="block text-[10px] font-black text-slate-300 uppercase tracking-widest mb-1.5">
                     Total Hora/Aula
                   </span>
                   <span className="text-2xl font-black text-slate-900">

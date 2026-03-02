@@ -8,7 +8,7 @@ import {
   FileDown,
   Search
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
+// ExcelJS é importado dinamicamente em handleExportExcel para reduzir bundle inicial
 
 import { Demand, Company, Training, Region, Instructor, InstructorAllocation } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
@@ -163,55 +163,119 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
   };
 
   /* ---------- EXPORT EXCEL ---------- */
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     const toExport = selectedIds.size > 0
       ? filteredDemands.filter(d => selectedIds.has(d.id))
       : filteredDemands;
 
     if (toExport.length === 0) return;
 
-    const rows = toExport.map(d => ({
-      'ID': d.id || '',
-      'ID Cliente': d.clientDemandId || '',
-      'Empresa': getCompanyName(d.companyId),
-      'Treinamento': getTrainingName(d.trainingId),
-      'Região': getRegionName(d.regionId),
-      'Data Início': formatDate(d.startDate),
-      'Data Fim': formatDate(d.endDate),
-      'Modo Datas': d.dateMode === 'DIAS_ESPECIFICOS' ? 'Dias Específicos' : 'Contínuo',
-      'Dias Específicos': d.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(d.specificDates) ? d.specificDates.sort().join(', ') : '',
-      'Instrutor Principal': getInstructorName(d),
-      'Status': getCalculatedStatus(d).replace('_', ' '),
-      'Modalidade': d.modality || '',
-      'Local do Treinamento': d.trainingLocal || '',
-      'Corredor': d.corredor || '',
-      'Aprovador': d.approver || '',
-      'Analista': d.analyst || '',
-      'Transporte': d.transportType || '',
-      'Hospedagem': d.accommodationType || '',
-    }));
+    // Import dinâmico: carregado somente ao exportar (bundle menor)
+    const ExcelJSModule = await import('exceljs');
+    const ExcelJS = (ExcelJSModule as any).default ?? ExcelJSModule;
 
-    const ws = XLSX.utils.json_to_sheet(rows);
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Demandas');
 
-    /* Larguras automáticas baseadas no conteúdo */
-    const colWidths = Object.keys(rows[0]).map(key => {
-      const maxLen = Math.max(
-        key.length,
-        ...rows.map(r => String((r as any)[key] || '').length)
-      );
-      return { wch: Math.min(maxLen + 2, 40) };
+    // Extrai HH:MM do datetime ISO (ex: "2026-02-12T18:30" → "18:30")
+    const getHorario = (dateStr?: string): string => {
+      if (!dateStr || !dateStr.includes('T')) return '—';
+      return dateStr.split('T')[1]?.slice(0, 5) || '—';
+    };
+
+    // Demanda noturna = horário de início a partir das 18:00
+    const isNocturnal = (dateStr?: string): boolean => {
+      if (!dateStr || !dateStr.includes('T')) return false;
+      const hour = parseInt((dateStr.split('T')[1] || '').split(':')[0], 10);
+      return !isNaN(hour) && hour >= 18;
+    };
+
+    // Definição das colunas
+    // Nova ordem: ID | ID Cliente | Empresa | Treinamento | Local do Treinamento | Região | Data Início | Horário | Data Fim | ...
+    worksheet.columns = [
+      { header: 'ID',                   key: 'id',               width: 14 },
+      { header: 'ID Cliente',            key: 'clientDemandId',   width: 16 },
+      { header: 'Empresa',               key: 'empresa',          width: 30 },
+      { header: 'Treinamento',           key: 'treinamento',      width: 35 },
+      { header: 'Local do Treinamento',  key: 'trainingLocal',    width: 28 },
+      { header: 'Região',                key: 'regiao',           width: 18 },
+      { header: 'Data Início',           key: 'dataInicio',       width: 14 },
+      { header: 'Horário Início',          key: 'horarioInicio',    width: 10 },
+      { header: 'Horário Fim',            key: 'horarioFim',       width: 10 },
+      { header: 'Data Fim',              key: 'dataFim',          width: 14 },
+      { header: 'Modo Datas',            key: 'modoDatas',        width: 18 },
+      { header: 'Dias Específicos',      key: 'diasEspecificos',  width: 40 },
+      { header: 'Instrutor Principal',   key: 'instrutor',        width: 25 },
+      { header: 'Status',                key: 'status',           width: 16 },
+      { header: 'Modalidade',            key: 'modalidade',       width: 16 },
+      { header: 'Corredor',              key: 'corredor',         width: 18 },
+      { header: 'Aprovador',             key: 'aprovador',        width: 20 },
+      { header: 'Analista',              key: 'analista',         width: 18 },
+      { header: 'Transporte',            key: 'transporte',       width: 16 },
+      { header: 'Hospedagem',            key: 'hospedagem',       width: 16 },
+    ];
+
+    // Estiliza o cabeçalho (linha 1): fundo escuro + texto branco + negrito
+    worksheet.getRow(1).eachCell({ includeEmpty: true }, (cell: any) => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
     });
-    ws['!cols'] = colWidths;
 
-    /* Auto-filter no header */
-    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-    ws['!autofilter'] = { ref: XLSX.utils.encode_range(range) };
+    // Adiciona as linhas de dados
+    toExport.forEach(d => {
+      const row = worksheet.addRow({
+        id:              d.id || '',
+        clientDemandId:  d.clientDemandId || '',
+        empresa:         getCompanyName(d.companyId),
+        treinamento:     getTrainingName(d.trainingId),
+        trainingLocal:   d.trainingLocal || '',
+        regiao:          getRegionName(d.regionId),
+        dataInicio:      formatDate(d.startDate),
+        horarioInicio:   getHorario(d.startDate),
+        horarioFim:      getHorario(d.endDate),
+        dataFim:         formatDate(d.endDate),
+        modoDatas:       d.dateMode === 'DIAS_ESPECIFICOS' ? 'Dias Específicos' : 'Contínuo',
+        diasEspecificos: d.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(d.specificDates)
+                           ? d.specificDates.sort().join(', ')
+                           : '',
+        instrutor:       getInstructorName(d),
+        status:          getCalculatedStatus(d).replace('_', ' '),
+        modalidade:      d.modality || '',
+        corredor:        d.corredor || '',
+        aprovador:       d.approver || '',
+        analista:        d.analyst || '',
+        transporte:      d.transportType || '',
+        hospedagem:      d.accommodationType || '',
+      });
 
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Demandas');
+      // Demandas noturnas (≥ 18:00): negrito + fundo laranja-claro em toda a linha
+      if (isNocturnal(d.startDate)) {
+        row.eachCell({ includeEmpty: true }, (cell: any) => {
+          cell.font = { bold: true };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE0B2' } };
+        });
+      }
+    });
 
-    const today = new Date().toISOString().split('T')[0];
-    XLSX.writeFile(wb, `demandas_${today}.xlsx`);
+    // AutoFilter cobrindo todas as colunas (19) e todas as linhas com dados
+    worksheet.autoFilter = {
+      from: { row: 1, column: 1 },
+      to:   { row: toExport.length + 1, column: 20 },
+    };
+
+    // Gera o arquivo e faz o download
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `demandas_${new Date().toISOString().split('T')[0]}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   /* ---------- dropdown options (derivadas dos dados) ---------- */

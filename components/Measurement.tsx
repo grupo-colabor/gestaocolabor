@@ -146,9 +146,11 @@ const MeasurementView: React.FC = () => {
   const [filter, setFilter] = useState('');
   const [advancedFilters, setAdvancedFilters] = useState({
     companyId: '',
-    status: '', 
+    status: '',
     startDate: '',
-    endDate: ''
+    endDate: '',
+    corredor: '',
+    localidade: ''
   });
 
   const getCalculatedDemandStatus = (d: Demand) => calculateDemandStatus({
@@ -197,14 +199,17 @@ const MeasurementView: React.FC = () => {
       // FILTRO: Ignorar se a demanda não existe ou se está CANCELADA
       if (!d || d.status === 'CANCELADA') return false;
 
-      const matchesText = 
+      const matchesText =
         d.id.toLowerCase().includes(filter.toLowerCase()) ||
+        (d.clientDemandId || '').toLowerCase().includes(filter.toLowerCase()) ||
         getCompanyName(d.companyId).toLowerCase().includes(filter.toLowerCase()) ||
         getTrainingName(d.trainingId).toLowerCase().includes(filter.toLowerCase());
 
       if (!matchesText) return false;
       if (advancedFilters.companyId && d.companyId !== advancedFilters.companyId) return false;
       if (advancedFilters.status && m.status !== advancedFilters.status) return false;
+      if (advancedFilters.corredor && (d.corredor ?? '') !== advancedFilters.corredor) return false;
+      if (advancedFilters.localidade && (d.trainingLocal ?? '') !== advancedFilters.localidade) return false;
       // ✅ Filtro por período: suporta dias específicos
       if (advancedFilters.startDate || advancedFilters.endDate) {
         if (!demandIntersectsRange(d, advancedFilters.startDate || undefined, advancedFilters.endDate || undefined)) return false;
@@ -216,6 +221,26 @@ const MeasurementView: React.FC = () => {
         return (d2?.startDate || '').localeCompare(d1?.startDate || '');
     });
   }, [measurements, demands, filter, advancedFilters, companies, trainings]);
+
+  const availableCorredores = useMemo(() =>
+    [...new Set(
+      measurements
+        .map(m => demands.find(d => d.id === m.demandId))
+        .filter((d): d is Demand => !!d && d.status !== 'CANCELADA')
+        .map(d => d.corredor)
+        .filter((v): v is string => !!v)
+    )].sort(),
+  [measurements, demands]);
+
+  const availableLocalidades = useMemo(() =>
+    [...new Set(
+      measurements
+        .map(m => demands.find(d => d.id === m.demandId))
+        .filter((d): d is Demand => !!d && d.status !== 'CANCELADA')
+        .map(d => d.trainingLocal)
+        .filter((v): v is string => !!v && v !== 'N/A')
+    )].sort(),
+  [measurements, demands]);
 
   const {
     currentPage: measPage,
@@ -952,9 +977,9 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 grid grid-cols-1 md:grid-cols-12 gap-3">
         <div className="relative col-span-1 md:col-span-4">
           <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-          <input 
-            type="text" 
-            placeholder="Buscar por ID ou Cliente..." 
+          <input
+            type="text"
+            placeholder="Buscar por ID, ID SAP ou Cliente..."
             className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -978,6 +1003,18 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
           <input type="date" className="w-full border border-gray-300 rounded-lg px-2 py-1 text-xs" value={advancedFilters.startDate} onChange={e => setAdvancedFilters({...advancedFilters, startDate: e.target.value})} />
           <input type="date" className="w-full border border-gray-300 rounded-lg px-2 py-1 text-xs" value={advancedFilters.endDate} onChange={e => setAdvancedFilters({...advancedFilters, endDate: e.target.value})} />
         </div>
+        <div className="col-span-1 md:col-span-3">
+          <select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={advancedFilters.corredor} onChange={e => setAdvancedFilters({...advancedFilters, corredor: e.target.value})}>
+            <option value="">Todos Corredores</option>
+            {availableCorredores.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div className="col-span-1 md:col-span-3">
+          <select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={advancedFilters.localidade} onChange={e => setAdvancedFilters({...advancedFilters, localidade: e.target.value})}>
+            <option value="">Todas Localidades</option>
+            {availableLocalidades.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -986,8 +1023,11 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200 text-[10px] uppercase tracking-wider font-black text-slate-500">
                 <th className="p-4">Demanda</th>
+                <th className="p-4">ID SAP / Pedido Cliente</th>
                 <th className="p-4">Empresa</th>
                 <th className="p-4">Treinamento</th>
+                <th className="p-4">Corredor</th>
+                <th className="p-4">Localidade</th>
                 <th className="p-4">Início</th>
                 <th className="p-4 text-center">Etapa Medição</th>
                 <th className="p-4 text-right">Ações</th>
@@ -999,8 +1039,11 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                 return (
                   <tr key={m.id} className="hover:bg-gray-50 transition-colors text-sm text-gray-700">
                     <td className="p-4 font-bold text-blue-600">{d?.id}</td>
+                    <td className="p-4 text-xs text-gray-500">{d?.clientDemandId || '—'}</td>
                     <td className="p-4 font-medium">{getCompanyName(d?.companyId || '')}</td>
                     <td className="p-4">{getTrainingName(d?.trainingId || '')}</td>
+                    <td className="p-4 text-xs">{d?.corredor || '—'}</td>
+                    <td className="p-4 text-xs">{d?.trainingLocal || '—'}</td>
                     <td className="p-4 font-mono text-xs">{formatDateTime(d?.startDate)}</td>
                     <td className="p-4 text-center">
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor(m.status)}`}>

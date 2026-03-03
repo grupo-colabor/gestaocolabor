@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell
@@ -50,6 +50,8 @@ const Dashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('GERAL');
   const [showNoInstructorTooltip, setShowNoInstructorTooltip] = useState(false);
   const [showNoMeasurementTooltip, setShowNoMeasurementTooltip] = useState(false);
+  const noInstructorTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const noMeasurementTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const [showCancelledList, setShowCancelledList] = useState(false);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const today = new Date();
@@ -531,12 +533,14 @@ const pendingLogisticsDemands = useMemo(() => {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {noInstructorDemands.length > 0 && (
-            <div className="relative group/alert">
+            <div
+              className="relative group/alert"
+              onMouseEnter={() => { clearTimeout(noInstructorTimerRef.current); setShowNoInstructorTooltip(true); }}
+              onMouseLeave={() => { noInstructorTimerRef.current = setTimeout(() => setShowNoInstructorTooltip(false), 150); }}
+            >
               <AlertBar
                 type="warning"
                 message={`${noInstructorDemands.length} demanda(s) sem instrutor alocado.`}
-                onMouseEnter={() => setShowNoInstructorTooltip(true)}
-                onMouseLeave={() => setShowNoInstructorTooltip(false)}
               >
                 <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-100 rounded-lg text-[10px] font-black uppercase transition-colors cursor-help">
                   Listar Pendências <Info size={12} />
@@ -544,7 +548,11 @@ const pendingLogisticsDemands = useMemo(() => {
               </AlertBar>
 
               {showNoInstructorTooltip && (
-                <div className="absolute top-full left-0 mt-2 w-full bg-white border border-amber-200 shadow-2xl rounded-2xl p-4 z-[200] animate-in fade-in slide-in-from-top-2 duration-200">
+                <div
+                  className="absolute top-full left-0 mt-2 w-full bg-white border border-amber-200 shadow-2xl rounded-2xl p-4 z-[200] animate-in fade-in slide-in-from-top-2 duration-200"
+                  onMouseEnter={() => { clearTimeout(noInstructorTimerRef.current); setShowNoInstructorTooltip(true); }}
+                  onMouseLeave={() => { noInstructorTimerRef.current = setTimeout(() => setShowNoInstructorTooltip(false), 150); }}
+                >
                   <div className="flex flex-col mb-3 border-b border-amber-50 pb-2">
                     <h4 className="text-[10px] font-black text-amber-600 uppercase tracking-widest flex items-center gap-1.5">
                       <AlertTriangle size={12} /> Aguardando Alocação Técnica
@@ -565,12 +573,14 @@ const pendingLogisticsDemands = useMemo(() => {
           )}
 
           {noMeasurementDemands.length > 0 && (
-            <div className="relative group/alert">
+            <div
+              className="relative group/alert"
+              onMouseEnter={() => { clearTimeout(noMeasurementTimerRef.current); setShowNoMeasurementTooltip(true); }}
+              onMouseLeave={() => { noMeasurementTimerRef.current = setTimeout(() => setShowNoMeasurementTooltip(false), 150); }}
+            >
               <AlertBar
                 type="info"
                 message={`${noMeasurementDemands.length} demanda(s) concluída(s) sem medição.`}
-                onMouseEnter={() => setShowNoMeasurementTooltip(true)}
-                onMouseLeave={() => setShowNoMeasurementTooltip(false)}
               >
                 <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-100 rounded-lg text-[10px] font-black uppercase transition-colors cursor-help">
                   Ver Medições <Info size={12} />
@@ -578,7 +588,11 @@ const pendingLogisticsDemands = useMemo(() => {
               </AlertBar>
 
               {showNoMeasurementTooltip && (
-                <div className="absolute top-full left-0 mt-2 w-full bg-white border border-blue-200 shadow-2xl rounded-2xl p-4 z-[200] animate-in fade-in slide-in-from-top-2 duration-200">
+                <div
+                  className="absolute top-full left-0 mt-2 w-full bg-white border border-blue-200 shadow-2xl rounded-2xl p-4 z-[200] animate-in fade-in slide-in-from-top-2 duration-200"
+                  onMouseEnter={() => { clearTimeout(noMeasurementTimerRef.current); setShowNoMeasurementTooltip(true); }}
+                  onMouseLeave={() => { noMeasurementTimerRef.current = setTimeout(() => setShowNoMeasurementTooltip(false), 150); }}
+                >
                   <div className="flex flex-col mb-3 border-b border-blue-50 pb-2">
                     <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-widest flex items-center gap-1.5">
                       <DollarSign size={12} /> Medições Administrativas Pendentes

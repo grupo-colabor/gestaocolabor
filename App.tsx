@@ -96,6 +96,7 @@ import {
 
 import {
   fetchInstructorAllocations,
+  upsertInstructorAllocation,
   replaceInstructorAllocationsForDemand
 } from './services/instructorAllocations';
 
@@ -2113,8 +2114,37 @@ const removeAgendaItem = useCallback(
 
 
   const updateInstructorAllocation = useCallback((updated: InstructorAllocation) => {
-    setInstructorAllocations(prev => prev.map(a => (a.id === updated.id ? updated : a)));
-  }, []);
+    if (AUTH_MODE !== 'supabase') {
+      setInstructorAllocations(prev => prev.map(a => (a.id === updated.id ? updated : a)));
+      return;
+    }
+
+    // Snapshot para rollback
+    setInstructorAllocations(prev => {
+      const snapshot = prev;
+      const next = prev.map(a => (a.id === updated.id ? updated : a));
+
+      // Persiste no Supabase de forma assíncrona
+      (async () => {
+        try {
+          await upsertInstructorAllocation({
+            id: updated.id,
+            demand_id: updated.demandId,
+            instructor_id: updated.instructorId,
+            start_date: updated.startDate,
+            end_date: updated.endDate
+          });
+        } catch (e) {
+          console.error('[updateInstructorAllocation] Erro ao persistir no banco:', e);
+          // Reverte para o estado anterior
+          setInstructorAllocations(snapshot);
+          setNotification({ message: 'Erro ao atualizar alocação de instrutor.', type: 'error' });
+        }
+      })();
+
+      return next;
+    });
+  }, [AUTH_MODE, setNotification]);
 
   const removeInstructorAllocation = useCallback(
   (id: string) => {

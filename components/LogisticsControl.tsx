@@ -560,7 +560,7 @@ const LogisticsControl: React.FC = () => {
                         <td className="p-5">
                           <div className="flex flex-col">
                             <span className="font-mono text-blue-600 font-bold">#{d.id}</span>
-                            <span className="text-[10px] font-black uppercase text-slate-400 mt-1 truncate max-w-[150px]">
+                            <span className="text-[10px] font-black uppercase text-slate-400 mt-1 truncate max-w-[150px]" title={getCompanyName(d.companyId)}>
                               {getCompanyName(d.companyId)}
                             </span>
                           </div>
@@ -570,7 +570,7 @@ const LogisticsControl: React.FC = () => {
                         <td className="p-5 max-w-[200px]">
                           <div className="flex items-center gap-2">
                             <GraduationCap size={14} className="text-slate-300 shrink-0" />
-                            <span className="truncate font-bold text-slate-700">{getTrainingName(d.trainingId)}</span>
+                            <span className="truncate font-bold text-slate-700" title={getTrainingName(d.trainingId)}>{getTrainingName(d.trainingId)}</span>
                           </div>
                         </td>
 

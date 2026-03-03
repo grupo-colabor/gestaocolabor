@@ -500,10 +500,10 @@ const handleSaveCompanionDays = () => {
                   <div className={`mt-1 flex-shrink-0 w-2 h-2 rounded-full ${isUrgent(demand.startDate) ? 'bg-red-500 animate-pulse' : 'bg-slate-300'}`}></div>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-start mb-1">
-                      <h3 className="font-bold text-slate-800 truncate text-sm">{getCompanyName(demand.companyId)}</h3>
+                      <h3 className="font-bold text-slate-800 truncate text-sm" title={getCompanyName(demand.companyId)}>{getCompanyName(demand.companyId)}</h3>
                       <span className="text-[10px] font-bold text-slate-400 font-mono tracking-tighter">#{demand.id}</span>
                     </div>
-                    <p className="text-xs font-semibold text-blue-600 mb-2 truncate">{getTrainingName(demand.trainingId)}</p>
+                    <p className="text-xs font-semibold text-blue-600 mb-2 truncate" title={getTrainingName(demand.trainingId)}>{getTrainingName(demand.trainingId)}</p>
                     
                     <div className="flex flex-wrap gap-y-2 gap-x-4 items-center text-[11px] text-slate-500">
                       <div className="flex items-center"><CalendarIcon size={12} className="mr-1" /> {new Date(demand.startDate).toLocaleDateString('pt-BR')}</div>
@@ -1000,7 +1000,7 @@ const handleSaveCompanionDays = () => {
                                 className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3"
                               >
                                 <div className="min-w-0">
-                                  <p className="text-[12px] font-black text-amber-900 truncate">{inst?.name ?? 'Instrutor'}</p>
+                                  <p className="text-[12px] font-black text-amber-900 truncate" title={inst?.name}>{inst?.name ?? 'Instrutor'}</p>
                                   <p className="text-[10px] font-black text-amber-700 uppercase tracking-widest">ACOMPANHANTE</p>
                                 </div>
 
@@ -1059,7 +1059,7 @@ const handleSaveCompanionDays = () => {
                                 >
                                   <div className="flex items-center justify-between gap-3">
                                     <div className="min-w-0">
-                                      <p className="text-[12px] font-black truncate">{i.name}</p>
+                                      <p className="text-[12px] font-black truncate" title={i.name}>{i.name}</p>
                                       {isMain && (
                                         <p className="text-[10px] font-black uppercase tracking-widest">INSTRUTOR PRINCIPAL</p>
                                       )}

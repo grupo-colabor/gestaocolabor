@@ -484,7 +484,7 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
                   <span className={`w-2 h-2 rounded-full shrink-0 ${
                     p.hasConflict ? 'bg-red-500' : p.isException ? 'bg-amber-500' : 'bg-emerald-500'
                   }`} />
-                  <span className="truncate">{p.instructorName}</span>
+                  <span className="truncate" title={p.instructorName}>{p.instructorName}</span>
                   {p.hasConflict && <AlertTriangle size={10} />}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
@@ -563,7 +563,7 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
             }`}>
               <div className="flex items-center gap-1.5 min-w-0">
                 <span className={`w-2 h-2 rounded-full shrink-0 ${p.hasConflict ? 'bg-red-500' : p.isException ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-                <span className="truncate font-black">{p.instructorName}</span>
+                <span className="truncate font-black" title={p.instructorName}>{p.instructorName}</span>
                 {p.hasConflict && <span className="text-[8px] opacity-70">(CONFLITO)</span>}
               </div>
               <div className="flex items-center gap-1 shrink-0">
@@ -623,10 +623,10 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
                   <div className={`mt-1.5 flex-shrink-0 w-2 h-2 rounded-full ${isUrgent(demand.startDate) ? 'bg-red-500 animate-pulse' : 'bg-slate-300'}`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-start mb-0.5">
-                      <h4 className="font-bold text-slate-800 truncate text-xs">{getCompanyName(demand.companyId)}</h4>
+                      <h4 className="font-bold text-slate-800 truncate text-xs" title={getCompanyName(demand.companyId)}>{getCompanyName(demand.companyId)}</h4>
                       <span className="text-[9px] font-bold text-slate-400 font-mono shrink-0">#{demand.id}</span>
                     </div>
-                    <p className="text-[10px] font-semibold text-blue-600 truncate">{getTrainingName(demand.trainingId)}</p>
+                    <p className="text-[10px] font-semibold text-blue-600 truncate" title={getTrainingName(demand.trainingId)}>{getTrainingName(demand.trainingId)}</p>
                     <div className="flex items-center gap-3 mt-1 text-[9px] text-slate-500 font-bold">
                       <span className="flex items-center gap-0.5"><CalendarIcon size={10} /> {formatDateBR(demand.startDate)} — {formatDateBR(demand.endDate)}</span>
                     </div>
@@ -909,7 +909,7 @@ const InstructorCard: React.FC<{
           {instructor.name.charAt(0)}
         </div>
         <div className="min-w-0">
-          <p className="text-[11px] font-bold text-slate-800 truncate">{instructor.name}</p>
+          <p className="text-[11px] font-bold text-slate-800 truncate" title={instructor.name}>{instructor.name}</p>
           <div className="flex items-center gap-1 mt-0.5">
             {isAlreadyAllocated ? (
               <span className="text-[8px] font-black uppercase px-1 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200 flex items-center gap-0.5">

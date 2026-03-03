@@ -821,7 +821,7 @@ const handleRemoveBaseItem = async (item: string) => {
                       <h3 className="font-bold text-gray-800 truncate pr-8" title={company.razaoSocial}>{company.name}</h3>
                       <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold shrink-0 ${company.status === 'ATIVO' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{company.status}</span>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1 truncate">{company.razaoSocial}</p>
+                    <p className="text-xs text-gray-500 mt-1 truncate" title={company.razaoSocial}>{company.razaoSocial}</p>
                     <div className="mt-3 flex flex-col space-y-1">
                       <div className="flex items-center text-[10px] text-gray-400"><MapPin size={10} className="mr-1" />{company.address?.cidade || 'Cidade não inf.'} - {company.address?.estado || 'UF'}</div>
                       <div className="flex items-center text-[10px] text-gray-400"><Info size={10} className="mr-1" />{company.segment || 'Segmento não inf.'}</div>
@@ -890,7 +890,7 @@ const handleRemoveBaseItem = async (item: string) => {
                     <tr key={t.id} className="hover:bg-gray-50 transition-colors group">
                       <td className="p-4">
                         <div className="font-bold text-gray-800">{t.name}</div>
-                        <div className="text-[10px] text-gray-400 truncate max-w-xs">{t.descriptionShort || 'Sem descrição'}</div>
+                        <div className="text-[10px] text-gray-400 truncate max-w-xs" title={t.descriptionShort || undefined}>{t.descriptionShort || 'Sem descrição'}</div>
                       </td>
                       <td className="p-4 text-gray-600 font-mono text-sm">{t.nr || '-'}</td>
                       <td className="p-4">
@@ -1067,10 +1067,10 @@ const handleRemoveBaseItem = async (item: string) => {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-start">
-                      <h3 className="font-bold text-gray-800 truncate pr-8">{inst.name}</h3>
+                      <h3 className="font-bold text-gray-800 truncate pr-8" title={inst.name}>{inst.name}</h3>
                       <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold shrink-0 ${inst.status === 'ATIVO' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{inst.status}</span>
                     </div>
-                    <p className="text-[11px] text-gray-500 mt-1 line-clamp-1">
+                    <p className="text-[11px] text-gray-500 mt-1 line-clamp-1" title={inst.regionIds.map(rid => regions.find(r => r.id === rid)?.name).join(', ')}>
                       <span className="font-semibold">Regiões:</span> {inst.regionIds.map(rid => regions.find(r => r.id === rid)?.name).join(', ')}
                     </p>
                     <div className="mt-3">
@@ -1779,7 +1779,7 @@ const handleRemoveBaseItem = async (item: string) => {
                                 <Target size={20} />
                               </div>
                               <div>
-                                <p className="text-xs font-bold text-slate-800 line-clamp-1">{training?.name || 'Não encontrado'}</p>
+                                <p className="text-xs font-bold text-slate-800 line-clamp-1" title={training?.name}>{training?.name || 'Não encontrado'}</p>
                                 <div className="flex items-center gap-1.5 mt-0.5">
                                   <span className={`text-[9px] font-black uppercase tracking-tighter px-1.5 py-0.5 rounded
                                     ${skill.level === 4 ? 'bg-purple-100 text-purple-700' :

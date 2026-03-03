@@ -2282,7 +2282,7 @@ const companionInstructorIds = useMemo(() => {
                   <tr key={demand.id} className="hover:bg-slate-50/50 transition-colors text-sm text-gray-700">
                     <td className="p-4 font-bold text-blue-600">{demand.id}</td>
                     <td className="p-4 font-medium">{getCompanyName(demand.companyId)}</td>
-                    <td className="p-4 max-w-xs truncate">{getTrainingName(demand.trainingId)}</td>
+                    <td className="p-4 max-w-xs truncate" title={getTrainingName(demand.trainingId)}>{getTrainingName(demand.trainingId)}</td>
                     <td className="p-4">{getRegionName(demand.regionId)}</td>
                     <td className="p-4 whitespace-nowrap">{formatDateTime(demand.startDate.split('T')[0])}</td>
                     <td className="p-4 font-medium text-gray-900">{getInstructorName(principalInstructorByDemandId[demand.id])}</td>
@@ -3034,7 +3034,7 @@ const companionInstructorIds = useMemo(() => {
                                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-blue-100">
                                       <div className="flex items-center gap-2 overflow-hidden">
                                         <FileCheck size={18} className="text-blue-600 shrink-0" />
-                                        <span className="text-xs font-bold text-slate-700 truncate">
+                                        <span className="text-xs font-bold text-slate-700 truncate" title={pendingPdfs.classList.name}>
                                           {pendingPdfs.classList.name}
                                         </span>
                                       </div>
@@ -3088,7 +3088,7 @@ const companionInstructorIds = useMemo(() => {
                                   <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-blue-100">
                                     <div className="flex items-center gap-2 overflow-hidden">
                                       <FileCheck size={18} className="text-blue-600 shrink-0" />
-                                      <span className="text-xs font-bold text-slate-700 truncate">{pendingPdfs.instructorRelease.name}</span>
+                                      <span className="text-xs font-bold text-slate-700 truncate" title={pendingPdfs.instructorRelease.name}>{pendingPdfs.instructorRelease.name}</span>
                                     </div>
                                     <button onClick={() => removePdf('instructorRelease')} className="p-1.5 text-slate-300 hover:text-red-500 transition-colors">
                                       <Trash2 size={16} />

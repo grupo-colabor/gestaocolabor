@@ -439,11 +439,11 @@ const pendingLogisticsDemands = useMemo(() => {
                   <div className="flex items-center gap-3 overflow-hidden">
                     <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse shrink-0"></div>
                     <div className="overflow-hidden">
-                      <p className="text-[11px] font-black text-slate-700 truncate">
+                      <p className="text-[11px] font-black text-slate-700 truncate" title={getTrainingName(d.trainingId)}>
                         <span className="text-blue-600 font-mono mr-1">#{d.id}</span>
                         {getTrainingName(d.trainingId)}
                       </p>
-                      <p className="text-[9px] font-bold text-slate-400 truncate uppercase">{getCompanyName(d.companyId)}</p>
+                      <p className="text-[9px] font-bold text-slate-400 truncate uppercase" title={getCompanyName(d.companyId)}>{getCompanyName(d.companyId)}</p>
                     </div>
                   </div>
 
@@ -493,11 +493,11 @@ const pendingLogisticsDemands = useMemo(() => {
                   <div className="flex items-center gap-3 overflow-hidden">
                     <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse shrink-0"></div>
                     <div className="overflow-hidden">
-                      <p className="text-[11px] font-black text-slate-700 truncate">
+                      <p className="text-[11px] font-black text-slate-700 truncate" title={getTrainingName(d.trainingId)}>
                         <span className="text-blue-600 font-mono mr-1">#{d.id}</span>
                         {getTrainingName(d.trainingId)}
                       </p>
-                      <p className="text-[9px] font-bold text-slate-400 truncate uppercase">
+                      <p className="text-[9px] font-bold text-slate-400 truncate uppercase" title={getCompanyName(d.companyId)}>
                         {getCompanyName(d.companyId)} • Fim: {new Date(d.endDate).toLocaleDateString('pt-BR')}
                       </p>
                     </div>
@@ -554,7 +554,7 @@ const pendingLogisticsDemands = useMemo(() => {
                     {noInstructorDemands.map(d => (
                       <div key={d.id} className="p-2 bg-slate-50 rounded-lg border border-slate-100 flex justify-between items-center">
                         <span className="text-[10px] font-black text-blue-600 font-mono">#{d.id}</span>
-                        <span className="text-[11px] font-bold text-slate-700 truncate flex-1 px-3">{getTrainingName(d.trainingId)}</span>
+                        <span className="text-[11px] font-bold text-slate-700 truncate flex-1 px-3" title={getTrainingName(d.trainingId)}>{getTrainingName(d.trainingId)}</span>
                         <span className="text-[9px] font-bold text-slate-400 uppercase">{new Date(d.startDate).toLocaleDateString('pt-BR')}</span>
                       </div>
                     ))}
@@ -588,7 +588,7 @@ const pendingLogisticsDemands = useMemo(() => {
                     {noMeasurementDemands.map(d => (
                       <div key={d.id} className="p-2 bg-slate-50 rounded-lg border border-slate-100 flex justify-between items-center">
                         <span className="text-[10px] font-black text-blue-600 font-mono">#{d.id}</span>
-                        <span className="text-[11px] font-bold text-slate-700 truncate flex-1 px-3">{getTrainingName(d.trainingId)}</span>
+                        <span className="text-[11px] font-bold text-slate-700 truncate flex-1 px-3" title={getTrainingName(d.trainingId)}>{getTrainingName(d.trainingId)}</span>
                         <span className="text-[9px] font-bold text-slate-400 uppercase">Fim: {new Date(d.endDate).toLocaleDateString('pt-BR')}</span>
                       </div>
                     ))}
@@ -627,7 +627,7 @@ const pendingLogisticsDemands = useMemo(() => {
                   <div key={d.id} className="flex items-center justify-between text-[11px] font-medium text-slate-600 bg-white/60 p-3 rounded-xl border border-slate-100 hover:border-slate-300 transition-colors">
                     <div className="flex items-center gap-3 min-w-0">
                       <span className="font-mono text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded">#{d.id}</span>
-                      <span className="truncate font-bold text-slate-700">{getTrainingName(d.trainingId)}</span>
+                      <span className="truncate font-bold text-slate-700" title={getTrainingName(d.trainingId)}>{getTrainingName(d.trainingId)}</span>
                     </div>
                     <div className="flex items-center gap-4 shrink-0">
                       <span className="text-slate-400 uppercase text-[9px] font-black tracking-tight">{getCompanyName(d.companyId)}</span>
@@ -859,9 +859,9 @@ const pendingLogisticsDemands = useMemo(() => {
                     <tr key={d.id} className="hover:bg-slate-50/50 transition-colors text-xs font-medium text-slate-600">
                       <td className="px-6 py-3 font-bold text-blue-600">{d.id}</td>
                       <td className="px-6 py-3">{new Date(d.startDate).toLocaleDateString('pt-BR')}</td>
-                      <td className="px-6 py-3 truncate max-w-[150px]">{companies.find(c => c.id === d.companyId)?.name}</td>
-                      <td className="px-6 py-3 truncate max-w-[200px]">{trainings.find(t => t.id === d.trainingId)?.name}</td>
-                      <td className="px-6 py-3 truncate max-w-[150px]">{d.trainingLocal}</td>
+                      <td className="px-6 py-3 truncate max-w-[150px]" title={companies.find(c => c.id === d.companyId)?.name}>{companies.find(c => c.id === d.companyId)?.name}</td>
+                      <td className="px-6 py-3 truncate max-w-[200px]" title={trainings.find(t => t.id === d.trainingId)?.name}>{trainings.find(t => t.id === d.trainingId)?.name}</td>
+                      <td className="px-6 py-3 truncate max-w-[150px]" title={d.trainingLocal}>{d.trainingLocal}</td>
                       <td className="px-6 py-3">
                         <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${COLORS[cStatus as keyof typeof COLORS] ? 'bg-opacity-10' : 'bg-slate-100'}`} style={{ color: COLORS[cStatus as keyof typeof COLORS] as string }}>
                           {STATUS_LABELS[cStatus]}
@@ -935,7 +935,7 @@ const pendingLogisticsDemands = useMemo(() => {
               {dependencyRisk.map((risk, idx) => (
                 <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 group hover:border-red-200 transition-colors">
                   <div className="min-w-0">
-                    <p className="text-xs font-black text-slate-700 truncate uppercase tracking-tight">{risk.name}</p>
+                    <p className="text-xs font-black text-slate-700 truncate uppercase tracking-tight" title={risk.name}>{risk.name}</p>
                     <p className="text-[9px] text-slate-400 font-bold">{risk.count === 0 ? 'NENHUM INSTRUTOR APTO' : 'APENAS 1 INSTRUTOR APTO'}</p>
                   </div>
                   <span className={`px-2 py-1 rounded-lg text-[10px] font-black ${risk.count === 0 ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>

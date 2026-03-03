@@ -483,7 +483,7 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
                       <CheckCircle2 size={16} />
                     </div>
                     <div>
-                      <p className="text-xs font-bold text-slate-700 truncate max-w-[200px]">{file.name}</p>
+                      <p className="text-xs font-bold text-slate-700 truncate max-w-[200px]" title={file.name}>{file.name}</p>
                       <p className="text-[9px] font-medium text-slate-400 uppercase">
                         Enviado em {formatDateTime(file.uploadDate)}
                       </p>
@@ -562,7 +562,7 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
                 <div className="flex items-center gap-3 overflow-hidden">
                   <FileText size={16} className="text-slate-400 shrink-0" />
                   <div className="overflow-hidden">
-                    <p className="text-[11px] font-bold text-slate-700 truncate">{file.name}</p>
+                    <p className="text-[11px] font-bold text-slate-700 truncate" title={file.name}>{file.name}</p>
                     <p className="text-[9px] text-slate-400 uppercase">{formatDateTime(file.uploadDate)}</p>
                   </div>
                 </div>
@@ -653,7 +653,7 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
                     </div>
 
                     <div className="absolute bottom-0 left-0 right-0 p-2 bg-white/90 backdrop-blur-sm border-t border-slate-100">
-                      <p className="text-[8px] font-black text-slate-600 truncate">{photo.name}</p>
+                      <p className="text-[8px] font-black text-slate-600 truncate" title={photo.name}>{photo.name}</p>
                     </div>
                   </div>
                 );

@@ -1173,10 +1173,10 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                         
                         <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
                           <div className="md:col-span-5">
-                            <h4 className="text-sm font-black text-slate-800 truncate">{getTrainingName(d?.trainingId || '')}</h4>
+                            <h4 className="text-sm font-black text-slate-800 truncate" title={getTrainingName(d?.trainingId || '')}>{getTrainingName(d?.trainingId || '')}</h4>
                             <div className="flex items-center gap-3 mt-1">
                               <span className="text-[10px] font-bold text-blue-600 font-mono tracking-tighter">#{d?.id}</span>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase truncate">{getCompanyName(d?.companyId || '')}</span>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase truncate" title={getCompanyName(d?.companyId || '')}>{getCompanyName(d?.companyId || '')}</span>
                               <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded shadow-sm ${STATUS_STYLING[cDemandStatus] || 'bg-slate-200'}`}>
                                 {cDemandStatus.replace('_', ' ')}
                               </span>

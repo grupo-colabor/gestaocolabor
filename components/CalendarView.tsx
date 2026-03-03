@@ -1427,7 +1427,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
               >
                 <div className="h-full flex items-center">
                   <div className="min-w-0 flex flex-col leading-tight">
-                    <span className="truncate max-w-[180px] font-bold text-slate-600">
+                    <span className="truncate max-w-[180px] font-bold text-slate-600" title={instructor.name}>
                       {instructor.name}
                     </span>
 
@@ -1555,7 +1555,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                             onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleItemCardClick(instructor, allocItem); }}
                             className={`flex-1 min-h-0 w-full rounded-md border shadow-sm px-1 flex items-center justify-center text-center overflow-hidden transition-all active:scale-95 cursor-pointer ${aBg} ${aText} ${aBorder}`}
                           >
-                            <span className="text-[8px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-1">
+                            <span className="text-[8px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-1" title={allocItem.title}>
                               {allocItem.title}
                             </span>
                           </div>
@@ -1670,7 +1670,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                       })()}
 
                       {/* Linha principal */}
-                      <span className="text-[9px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-2">
+                      <span className="text-[9px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-2" title={cellItem.data.title}>
                         {cellItem.data.title}
                       </span>
 
@@ -1752,7 +1752,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                           }`}
                           onClick={e => e.stopPropagation()}
                         >
-                          <span className="text-[8px] font-black uppercase tracking-tighter line-clamp-1 leading-none">
+                          <span className="text-[8px] font-black uppercase tracking-tighter line-clamp-1 leading-none" title={preview.instructorName}>
                             {preview.instructorName.split(' ')[0]}
                           </span>
                           <span className="text-[6px] font-bold uppercase opacity-70 leading-none mt-0.5">
@@ -1837,7 +1837,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                             <span className="text-[7px] font-black opacity-60 uppercase mb-0.5 tracking-tighter truncate w-full">
                               {cellItem.type === 'MIRROR' ? 'ALOCADO' : 'MANUTENÇÃO'}
                             </span>
-                            <p className="text-[8px] font-bold uppercase truncate w-full px-0.5 leading-none">{cellItem.data.title}</p>
+                            <p className="text-[8px] font-bold uppercase truncate w-full px-0.5 leading-none" title={cellItem.data.title}>{cellItem.data.title}</p>
                           </div>
                         ) : (
                           <div className={`w-1.5 h-1.5 rounded-full ${cellItem.type === 'MIRROR' ? 'bg-amber-400' : 'bg-slate-400'}`} />

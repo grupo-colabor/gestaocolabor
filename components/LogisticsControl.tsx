@@ -51,7 +51,9 @@ type DemandDocument = {
 };
 
 const LogisticsControl: React.FC = () => {
-  const { demands, companies, trainings, updateDemand } = useApp();
+  const { demands, companies, trainings, instructors, updateDemand } = useApp();
+
+  const getInstructorName = (id?: string) => instructors.find(i => i.id === id)?.name;
 
   const [filterText, setFilterText] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('WEEK');
@@ -472,6 +474,7 @@ const LogisticsControl: React.FC = () => {
               <tr className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase tracking-wider font-black text-slate-500">
                 <th className="p-5">ID / Empresa</th>
                 <th className="p-5">Treinamento</th>
+                <th className="p-5">Instrutor</th>
                 <th className="p-5 text-center">Período</th>
                 <th className="p-5 text-center">
                   <span className="flex flex-col items-center gap-1">
@@ -572,6 +575,13 @@ const LogisticsControl: React.FC = () => {
                             <GraduationCap size={14} className="text-slate-300 shrink-0" />
                             <span className="truncate font-bold text-slate-700" title={getTrainingName(d.trainingId)}>{getTrainingName(d.trainingId)}</span>
                           </div>
+                        </td>
+
+                        {/* INSTRUTOR */}
+                        <td className="p-5 max-w-[160px]">
+                          <span className="truncate font-medium text-slate-700 block" title={getInstructorName(d.instructorId) ?? undefined}>
+                            {getInstructorName(d.instructorId) ?? '—'}
+                          </span>
                         </td>
 
                         {/* PERÍODO */}

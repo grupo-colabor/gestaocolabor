@@ -193,6 +193,11 @@ const MeasurementView: React.FC = () => {
     return date.toLocaleDateString('pt-BR');
   };
 
+  const formatTime = (dateStr?: string) => {
+    if (!dateStr || !dateStr.includes('T')) return '---';
+    return dateStr.split('T')[1]?.substring(0, 5) || '---';
+  };
+
   const filteredMeasurements = useMemo(() => {
     return measurements.filter(m => {
       const d = demands.find(demand => demand.id === m.demandId);
@@ -1034,9 +1039,12 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                 <th className="p-4">ID SAP / Pedido Cliente</th>
                 <th className="p-4">Empresa</th>
                 <th className="p-4">Treinamento</th>
+                <th className="p-4">Instrutor</th>
                 <th className="p-4">Corredor</th>
                 <th className="p-4">Localidade</th>
                 <th className="p-4">Início</th>
+                <th className="p-4">Horário Início</th>
+                <th className="p-4">Horário Fim</th>
                 <th className="p-4 text-center">Etapa Medição</th>
                 <th className="p-4 text-right">Ações</th>
               </tr>
@@ -1050,9 +1058,12 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                     <td className="p-4 text-xs text-gray-500">{d?.clientDemandId || '—'}</td>
                     <td className="p-4 font-medium">{getCompanyName(d?.companyId || '')}</td>
                     <td className="p-4">{getTrainingName(d?.trainingId || '')}</td>
+                    <td className="p-4 text-xs">{getInstructorName(d?.instructorId)}</td>
                     <td className="p-4 text-xs">{d?.corredor || '—'}</td>
                     <td className="p-4 text-xs">{d?.trainingLocal || '—'}</td>
                     <td className="p-4 font-mono text-xs">{formatDateTime(d?.startDate)}</td>
+                    <td className="p-4 font-mono text-xs">{formatTime(d?.startDate)}</td>
+                    <td className="p-4 font-mono text-xs">{formatTime(d?.endDate)}</td>
                     <td className="p-4 text-center">
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor(m.status)}`}>
                         {STAGE_LABELS[m.status]}

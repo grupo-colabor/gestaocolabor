@@ -2608,6 +2608,26 @@ const hasScheduleConflict = useCallback(
 
       // Verifica conflito de ALOCAÇÃO (demandas + instructorAllocations), sem agenda
       const hasAllocationConflict = (instructorId: string): boolean => {
+        // Constrói o set de dias reais da demanda de entrada
+        const isDiasEspecificos = demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates) && demand.specificDates.length > 0;
+        const reqDays = new Set<string>();
+        if (isDiasEspecificos) {
+          (demand.specificDates as string[]).forEach((d: string) => reqDays.add(d));
+        } else {
+          const c = toDayStart(reqStart);
+          const e = toDayStart(reqEnd);
+          if (c && e) {
+            while (c <= e) { reqDays.add(toDateOnly(c.toISOString())); c.setDate(c.getDate() + 1); }
+          }
+        }
+
+        const dayInRange = (day: string, start?: string, end?: string) => {
+          const d = toDayStart(day);
+          const s = toDayStart(start);
+          const e = toDayEnd(end);
+          return !!(d && s && e && d >= s && d <= e);
+        };
+
         // 1) Conflito com demandas
         const demandConflict = demands.some((d: Demand) => {
           if (d.id === demand.id) return false;
@@ -2616,15 +2636,12 @@ const hasScheduleConflict = useCallback(
           const hasExplicit = instructorAllocations.some((a: InstructorAllocation) => a.demandId === d.id);
           if (hasExplicit) return false;
           if (d.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(d.specificDates) && d.specificDates.length > 0) {
-            const reqDays = new Set<string>();
-            const c = toDayStart(reqStart);
-            const e = toDayStart(reqEnd);
-            if (c && e) {
-              while (c <= e) { reqDays.add(toDateOnly(c.toISOString())); c.setDate(c.getDate() + 1); }
-            }
             return d.specificDates.some((sd: string) => reqDays.has(sd));
           }
           const eff = getEffectiveDemandRange(d);
+          if (isDiasEspecificos) {
+            return [...reqDays].some(day => dayInRange(day, eff.start, eff.end));
+          }
           return overlapsByDay(reqStart, reqEnd, eff.start, eff.end);
         });
         if (demandConflict) return true;
@@ -2634,16 +2651,21 @@ const hasScheduleConflict = useCallback(
           const allocDemand = demands.find((dm: Demand) => dm.id === a.demandId);
           if (allocDemand?.id === demand.id) return false;
           if (allocDemand && allocDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(allocDemand.specificDates) && allocDemand.specificDates.length > 0) {
-            const reqDays = new Set<string>();
-            const c = toDayStart(reqStart);
-            const e = toDayStart(reqEnd);
-            if (c && e) {
-              while (c <= e) { reqDays.add(toDateOnly(c.toISOString())); c.setDate(c.getDate() + 1); }
-            }
             return allocDemand.specificDates.some((sd: string) => reqDays.has(sd));
+          }
+          if (isDiasEspecificos) {
+            return [...reqDays].some(day => dayInRange(day, a.startDate, a.endDate));
           }
           return overlapsByDay(reqStart, reqEnd, a.startDate, a.endDate);
         });
+      };
+
+      // Verifica conflito de agenda respeitando dias específicos da demanda de entrada
+      const hasScheduleConflictForDemand = (instructorId: string): boolean => {
+        if (demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates) && demand.specificDates.length > 0) {
+          return (demand.specificDates as string[]).some(date => hasScheduleConflict(instructorId, date, date, demand.id));
+        }
+        return hasScheduleConflict(instructorId, effective.start, effective.end, demand.id);
       };
 
       const activeCapableInstructors = instructors
@@ -2651,7 +2673,7 @@ const hasScheduleConflict = useCallback(
           i =>
             i.status === 'ATIVO' &&
             i.skills?.some(s => s.trainingId === demand.trainingId) &&
-            !hasScheduleConflict(i.id, effective.start, effective.end, demand.id)
+            !hasScheduleConflictForDemand(i.id)
         )
         .map(i => {
           const skill = i.skills?.find(s => s.trainingId === demand.trainingId);
@@ -2665,7 +2687,7 @@ const hasScheduleConflict = useCallback(
           i =>
             i.status === 'ATIVO' &&
             i.skills?.some(s => s.trainingId === demand.trainingId) &&
-            hasScheduleConflict(i.id, effective.start, effective.end, demand.id) &&
+            hasScheduleConflictForDemand(i.id) &&
             hasAllocationConflict(i.id)
         )
         .map(i => {

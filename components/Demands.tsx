@@ -2329,7 +2329,7 @@ const companionInstructorIds = useMemo(() => {
       </div>
 
       {isModalOpen && (
-        <div 
+        <div
           className="fixed inset-0 z-[100] bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center p-4 no-print"
           onClick={() => {
             setConfirmDelete(false);
@@ -2634,17 +2634,21 @@ const companionInstructorIds = useMemo(() => {
                                 <DataViewField label="Treinamento" value={getTrainingName(formDemand.trainingId!)} icon={BookOpen} />
                                 <DataViewField label="Unidade / Local" value={formDemand.modality === 'ONLINE' ? 'N/A' : formDemand.trainingLocal} icon={MapPin} />
                                 {formDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(formDemand.specificDates) && formDemand.specificDates.length > 0 ? (
-                                  <div className="flex flex-col space-y-1 md:col-span-3">
-                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1"><Calendar size={12} /> Dias Específicos</span>
-                                    <div className="flex flex-wrap gap-1">
-                                      {[...formDemand.specificDates].sort().map(d => (
-                                        <span key={d} className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-[10px] font-bold border border-blue-200">
-                                          {new Date(`${d}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
-                                        </span>
-                                      ))}
+                                  <>
+                                    <div className="flex flex-col space-y-1 md:col-span-3">
+                                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1"><Calendar size={12} /> Dias Específicos</span>
+                                      <div className="flex flex-wrap gap-1">
+                                        {[...formDemand.specificDates].sort().map(d => (
+                                          <span key={d} className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-[10px] font-bold border border-blue-200">
+                                            {new Date(`${d}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
+                                          </span>
+                                        ))}
+                                      </div>
+                                      <span className="text-[10px] text-slate-500">{formDemand.specificDates.length} dia(s)</span>
                                     </div>
-                                    <span className="text-[10px] text-slate-500">{formDemand.specificDates.length} dia(s)</span>
-                                  </div>
+                                    <DataViewField label="Horário Início" value={toLocalTimeInput(formDemand.startDate) || '---'} icon={Clock} />
+                                    <DataViewField label="Horário Fim" value={toLocalTimeInput(formDemand.endDate) || '---'} icon={Clock} />
+                                  </>
                                 ) : (
                                   <>
                                     <DataViewField label="Início" value={formatDateTime(formDemand.startDate)} icon={Calendar} />

@@ -2029,7 +2029,10 @@ const companionInstructorIds = useMemo(() => {
 
       <div className="flex flex-col space-y-4 no-print">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <h1 className="text-2xl font-bold text-gray-800">Gestão de Demandas</h1>
+            <div>
+              <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Gestão de Demandas</h1>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Criação, Acompanhamento e Controle de Demandas de Treinamento</p>
+            </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setIsExportDemandsOpen(true)}

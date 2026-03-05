@@ -1041,11 +1041,11 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
             </button>
           )}
           <div>
-            <h1 className={`font-bold text-gray-800 ${allocationMode ? 'text-lg' : 'text-2xl'}`}>
+            <h1 className={`font-black text-slate-800 uppercase tracking-tight ${allocationMode ? 'text-lg' : 'text-2xl'}`}>
               {allocationMode ? 'Alocação Inteligente' : 'Agenda de Instrutores'}
             </h1>
             {!allocationMode && (
-              <p className="text-sm text-gray-500">Suporte a múltiplos instrutores e controle de alocação por períodos.</p>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Programação e Alocação de Instrutores por Período</p>
             )}
           </div>
         </div>

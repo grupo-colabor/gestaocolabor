@@ -1056,8 +1056,8 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Medição e Faturamento</h1>
-          <p className="text-sm text-slate-500">Gestão de comprovantes e valores de treinamentos realizados.</p>
+          <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Medição e Faturamento</h1>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Gestão de Comprovantes e Valores de Treinamentos Realizados</p>
         </div>
         <button 
           onClick={() => setIsExportSelectionOpen(true)}

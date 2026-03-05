@@ -449,8 +449,8 @@ const handleSaveCompanionDays = () => {
     <div className="h-full flex flex-col gap-6 animate-fade-in">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Orquestração Logística</h1>
-          <p className="text-sm text-slate-500">Alocação inteligente baseada em disponibilidade e qualificação técnica.</p>
+          <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Orquestração Logística</h1>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Alocação Inteligente Baseada em Disponibilidade e Qualificação Técnica</p>
         </div>
         <div className="flex items-center gap-3">
           <button

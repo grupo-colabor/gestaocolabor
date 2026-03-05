@@ -20,7 +20,8 @@ import {
   Info,
   CheckCircle2,
   AlertCircle,
-  FileSearch
+  FileSearch,
+  Bell
 } from 'lucide-react';
 
 import type {
@@ -60,6 +61,7 @@ import Logistics from './components/Logistics';
 import LogisticsControl from './components/LogisticsControl';
 import MeasurementView from './components/Measurement';
 import Evidences from './components/Evidences';
+import Notifications from './components/Notifications';
 import AuthGate from './components/AuthGate';
 import { fetchTrainings } from './services/trainings';
 import { fetchCompanies, insertCompany, updateCompanyById, CompanyRow } from './services/companies';
@@ -120,6 +122,7 @@ import { useRealtimeSync } from './hooks/useRealtimeSync';
 
 type View =
   | 'dashboard'
+  | 'notifications'
   | 'demands'
   | 'calendar'
   | 'registrations'
@@ -2923,6 +2926,7 @@ type Action =
 const ROLE_PERMISSIONS: Record<string, View[]> = {
   admin: [
     'dashboard',
+    'notifications',
     'demands',
     'calendar',
     'registrations',
@@ -2933,6 +2937,7 @@ const ROLE_PERMISSIONS: Record<string, View[]> = {
   ],
   analista: [
     'dashboard',
+    'notifications',
     'demands',
     'calendar',
     'registrations',
@@ -3051,6 +3056,8 @@ const renderContent = () => {
 
 
     switch (currentView) {
+      case 'notifications':
+        return <Notifications />;
       case 'demands':
         return <Demands />;
       case 'calendar':
@@ -3129,6 +3136,15 @@ const renderContent = () => {
               label="Dashboard"
               active={currentView === 'dashboard'}
               onClick={() => setCurrentView('dashboard')}
+            />
+          )}
+
+          {canAccessView(profile?.role, 'notifications') && (
+            <SidebarButton
+              icon={Bell}
+              label="Notificações"
+              active={currentView === 'notifications'}
+              onClick={() => setCurrentView('notifications')}
             />
           )}
 

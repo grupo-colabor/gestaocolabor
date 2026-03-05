@@ -849,8 +849,10 @@ const pendingLogisticsDemands = useMemo(() => {
   };
 
   const renderInstrutores = () => {
+    const next30 = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
     const activeInstructors = instructors.filter(i => i.status === 'ATIVO');
 
+    // --- Workload (horas concluídas no período filtrado) ---
     const instructorWorkload = activeInstructors.map(inst => {
       const hours = filteredDemands
         .filter(d => d.instructorId === inst.id && getCalculatedStatus(d) === 'CONCLUIDA')
@@ -858,60 +860,302 @@ const pendingLogisticsDemands = useMemo(() => {
       return { name: inst.name.split(' ')[0], hours };
     }).sort((a, b) => b.hours - a.hours).slice(0, 10).filter(i => i.hours > 0);
 
+    // --- Risco de dependência ---
     const dependencyRisk = trainings.filter(t => t.status === 'ATIVO').map(t => ({
-      name: t.nr || t.name.substring(0, 15),
-      count: instructors.filter(i => i.skills.some(s => s.trainingId === t.id && s.level >= 3)).length
+      name: t.nr || t.name.substring(0, 20),
+      fullName: t.name,
+      count: instructors.filter(i => i.skills.some(s => s.trainingId === t.id && s.level >= 3)).length,
     })).filter(r => r.count <= 1).sort((a, b) => a.count - b.count).slice(0, 10);
+
+    // --- Disponibilidade nos próximos 30 dias ---
+    const busyNext30Ids = new Set(
+      demands.filter(d => {
+        const s = getCalculatedStatus(d);
+        if (s === 'CANCELADA' || s === 'CONCLUIDA') return false;
+        if (!d.instructorId) return false;
+        const start = new Date(d.startDate);
+        const end   = new Date(d.endDate);
+        return end >= today && start <= next30;
+      }).map(d => d.instructorId!)
+    );
+    const availableNext30 = activeInstructors.filter(i => !busyNext30Ids.has(i.id));
+
+    // --- Sem demanda no período filtrado ---
+    const instructorsWithDemandIds = new Set(
+      filteredDemands.filter(d => d.instructorId).map(d => d.instructorId!)
+    );
+    const noDemandsInPeriod = activeInstructors.filter(i => !instructorsWithDemandIds.has(i.id));
+
+    // --- Taxa de reaproveitamento (múltiplos treinamentos distintos concluídos) ---
+    const reuseStats = activeInstructors.map(inst => {
+      const distinct = new Set(
+        demands
+          .filter(d => d.instructorId === inst.id && getCalculatedStatus(d) === 'CONCLUIDA')
+          .map(d => d.trainingId)
+      );
+      return { inst, count: distinct.size };
+    }).filter(x => x.count > 0).sort((a, b) => b.count - a.count);
+    const reuseRate = activeInstructors.length > 0
+      ? Math.round((reuseStats.filter(x => x.count >= 2).length / activeInstructors.length) * 100)
+      : 0;
+    const topReuseItems    = reuseStats.slice(0, 8).map(x => ({ name: x.inst.name.split(' ').slice(0, 2).join(' '), value: x.count }));
+    const othersReuseItems = reuseStats.slice(8).map(x => ({ name: x.inst.name.split(' ').slice(0, 2).join(' '), value: x.count }));
+
+    // --- Distribuição geográfica: instrutores habilitados vs demandas por região ---
+    const geoData = regions.map(r => ({
+      region: r.name,
+      instructors: activeInstructors.filter(i => i.regionIds?.includes(r.id)).length,
+      demands: filteredDemands.filter(d => d.regionId === r.id).length,
+    })).filter(g => g.instructors > 0 || g.demands > 0).sort((a, b) => b.demands - a.demands);
+    const geoMaxDemands = Math.max(...geoData.map(x => x.demands), 1);
+    const geoMaxInstr   = Math.max(...geoData.map(x => x.instructors), 1);
+
+    // --- Cobertura de competências por categoria ---
+    const trainingCategories = [...new Set(trainings.filter(t => t.status === 'ATIVO').map(t => t.category))];
+    const competenceCoverage = trainingCategories.map(cat => {
+      const catTrainings = trainings.filter(t => t.category === cat && t.status === 'ATIVO');
+      const aptCount     = activeInstructors.filter(i =>
+        catTrainings.some(t => i.skills.some(s => s.trainingId === t.id && s.level >= 3))
+      ).length;
+      const demandCount  = filteredDemands.filter(d => catTrainings.some(t => t.id === d.trainingId)).length;
+      const ratio        = demandCount > 0 ? aptCount / demandCount : aptCount > 0 ? 99 : 0;
+      const barPct       = Math.min(100, Math.round(Math.min(ratio, 1) * 100));
+      const shortCat     = String(cat)
+        .replace('Segurança do Trabalho', 'Seg. Trabalho')
+        .replace('Manutenção Industrial', 'Manut. Industrial')
+        .replace('Operação de Equipamentos', 'Op. Equipamentos')
+        .replace('Operação Ferroviária', 'Op. Ferroviária')
+        .replace('Treinamentos Comportamentais', 'Comportamental');
+      return { category: shortCat, aptCount, demandCount, ratio, barPct };
+    }).sort((a, b) => b.demandCount - a.demandCount).filter(c => c.demandCount > 0 || c.aptCount > 0);
 
     return (
       <div className="space-y-6 animate-fade-in">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <KPICard title="Instrutores Ativos" value={activeInstructors.length} icon={Users} colorClass="bg-blue-50 text-blue-600" />
-          <KPICard title="Risco Dependência" value={dependencyRisk.length} icon={ShieldAlert} colorClass="bg-red-50 text-red-600" subtext="Treinamentos c/ <= 1 Instr." />
-          <KPICard title="Média Horas/Instr." value={`${(totalHours / (activeInstructors.length || 1)).toFixed(1)}h`} icon={TrendingUp} colorClass="bg-indigo-50 text-indigo-600" />
-          <KPICard title="Produtividade Global" value={`${totalHours}h`} icon={CheckCircle} colorClass="bg-emerald-50 text-emerald-600" subtext="Horas Totais Concluídas" />
+
+        {/* KPIs */}
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+          <KPICard title="Ativos" value={activeInstructors.length} icon={Users} colorClass="bg-blue-50 text-blue-600" />
+          <KPICard title="Disponíveis (30d)" value={availableNext30.length} icon={Calendar} colorClass="bg-emerald-50 text-emerald-600" subtext="Sem alocação prevista" />
+          <KPICard title="Sem Demanda" value={noDemandsInPeriod.length} icon={AlertCircle} colorClass="bg-amber-50 text-amber-600" subtext="No período filtrado" />
+          <KPICard title="Reaproveitamento" value={`${reuseRate}%`} icon={TrendingUp} colorClass="bg-violet-50 text-violet-600" subtext="Com ≥ 2 tipos concluídos" />
+          <KPICard title="Risco Dependência" value={dependencyRisk.length} icon={ShieldAlert} colorClass="bg-red-50 text-red-600" subtext="Treinamentos c/ ≤ 1 instr." />
+          <KPICard title="Produtividade Global" value={`${totalHours}h`} icon={Award} colorClass="bg-indigo-50 text-indigo-600" subtext="Horas concluídas" />
         </div>
 
+        {/* Top Performance + Risco Dependência */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-8 bg-white p-6 rounded-2xl border border-slate-200 h-96 shadow-sm flex flex-col">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex justify-between">
-              <span>Top Performance (Horas Ministradas Reais)</span>
-              <Award size={14} />
+          <div className="lg:col-span-8 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '22rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center justify-between shrink-0">
+              <span>Top Performance — Horas Ministradas</span>
+              <Award size={13} className="text-slate-300" />
             </h3>
             <div className="flex-1 min-h-0">
               {instructorWorkload.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={instructorWorkload} margin={{ top: 10 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontStyle: 'normal', fontWeight: 'bold' }} />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold' }} />
                     <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
-                    <Tooltip cursor={{ fill: '#F8FAFC' }} />
-                    <Bar dataKey="hours" fill="#10B981" radius={[4, 4, 0, 0]} barSize={40} />
+                    <Tooltip cursor={{ fill: '#F8FAFC' }} formatter={(v: number) => [`${v}h`, 'Horas']} />
+                    <Bar dataKey="hours" fill="#10B981" radius={[4, 4, 0, 0]} barSize={36} />
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem horas concluídas no período</div>
+                <div className="h-full flex items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem horas concluídas no período</div>
               )}
             </div>
           </div>
 
-          <div className="lg:col-span-4 bg-white p-6 rounded-2xl border border-slate-200 h-96 shadow-sm flex flex-col">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Risco de Dependência (NRs críticas)</h3>
-            <div className="flex-1 overflow-y-auto max-h-[300px] pr-2 custom-scrollbar space-y-3">
-              {dependencyRisk.map((risk, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 group hover:border-red-200 transition-colors">
-                  <div className="min-w-0">
-                    <p className="text-xs font-black text-slate-700 truncate uppercase tracking-tight" title={risk.name}>{risk.name}</p>
-                    <p className="text-[9px] text-slate-400 font-bold">{risk.count === 0 ? 'NENHUM INSTRUTOR APTO' : 'APENAS 1 INSTRUTOR APTO'}</p>
-                  </div>
-                  <span className={`px-2 py-1 rounded-lg text-[10px] font-black ${risk.count === 0 ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
-                    {risk.count}
-                  </span>
+          <div className="lg:col-span-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '22rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 shrink-0">Risco de Dependência</h3>
+            {dependencyRisk.length === 0
+              ? <p className="text-[11px] text-slate-300 italic mt-2">Nenhum risco crítico identificado ✅</p>
+              : (
+                <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-2">
+                  {dependencyRisk.map((risk, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 hover:border-red-200 transition-colors">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-black text-slate-700 truncate uppercase tracking-tight" title={risk.fullName}>{risk.name}</p>
+                        <p className="text-[9px] text-slate-400 font-bold">{risk.count === 0 ? 'NENHUM INSTRUTOR APTO' : 'APENAS 1 INSTRUTOR APTO'}</p>
+                      </div>
+                      <span className={`shrink-0 px-2 py-1 rounded-lg text-[10px] font-black ${risk.count === 0 ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
+                        {risk.count}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              )
+            }
           </div>
         </div>
+
+        {/* Disponibilidade + Sem Demanda no Período */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-black text-slate-800 uppercase tracking-tight">Disponíveis nos Próximos 30 Dias</h3>
+                <p className="text-[10px] font-bold text-slate-400 mt-0.5 uppercase tracking-widest">
+                  {availableNext30.length} instrutor{availableNext30.length !== 1 ? 'es' : ''} sem alocação prevista
+                </p>
+              </div>
+              <span className={`px-3 py-1 rounded-full text-[11px] font-black ${availableNext30.length > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
+                {availableNext30.length}
+              </span>
+            </div>
+            {availableNext30.length > 0 ? (
+              <div className="p-4 max-h-52 overflow-y-auto custom-scrollbar">
+                <div className="grid grid-cols-2 gap-2">
+                  {availableNext30.map(i => (
+                    <div key={i.id} className="flex items-center gap-2 p-2.5 bg-emerald-50/60 rounded-xl border border-emerald-100">
+                      <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                      <span className="text-[11px] font-bold text-slate-700 truncate">{i.name.split(' ').slice(0, 2).join(' ')}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="px-5 py-8 text-center text-[11px] text-slate-300 italic font-bold">Todos os instrutores possuem alocação prevista.</p>
+            )}
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-black text-slate-800 uppercase tracking-tight">Sem Demanda no Período</h3>
+                <p className="text-[10px] font-bold text-slate-400 mt-0.5 uppercase tracking-widest">
+                  {noDemandsInPeriod.length} instrutor{noDemandsInPeriod.length !== 1 ? 'es' : ''} sem participação no filtro ativo
+                </p>
+              </div>
+              <span className={`px-3 py-1 rounded-full text-[11px] font-black ${noDemandsInPeriod.length > 0 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                {noDemandsInPeriod.length}
+              </span>
+            </div>
+            {noDemandsInPeriod.length > 0 ? (
+              <div className="p-4 max-h-52 overflow-y-auto custom-scrollbar">
+                <div className="grid grid-cols-2 gap-2">
+                  {noDemandsInPeriod.map(i => (
+                    <div key={i.id} className="flex items-center gap-2 p-2.5 bg-slate-50 rounded-xl border border-slate-100">
+                      <div className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                      <span className="text-[11px] font-bold text-slate-700 truncate">{i.name.split(' ').slice(0, 2).join(' ')}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="px-5 py-8 text-center text-[11px] text-emerald-500 font-bold">Todos os instrutores ativos participaram do período ✅</p>
+            )}
+          </div>
+        </div>
+
+        {/* Reaproveitamento + Distribuição Geográfica */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+          <div className="lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center justify-between shrink-0">
+              <span>Reaproveitamento de Instrutores</span>
+              <TrendingUp size={13} className="text-slate-300" />
+            </h3>
+            <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest mb-3 shrink-0">Nº de treinamentos distintos ministrados (histórico completo)</p>
+            <RankedListChart items={topReuseItems} othersDetail={othersReuseItems} barColor="bg-violet-500" emptyLabel="Sem histórico de execuções" />
+          </div>
+
+          <div className="lg:col-span-7 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center justify-between shrink-0">
+              <span>Distribuição Geográfica</span>
+              <MapPin size={13} className="text-slate-300" />
+            </h3>
+            <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest mb-4 shrink-0">Instrutores habilitados vs demandas por região (período filtrado)</p>
+            {geoData.length > 0 ? (
+              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1">
+                {geoData.map((g, idx) => (
+                  <div key={idx} className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black text-slate-700 truncate max-w-[200px]" title={g.region}>{g.region}</span>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-[10px] text-blue-600 font-black">{g.instructors} instr.</span>
+                        <span className="text-[10px] text-emerald-600 font-black">{g.demands} dem.</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-400 rounded-full" style={{ width: `${Math.round((g.instructors / geoMaxInstr) * 100)}%` }} />
+                      </div>
+                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${Math.round((g.demands / geoMaxDemands) * 100)}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div className="flex items-center gap-4 pt-2 border-t border-slate-100">
+                  <div className="flex items-center gap-1.5"><div className="w-3 h-1.5 rounded-full bg-blue-400" /><span className="text-[9px] font-bold text-slate-400 uppercase">Instrutores</span></div>
+                  <div className="flex items-center gap-1.5"><div className="w-3 h-1.5 rounded-full bg-emerald-400" /><span className="text-[9px] font-bold text-slate-400 uppercase">Demandas</span></div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-300 italic">Sem dados regionais disponíveis.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Cobertura de Competências por Categoria */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+            <div>
+              <h3 className="text-xs font-black text-slate-800 uppercase tracking-tight">Cobertura de Competências por Categoria</h3>
+              <p className="text-[10px] font-bold text-slate-400 mt-0.5 uppercase tracking-widest">
+                Instrutores aptos (nível ≥ 3) vs volume de demandas por categoria no período
+              </p>
+            </div>
+            <Target size={14} className="text-slate-300" />
+          </div>
+          {competenceCoverage.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="text-[10px] text-slate-400 uppercase font-black bg-slate-50/60 border-b border-slate-100">
+                    <th className="px-5 py-3 whitespace-nowrap">Categoria</th>
+                    <th className="px-5 py-3 text-right whitespace-nowrap">Instrutores Aptos</th>
+                    <th className="px-5 py-3 text-right whitespace-nowrap">Demandas no Período</th>
+                    <th className="px-5 py-3 whitespace-nowrap">Cobertura</th>
+                    <th className="px-5 py-3 text-right whitespace-nowrap">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {competenceCoverage.map((row, idx) => {
+                    const statusCls   = row.ratio === 0 ? 'bg-red-100 text-red-600' : row.ratio < 0.5 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700';
+                    const statusLabel = row.ratio === 0 ? 'Crítico' : row.ratio < 0.5 ? 'Alerta' : 'OK';
+                    return (
+                      <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="px-5 py-3 text-[11px] font-black text-slate-700 whitespace-nowrap">{row.category}</td>
+                        <td className="px-5 py-3 text-[11px] font-bold text-blue-600 text-right whitespace-nowrap">{row.aptCount}</td>
+                        <td className="px-5 py-3 text-[11px] font-bold text-slate-600 text-right whitespace-nowrap">{row.demandCount}</td>
+                        <td className="px-5 py-3 min-w-[160px]">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${row.ratio >= 0.5 ? 'bg-emerald-400' : row.ratio > 0 ? 'bg-amber-400' : 'bg-red-400'}`}
+                                style={{ width: `${row.barPct}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] font-black text-slate-500 shrink-0 w-8 text-right">{row.barPct}%</span>
+                          </div>
+                        </td>
+                        <td className="px-5 py-3 text-right whitespace-nowrap">
+                          <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase ${statusCls}`}>{statusLabel}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="px-5 py-8 text-center text-[11px] text-slate-300 italic font-bold">Sem dados de competência disponíveis.</p>
+          )}
+        </div>
+
       </div>
     );
   };

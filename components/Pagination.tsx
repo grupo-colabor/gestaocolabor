@@ -28,14 +28,12 @@ function buildPageRange(current: number, total: number): (number | '...')[] {
   pages.push(1);
 
   if (left > 2) pages.push('...');
-  else if (left === 2) pages.push(2);
 
   for (let p = Math.max(2, left); p <= Math.min(total - 1, right); p++) {
     pages.push(p);
   }
 
   if (right < total - 1) pages.push('...');
-  else if (right === total - 1) pages.push(total - 1);
 
   pages.push(total);
 

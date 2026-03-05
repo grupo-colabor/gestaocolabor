@@ -99,7 +99,20 @@ const CategoryBlock = ({
           <div key={a.id} className="flex items-center gap-3 bg-slate-50 p-2 rounded-lg border border-slate-100 group">
             <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-2">
               <span className="text-slate-300"><Paperclip size={12}/></span>
-              <p className="text-[10px] text-slate-600 font-medium truncate" title={a.name}>{a.name}</p>
+              {a.url && a.url !== '#' ? (
+                <a
+                  href={a.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] text-blue-600 font-medium truncate hover:underline flex items-center gap-1"
+                  title={a.name}
+                >
+                  {a.name}
+                  <ExternalLink size={10} className="flex-shrink-0" />
+                </a>
+              ) : (
+                <p className="text-[10px] text-slate-600 font-medium truncate" title={a.name}>{a.name}</p>
+              )}
             </div>
             <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-md px-2 py-0.5 shadow-inner">
               <span className="text-[9px] font-bold text-slate-400">R$</span>
@@ -1251,47 +1264,52 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
       {isModalOpen && selectedMeasurement && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-slate-50 rounded-[2rem] shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[95vh] border border-white">
-            <div className="p-7 border-b border-slate-200 bg-white flex justify-between items-center">
-              <div>
-                <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Painel de Medição</h2>
-                <div className="flex items-center gap-3 mt-1">
-                  <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">REF: {selectedMeasurement.demandId}</p>
-                  <div className="h-3 w-px bg-slate-200"></div>
-                  {(() => {
-                    const d = demands.find(dm => dm.id === selectedMeasurement.demandId);
-                    const cStatus = d ? getCalculatedDemandStatus(d) : 'N/A';
-                    return (
-                      <div className="flex items-center gap-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Status Demanda:</label>
-                        <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded shadow-sm ${STATUS_STYLING[cStatus] || 'bg-slate-200'}`}>
-                          {cStatus.replace('_', ' ')}
-                        </span>
-                      </div>
-                    );
-                  })()}
-                  <div className="h-3 w-px bg-slate-200 ml-1"></div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Etapa Medição:</label>
-                    <select 
-                      className={`text-[10px] font-black uppercase px-2 py-1 rounded-lg border focus:ring-2 focus:ring-blue-500 outline-none transition-all ${statusColor(selectedMeasurement.status)} border-transparent`}
-                      value={selectedMeasurement.status}
-                      onChange={e => setSelectedMeasurement({...selectedMeasurement, status: e.target.value as MeasurementStatus})}
-                    >
-                      {STAGE_OPTIONS.map(opt => (
-                        <option key={opt} value={opt}>{STAGE_LABELS[opt]}</option>
-                      ))}
-                    </select>
-                  </div>
+            <div className="px-7 pt-6 pb-5 border-b border-slate-200 bg-white space-y-3">
+              {/* Linha 1: Título + Ações */}
+              <div className="flex items-center justify-between gap-4">
+                <h2 className="text-lg font-black text-slate-800 uppercase tracking-tight leading-none">Painel de Medição</h2>
+                <div className="flex items-center gap-2">
+                  <button onClick={handleGenerateWord} className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-50 text-blue-700 rounded-xl hover:bg-blue-100 transition font-black text-[10px] uppercase tracking-wider border border-blue-200 shadow-sm whitespace-nowrap">
+                    <FileText size={14} /> Exportar Word
+                  </button>
+                  <button onClick={handleSendWhatsApp} className="flex items-center gap-1.5 px-3.5 py-2 bg-green-50 text-green-700 rounded-xl hover:bg-green-100 transition font-black text-[10px] uppercase tracking-wider border border-green-200 shadow-sm whitespace-nowrap">
+                    <MessageCircle size={14} /> WhatsApp
+                  </button>
+                  <div className="w-px h-5 bg-slate-200 mx-1"></div>
+                  <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1.5 hover:bg-slate-100 rounded-xl transition"><X size={20} /></button>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button onClick={handleGenerateWord} className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-xl hover:bg-blue-100 transition font-black text-[10px] uppercase border border-blue-200 shadow-sm">
-                  <FileText size={16} /> Exportar Word
-                </button>
-                <button onClick={handleSendWhatsApp} className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-xl hover:bg-green-100 transition font-black text-[10px] uppercase border border-green-200 shadow-sm">
-                  <MessageCircle size={16} /> WhatsApp
-                </button>
-                <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1.5 hover:bg-slate-100 rounded-xl transition ml-2"><X size={24} /></button>
+              {/* Linha 2: Metadados */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-[11px] text-slate-500 font-semibold bg-slate-100 px-2.5 py-1 rounded-lg">
+                  REF: <span className="font-black text-slate-700">{selectedMeasurement.demandId}</span>
+                </span>
+                <div className="h-4 w-px bg-slate-200"></div>
+                {(() => {
+                  const d = demands.find(dm => dm.id === selectedMeasurement.demandId);
+                  const cStatus = d ? getCalculatedDemandStatus(d) : 'N/A';
+                  return (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Status:</span>
+                      <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-lg shadow-sm ${STATUS_STYLING[cStatus] || 'bg-slate-200'}`}>
+                        {cStatus.replace('_', ' ')}
+                      </span>
+                    </div>
+                  );
+                })()}
+                <div className="h-4 w-px bg-slate-200"></div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Etapa:</span>
+                  <select
+                    className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-lg border-0 focus:ring-2 focus:ring-blue-400 outline-none transition-all cursor-pointer ${statusColor(selectedMeasurement.status)}`}
+                    value={selectedMeasurement.status}
+                    onChange={e => setSelectedMeasurement({...selectedMeasurement, status: e.target.value as MeasurementStatus})}
+                  >
+                    {STAGE_OPTIONS.map(opt => (
+                      <option key={opt} value={opt}>{STAGE_LABELS[opt]}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 

@@ -11,7 +11,9 @@ import {
   Tag, Info, BookOpen, Clock, Mail, MessageCircle, 
   FileDown, Upload, Trash2, ExternalLink, User, Plus, Paperclip, DollarSign, Wallet, CheckSquare, Square, RotateCcw
 } from 'lucide-react';
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ImageRun } from 'docx';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ImageRun, ExternalHyperlink } from 'docx';
+import * as pdfjsLib from 'pdfjs-dist';
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { demandIntersectsRange } from '../domain/demandDays';
 import { supabase } from '../lib/supabase';
@@ -640,15 +642,34 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
   };
 
   const urlToUint8Array = async (url: string) => {
-  // garante URL “segura” (especialmente se vier com espaços)
   const safeUrl = encodeURI(url);
-
   const res = await fetch(safeUrl);
   if (!res.ok) throw new Error(`Falha ao baixar imagem: ${res.status}`);
-
   const buf = await res.arrayBuffer();
   return new Uint8Array(buf);
 };
+
+  const pdfToImageBytes = async (url: string): Promise<{ bytes: Uint8Array; width: number; height: number }[]> => {
+    const safeUrl = encodeURI(url);
+    const pdf = await pdfjsLib.getDocument(safeUrl).promise;
+    const pages: { bytes: Uint8Array; width: number; height: number }[] = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 1.5 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d')!;
+      await page.render({ canvasContext: ctx as any, viewport, canvas } as any).promise;
+      const dataUrl = canvas.toDataURL('image/png');
+      const base64 = dataUrl.split(',')[1];
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+      pages.push({ bytes, width: Math.round(viewport.width), height: Math.round(viewport.height) });
+    }
+    return pages;
+  };
 
 
   const createDemandDocSection = async (m: Measurement) => {
@@ -748,8 +769,30 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
           } catch (err) {
             children.push(new Paragraph({ children: [new TextRun({ text: "[Erro ao carregar imagem do Storage]", italics: true, color: "FF0000" })] }));
           }
-        } else if (a.type === 'application/pdf') {
-          children.push(new Paragraph({ children: [new TextRun({ text: "(Arquivo PDF anexado no sistema - Visualize online)", italics: true, color: "64748b" })] }));
+        } else if (a.type === 'application/pdf' && a.url && a.url !== '#') {
+          try {
+            const pages = await pdfToImageBytes(a.url);
+            for (const pg of pages) {
+              const maxW = 480;
+              const ratio = maxW / pg.width;
+              children.push(
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [new ImageRun({ data: pg.bytes, transformation: { width: maxW, height: Math.round(pg.height * ratio) } } as any)],
+                  spacing: { before: 100, after: 60 },
+                })
+              );
+            }
+          } catch {
+            // fallback: só link
+          }
+          children.push(
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new ExternalHyperlink({ children: [new TextRun({ text: `Ver PDF original: ${a.name}`, style: 'Hyperlink' })], link: a.url })],
+              spacing: { after: 100 },
+            })
+          );
         }
       }
 
@@ -820,6 +863,30 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
           } catch (err) {
             children.push(new Paragraph({ children: [new TextRun({ text: "[Erro ao carregar imagem do Storage]", italics: true, color: "FF0000" })] }));
           }
+        } else if (a.type === 'application/pdf' && a.url && a.url !== '#') {
+          try {
+            const pages = await pdfToImageBytes(a.url);
+            for (const pg of pages) {
+              const maxW = 480;
+              const ratio = maxW / pg.width;
+              children.push(
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [new ImageRun({ data: pg.bytes, transformation: { width: maxW, height: Math.round(pg.height * ratio) } } as any)],
+                  spacing: { before: 100, after: 60 },
+                })
+              );
+            }
+          } catch {
+            // fallback: só link
+          }
+          children.push(
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new ExternalHyperlink({ children: [new TextRun({ text: `Ver PDF original: ${a.name}`, style: 'Hyperlink' })], link: a.url })],
+              spacing: { after: 100 },
+            })
+          );
         }
       }
     }

@@ -20,16 +20,16 @@ import {
 } from 'lucide-react';
 
 const Logistics: React.FC = () => {
-  const { 
-    demands, 
-    companies, 
-    trainings, 
-    regions, 
+  const {
+    demands,
+    companies,
+    trainings,
+    regions,
     instructors,
     resourceAllocations,
     hasScheduleConflict,
     hasResourceConflict,
-    recommendInstructors, 
+    recommendInstructors,
     allocateInstructor,
     addResourceAllocation,
     removeResourceAllocation,
@@ -41,11 +41,19 @@ const Logistics: React.FC = () => {
     setNotification,
     setCalendarDrawerDemandId,
     setCurrentView,
+    notificationTarget, setNotificationTarget,
   } = useApp();
-
 
   const [selectedDemandId, setSelectedDemandId] = useState<string | null>(null);
   const [filterText, setFilterText] = useState('');
+
+  // Navegação a partir de Notificações
+  useEffect(() => {
+    if (notificationTarget?.view === 'logistics-control') {
+      setFilterText(notificationTarget.demandId);
+      setNotificationTarget(null);
+    }
+  }, [notificationTarget]);
 
   // Modal de Alocação de CTM
   const [isResourceModalOpen, setIsResourceModalOpen] = useState(false);

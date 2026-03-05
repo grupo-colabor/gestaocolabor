@@ -9,7 +9,8 @@ import {
   Clock, TrendingUp, AlertTriangle, Building2, MapPin,
   Truck, DollarSign, Award, Target, Zap, ShieldAlert,
   Download, MousePointer2,
-  Info, Ban, ChevronDown, ChevronUp, Bell, Package, FileText, UserCheck, Hotel, Car
+  Info, Ban, ChevronDown, ChevronUp, Bell, Package, FileText, UserCheck, Hotel, Car,
+  HelpCircle, X
 } from 'lucide-react';
 import { Demand } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
@@ -50,7 +51,8 @@ const RankedListChart: React.FC<{
   othersDetail: RankedItem[];
   barColor: string;
   emptyLabel?: string;
-}> = ({ items, othersDetail, barColor, emptyLabel = 'Sem dados' }) => {
+  valueFormatter?: (v: number) => string;
+}> = ({ items, othersDetail, barColor, emptyLabel = 'Sem dados', valueFormatter }) => {
   const [expanded, setExpanded] = useState(false);
 
   const allItems = expanded
@@ -94,8 +96,8 @@ const RankedListChart: React.FC<{
                   style={{ width: `${Math.round((item.value / max) * 100)}%` }}
                 />
               </div>
-              <span className={`text-[10px] font-black w-5 text-right shrink-0 ${isOthersRow ? 'text-slate-400' : 'text-slate-700'}`}>
-                {item.value}
+              <span className={`text-[10px] font-black shrink-0 text-right ${isOthersRow ? 'text-slate-400' : 'text-slate-700'} ${valueFormatter ? 'w-20' : 'w-5'}`}>
+                {valueFormatter ? valueFormatter(item.value) : item.value}
               </span>
             </div>
           </div>
@@ -113,6 +115,202 @@ const RankedListChart: React.FC<{
   );
 };
 
+// ─── Glossário de ajuda por aba ─────────────────────────────────────────────
+
+const TAB_LABELS: Record<string, string> = {
+  GERAL: 'Visão Geral',
+  OPERACIONAL: 'Operacional',
+  INSTRUTORES: 'Instrutores',
+  CLIENTES: 'Clientes',
+  CUSTOS: 'Custos',
+};
+
+type HelpItem    = { term: string; desc: string };
+type HelpSection = { section: string; items: HelpItem[] };
+
+const HELP_CONTENT: Record<string, HelpSection[]> = {
+  GERAL: [
+    {
+      section: 'Cards de Indicadores',
+      items: [
+        { term: 'Total de Demandas', desc: 'Quantidade de demandas dentro do período e filtros selecionados.' },
+        { term: 'Horas Ministradas', desc: 'Soma das horas dos treinamentos com status CONCLUÍDA no período filtrado.' },
+        { term: 'Taxa de Cancelamento', desc: 'Proporção de demandas canceladas sobre o total de demandas ativas (concluídas + canceladas).' },
+        { term: 'Treinamentos Concluídos', desc: 'Número de demandas que atingiram o status CONCLUÍDA no período.' },
+      ],
+    },
+    {
+      section: 'Gráficos',
+      items: [
+        { term: 'Volume por Status', desc: 'Distribuição de todas as demandas pelos seus status calculados: Nova, Pendente, Alocada, Em Andamento, Concluída, Cancelada.' },
+        { term: 'Volume por Região', desc: 'Quantidade de demandas agrupadas pela região configurada em cada demanda.' },
+        { term: 'Volume por Local', desc: 'Demandas agrupadas pelo campo "Local de Treinamento". Itens com menor volume formam o grupo "Outros" — clique na linha para expandir e ver todos.' },
+        { term: 'Volume por Corredor', desc: 'Demandas agrupadas pelo campo "Corredor" — localidade ou rota logística da operação.' },
+        { term: 'Volume por UF', desc: 'Demandas agrupadas pela Unidade Federativa (estado) registrada no campo "Estado da Demanda".' },
+      ],
+    },
+  ],
+  OPERACIONAL: [
+    {
+      section: 'Cards de Indicadores',
+      items: [
+        { term: 'Aguardando Instrutor', desc: 'Demandas ativas, presenciais e sem instrutor alocado. Demandas Online/EAD são excluídas desse contador.' },
+        { term: 'Alocadas', desc: 'Demandas com status calculado ALOCADA no período filtrado.' },
+        { term: 'Em Execução Hoje', desc: 'Demandas com status EM_ANDAMENTO cujo intervalo de datas abrange hoje.' },
+        { term: 'Próximos 30 Dias', desc: 'Demandas com data de início entre hoje e 30 dias à frente.' },
+        { term: 'Taxa de Execução', desc: 'Percentual de demandas concluídas sobre o total ativo (excluindo canceladas). Verde ≥ 70%, Amarelo ≥ 40%, Vermelho < 40%.' },
+      ],
+    },
+    {
+      section: 'Gráficos e Blocos',
+      items: [
+        { term: 'Top Treinamentos', desc: 'Ranking dos treinamentos com maior número de demandas no período. Clique em "Outros" para expandir e ver todos.' },
+        { term: 'Demandas por Instrutor', desc: 'Ranking dos instrutores com mais demandas alocadas no período. Mostra os 8 primeiros.' },
+        { term: 'Modalidade', desc: 'Proporção das demandas por tipo: Presencial, Online/EAD e Híbrido.' },
+        { term: 'Taxa de Execução (donut)', desc: 'Gráfico circular mostrando o percentual de conclusão com legenda de concluídas, em andamento e pendentes.' },
+        { term: 'Agenda dos Próximos 7 Dias', desc: 'Demandas em execução ou com início previsto nos próximos 7 dias, ordenadas por data de início. A paginação exibe 15 linhas por vez.' },
+      ],
+    },
+  ],
+  INSTRUTORES: [
+    {
+      section: 'Cards de Indicadores',
+      items: [
+        { term: 'Ativos', desc: 'Total de instrutores com status ATIVO no cadastro.' },
+        { term: 'Disponíveis (30d)', desc: 'Instrutores ativos sem nenhuma demanda ativa (não cancelada/concluída) sobreposta aos próximos 30 dias.' },
+        { term: 'Sem Demanda', desc: 'Instrutores que não aparecem em nenhuma demanda dentro do período e filtros ativos.' },
+        { term: 'Reaproveitamento %', desc: 'Percentual de instrutores ativos que já ministrou pelo menos 2 tipos de treinamentos distintos em todo o histórico.' },
+        { term: 'Risco Dependência', desc: 'Quantidade de treinamentos ativos com ≤ 1 instrutor apto (nível ≥ 3 — Avançado ou Especialista).' },
+        { term: 'Produtividade Global', desc: 'Soma total de horas de treinamentos concluídos no período filtrado.' },
+      ],
+    },
+    {
+      section: 'Gráficos e Blocos',
+      items: [
+        { term: 'Top Performance', desc: 'Ranking dos 10 instrutores com mais horas ministradas em demandas concluídas no período.' },
+        { term: 'Risco de Dependência (lista)', desc: 'NRs e treinamentos onde apenas 1 ou nenhum instrutor tem nível ≥ 3. Risco: se esse instrutor ficar indisponível, a execução pode ser comprometida.' },
+        { term: 'Disponíveis nos Próximos 30 Dias', desc: 'Lista nominal de instrutores sem alocação ativa prevista — candidatos para absorver novas demandas.' },
+        { term: 'Sem Demanda no Período', desc: 'Instrutores sem nenhuma participação no filtro ativo. Pode indicar ociosidade ou escopo fora da região selecionada.' },
+        { term: 'Reaproveitamento de Instrutores', desc: 'Ranking pelo número de tipos distintos de treinamento ministrados no histórico completo. Quanto maior, mais versátil o instrutor.' },
+        { term: 'Distribuição Geográfica', desc: 'Por região: barra azul = instrutores habilitados, barra verde = demandas no período. Identifica desequilíbrio entre oferta de instrutores e concentração de demandas.' },
+        { term: 'Cobertura de Competências', desc: 'Por categoria de treinamento: instrutores aptos (nível ≥ 3) vs volume de demandas. Status OK (cobertura ≥ 50%), Alerta (< 50%) e Crítico (0 instrutores aptos).' },
+      ],
+    },
+  ],
+  CLIENTES: [
+    {
+      section: 'Gráficos',
+      items: [
+        { term: 'Clientes mais Ativos', desc: 'Empresas com maior volume de demandas no período filtrado. Exibe os 8 com mais demandas.' },
+        { term: 'Treinamentos por Categoria', desc: 'Distribuição das demandas pelas categorias de treinamento (Segurança do Trabalho, Manutenção, Operações, etc.).' },
+      ],
+    },
+  ],
+  CUSTOS: [
+    {
+      section: 'Cards de Indicadores',
+      items: [
+        { term: 'Total em Despesas', desc: 'Soma de todos os valores de anexos (notas e comprovantes) registrados nas medições do período filtrado.' },
+        { term: 'Ticket Médio/Medição', desc: 'Média de despesas por medição registrada no período.' },
+        { term: 'Não Iniciadas', desc: 'Demandas concluídas no período sem medição em andamento — status NAO_INICIADA ou sem registro.' },
+        { term: 'Pronta Faturamento', desc: 'Medições conferidas e aguardando emissão de nota fiscal.' },
+        { term: 'Faturadas', desc: 'Medições com ciclo financeiro encerrado.' },
+      ],
+    },
+    {
+      section: 'Gráficos e Blocos',
+      items: [
+        { term: 'Mix de Despesas', desc: 'Gráfico de rosca com a proporção de cada categoria: Hospedagem, Locomoção, Café da Manhã, Almoço, Jantar e Outros.' },
+        { term: 'Média por Categoria', desc: 'Para cada categoria: total gasto, número de medições com esse tipo (×), média por medição e percentual sobre o total.' },
+        { term: 'Status das Medições', desc: 'Funil de progresso: Não Iniciada → Em Lançamento → Em Conferência → Pronta Faturamento → Faturada. Percentuais calculados sobre o total de demandas concluídas.' },
+        { term: 'Top Instrutores por Custo', desc: 'Ranking dos instrutores cujas demandas geraram o maior volume de despesas no período filtrado.' },
+        { term: 'Evolução Mensal de Custos', desc: 'Histórico dos últimos 6 meses de despesas registradas. Não é restrito pelo filtro de período — exibe o histórico completo para comparação de tendências.' },
+      ],
+    },
+  ],
+};
+
+// ─── Painel de ajuda (drawer lateral) ───────────────────────────────────────
+
+const HelpDrawer: React.FC<{ tab: string; onClose: () => void }> = ({ tab, onClose }) => {
+  const sections = HELP_CONTENT[tab] || [];
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 bg-black/25 backdrop-blur-[2px] z-40"
+        onClick={onClose}
+      />
+      {/* Drawer */}
+      <div className="fixed right-0 top-0 h-full w-[400px] max-w-[95vw] bg-white shadow-2xl z-50 flex flex-col border-l border-slate-200">
+        {/* Header */}
+        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-50 rounded-xl">
+              <HelpCircle size={16} className="text-blue-500" />
+            </div>
+            <div>
+              <h2 className="text-xs font-black text-slate-800 uppercase tracking-tight">Legenda</h2>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{TAB_LABELS[tab]}</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-xl hover:bg-slate-200 transition-colors text-slate-400 hover:text-slate-700"
+            aria-label="Fechar"
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-7 custom-scrollbar">
+          {sections.length === 0 && (
+            <p className="text-[11px] text-slate-300 italic">Nenhuma legenda disponível para esta aba.</p>
+          )}
+          {sections.map((sec, i) => (
+            <div key={i}>
+              <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest pb-2 mb-3 border-b border-slate-100">
+                {sec.section}
+              </h3>
+              <div className="space-y-4">
+                {sec.items.map((item, j) => (
+                  <div key={j} className="flex gap-3">
+                    <div className="w-0.5 rounded-full bg-blue-200 shrink-0 mt-0.5" style={{ minHeight: '100%' }} />
+                    <div>
+                      <p className="text-[11px] font-black text-slate-700 leading-snug">{item.term}</p>
+                      <p className="text-[11px] text-slate-400 leading-relaxed mt-0.5">{item.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-slate-100 shrink-0">
+          <button
+            onClick={onClose}
+            className="w-full py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-slate-700 hover:bg-slate-50 rounded-xl transition-colors"
+          >
+            Fechar Legenda
+          </button>
+        </div>
+      </div>
+    </>
+  );
+};
+
+// ─── Dashboard ───────────────────────────────────────────────────────────────
+
 const Dashboard: React.FC = () => {
   const { demands, companies, regions, instructors, trainings, measurements, getEvidenceAutoStatus } = useApp();
 
@@ -120,6 +318,7 @@ const Dashboard: React.FC = () => {
   const normId = (v: any) => String(v ?? '').trim().replace(/^#/, '');
 
   const [activeTab, setActiveTab] = useState<TabType>('GERAL');
+  const [showHelp, setShowHelp] = useState(false);
   const [showNoInstructorTooltip, setShowNoInstructorTooltip] = useState(false);
   const [showNoMeasurementTooltip, setShowNoMeasurementTooltip] = useState(false);
   const noInstructorTimerRef = useRef<ReturnType<typeof setTimeout>>();
@@ -1224,90 +1423,246 @@ const pendingLogisticsDemands = useMemo(() => {
   const formatCurrency = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 
   const renderCustos = () => {
-    const sumAttachments = (ms: any[], category: any): number => {
-      return ms.reduce((acc: number, m) => {
-        const filtered = m.attachments.filter((a: any) => {
-          return Array.isArray(category) ? category.includes(a.category) : a.category === category;
-        });
+    const toVal = (v: any): number => {
+      const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v);
+      return Number(n) || 0;
+    };
+    const normCat = (c: any) => String(c ?? '').toUpperCase().trim();
 
-        return acc + filtered.reduce((s: number, a: any) => {
-          const val = typeof a.value === 'string' ? parseFloat(a.value.replace(',', '.')) : Number(a.value);
-          return s + (val || 0);
-        }, 0);
-      }, 0);
+    const sumByCategory = (ms: typeof filteredMeasurements, cats: string | string[]): number => {
+      const catList = (Array.isArray(cats) ? cats : [cats]).map(c => c.toUpperCase());
+      return ms.reduce((acc, m) =>
+        acc + m.attachments
+          .filter((a: any) => catList.includes(normCat(a.category)))
+          .reduce((s: number, a: any) => s + toVal(a.value), 0),
+      0);
     };
 
+    const countMsWithCategory = (ms: typeof filteredMeasurements, cats: string | string[]): number => {
+      const catList = (Array.isArray(cats) ? cats : [cats]).map(c => c.toUpperCase());
+      return ms.filter(m =>
+        m.attachments.some((a: any) => catList.includes(normCat(a.category)) && toVal(a.value) > 0)
+      ).length;
+    };
+
+    // Totais por categoria (com normalização)
+    const hospTotal  = sumByCategory(filteredMeasurements, 'HOSPEDAGEM');
+    const locoTotal  = sumByCategory(filteredMeasurements, 'LOCOMOCAO');
+    const cafeTotal  = sumByCategory(filteredMeasurements, 'CAFE');
+    const almoTotal  = sumByCategory(filteredMeasurements, 'ALMOCO');
+    const jantTotal  = sumByCategory(filteredMeasurements, 'JANTAR');
+    const outTotal   = sumByCategory(filteredMeasurements, 'OUTROS');
+    const alimentTotal = cafeTotal + almoTotal + jantTotal;
+
+    // Mix de despesas — todas as categorias, sem filtrar zeros do array (para o pie)
     const expenseData: { name: string; value: number }[] = [
-      { name: 'Hospedagem', value: sumAttachments(filteredMeasurements, 'HOSPEDAGEM') },
-      { name: 'Locomoção', value: sumAttachments(filteredMeasurements, 'LOCOMOCAO') },
-      { name: 'Alimentação', value: sumAttachments(filteredMeasurements, ['CAFE', 'ALMOCO', 'JANTAR']) },
-      { name: 'Outros', value: sumAttachments(filteredMeasurements, 'OUTROS') },
+      { name: 'Hospedagem',    value: hospTotal },
+      { name: 'Locomoção',     value: locoTotal },
+      { name: 'Café da Manhã', value: cafeTotal },
+      { name: 'Almoço',        value: almoTotal },
+      { name: 'Jantar',        value: jantTotal },
+      { name: 'Outros',        value: outTotal  },
     ].filter(e => e.value > 0);
 
-    const clientCosts = companies.map((c): { name: string; cost: number } => {
-      const mIds = new Set(filteredDemands.filter(d => d.companyId === c.id).map(d => d.id));
-      const relevantMeasurements = measurements.filter(m => mIds.has(m.demandId));
+    // Breakdown com médias por categoria agrupada
+    const catBreakdown = [
+      { label: 'Hospedagem',  total: hospTotal,   count: countMsWithCategory(filteredMeasurements, 'HOSPEDAGEM'),              color: 'bg-blue-500'    },
+      { label: 'Locomoção',   total: locoTotal,   count: countMsWithCategory(filteredMeasurements, 'LOCOMOCAO'),               color: 'bg-amber-500'   },
+      { label: 'Alimentação', total: alimentTotal, count: countMsWithCategory(filteredMeasurements, ['CAFE','ALMOCO','JANTAR']), color: 'bg-emerald-500' },
+      { label: 'Café da Manhã', total: cafeTotal,  count: countMsWithCategory(filteredMeasurements, 'CAFE'),                   color: 'bg-teal-400'    },
+      { label: 'Almoço',      total: almoTotal,   count: countMsWithCategory(filteredMeasurements, 'ALMOCO'),                  color: 'bg-green-400'   },
+      { label: 'Jantar',      total: jantTotal,   count: countMsWithCategory(filteredMeasurements, 'JANTAR'),                  color: 'bg-lime-400'    },
+      { label: 'Outros',      total: outTotal,    count: countMsWithCategory(filteredMeasurements, 'OUTROS'),                  color: 'bg-violet-500'  },
+    ].filter(c => c.total > 0);
 
-      const cost: number = relevantMeasurements.reduce((acc: number, m) => {
-        return acc + m.attachments.reduce((sum: number, a: any) => {
-          const val = typeof a.value === 'string' ? parseFloat(a.value.replace(',', '.')) : Number(a.value);
-          return sum + (val || 0);
-        }, 0);
-      }, 0);
+    // Status das medições
+    const concludedDemands = filteredDemands.filter(d => getCalculatedStatus(d) === 'CONCLUIDA');
+    const naoIniciadaCount  = concludedDemands.filter(d =>
+      !filteredMeasurements.some(m => m.demandId === d.id) ||
+      filteredMeasurements.find(m => m.demandId === d.id)?.status === 'NAO_INICIADA'
+    ).length;
+    const totalConcluded = concludedDemands.length;
 
-      return { name: c.name, cost };
-    })
-      .sort((a, b) => b.cost - a.cost)
-      .slice(0, 8)
-      .filter(c => c.cost > 0);
+    const measurementStatusRows = [
+      { key: 'NAO_INICIADA',       label: 'Não Iniciada',         count: naoIniciadaCount,                                              color: 'bg-slate-300',   textColor: 'text-slate-500'  },
+      { key: 'LANCAMENTO',         label: 'Em Lançamento',        count: filteredMeasurements.filter(m => m.status === 'LANCAMENTO').length,         color: 'bg-amber-400',   textColor: 'text-amber-600'  },
+      { key: 'CONFERENCIA',        label: 'Em Conferência',       count: filteredMeasurements.filter(m => m.status === 'CONFERENCIA').length,        color: 'bg-blue-400',    textColor: 'text-blue-600'   },
+      { key: 'PRONTA_FATURAMENTO', label: 'Pronta Faturamento',   count: filteredMeasurements.filter(m => m.status === 'PRONTA_FATURAMENTO').length, color: 'bg-violet-400',  textColor: 'text-violet-600' },
+      { key: 'FATURADA',           label: 'Faturada',             count: filteredMeasurements.filter(m => m.status === 'FATURADA').length,           color: 'bg-emerald-400', textColor: 'text-emerald-600'},
+    ];
+
+    // Top instrutores por custo gerado
+    const instructorCostItems: RankedItem[] = instructors.map(inst => {
+      const instDemandIds = new Set(filteredDemands.filter(d => d.instructorId === inst.id).map(d => d.id));
+      const cost = filteredMeasurements
+        .filter(m => instDemandIds.has(m.demandId))
+        .reduce((acc, m) => acc + m.attachments.reduce((s: number, a: any) => s + toVal(a.value), 0), 0);
+      return { name: inst.name.split(' ').slice(0, 2).join(' '), value: Math.round(cost * 100) / 100 };
+    }).filter(x => x.value > 0).sort((a, b) => b.value - a.value).slice(0, 8);
+
+    // Evolução mensal (últimos 6 meses — histórico completo, não filtrado)
+    const months: { label: string; key: string }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      months.push({
+        label: d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }),
+        key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+      });
+    }
+    const monthlyCosts = months.map(mo => {
+      const moDemandIds = new Set(
+        demands.filter(d => d.endDate?.substring(0, 7) === mo.key).map(d => d.id)
+      );
+      const cost = measurements
+        .filter(m => moDemandIds.has(m.demandId))
+        .reduce((acc, m) => acc + m.attachments.reduce((s: number, a: any) => s + toVal(a.value), 0), 0);
+      return { label: mo.label, cost: Math.round(cost * 100) / 100 };
+    });
+
+    const ticketMedio = filteredMeasurements.length > 0 ? totalCosts / filteredMeasurements.length : 0;
 
     return (
       <div className="space-y-6 animate-fade-in">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+        {/* KPIs */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <KPICard title="Total em Despesas" value={totalCosts} isCurrency icon={DollarSign} colorClass="bg-amber-50 text-amber-600" />
-          <KPICard title="Ticket Médio/Demanda" value={totalCosts / (filteredDemands.length || 1)} isCurrency icon={Zap} colorClass="bg-blue-50 text-blue-600" />
-          <KPICard title="Medições Pendentes" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'CONCLUIDA' && measurements.find(m => m.demandId === d.id)?.status === 'NAO_INICIADA').length} icon={Clock} colorClass="bg-orange-50 text-orange-600" />
+          <KPICard title="Ticket Médio/Medição" value={ticketMedio} isCurrency icon={Zap} colorClass="bg-blue-50 text-blue-600" subtext={`${filteredMeasurements.length} medições`} />
+          <KPICard title="Não Iniciadas" value={naoIniciadaCount} icon={Clock} colorClass="bg-orange-50 text-orange-600" subtext="Demandas concluídas" />
+          <KPICard title="Pronta Faturamento" value={filteredMeasurements.filter(m => m.status === 'PRONTA_FATURAMENTO').length} icon={CheckCircle} colorClass="bg-violet-50 text-violet-600" />
+          <KPICard title="Faturadas" value={filteredMeasurements.filter(m => m.status === 'FATURADA').length} icon={Award} colorClass="bg-emerald-50 text-emerald-600" />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 h-80 shadow-sm flex flex-col">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Mix de Despesas</h3>
+        {/* Mix de Despesas + Média por Categoria */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+          {/* Rosca — Mix */}
+          <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '22rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 shrink-0">Mix de Despesas</h3>
             <div className="flex-1 min-h-0">
               {expenseData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={expenseData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} dataKey="value" stroke="none">
-                      {expenseData.map((_, i) => <Cell key={i} fill={COLORS.CHART_PALETTE[i]} />)}
+                    <Pie data={expenseData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} dataKey="value" stroke="none">
+                      {expenseData.map((_, i) => <Cell key={i} fill={COLORS.CHART_PALETTE[i % COLORS.CHART_PALETTE.length]} />)}
                     </Pie>
                     <Tooltip formatter={(val: number) => formatCurrency(val)} />
                     <Legend iconType="circle" wrapperStyle={{ fontSize: '9px', fontWeight: 'bold' }} />
                   </PieChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem custos registrados</div>
+                <div className="h-full flex items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem custos registrados</div>
               )}
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 h-80 shadow-sm flex flex-col">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Faturamento Bruto por Cliente</h3>
-            <div className="flex-1 min-h-0">
-              {clientCosts.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={clientCosts}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold' }} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
-                    <Tooltip formatter={(val: number) => formatCurrency(val)} />
-                    <Bar dataKey="cost" fill="#F59E0B" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem dados</div>
-              )}
-            </div>
+          {/* Média por Categoria */}
+          <div className="lg:col-span-7 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '22rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1 shrink-0">Média por Categoria de Despesa</h3>
+            <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest mb-4 shrink-0">Valor médio por medição com gasto na categoria</p>
+            {catBreakdown.length > 0 ? (
+              <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-3">
+                {catBreakdown.map((cat, idx) => {
+                  const avg = cat.count > 0 ? cat.total / cat.count : 0;
+                  const pct = totalCosts > 0 ? Math.round((cat.total / totalCosts) * 100) : 0;
+                  return (
+                    <div key={idx}>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className={`w-2 h-2 rounded-full ${cat.color} shrink-0`} />
+                          <span className="text-[11px] font-black text-slate-700 truncate">{cat.label}</span>
+                          <span className="text-[9px] font-bold text-slate-300 uppercase shrink-0">{cat.count}×</span>
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0 ml-2">
+                          <span className="text-[9px] font-bold text-slate-400">média {formatCurrency(avg)}</span>
+                          <span className="text-[11px] font-black text-slate-700">{formatCurrency(cat.total)}</span>
+                          <span className="text-[9px] font-bold text-slate-300 w-7 text-right">{pct}%</span>
+                        </div>
+                      </div>
+                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full ${cat.color}`} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-300 italic">Sem despesas registradas no período.</p>
+            )}
           </div>
         </div>
+
+        {/* Status das Medições + Top Instrutores por Custo */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+          {/* Status das Medições */}
+          <div className="lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '18rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1 shrink-0">Status das Medições</h3>
+            <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest mb-4 shrink-0">Demandas concluídas no período filtrado</p>
+            {totalConcluded > 0 ? (
+              <div className="space-y-3">
+                {measurementStatusRows.map((s, idx) => {
+                  const pct = totalConcluded > 0 ? Math.round((s.count / totalConcluded) * 100) : 0;
+                  return (
+                    <div key={idx}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className={`text-[11px] font-black ${s.textColor}`}>{s.label}</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[10px] font-bold text-slate-600">{s.count}</span>
+                          <span className="text-[9px] font-bold text-slate-300 w-7 text-right">{pct}%</span>
+                        </div>
+                      </div>
+                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full ${s.color}`} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+                <p className="text-[10px] font-bold text-slate-300 pt-1">{totalConcluded} demandas concluídas no total</p>
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-300 italic">Nenhuma demanda concluída no período.</p>
+            )}
+          </div>
+
+          {/* Top Instrutores por Custo */}
+          <div className="lg:col-span-7 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '18rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center justify-between shrink-0">
+              <span>Top Instrutores por Custo Gerado</span>
+              <Users size={13} className="text-slate-300" />
+            </h3>
+            <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest mb-3 shrink-0">Soma de despesas das medições por instrutor no período</p>
+            <RankedListChart
+              items={instructorCostItems}
+              othersDetail={[]}
+              barColor="bg-amber-500"
+              emptyLabel="Sem despesas registradas"
+              valueFormatter={(v) => formatCurrency(v)}
+            />
+          </div>
+        </div>
+
+        {/* Evolução Mensal de Custos */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '18rem' }}>
+          <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1 shrink-0">Evolução Mensal de Custos</h3>
+          <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest mb-4 shrink-0">Despesas registradas por mês — últimos 6 meses (histórico completo)</p>
+          <div className="flex-1 min-h-0" style={{ minHeight: '180px' }}>
+            {monthlyCosts.some(m => m.cost > 0) ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={monthlyCosts} margin={{ top: 10, right: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
+                  <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold' }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(val: number) => [formatCurrency(val), 'Despesas']} labelStyle={{ fontWeight: 'bold', fontSize: 11 }} />
+                  <Bar dataKey="cost" fill="#F59E0B" radius={[4, 4, 0, 0]} barSize={40} name="Despesas" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem histórico de despesas nos últimos 6 meses</div>
+            )}
+          </div>
+        </div>
+
       </div>
     );
   };
@@ -1320,26 +1675,41 @@ const pendingLogisticsDemands = useMemo(() => {
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">BI & Inteligência Operacional Colabor</p>
         </div>
 
-        <div className="flex flex-wrap gap-1 bg-white p-1 rounded-2xl border border-slate-200 shadow-sm">
-          {[
-            { id: 'GERAL', label: 'Visão Geral', icon: Target },
-            { id: 'OPERACIONAL', label: 'Operacional', icon: Truck },
-            { id: 'INSTRUTORES', label: 'Instrutores', icon: Award },
-            { id: 'CLIENTES', label: 'Clientes', icon: Building2 },
-            { id: 'CUSTOS', label: 'Custos', icon: DollarSign }
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as TabType)}
-              className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-2 ${activeTab === tab.id
-                ? 'bg-slate-900 text-white shadow-lg'
-                : 'text-slate-400 hover:text-slate-900 hover:bg-slate-50'
-                }`}
-            >
-              <tab.icon size={14} />
-              {tab.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-3">
+          <div className="flex flex-wrap gap-1 bg-white p-1 rounded-2xl border border-slate-200 shadow-sm">
+            {[
+              { id: 'GERAL', label: 'Visão Geral', icon: Target },
+              { id: 'OPERACIONAL', label: 'Operacional', icon: Truck },
+              { id: 'INSTRUTORES', label: 'Instrutores', icon: Award },
+              { id: 'CLIENTES', label: 'Clientes', icon: Building2 },
+              { id: 'CUSTOS', label: 'Custos', icon: DollarSign }
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => { setActiveTab(tab.id as TabType); setShowHelp(false); }}
+                className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-2 ${activeTab === tab.id
+                  ? 'bg-slate-900 text-white shadow-lg'
+                  : 'text-slate-400 hover:text-slate-900 hover:bg-slate-50'
+                  }`}
+              >
+                <tab.icon size={14} />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Botão de ajuda contextual */}
+          <button
+            onClick={() => setShowHelp(v => !v)}
+            title="Legenda da aba"
+            className={`p-2 rounded-xl border transition-all ${
+              showHelp
+                ? 'bg-blue-50 border-blue-200 text-blue-500'
+                : 'bg-white border-slate-200 text-slate-400 hover:text-blue-500 hover:border-blue-200 hover:bg-blue-50'
+            } shadow-sm`}
+          >
+            <HelpCircle size={16} />
+          </button>
         </div>
       </div>
 
@@ -1450,6 +1820,9 @@ const pendingLogisticsDemands = useMemo(() => {
         {activeTab === 'CLIENTES' && renderClientes()}
         {activeTab === 'CUSTOS' && renderCustos()}
       </div>
+
+      {/* Drawer de ajuda */}
+      {showHelp && <HelpDrawer tab={activeTab} onClose={() => setShowHelp(false)} />}
     </div>
   );
 };

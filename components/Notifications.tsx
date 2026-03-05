@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useApp } from '../App';
 import {
   Bell, FileText, AlertTriangle, DollarSign, Ban,
-  ChevronDown, ChevronUp, RefreshCw
+  ChevronDown, ChevronUp, RefreshCw, ExternalLink
 } from 'lucide-react';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import {
@@ -10,14 +10,24 @@ import {
   LogisticAllocationRow
 } from '../services/logisticAllocations';
 
+const PREVIEW_COUNT = 6;
+
 const Notifications: React.FC = () => {
-  const { demands, companies, trainings, measurements, getEvidenceAutoStatus } = useApp();
+  const {
+    demands, companies, trainings, measurements, getEvidenceAutoStatus,
+    setCurrentView, setNotificationTarget,
+  } = useApp();
 
   const normId = (v: any) => String(v ?? '').trim().replace(/^#/, '');
 
   const [logisticsByDemandId, setLogisticsByDemandId] = useState<Record<string, LogisticAllocationRow>>({});
   const [isLoadingPendencies, setIsLoadingPendencies] = useState(true);
   const [showCancelledList, setShowCancelledList] = useState(false);
+
+  // Estado de expansão por bloco
+  const [expandedBlocks, setExpandedBlocks] = useState<Record<string, boolean>>({});
+  const toggleBlock = (key: string) =>
+    setExpandedBlocks(prev => ({ ...prev, [key]: !prev[key] }));
 
   const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
   const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
@@ -123,8 +133,42 @@ const Notifications: React.FC = () => {
 
   const totalAlerts = pendingLogistics.length + pendingEvidences.length + noInstructorDemands.length + noMeasurementDemands.length;
 
-  // --- Card de alerta padronizado ---
+  // --- Navegação ao clicar numa demanda ---
+  type TargetView = 'logistics-control' | 'evidences' | 'demands' | 'measurement';
+
+  const handleDemandClick = (demandId: string, view: TargetView) => {
+    setNotificationTarget({ demandId, view });
+    setCurrentView(view);
+  };
+
+  // --- DemandRow clicável ---
+  const DemandRow = ({
+    d, badge, badgeCls, targetView,
+  }: { d: any; badge: string; badgeCls: string; targetView: TargetView }) => (
+    <button
+      onClick={() => handleDemandClick(d.id, targetView)}
+      className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between gap-2 hover:bg-blue-50 hover:border-blue-200 transition-colors group text-left"
+    >
+      <div className="flex items-center gap-2 overflow-hidden">
+        <span className="w-2 h-2 rounded-full bg-current shrink-0 opacity-60" />
+        <div className="overflow-hidden">
+          <p className="text-[11px] font-black text-slate-700 truncate group-hover:text-blue-700">
+            <span className="text-blue-600 font-mono mr-1">#{d.id}</span>
+            {getTrainingName(d.trainingId)}
+          </p>
+          <p className="text-[9px] font-bold text-slate-400 uppercase truncate">{getCompanyName(d.companyId)}</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5 shrink-0">
+        <span className={`text-[9px] font-black px-2 py-1 rounded-lg uppercase ${badgeCls}`}>{badge}</span>
+        <ExternalLink size={10} className="text-slate-300 group-hover:text-blue-400 transition-colors" />
+      </div>
+    </button>
+  );
+
+  // --- Card de alerta com expansão ---
   const AlertCard = ({
+    blockKey,
     title,
     subtitle,
     count,
@@ -137,6 +181,7 @@ const Notifications: React.FC = () => {
     renderItem,
     loading = false,
   }: {
+    blockKey: string;
     title: string;
     subtitle: string;
     count: number;
@@ -148,61 +193,70 @@ const Notifications: React.FC = () => {
     items: any[];
     renderItem: (item: any) => React.ReactNode;
     loading?: boolean;
-  }) => (
-    <div className={`bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden border-l-4 ${accentColor}`}>
-      <div className="p-5 flex items-center gap-4 border-b border-slate-100">
-        <div className={`p-3 ${iconBg} rounded-xl shrink-0`}>
-          <Icon size={20} className={iconColor} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">{title}</h3>
-          <p className="text-xs font-bold text-slate-400 mt-0.5">
-            {loading
-              ? 'Carregando...'
-              : count > 0
-                ? subtitle
-                : `Nenhuma pendência no momento ✅`}
-          </p>
-        </div>
-        {!loading && count > 0 && (
-          <span className={`shrink-0 text-[11px] font-black px-3 py-1 rounded-full ${badgeClass}`}>
-            {count}
-          </span>
-        )}
-      </div>
+  }) => {
+    const isExpanded = expandedBlocks[blockKey] ?? false;
+    const visibleItems = isExpanded ? items : items.slice(0, PREVIEW_COUNT);
+    const hiddenCount = items.length - PREVIEW_COUNT;
 
-      {!loading && items.length > 0 && (
-        <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {items.slice(0, 6).map((item, idx) => (
-            <React.Fragment key={item.id ?? idx}>{renderItem(item)}</React.Fragment>
-          ))}
-          {count > 6 && (
-            <div className="p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center col-span-full md:col-span-1">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                + {count - 6} outras pendências
-              </p>
-            </div>
+    return (
+      <div className={`bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden border-l-4 ${accentColor}`}>
+        <div className="p-5 flex items-center gap-4 border-b border-slate-100">
+          <div className={`p-3 ${iconBg} rounded-xl shrink-0`}>
+            <Icon size={20} className={iconColor} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">{title}</h3>
+            <p className="text-xs font-bold text-slate-400 mt-0.5">
+              {loading
+                ? 'Carregando...'
+                : count > 0
+                  ? subtitle
+                  : `Nenhuma pendência no momento ✅`}
+            </p>
+          </div>
+          {!loading && count > 0 && (
+            <span className={`shrink-0 text-[11px] font-black px-3 py-1 rounded-full ${badgeClass}`}>
+              {count}
+            </span>
           )}
         </div>
-      )}
-    </div>
-  );
 
-  const DemandRow = ({ d, badge, badgeCls }: { d: any; badge: string; badgeCls: string }) => (
-    <div key={d.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between gap-2">
-      <div className="flex items-center gap-2 overflow-hidden">
-        <span className="w-2 h-2 rounded-full bg-current shrink-0 opacity-60" />
-        <div className="overflow-hidden">
-          <p className="text-[11px] font-black text-slate-700 truncate">
-            <span className="text-blue-600 font-mono mr-1">#{d.id}</span>
-            {getTrainingName(d.trainingId)}
-          </p>
-          <p className="text-[9px] font-bold text-slate-400 uppercase truncate">{getCompanyName(d.companyId)}</p>
-        </div>
+        {!loading && items.length > 0 && (
+          <div className="p-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {visibleItems.map((item, idx) => (
+                <React.Fragment key={item.id ?? idx}>{renderItem(item)}</React.Fragment>
+              ))}
+            </div>
+
+            {/* Botão expandir / recolher */}
+            {hiddenCount > 0 && !isExpanded && (
+              <button
+                onClick={() => toggleBlock(blockKey)}
+                className="mt-3 w-full p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center gap-2 hover:bg-blue-50 hover:border-blue-200 transition-colors group"
+              >
+                <ChevronDown size={13} className="text-slate-400 group-hover:text-blue-500" />
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-blue-500">
+                  + {hiddenCount} outra{hiddenCount !== 1 ? 's' : ''} pendência{hiddenCount !== 1 ? 's' : ''}
+                </span>
+              </button>
+            )}
+            {isExpanded && items.length > PREVIEW_COUNT && (
+              <button
+                onClick={() => toggleBlock(blockKey)}
+                className="mt-3 w-full p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center gap-2 hover:bg-slate-100 transition-colors group"
+              >
+                <ChevronUp size={13} className="text-slate-400 group-hover:text-slate-600" />
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-slate-600">
+                  Recolher
+                </span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
-      <span className={`shrink-0 text-[9px] font-black px-2 py-1 rounded-lg uppercase ${badgeCls}`}>{badge}</span>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -233,6 +287,7 @@ const Notifications: React.FC = () => {
 
       {/* --- Bloco 1: Pendências Logísticas --- */}
       <AlertCard
+        blockKey="logistics"
         title="Pendências Logísticas"
         subtitle={`${pendingLogistics.length} demanda${pendingLogistics.length !== 1 ? 's' : ''} aguardando tratativa operacional`}
         count={pendingLogistics.length}
@@ -247,13 +302,14 @@ const Notifications: React.FC = () => {
           const alloc = logisticsByDemandId[normId(d.id)];
           const overall = String(alloc?.overall_status ?? 'PENDENTE').toUpperCase();
           return (
-            <DemandRow d={d} badge={overall} badgeCls="bg-amber-100 text-amber-700" />
+            <DemandRow d={d} badge={overall} badgeCls="bg-amber-100 text-amber-700" targetView="logistics-control" />
           );
         }}
       />
 
       {/* --- Bloco 2: Pendências de Evidência --- */}
       <AlertCard
+        blockKey="evidences"
         title="Pendências de Evidência"
         subtitle={`${pendingEvidences.length} demanda${pendingEvidences.length !== 1 ? 's' : ''} concluída${pendingEvidences.length !== 1 ? 's' : ''} com evidência pendente`}
         count={pendingEvidences.length}
@@ -264,12 +320,13 @@ const Notifications: React.FC = () => {
         badgeClass="bg-indigo-100 text-indigo-700"
         items={pendingEvidences}
         renderItem={(d) => (
-          <DemandRow d={d} badge={getEvidenceAutoStatus(d.id)} badgeCls="bg-indigo-100 text-indigo-600" />
+          <DemandRow d={d} badge={getEvidenceAutoStatus(d.id)} badgeCls="bg-indigo-100 text-indigo-600" targetView="evidences" />
         )}
       />
 
       {/* --- Bloco 3: Aguardando Alocação de Instrutor --- */}
       <AlertCard
+        blockKey="no-instructor"
         title="Aguardando Alocação de Instrutor"
         subtitle={`${noInstructorDemands.length} demanda${noInstructorDemands.length !== 1 ? 's' : ''} sem instrutor alocado`}
         count={noInstructorDemands.length}
@@ -284,12 +341,14 @@ const Notifications: React.FC = () => {
             d={d}
             badge={new Date(d.startDate).toLocaleDateString('pt-BR')}
             badgeCls="bg-orange-100 text-orange-600"
+            targetView="demands"
           />
         )}
       />
 
       {/* --- Bloco 4: Medições Pendentes --- */}
       <AlertCard
+        blockKey="measurement"
         title="Medições Administrativas Pendentes"
         subtitle={`${noMeasurementDemands.length} demanda${noMeasurementDemands.length !== 1 ? 's' : ''} concluída${noMeasurementDemands.length !== 1 ? 's' : ''} sem medição iniciada`}
         count={noMeasurementDemands.length}
@@ -304,6 +363,7 @@ const Notifications: React.FC = () => {
             d={d}
             badge={`Fim: ${new Date(d.endDate).toLocaleDateString('pt-BR')}`}
             badgeCls="bg-blue-100 text-blue-600"
+            targetView="measurement"
           />
         )}
       />
@@ -335,16 +395,21 @@ const Notifications: React.FC = () => {
           {showCancelledList && (
             <div className="px-5 pb-5 space-y-2 max-h-64 overflow-y-auto">
               {cancelledDemands.map(d => (
-                <div key={d.id} className="flex items-center justify-between text-[11px] bg-slate-50 p-3 rounded-xl border border-slate-100">
+                <button
+                  key={d.id}
+                  onClick={() => handleDemandClick(d.id, 'demands')}
+                  className="w-full flex items-center justify-between text-[11px] bg-slate-50 p-3 rounded-xl border border-slate-100 hover:bg-blue-50 hover:border-blue-200 transition-colors group text-left"
+                >
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="font-mono text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded shrink-0">#{d.id}</span>
-                    <span className="truncate font-bold text-slate-700">{getTrainingName(d.trainingId)}</span>
+                    <span className="truncate font-bold text-slate-700 group-hover:text-blue-700">{getTrainingName(d.trainingId)}</span>
                   </div>
                   <div className="flex items-center gap-4 shrink-0 ml-3">
                     <span className="text-slate-400 uppercase text-[9px] font-black">{getCompanyName(d.companyId)}</span>
                     <span className="text-[9px] font-bold text-slate-300">{new Date(d.startDate).toLocaleDateString('pt-BR')}</span>
+                    <ExternalLink size={10} className="text-slate-300 group-hover:text-blue-400" />
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           )}

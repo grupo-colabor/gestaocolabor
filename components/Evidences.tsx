@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../App';
 import { 
   FileSearch, 
@@ -21,8 +21,10 @@ import { usePagination } from '../hooks/usePagination';
 import Pagination from './Pagination';
 
 const Evidences: React.FC = () => {
-  const { demands, companies, trainings, instructors, instructorAllocations, evidenceStore, updateEvidence } = useApp();
-
+  const {
+    demands, companies, trainings, instructors, instructorAllocations, evidenceStore, updateEvidence,
+    notificationTarget, setNotificationTarget,
+  } = useApp();
 
   // Estado para os filtros
   const [filterId, setFilterId] = useState('');
@@ -35,6 +37,14 @@ const Evidences: React.FC = () => {
 
   // Estado para gerenciar qual demanda está sendo visualizada (null = lista)
   const [selectedDemandId, setSelectedDemandId] = useState<string | null>(null);
+
+  // Navegação a partir de Notificações
+  useEffect(() => {
+    if (notificationTarget?.view === 'evidences') {
+      setFilterId(notificationTarget.demandId);
+      setNotificationTarget(null);
+    }
+  }, [notificationTarget]);
   
 
   const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';

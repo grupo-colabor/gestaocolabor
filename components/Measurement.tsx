@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../App';
 import { Measurement, Demand, MeasurementStatus, ExpenseCategory, Attachment, OtherExpenseItem } from '../types';
 import { usePagination } from '../hooks/usePagination';
@@ -153,12 +153,21 @@ const CategoryBlock = ({
 };
 
 const MeasurementView: React.FC = () => {
-  const { 
+  const {
     measurements, demands, companies, trainings, regions, instructors,
-    updateMeasurement, updateDemand
+    updateMeasurement, updateDemand,
+    notificationTarget, setNotificationTarget,
   } = useApp();
-  
+
   const [filter, setFilter] = useState('');
+
+  // Navegação a partir de Notificações
+  useEffect(() => {
+    if (notificationTarget?.view === 'measurement') {
+      setFilter(`#${notificationTarget.demandId}`);
+      setNotificationTarget(null);
+    }
+  }, [notificationTarget]);
   const [advancedFilters, setAdvancedFilters] = useState({
     companyId: '',
     status: '',

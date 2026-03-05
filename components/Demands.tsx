@@ -119,7 +119,8 @@ const Demands: React.FC = () => {
     measurements, agendaItems, instructorAllocations, resourceAllocations,companionAllocations,
     updateDemand, addDemand, deleteDemand, deallocateInstructor, recommendInstructors,
     updateMeasurement, removeAgendaItem, hasResourceConflict,
-    addInstructorAllocation, removeInstructorAllocation, addResourceAllocation, removeResourceAllocation, hasScheduleConflict, setNotification
+    addInstructorAllocation, removeInstructorAllocation, addResourceAllocation, removeResourceAllocation, hasScheduleConflict, setNotification,
+    notificationTarget, setNotificationTarget,
   } = useApp();
   
   const { profile } = useAuth();
@@ -135,6 +136,14 @@ const Demands: React.FC = () => {
 
 const [filter, setFilter] = useState('');
 const [isExportDemandsOpen, setIsExportDemandsOpen] = useState(false);
+
+// Navegação a partir de Notificações
+useEffect(() => {
+  if (notificationTarget?.view === 'demands') {
+    setFilter(`#${notificationTarget.demandId}`);
+    setNotificationTarget(null);
+  }
+}, [notificationTarget]);
   type SortKey =
     | 'id'
     | 'company'

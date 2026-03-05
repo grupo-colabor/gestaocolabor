@@ -241,6 +241,10 @@ interface AppState {
   setCurrentView: (v: View) => void;
   calendarDrawerDemandId: string | null;
   setCalendarDrawerDemandId: (id: string | null) => void;
+
+  // Navegação a partir de notificações
+  notificationTarget: { demandId: string; view: View } | null;
+  setNotificationTarget: (t: { demandId: string; view: View } | null) => void;
 }
 
 const getDefaultViewForRole = (role?: string | null) => {
@@ -274,6 +278,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Cross-view: navegação + drawer de alocação na agenda
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [calendarDrawerDemandId, setCalendarDrawerDemandId] = useState<string | null>(null);
+  const [notificationTarget, setNotificationTarget] = useState<{ demandId: string; view: View } | null>(null);
 
   const { user, loading } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -2846,7 +2851,9 @@ const hasScheduleConflict = useCallback(
       currentView,
       setCurrentView,
       calendarDrawerDemandId,
-      setCalendarDrawerDemandId
+      setCalendarDrawerDemandId,
+      notificationTarget,
+      setNotificationTarget,
     }),
     [
       companies,
@@ -2900,6 +2907,7 @@ const hasScheduleConflict = useCallback(
       setOperationalBases,
       currentView,
       calendarDrawerDemandId,
+      notificationTarget,
     ]
   );
 

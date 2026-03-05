@@ -11,6 +11,7 @@ interface PaginationProps {
   entityLabel: string;
   onPageChange: (page: number) => void;
   onItemsPerPageChange: (n: number) => void;
+  hideSizeSelector?: boolean;
 }
 
 /** Gera a sequência de páginas/reticências para exibir nos botões */
@@ -49,6 +50,7 @@ const Pagination: React.FC<PaginationProps> = ({
   entityLabel,
   onPageChange,
   onItemsPerPageChange,
+  hideSizeSelector = false,
 }) => {
   if (totalItems === 0) return null;
 
@@ -70,18 +72,20 @@ const Pagination: React.FC<PaginationProps> = ({
       {/* Controles */}
       <div className="flex items-center gap-2 flex-wrap">
         {/* Seletor de itens por página */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">Por página:</span>
-          <select
-            value={itemsPerPage}
-            onChange={e => onItemsPerPageChange(Number(e.target.value))}
-            className="border border-slate-200 rounded-lg text-xs px-2 py-1.5 text-slate-600 bg-white outline-none focus:ring-2 focus:ring-slate-300 cursor-pointer"
-          >
-            {ITEMS_PER_PAGE_OPTIONS.map(opt => (
-              <option key={opt} value={opt}>{opt}</option>
-            ))}
-          </select>
-        </div>
+        {!hideSizeSelector && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">Por página:</span>
+            <select
+              value={itemsPerPage}
+              onChange={e => onItemsPerPageChange(Number(e.target.value))}
+              className="border border-slate-200 rounded-lg text-xs px-2 py-1.5 text-slate-600 bg-white outline-none focus:ring-2 focus:ring-slate-300 cursor-pointer"
+            >
+              {ITEMS_PER_PAGE_OPTIONS.map(opt => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Navegação */}
         <div className="flex items-center gap-1">

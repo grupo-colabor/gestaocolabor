@@ -14,6 +14,7 @@ import {
 import { Demand } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { demandIntersectsRange } from '../domain/demandDays';
+import Pagination from './Pagination';
 import {
   fetchLogisticAllocations,
   LogisticAllocationRow
@@ -41,6 +42,77 @@ const STATUS_LABELS: Record<string, string> = {
 
 type TabType = 'GERAL' | 'OPERACIONAL' | 'INSTRUTORES' | 'CLIENTES' | 'CUSTOS';
 
+type RankedItem = { name: string; value: number };
+
+/** Lista ranqueada com barras inline e expansão do grupo "Outros" */
+const RankedListChart: React.FC<{
+  items: RankedItem[];
+  othersDetail: RankedItem[];
+  barColor: string;
+  emptyLabel?: string;
+}> = ({ items, othersDetail, barColor, emptyLabel = 'Sem dados' }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  const allItems = expanded
+    ? [...items, ...othersDetail]
+    : othersDetail.length > 0
+      ? [...items, { name: `Outros (${othersDetail.length} locais)`, value: othersDetail.reduce((s, i) => s + i.value, 0), isOthers: true } as any]
+      : items;
+
+  const max = Math.max(...[...items, ...othersDetail].map(i => i.value), 1);
+
+  if (items.length === 0 && othersDetail.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center text-slate-300 italic text-xs uppercase font-bold">
+        {emptyLabel}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1 overflow-y-auto flex-1 min-h-0 pr-0.5">
+      {allItems.map((item: any, idx: number) => {
+        const isOthersRow = item.isOthers;
+        return (
+          <div key={item.name + idx}>
+            <div
+              className={`flex items-center gap-2 py-1 px-1.5 rounded-lg transition-colors ${isOthersRow ? 'cursor-pointer hover:bg-slate-50 group' : ''}`}
+              onClick={isOthersRow ? () => setExpanded(true) : undefined}
+              title={isOthersRow ? 'Clique para ver todos os locais' : item.name}
+            >
+              <span className="text-[9px] font-black text-slate-300 w-3.5 text-right shrink-0">
+                {isOthersRow ? '…' : idx + 1}
+              </span>
+              <span
+                className={`text-[10px] font-bold truncate shrink-0 w-28 ${isOthersRow ? 'text-blue-500 group-hover:underline' : 'text-slate-600'}`}
+              >
+                {item.name}
+              </span>
+              <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${isOthersRow ? 'bg-slate-300' : barColor}`}
+                  style={{ width: `${Math.round((item.value / max) * 100)}%` }}
+                />
+              </div>
+              <span className={`text-[10px] font-black w-5 text-right shrink-0 ${isOthersRow ? 'text-slate-400' : 'text-slate-700'}`}>
+                {item.value}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+      {expanded && othersDetail.length > 0 && (
+        <button
+          onClick={() => setExpanded(false)}
+          className="mt-1 text-[9px] font-black text-slate-400 uppercase tracking-widest hover:text-slate-600 transition-colors text-center"
+        >
+          ▲ Recolher
+        </button>
+      )}
+    </div>
+  );
+};
+
 const Dashboard: React.FC = () => {
   const { demands, companies, regions, instructors, trainings, measurements, getEvidenceAutoStatus } = useApp();
 
@@ -60,6 +132,8 @@ const Dashboard: React.FC = () => {
   const [logisticsByDemandId, setLogisticsByDemandId] = useState<Record<string, LogisticAllocationRow>>({});
   // ✅ evita "piscar" (pendente vs ok) enquanto carrega do Supabase
   const [isLoadingPendencies, setIsLoadingPendencies] = useState(true);
+  const [agenda7Page, setAgenda7Page] = useState(1);
+  const AGENDA7_PER_PAGE = 15;
 
   const syncLogisticsControlFromDb = useCallback(async () => {
     setIsLoadingPendencies(true);
@@ -375,10 +449,9 @@ const pendingLogisticsDemands = useMemo(() => {
         counts[v] = (counts[v] || 0) + 1;
       });
       const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-      if (sorted.length <= limit) return sorted.map(([name, value]) => ({ name, value }));
-      const top = sorted.slice(0, limit);
-      const othersSum = sorted.slice(limit).reduce((s, [, v]) => s + v, 0);
-      return [...top.map(([name, value]) => ({ name, value })), { name: 'Outros', value: othersSum }];
+      const items = sorted.slice(0, limit).map(([name, value]) => ({ name, value }));
+      const othersDetail = sorted.slice(limit).map(([name, value]) => ({ name, value }));
+      return { items, othersDetail };
     };
 
     const localData = buildTop(d => d.trainingLocal ?? '');
@@ -464,72 +537,63 @@ const pendingLogisticsDemands = useMemo(() => {
         {/* --- INSIGHTS: Local / Corredor / UF --- */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Volume por Local do Treinamento */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-80 flex flex-col">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex justify-between">
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between shrink-0">
               <span>Volume por Local</span>
-              <MapPin size={14} />
+              <div className="flex items-center gap-1.5">
+                {localData.othersDetail.length > 0 && (
+                  <span className="text-[9px] font-black bg-blue-50 text-blue-400 px-1.5 py-0.5 rounded-md">
+                    +{localData.othersDetail.length} ocultos
+                  </span>
+                )}
+                <MapPin size={13} />
+              </div>
             </h3>
-            <div className="flex-1 min-h-0">
-              {localData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={localData} layout="vertical" margin={{ left: 10, right: 10, top: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#F1F5F9" />
-                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 9 }} />
-                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 'bold' }} width={80} />
-                    <Tooltip cursor={{ fill: '#F8FAFC' }} />
-                    <Bar dataKey="value" fill="#3B82F6" radius={[0, 4, 4, 0]} barSize={16} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem dados</div>
-              )}
-            </div>
+            <RankedListChart
+              items={localData.items}
+              othersDetail={localData.othersDetail}
+              barColor="bg-blue-500"
+            />
           </div>
 
           {/* Volume por Corredor */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-80 flex flex-col">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex justify-between">
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between shrink-0">
               <span>Volume por Corredor</span>
-              <Truck size={14} />
+              <div className="flex items-center gap-1.5">
+                {corredorData.othersDetail.length > 0 && (
+                  <span className="text-[9px] font-black bg-emerald-50 text-emerald-400 px-1.5 py-0.5 rounded-md">
+                    +{corredorData.othersDetail.length} ocultos
+                  </span>
+                )}
+                <Truck size={13} />
+              </div>
             </h3>
-            <div className="flex-1 min-h-0">
-              {corredorData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={corredorData} layout="vertical" margin={{ left: 10, right: 10, top: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#F1F5F9" />
-                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 9 }} />
-                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 'bold' }} width={80} />
-                    <Tooltip cursor={{ fill: '#F8FAFC' }} />
-                    <Bar dataKey="value" fill="#10B981" radius={[0, 4, 4, 0]} barSize={16} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem dados</div>
-              )}
-            </div>
+            <RankedListChart
+              items={corredorData.items}
+              othersDetail={corredorData.othersDetail}
+              barColor="bg-emerald-500"
+            />
           </div>
 
           {/* Volume por UF */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-80 flex flex-col">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex justify-between">
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between shrink-0">
               <span>Volume por Estado (UF)</span>
-              <Target size={14} />
+              <div className="flex items-center gap-1.5">
+                {ufData.othersDetail.length > 0 && (
+                  <span className="text-[9px] font-black bg-amber-50 text-amber-400 px-1.5 py-0.5 rounded-md">
+                    +{ufData.othersDetail.length} ocultos
+                  </span>
+                )}
+                <Target size={13} />
+              </div>
             </h3>
-            <div className="flex-1 min-h-0">
-              {ufData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={ufData} layout="vertical" margin={{ left: 10, right: 10, top: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#F1F5F9" />
-                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 9 }} />
-                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 'bold' }} width={40} />
-                    <Tooltip cursor={{ fill: '#F8FAFC' }} />
-                    <Bar dataKey="value" fill="#F59E0B" radius={[0, 4, 4, 0]} barSize={16} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem dados</div>
-              )}
-            </div>
+            <RankedListChart
+              items={ufData.items}
+              othersDetail={ufData.othersDetail}
+              barColor="bg-amber-500"
+            />
           </div>
         </div>
 
@@ -538,121 +602,248 @@ const pendingLogisticsDemands = useMemo(() => {
   };
 
   const renderOperacional = () => {
-    const inExecution = filteredDemands.filter(d => getCalculatedStatus(d) === 'EM_ANDAMENTO').length;
+    const next7  = new Date(today.getTime() + 7  * 24 * 60 * 60 * 1000);
+    const next30 = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-    const modalityData = [
-      { name: 'Presencial', value: filteredDemands.filter(d => getDemandModality(d) === 'PRESENCIAL').length },
-      { name: 'Online', value: filteredDemands.filter(d => getDemandModality(d) === 'ONLINE').length },
-      { name: 'Híbrido', value: filteredDemands.filter(d => getDemandModality(d) === 'HIBRIDO').length },
-    ].filter(v => v.value > 0);
+    const concluded  = filteredDemands.filter(d => getCalculatedStatus(d) === 'CONCLUIDA');
+    const activeDmds = filteredDemands.filter(d => getCalculatedStatus(d) !== 'CANCELADA');
+    const execRate   = activeDmds.length > 0 ? Math.round((concluded.length / activeDmds.length) * 100) : 0;
+    const execColor  = execRate >= 70 ? '#10B981' : execRate >= 40 ? '#F59E0B' : '#EF4444';
 
-    const logisticsStats = [
-      { name: 'C/ Hotel', value: filteredDemands.filter(d => d.accommodationType === 'Hotel').length },
-      { name: 'S/ Hotel', value: filteredDemands.filter(d => d.accommodationType === 'N/A').length },
-      { name: 'Carro Alugado', value: filteredDemands.filter(d => d.transportType === 'Carro Alugado').length },
-      { name: 'Carro Próprio', value: filteredDemands.filter(d => d.transportType === 'Carro Próprio').length },
-    ];
+    const noInstructor = filteredDemands.filter(d => {
+      const s = getCalculatedStatus(d);
+      if (s === 'CANCELADA' || s === 'CONCLUIDA') return false;
+      if (isOnlineDemand(d)) return false;
+      return !d.instructorId;
+    }).length;
 
-    const criticalList = filteredDemands
+    // Agenda 7 dias: em andamento OU com início nos próximos 7 dias (não canceladas/concluídas)
+    const agenda7 = filteredDemands
       .filter(d => {
-        const status = getCalculatedStatus(d);
-        return status !== 'CONCLUIDA' && status !== 'CANCELADA' && new Date(d.startDate) <= new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+        const s = getCalculatedStatus(d);
+        if (s === 'CANCELADA' || s === 'CONCLUIDA') return false;
+        const start = new Date(d.startDate);
+        const end   = new Date(d.endDate);
+        return start <= next7 && end >= today;
       })
-      .sort((a, b) => a.startDate.localeCompare(b.startDate))
-      .slice(0, 5);
+      .sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+    // Top treinamentos no período
+    const tCounts: Record<string, number> = {};
+    filteredDemands.forEach(d => {
+      const name = trainings.find(t => t.id === d.trainingId)?.name;
+      if (name) tCounts[name] = (tCounts[name] || 0) + 1;
+    });
+    const tSorted = Object.entries(tCounts).sort((a, b) => b[1] - a[1]);
+    const topTrainings    = tSorted.slice(0, 8).map(([name, value]) => ({ name, value }));
+    const othersTrainings = tSorted.slice(8).map(([name, value]) => ({ name, value }));
+
+    // Ranking instrutores por demandas no período
+    const iCounts: Record<string, number> = {};
+    filteredDemands.filter(d => d.instructorId).forEach(d => {
+      iCounts[d.instructorId!] = (iCounts[d.instructorId!] || 0) + 1;
+    });
+    const topInstructors = Object.entries(iCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([id, value]) => ({
+        name: instructors.find(i => i.id === id)?.name || id,
+        value
+      }));
+
+    // Modalidade
+    const modalTotal = filteredDemands.length || 1;
+    const modalities = [
+      { label: 'Presencial', value: filteredDemands.filter(d => getDemandModality(d) === 'PRESENCIAL').length, color: 'bg-blue-500' },
+      { label: 'Online / EAD', value: filteredDemands.filter(d => ['ONLINE','EAD'].includes(getDemandModality(d))).length, color: 'bg-emerald-500' },
+      { label: 'Híbrido', value: filteredDemands.filter(d => getDemandModality(d) === 'HIBRIDO').length, color: 'bg-violet-500' },
+    ].filter(m => m.value > 0);
+
+    const STATUS_BADGE: Record<string, string> = {
+      NOVA:        'bg-violet-100 text-violet-700',
+      PENDENTE:    'bg-amber-100 text-amber-700',
+      ALOCADA:     'bg-blue-100 text-blue-700',
+      EM_ANDAMENTO:'bg-emerald-100 text-emerald-700',
+      CONCLUIDA:   'bg-slate-100 text-slate-500',
+      CANCELADA:   'bg-red-100 text-red-500',
+    };
 
     return (
       <div className="space-y-6 animate-fade-in">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <KPICard title="Aguardando Instrutor" value={filteredDemands.filter(d => { const status = getCalculatedStatus(d); if (status === 'CANCELADA' || status === 'CONCLUIDA') return false; if (isOnlineDemand(d)) return false; return !d.instructorId; }).length} icon={AlertCircle} colorClass="bg-orange-50 text-orange-600" />
-          <KPICard title="Alocadas Futuras" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'ALOCADA').length} icon={Calendar} colorClass="bg-blue-50 text-blue-600" />
-          <KPICard title="Em Execução Hoje" value={inExecution} icon={Zap} colorClass="bg-emerald-50 text-emerald-600" />
-          <KPICard title="Próximos 30 Dias" value={filteredDemands.filter(d => new Date(d.startDate) > today && new Date(d.startDate) <= new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000)).length} icon={Clock} colorClass="bg-indigo-50 text-indigo-600" />
+
+        {/* KPIs */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <KPICard title="Aguardando Instrutor" value={noInstructor} icon={AlertCircle} colorClass="bg-orange-50 text-orange-600" />
+          <KPICard title="Alocadas" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'ALOCADA').length} icon={Calendar} colorClass="bg-blue-50 text-blue-600" />
+          <KPICard title="Em Execução Hoje" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'EM_ANDAMENTO').length} icon={Zap} colorClass="bg-emerald-50 text-emerald-600" />
+          <KPICard title="Próximos 30 Dias" value={filteredDemands.filter(d => { const s = new Date(d.startDate); return s > today && s <= next30; }).length} icon={Clock} colorClass="bg-indigo-50 text-indigo-600" />
+          <KPICard title="Taxa de Execução" value={`${execRate}%`} icon={TrendingUp} colorClass="bg-teal-50 text-teal-600" subtext={`${concluded.length} de ${activeDmds.length} concluídas`} />
         </div>
 
+        {/* Top Treinamentos + Demandas por Instrutor + Perfil do Período */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-4 bg-white p-6 rounded-2xl border border-slate-200 h-80 shadow-sm flex flex-col">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Modalidade</h3>
-            <div className="flex-1 min-h-0">
-              {modalityData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={modalityData} cx="50%" cy="50%" outerRadius={70} dataKey="value" stroke="none">
-                      {modalityData.map((_, i) => <Cell key={i} fill={COLORS.CHART_PALETTE[i]} />)}
-                    </Pie>
-                    <Tooltip />
-                    <Legend iconType="circle" wrapperStyle={{ fontSize: '9px' }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem dados</div>
-              )}
-            </div>
+
+          {/* Top Treinamentos */}
+          <div className="lg:col-span-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '22rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between shrink-0">
+              <span>Top Treinamentos</span>
+              <Package size={13} className="text-slate-300" />
+            </h3>
+            <RankedListChart items={topTrainings} othersDetail={othersTrainings} barColor="bg-violet-500" emptyLabel="Sem treinamentos no período" />
           </div>
 
-          <div className="lg:col-span-8 bg-white p-6 rounded-2xl border border-slate-200 h-80 shadow-sm flex flex-col">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Perfil Logístico</h3>
-            <div className="flex-1 min-h-0">
-              {filteredDemands.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart layout="vertical" data={logisticsStats} margin={{ left: 30, right: 30 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#F1F5F9" />
-                    <XAxis type="number" hide />
-                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold' }} />
-                    <Tooltip cursor={{ fill: '#F8FAFC' }} />
-                    <Bar dataKey="value" fill="#8B5CF6" radius={[0, 4, 4, 0]} barSize={20} />
-                  </BarChart>
-                </ResponsiveContainer>
+          {/* Demandas por Instrutor */}
+          <div className="lg:col-span-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '22rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between shrink-0">
+              <span>Demandas por Instrutor</span>
+              <UserCheck size={13} className="text-slate-300" />
+            </h3>
+            <RankedListChart items={topInstructors} othersDetail={[]} barColor="bg-blue-500" emptyLabel="Sem instrutores alocados" />
+          </div>
+
+          {/* Perfil do Período */}
+          <div className="lg:col-span-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-5" style={{ minHeight: '22rem' }}>
+
+            {/* Modalidade */}
+            <div>
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between">
+                <span>Modalidade</span>
+                <MousePointer2 size={13} className="text-slate-300" />
+              </h3>
+              {modalities.length > 0 ? (
+                <div className="space-y-2.5">
+                  {modalities.map(m => (
+                    <div key={m.label} className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-slate-500 w-24 shrink-0">{m.label}</span>
+                      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full ${m.color}`} style={{ width: `${Math.round((m.value / modalTotal) * 100)}%` }} />
+                      </div>
+                      <span className="text-[10px] font-black text-slate-700 w-6 text-right shrink-0">{m.value}</span>
+                    </div>
+                  ))}
+                </div>
               ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem demandas registradas</div>
+                <p className="text-[11px] text-slate-300 italic">Sem dados no período</p>
               )}
+            </div>
+
+            {/* Taxa de Execução — donut */}
+            <div className="border-t border-slate-100 pt-4">
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3">Taxa de Execução</h3>
+              <div className="flex items-center gap-4">
+                <div className="relative w-[72px] h-[72px] shrink-0">
+                  <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+                    <circle cx="18" cy="18" r="15.9" fill="none" stroke="#F1F5F9" strokeWidth="3.5" />
+                    <circle cx="18" cy="18" r="15.9" fill="none" stroke={execColor} strokeWidth="3.5"
+                      strokeDasharray={`${execRate} ${100 - execRate}`} strokeLinecap="round" />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="text-[13px] font-black text-slate-800">{execRate}%</span>
+                  </div>
+                </div>
+                <div className="space-y-1.5 flex-1">
+                  {[
+                    { label: 'Concluídas', count: concluded.length, dot: 'bg-emerald-500' },
+                    { label: 'Em andamento', count: filteredDemands.filter(d => getCalculatedStatus(d) === 'EM_ANDAMENTO').length, dot: 'bg-blue-400' },
+                    { label: 'Pendentes', count: filteredDemands.filter(d => ['NOVA','PENDENTE','ALOCADA'].includes(getCalculatedStatus(d))).length, dot: 'bg-amber-400' },
+                  ].map(row => (
+                    <div key={row.label} className="flex items-center gap-2">
+                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${row.dot}`} />
+                      <span className="text-[10px] font-bold text-slate-400">{row.label}</span>
+                      <span className="text-[10px] font-black text-slate-700 ml-auto">{row.count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">⚠️ Demandas Críticas (Próximas 7 dias)</h3>
-            <MousePointer2 size={14} className="text-slate-300" />
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead className="text-[10px] text-slate-400 uppercase font-black bg-slate-50/30">
-                <tr>
-                  <th className="px-6 py-3">ID</th>
-                  <th className="px-6 py-3">Data Início</th>
-                  <th className="px-6 py-3">Empresa</th>
-                  <th className="px-6 py-3">Treinamento</th>
-                  <th className="px-6 py-3">Local</th>
-                  <th className="px-6 py-3">Status Calculado</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {criticalList.length > 0 ? criticalList.map(d => {
-                  const cStatus = getCalculatedStatus(d);
-                  return (
-                    <tr key={d.id} className="hover:bg-slate-50/50 transition-colors text-xs font-medium text-slate-600">
-                      <td className="px-6 py-3 font-bold text-blue-600">{d.id}</td>
-                      <td className="px-6 py-3">{new Date(d.startDate).toLocaleDateString('pt-BR')}</td>
-                      <td className="px-6 py-3 truncate max-w-[150px]" title={companies.find(c => c.id === d.companyId)?.name}>{companies.find(c => c.id === d.companyId)?.name}</td>
-                      <td className="px-6 py-3 truncate max-w-[200px]" title={trainings.find(t => t.id === d.trainingId)?.name}>{trainings.find(t => t.id === d.trainingId)?.name}</td>
-                      <td className="px-6 py-3 truncate max-w-[150px]" title={d.trainingLocal}>{d.trainingLocal}</td>
-                      <td className="px-6 py-3">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${COLORS[cStatus as keyof typeof COLORS] ? 'bg-opacity-10' : 'bg-slate-100'}`} style={{ color: COLORS[cStatus as keyof typeof COLORS] as string }}>
-                          {STATUS_LABELS[cStatus]}
-                        </span>
-                      </td>
+        {/* Agenda dos Próximos 7 Dias */}
+        {(() => {
+          const totalPages7 = Math.max(1, Math.ceil(agenda7.length / AGENDA7_PER_PAGE));
+          const safePage7   = Math.min(agenda7Page, totalPages7);
+          const startIdx7   = (safePage7 - 1) * AGENDA7_PER_PAGE;
+          const pageItems7  = agenda7.slice(startIdx7, startIdx7 + AGENDA7_PER_PAGE);
+          return (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center">
+                <div>
+                  <h3 className="text-xs font-black text-slate-800 uppercase tracking-tight">Agenda dos Próximos 7 Dias</h3>
+                  <p className="text-[10px] font-bold text-slate-400 mt-0.5 uppercase tracking-widest">
+                    {agenda7.length} demanda{agenda7.length !== 1 ? 's' : ''} em execução ou com início previsto
+                  </p>
+                </div>
+                <Calendar size={14} className="text-slate-300" />
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="text-[10px] text-slate-400 uppercase font-black bg-slate-50/60 border-b border-slate-100">
+                      <th className="px-4 py-3 whitespace-nowrap">ID</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Início</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Empresa</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Treinamento</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Instrutor</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Local</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Status</th>
                     </tr>
-                  );
-                }) : (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-slate-400 italic text-sm">Nenhuma demanda crítica identificada.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {pageItems7.length > 0 ? pageItems7.map(d => {
+                      const cStatus    = getCalculatedStatus(d);
+                      const instructor = instructors.find(i => i.id === d.instructorId);
+                      return (
+                        <tr key={d.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-4 py-3 text-[11px] font-black text-blue-600 font-mono whitespace-nowrap">{d.id}</td>
+                          <td className="px-4 py-3 text-[11px] font-bold text-slate-600 whitespace-nowrap">
+                            {new Date(d.startDate).toLocaleDateString('pt-BR')}
+                          </td>
+                          <td className="px-4 py-3 text-[11px] font-bold text-slate-700 max-w-[140px] truncate" title={companies.find(c => c.id === d.companyId)?.name}>
+                            {companies.find(c => c.id === d.companyId)?.name || '—'}
+                          </td>
+                          <td className="px-4 py-3 text-[11px] text-slate-600 max-w-[200px] truncate" title={trainings.find(t => t.id === d.trainingId)?.name}>
+                            {trainings.find(t => t.id === d.trainingId)?.name || '—'}
+                          </td>
+                          <td className="px-4 py-3 text-[11px] text-slate-600 whitespace-nowrap">
+                            {instructor
+                              ? instructor.name.split(' ').slice(0, 2).join(' ')
+                              : <span className="text-amber-500 font-bold text-[10px] uppercase">Sem instrutor</span>
+                            }
+                          </td>
+                          <td className="px-4 py-3 text-[11px] text-slate-500 whitespace-nowrap">{d.trainingLocal || '—'}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase ${STATUS_BADGE[cStatus] || 'bg-slate-100 text-slate-500'}`}>
+                              {STATUS_LABELS[cStatus] || cStatus}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    }) : (
+                      <tr>
+                        <td colSpan={7} className="px-6 py-10 text-center text-slate-300 italic text-xs uppercase font-bold">
+                          Nenhuma demanda prevista nos próximos 7 dias.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <Pagination
+                currentPage={safePage7}
+                totalPages={totalPages7}
+                totalItems={agenda7.length}
+                itemsPerPage={AGENDA7_PER_PAGE}
+                startIdx={startIdx7}
+                entityLabel="demandas"
+                onPageChange={setAgenda7Page}
+                onItemsPerPageChange={() => {}}
+                hideSizeSelector
+              />
+            </div>
+          );
+        })()}
+
       </div>
     );
   };

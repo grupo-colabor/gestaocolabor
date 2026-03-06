@@ -50,6 +50,13 @@ const Evidences: React.FC = () => {
   const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
   const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
 
+  const getInstructorName = (demand: Demand): string => {
+    const instructorId = demand.instructorId
+      || instructorAllocations.find(a => a.demandId === demand.id)?.instructorId;
+    if (!instructorId) return '—';
+    return instructors.find(i => i.id === instructorId)?.name || '—';
+  };
+
   const formatDateTime = (dateStr?: string) => {
     if (!dateStr) return '---';
     const date = new Date(dateStr);
@@ -326,6 +333,7 @@ const getEvidenceAutoStatus = (
                 <th className="p-6">ID Demanda</th>
                 <th className="p-6">Empresa</th>
                 <th className="p-6">Treinamento</th>
+                <th className="p-6">Instrutor</th>
                 <th className="p-6 text-center">Período</th>
                 <th className="p-6 text-center">Status Trein.</th>
                 <th className="p-6 text-center">Status Evidência</th>
@@ -362,6 +370,9 @@ const getEvidenceAutoStatus = (
                         <GraduationCap size={14} className="text-slate-300 mt-0.5 shrink-0" />
                         <span className="font-medium text-slate-600 leading-relaxed">{getTrainingName(demand.trainingId)}</span>
                       </div>
+                    </td>
+                    <td className="p-6">
+                      <span className="font-medium text-slate-600">{getInstructorName(demand)}</span>
                     </td>
                     <td className="p-6 text-center whitespace-nowrap">
                       <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-1 rounded-lg border border-slate-200">
@@ -407,7 +418,7 @@ const getEvidenceAutoStatus = (
                 );
               }) : (
                 <tr>
-                  <td colSpan={7} className="p-20 text-center text-slate-400">
+                  <td colSpan={8} className="p-20 text-center text-slate-400">
                     <div className="flex flex-col items-center gap-4">
                       <FileSearch size={48} className="opacity-10" />
                       <p className="font-bold text-sm italic uppercase tracking-widest">Nenhuma demanda correspondente encontrada.</p>

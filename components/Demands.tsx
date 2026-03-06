@@ -14,7 +14,8 @@ import {
   PaymentMethod,
   AccommodationType,
   InstructorAllocation,
-  LogisticAllocation
+  LogisticAllocation,
+  SpecificDateEntry
 } from '../types';
 
 import {
@@ -234,7 +235,7 @@ useEffect(() => {
     demandState: '',
     modality: 'PRESENCIAL',
     dateMode: 'CONTINUO' as const,
-    specificDates: [] as string[],
+    specificDates: [] as SpecificDateEntry[],
     startDate: '',
     endDate: '',
     status: 'NOVA',
@@ -949,7 +950,7 @@ Treinamento: ${training}
 Instrutor: ${instructor}
 
 ${b('📘 INFORMAÇÕES GERAIS')}
-• Período: ${start} até ${end}${formDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(formDemand.specificDates) && formDemand.specificDates.length > 0 ? `\n• Dias específicos: ${[...formDemand.specificDates].sort().map(d => new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })).join(', ')}` : ''}
+• Período: ${start} até ${end}${formDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(formDemand.specificDates) && formDemand.specificDates.length > 0 ? `\n• Dias específicos: ${[...formDemand.specificDates].sort((a, b) => a.data.localeCompare(b.data)).map(e => `${new Date(e.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${e.horarioInicio}-${e.horarioFim}`).join(', ')}` : ''}
 • Unidade/Local: ${formDemand.modality === 'ONLINE' ? 'N/A' : (formDemand.trainingLocal || 'N/A')}
 • Modalidade: ${formDemand.modality}
 • Região: ${getRegionName(formDemand.regionId!)}
@@ -1060,7 +1061,7 @@ ${formDemand.observations || 'N/A'}
           new Paragraph({ children: [new TextRun({ text: "🌐 Modalidade: ", bold: true }), new TextRun(formDemand.modality!)] }),
           new Paragraph({ children: [new TextRun({ text: "📅 Período: ", bold: true }), new TextRun(`${formatDateTime(formDemand.startDate)} até ${formatDateTime(formDemand.endDate)}`)] }),
           ...(formDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(formDemand.specificDates) && formDemand.specificDates.length > 0
-            ? [new Paragraph({ children: [new TextRun({ text: "📅 Dias específicos: ", bold: true }), new TextRun([...formDemand.specificDates].sort().map(d => new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })).join(', '))] })]
+            ? [new Paragraph({ children: [new TextRun({ text: "📅 Dias específicos: ", bold: true }), new TextRun([...formDemand.specificDates].sort((a, b) => a.data.localeCompare(b.data)).map(e => `${new Date(e.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${e.horarioInicio}-${e.horarioFim}`).join(', '))] })]
             : []),
           new Paragraph({ children: [new TextRun({ text: "📍 Local / Unidade: ", bold: true }), new TextRun(formDemand.modality === 'ONLINE' ? 'N/A' : (formDemand.trainingLocal || 'N/A'))] }),
           new Paragraph({ children: [new TextRun({ text: "🏢 Corredor: ", bold: true }), new TextRun(formDemand.corredor || 'Não informado')] }),
@@ -1289,15 +1290,9 @@ const handleSave = async () => {
     const isSpecificMode = formDemand.dateMode === 'DIAS_ESPECIFICOS';
 
     if (isSpecificMode && Array.isArray(formDemand.specificDates) && formDemand.specificDates.length > 0) {
-      const sorted = [...formDemand.specificDates].sort();
-      const startTime = (formDemand.startDate || '').includes('T')
-        ? formDemand.startDate!.split('T')[1] || '08:00'
-        : '08:00';
-      const endTime = (formDemand.endDate || '').includes('T')
-        ? formDemand.endDate!.split('T')[1] || '18:00'
-        : '18:00';
-      derivedStart = `${sorted[0]}T${startTime}`;
-      derivedEnd = `${sorted[sorted.length - 1]}T${endTime}`;
+      const sorted = [...formDemand.specificDates].sort((a, b) => a.data.localeCompare(b.data));
+      derivedStart = `${sorted[0].data}T${sorted[0].horarioInicio}`;
+      derivedEnd = `${sorted[sorted.length - 1].data}T${sorted[sorted.length - 1].horarioFim}`;
     }
 
     // ✅ Validação de datas SEM timezone (datetime-local ordena corretamente)
@@ -2530,9 +2525,9 @@ const companionInstructorIds = useMemo(() => {
                               ) : (
                               /* ── MODO DIAS ESPECÍFICOS ── */
                               <div className="md:col-span-2 space-y-3">
-                                {/* Adicionar dia */}
-                                <div className="flex gap-2 items-end">
-                                  <div className="flex-1">
+                                {/* Adicionar dia com horários individuais */}
+                                <div className="flex gap-2 items-end flex-wrap">
+                                  <div className="flex-1 min-w-[130px]">
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Adicionar Dia *</label>
                                     <input
                                       type="date"
@@ -2540,95 +2535,80 @@ const companionInstructorIds = useMemo(() => {
                                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                                     />
                                   </div>
+                                  <div className="w-28">
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Início</label>
+                                    <input
+                                      type="time"
+                                      id="specific-start-time-input"
+                                      defaultValue="08:00"
+                                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                    />
+                                  </div>
+                                  <div className="w-28">
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Fim</label>
+                                    <input
+                                      type="time"
+                                      id="specific-end-time-input"
+                                      defaultValue="18:00"
+                                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                    />
+                                  </div>
                                   <button
                                     type="button"
-                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition"
+                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition self-end"
                                     onClick={() => {
-                                      const input = document.getElementById('specific-date-input') as HTMLInputElement;
-                                      const val = input?.value;
+                                      const dateInput = document.getElementById('specific-date-input') as HTMLInputElement;
+                                      const startInput = document.getElementById('specific-start-time-input') as HTMLInputElement;
+                                      const endInput = document.getElementById('specific-end-time-input') as HTMLInputElement;
+                                      const val = dateInput?.value;
                                       if (!val) return;
+                                      const horarioInicio = startInput?.value || '08:00';
+                                      const horarioFim = endInput?.value || '18:00';
                                       const current = Array.isArray(formDemand.specificDates) ? formDemand.specificDates : [];
-                                      if (current.includes(val)) return; // sem duplicatas
-                                      const updated = [...current, val].sort();
-                                      // Auto-derivar startDate/endDate
-                                      const minDate = updated[0];
-                                      const maxDate = updated[updated.length - 1];
-                                      const startTime = getTimeValue('startDate') || '08:00';
-                                      const endTime = getTimeValue('endDate') || '18:00';
+                                      if (current.some(e => e.data === val)) return; // sem duplicatas
+                                      const updated = [...current, { data: val, horarioInicio, horarioFim }].sort((a, b) => a.data.localeCompare(b.data));
                                       setFormDemand({
                                         ...formDemand,
                                         specificDates: updated,
-                                        startDate: `${minDate}T${startTime}`,
-                                        endDate: `${maxDate}T${endTime}`,
+                                        startDate: `${updated[0].data}T${updated[0].horarioInicio}`,
+                                        endDate: `${updated[updated.length - 1].data}T${updated[updated.length - 1].horarioFim}`,
                                       });
-                                      input.value = '';
+                                      dateInput.value = '';
                                     }}
                                   >+ Adicionar</button>
                                 </div>
 
-                                {/* Horários (compartilhados para todos os dias) */}
-                                <div className="grid grid-cols-2 gap-4">
-                                  <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Hor\u00e1rio Início</label>
-                                    <input
-                                      type="time"
-                                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                      value={getTimeValue('startDate') || '08:00'}
-                                      onChange={(e) => {
-                                        const dates = Array.isArray(formDemand.specificDates) ? formDemand.specificDates : [];
-                                        if (dates.length === 0) return;
-                                        const minDate = [...dates].sort()[0];
-                                        setFormDemand({...formDemand, startDate: `${minDate}T${e.target.value}`});
-                                      }}
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Hor\u00e1rio Fim</label>
-                                    <input
-                                      type="time"
-                                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                      value={getTimeValue('endDate') || '18:00'}
-                                      onChange={(e) => {
-                                        const dates = Array.isArray(formDemand.specificDates) ? formDemand.specificDates : [];
-                                        if (dates.length === 0) return;
-                                        const maxDate = [...dates].sort()[dates.length - 1];
-                                        setFormDemand({...formDemand, endDate: `${maxDate}T${e.target.value}`});
-                                      }}
-                                    />
-                                  </div>
-                                </div>
-
-                                {/* Chips de dias selecionados */}
+                                {/* Lista de dias adicionados com horários */}
                                 {Array.isArray(formDemand.specificDates) && formDemand.specificDates.length > 0 && (
-                                  <div>
-                                    <div className="flex flex-wrap gap-2">
-                                      {[...formDemand.specificDates].sort().map(d => (
-                                        <span key={d} className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-full text-xs font-bold border border-blue-200">
-                                          {new Date(`${d}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
-                                          <button
-                                            type="button"
-                                            className="ml-1 text-blue-400 hover:text-red-500 font-black text-sm leading-none"
-                                            onClick={() => {
-                                              const updated = formDemand.specificDates!.filter(x => x !== d);
-                                              const startTime = getTimeValue('startDate') || '08:00';
-                                              const endTime = getTimeValue('endDate') || '18:00';
-                                              const sorted = [...updated].sort();
-                                              setFormDemand({
-                                                ...formDemand,
-                                                specificDates: updated,
-                                                startDate: sorted.length > 0 ? `${sorted[0]}T${startTime}` : '',
-                                                endDate: sorted.length > 0 ? `${sorted[sorted.length - 1]}T${endTime}` : '',
-                                              });
-                                            }}
-                                          >&times;</button>
+                                  <div className="space-y-1">
+                                    {[...formDemand.specificDates].sort((a, b) => String(a.data).localeCompare(String(b.data))).map((entry, i) => {
+                                      const dateStr = String(entry.data ?? '').slice(0, 10);
+                                      const dateObj = new Date(`${dateStr}T12:00:00`);
+                                      const dateLabel = isNaN(dateObj.getTime()) ? dateStr : dateObj.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+                                      return (
+                                      <div key={`${dateStr}-${i}`} className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg">
+                                        <span className="text-xs font-bold text-blue-700 flex-1">
+                                          {dateLabel}
                                         </span>
-                                      ))}
-                                    </div>
-                                    <p className="text-[10px] text-slate-500 mt-2 font-bold">
+                                        <span className="text-xs text-blue-600 font-medium">{entry.horarioInicio} – {entry.horarioFim}</span>
+                                        <button
+                                          type="button"
+                                          className="text-blue-400 hover:text-red-500 font-black text-sm leading-none ml-1"
+                                          onClick={() => {
+                                            const updated = formDemand.specificDates!.filter(x => x.data !== entry.data);
+                                            const sorted = [...updated].sort((a, b) => a.data.localeCompare(b.data));
+                                            setFormDemand({
+                                              ...formDemand,
+                                              specificDates: updated,
+                                              startDate: sorted.length > 0 ? `${sorted[0].data}T${sorted[0].horarioInicio}` : '',
+                                              endDate: sorted.length > 0 ? `${sorted[sorted.length - 1].data}T${sorted[sorted.length - 1].horarioFim}` : '',
+                                            });
+                                          }}
+                                        >&times;</button>
+                                      </div>
+                                    ); })}
+                                    <p className="text-[10px] text-slate-500 mt-1 font-bold">
                                       {formDemand.specificDates.length} dia(s) selecionado(s)
-                                      {formDemand.specificDates.length >= 2 && (
-                                        <> &mdash; {new Date(`${[...formDemand.specificDates].sort()[0]}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })} a {new Date(`${[...formDemand.specificDates].sort()[formDemand.specificDates.length - 1]}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}</>
-                                      )}
                                     </p>
                                   </div>
                                 )}
@@ -2657,17 +2637,21 @@ const companionInstructorIds = useMemo(() => {
                                   <>
                                     <div className="flex flex-col space-y-1 md:col-span-3">
                                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1"><Calendar size={12} /> Dias Específicos</span>
-                                      <div className="flex flex-wrap gap-1">
-                                        {[...formDemand.specificDates].sort().map(d => (
-                                          <span key={d} className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-[10px] font-bold border border-blue-200">
-                                            {new Date(`${d}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
+                                      <div className="flex flex-col gap-1 mt-1">
+                                        {[...formDemand.specificDates].sort((a, b) => String(a.data).localeCompare(String(b.data))).map((entry, i) => {
+                                          const dateStr = String(entry.data ?? '').slice(0, 10);
+                                          const dateObj = new Date(`${dateStr}T12:00:00`);
+                                          const dateLabel = isNaN(dateObj.getTime()) ? dateStr : dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' });
+                                          return (
+                                          <span key={`${dateStr}-${i}`} className="inline-flex items-center gap-2 px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-[10px] font-bold border border-blue-200 w-fit">
+                                            {dateLabel}
+                                            <span className="text-blue-500">{entry.horarioInicio}–{entry.horarioFim}</span>
                                           </span>
-                                        ))}
+                                          );
+                                        })}
                                       </div>
                                       <span className="text-[10px] text-slate-500">{formDemand.specificDates.length} dia(s)</span>
                                     </div>
-                                    <DataViewField label="Horário Início" value={toLocalTimeInput(formDemand.startDate) || '---'} icon={Clock} />
-                                    <DataViewField label="Horário Fim" value={toLocalTimeInput(formDemand.endDate) || '---'} icon={Clock} />
                                   </>
                                 ) : (
                                   <>

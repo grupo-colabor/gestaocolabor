@@ -12,6 +12,101 @@ import {
 
 const PREVIEW_COUNT = 6;
 
+// Definido FORA de Notifications para que o React não remonte o componente
+// a cada re-render do pai (o que causava scroll para o topo ao expandir/recolher).
+const AlertCard = ({
+  title,
+  subtitle,
+  count,
+  accentColor,
+  icon: Icon,
+  iconBg,
+  iconColor,
+  badgeClass,
+  items,
+  renderItem,
+  loading = false,
+  isExpanded,
+  onToggle,
+}: {
+  title: string;
+  subtitle: string;
+  count: number;
+  accentColor: string;
+  icon: React.ElementType;
+  iconBg: string;
+  iconColor: string;
+  badgeClass: string;
+  items: any[];
+  renderItem: (item: any) => React.ReactNode;
+  loading?: boolean;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) => {
+  const visibleItems = isExpanded ? items : items.slice(0, PREVIEW_COUNT);
+  const hiddenCount = items.length - PREVIEW_COUNT;
+
+  return (
+    <div className={`bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden border-l-4 ${accentColor}`}>
+      <div className="p-5 flex items-center gap-4 border-b border-slate-100">
+        <div className={`p-3 ${iconBg} rounded-xl shrink-0`}>
+          <Icon size={20} className={iconColor} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">{title}</h3>
+          <p className="text-xs font-bold text-slate-400 mt-0.5">
+            {loading
+              ? 'Carregando...'
+              : count > 0
+                ? subtitle
+                : `Nenhuma pendência no momento ✅`}
+          </p>
+        </div>
+        {!loading && count > 0 && (
+          <span className={`shrink-0 text-[11px] font-black px-3 py-1 rounded-full ${badgeClass}`}>
+            {count}
+          </span>
+        )}
+      </div>
+
+      {!loading && items.length > 0 && (
+        <div className="p-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {visibleItems.map((item, idx) => (
+              <React.Fragment key={item.id ?? idx}>{renderItem(item)}</React.Fragment>
+            ))}
+          </div>
+
+          {hiddenCount > 0 && !isExpanded && (
+            <button
+              type="button"
+              onClick={onToggle}
+              className="mt-3 w-full p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center gap-2 hover:bg-blue-50 hover:border-blue-200 transition-colors group"
+            >
+              <ChevronDown size={13} className="text-slate-400 group-hover:text-blue-500" />
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-blue-500">
+                + {hiddenCount} outra{hiddenCount !== 1 ? 's' : ''} pendência{hiddenCount !== 1 ? 's' : ''}
+              </span>
+            </button>
+          )}
+          {isExpanded && items.length > PREVIEW_COUNT && (
+            <button
+              type="button"
+              onClick={onToggle}
+              className="mt-3 w-full p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center gap-2 hover:bg-slate-100 transition-colors group"
+            >
+              <ChevronUp size={13} className="text-slate-400 group-hover:text-slate-600" />
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-slate-600">
+                Recolher
+              </span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const Notifications: React.FC = () => {
   const {
     demands, companies, trainings, measurements, getEvidenceAutoStatus,
@@ -173,97 +268,6 @@ const Notifications: React.FC = () => {
     </button>
   );
 
-  // --- Card de alerta com expansão ---
-  const AlertCard = ({
-    blockKey,
-    title,
-    subtitle,
-    count,
-    accentColor,
-    icon: Icon,
-    iconBg,
-    iconColor,
-    badgeClass,
-    items,
-    renderItem,
-    loading = false,
-  }: {
-    blockKey: string;
-    title: string;
-    subtitle: string;
-    count: number;
-    accentColor: string;
-    icon: React.ElementType;
-    iconBg: string;
-    iconColor: string;
-    badgeClass: string;
-    items: any[];
-    renderItem: (item: any) => React.ReactNode;
-    loading?: boolean;
-  }) => {
-    const isExpanded = expandedBlocks[blockKey] ?? false;
-    const visibleItems = isExpanded ? items : items.slice(0, PREVIEW_COUNT);
-    const hiddenCount = items.length - PREVIEW_COUNT;
-
-    return (
-      <div className={`bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden border-l-4 ${accentColor}`}>
-        <div className="p-5 flex items-center gap-4 border-b border-slate-100">
-          <div className={`p-3 ${iconBg} rounded-xl shrink-0`}>
-            <Icon size={20} className={iconColor} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">{title}</h3>
-            <p className="text-xs font-bold text-slate-400 mt-0.5">
-              {loading
-                ? 'Carregando...'
-                : count > 0
-                  ? subtitle
-                  : `Nenhuma pendência no momento ✅`}
-            </p>
-          </div>
-          {!loading && count > 0 && (
-            <span className={`shrink-0 text-[11px] font-black px-3 py-1 rounded-full ${badgeClass}`}>
-              {count}
-            </span>
-          )}
-        </div>
-
-        {!loading && items.length > 0 && (
-          <div className="p-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {visibleItems.map((item, idx) => (
-                <React.Fragment key={item.id ?? idx}>{renderItem(item)}</React.Fragment>
-              ))}
-            </div>
-
-            {/* Botão expandir / recolher */}
-            {hiddenCount > 0 && !isExpanded && (
-              <button
-                onClick={() => toggleBlock(blockKey)}
-                className="mt-3 w-full p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center gap-2 hover:bg-blue-50 hover:border-blue-200 transition-colors group"
-              >
-                <ChevronDown size={13} className="text-slate-400 group-hover:text-blue-500" />
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-blue-500">
-                  + {hiddenCount} outra{hiddenCount !== 1 ? 's' : ''} pendência{hiddenCount !== 1 ? 's' : ''}
-                </span>
-              </button>
-            )}
-            {isExpanded && items.length > PREVIEW_COUNT && (
-              <button
-                onClick={() => toggleBlock(blockKey)}
-                className="mt-3 w-full p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center gap-2 hover:bg-slate-100 transition-colors group"
-              >
-                <ChevronUp size={13} className="text-slate-400 group-hover:text-slate-600" />
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-slate-600">
-                  Recolher
-                </span>
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -294,7 +298,6 @@ const Notifications: React.FC = () => {
 
       {/* --- Bloco 1: Pendências Logísticas --- */}
       <AlertCard
-        blockKey="logistics"
         title="Pendências Logísticas"
         subtitle={`${pendingLogistics.length} demanda${pendingLogistics.length !== 1 ? 's' : ''} aguardando tratativa operacional`}
         count={pendingLogistics.length}
@@ -305,6 +308,8 @@ const Notifications: React.FC = () => {
         badgeClass="bg-amber-100 text-amber-700"
         items={pendingLogistics}
         loading={isLoadingPendencies}
+        isExpanded={expandedBlocks['logistics'] ?? false}
+        onToggle={() => toggleBlock('logistics')}
         renderItem={(d) => {
           const alloc = logisticsByDemandId[normId(d.id)];
           const overall = String(alloc?.overall_status ?? 'PENDENTE').toUpperCase();
@@ -316,7 +321,6 @@ const Notifications: React.FC = () => {
 
       {/* --- Bloco 2: Pendências de Evidência --- */}
       <AlertCard
-        blockKey="evidences"
         title="Pendências de Evidência"
         subtitle={`${pendingEvidences.length} demanda${pendingEvidences.length !== 1 ? 's' : ''} concluída${pendingEvidences.length !== 1 ? 's' : ''} com evidência pendente`}
         count={pendingEvidences.length}
@@ -326,6 +330,8 @@ const Notifications: React.FC = () => {
         iconColor="text-indigo-500"
         badgeClass="bg-indigo-100 text-indigo-700"
         items={pendingEvidences}
+        isExpanded={expandedBlocks['evidences'] ?? false}
+        onToggle={() => toggleBlock('evidences')}
         renderItem={(d) => (
           <DemandRow d={d} badge={getEvidenceAutoStatus(d.id)} badgeCls="bg-indigo-100 text-indigo-600" targetView="evidences" />
         )}
@@ -333,7 +339,6 @@ const Notifications: React.FC = () => {
 
       {/* --- Bloco 3: Aguardando Alocação de Instrutor --- */}
       <AlertCard
-        blockKey="no-instructor"
         title="Aguardando Alocação de Instrutor"
         subtitle={`${noInstructorDemands.length} demanda${noInstructorDemands.length !== 1 ? 's' : ''} sem instrutor alocado`}
         count={noInstructorDemands.length}
@@ -343,6 +348,8 @@ const Notifications: React.FC = () => {
         iconColor="text-orange-500"
         badgeClass="bg-orange-100 text-orange-700"
         items={noInstructorDemands}
+        isExpanded={expandedBlocks['no-instructor'] ?? false}
+        onToggle={() => toggleBlock('no-instructor')}
         renderItem={(d) => (
           <DemandRow
             d={d}
@@ -355,7 +362,6 @@ const Notifications: React.FC = () => {
 
       {/* --- Bloco 4: Medições Pendentes --- */}
       <AlertCard
-        blockKey="measurement"
         title="Medições Administrativas Pendentes"
         subtitle={`${noMeasurementDemands.length} demanda${noMeasurementDemands.length !== 1 ? 's' : ''} concluída${noMeasurementDemands.length !== 1 ? 's' : ''} sem medição iniciada`}
         count={noMeasurementDemands.length}
@@ -365,6 +371,8 @@ const Notifications: React.FC = () => {
         iconColor="text-blue-500"
         badgeClass="bg-blue-100 text-blue-700"
         items={noMeasurementDemands}
+        isExpanded={expandedBlocks['measurement'] ?? false}
+        onToggle={() => toggleBlock('measurement')}
         renderItem={(d) => (
           <DemandRow
             d={d}

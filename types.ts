@@ -153,6 +153,12 @@ export interface LogisticAllocation {
   endDate: string;
 }
 
+export interface SpecificDateEntry {
+  data: string;          // 'YYYY-MM-DD'
+  horarioInicio: string; // 'HH:mm'
+  horarioFim: string;    // 'HH:mm'
+}
+
 export interface Demand {
   id: string;
   clientDemandId?: string;
@@ -163,7 +169,7 @@ export interface Demand {
   demandState?: string; // Estado (UF) da demanda — ex: ES, MG, MA
   modality: Modality;
   dateMode: 'CONTINUO' | 'DIAS_ESPECIFICOS';
-  specificDates?: string[]; // ['2026-02-12', '2026-02-13', ...] — só quando dateMode === 'DIAS_ESPECIFICOS'
+  specificDates?: SpecificDateEntry[]; // só quando dateMode === 'DIAS_ESPECIFICOS'
   startDate: string;
   endDate: string;
   status: DemandStatus;

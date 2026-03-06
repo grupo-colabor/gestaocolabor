@@ -7,7 +7,7 @@
 
 interface DemandLike {
   dateMode?: 'CONTINUO' | 'DIAS_ESPECIFICOS' | string;
-  specificDates?: string[];  // ['2026-02-12', '2026-02-13', ...]
+  specificDates?: { data: string; horarioInicio: string; horarioFim: string }[];
   startDate: string;         // 'YYYY-MM-DD' ou 'YYYY-MM-DDTHH:mm'
   endDate: string;
 }
@@ -48,7 +48,7 @@ const generateContinuousDays = (startStr: string, endStr: string): string[] => {
  */
 export function getDemandDays(demand: DemandLike): string[] {
   if (demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates) && demand.specificDates.length > 0) {
-    return [...new Set(demand.specificDates)].sort();
+    return [...new Set(demand.specificDates.map(e => e.data))].sort();
   }
   return generateContinuousDays(demand.startDate, demand.endDate);
 }
@@ -72,7 +72,7 @@ export function isDemandDay(demand: DemandLike, date: Date | string): boolean {
   if (!key) return false;
 
   if (demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates) && demand.specificDates.length > 0) {
-    return demand.specificDates.includes(key);
+    return demand.specificDates.some(e => e.data === key);
   }
 
   // CONTINUO: verifica se está dentro do range
@@ -91,8 +91,8 @@ export function demandIntersectsRange(demand: DemandLike, from?: string, to?: st
   const toKey = to ? toDateKey(to) : '';
 
   if (demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates) && demand.specificDates.length > 0) {
-    return demand.specificDates.some(d => {
-      const dk = toDateKey(d);
+    return demand.specificDates.some(e => {
+      const dk = e.data;
       if (fromKey && dk < fromKey) return false;
       if (toKey && dk > toKey) return false;
       return true;
@@ -120,7 +120,7 @@ export function demandDaysOverlap(
   startB: string,
   endB: string,
   dateModeB?: string,
-  specificDatesB?: string[]
+  specificDatesB?: { data: string; horarioInicio: string; horarioFim: string }[]
 ): boolean {
   const daysA = new Set(getDemandDays(demandA));
   const daysB = getDemandDays({

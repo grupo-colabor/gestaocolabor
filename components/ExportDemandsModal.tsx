@@ -237,7 +237,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
         dataFim:         formatDate(d.endDate),
         modoDatas:       d.dateMode === 'DIAS_ESPECIFICOS' ? 'Dias Específicos' : 'Contínuo',
         diasEspecificos: d.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(d.specificDates)
-                           ? d.specificDates.sort().join(', ')
+                           ? d.specificDates.sort((a, b) => a.data.localeCompare(b.data)).map(e => `${e.data} ${e.horarioInicio}-${e.horarioFim}`).join(', ')
                            : '',
         instrutor:       getInstructorName(d),
         status:          getCalculatedStatus(d).replace('_', ' '),

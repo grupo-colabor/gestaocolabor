@@ -835,7 +835,37 @@ const syncCompanionAllocationsFromDb = useCallback(async () => {
       trainingLocal: row.training_local ?? 'N/A',
       modality: row.modality ?? 'PRESENCIAL',
       dateMode: row.date_mode ?? 'CONTINUO',
-      specificDates: Array.isArray(row.specific_dates) ? row.specific_dates : undefined,
+      specificDates: (() => {
+        const raw = row.specific_dates;
+        if (!raw) return undefined;
+        const arr = Array.isArray(raw) ? raw : (typeof raw === 'string' ? JSON.parse(raw) : null);
+        if (!Array.isArray(arr) || arr.length === 0) return undefined;
+        return arr.map((sd: any) => {
+          if (typeof sd === 'string') {
+            // Tenta parsear como objeto JSON (salvo em coluna text[] após migração)
+            try {
+              const parsed = JSON.parse(sd);
+              if (parsed && typeof parsed === 'object' && parsed.data) {
+                return {
+                  data: String(parsed.data).slice(0, 10),
+                  horarioInicio: parsed.horarioInicio ?? '08:00',
+                  horarioFim: parsed.horarioFim ?? '18:00',
+                };
+              }
+            } catch {}
+            // Formato antigo: plain date string 'YYYY-MM-DD'
+            return { data: sd.slice(0, 10), horarioInicio: '08:00', horarioFim: '18:00' };
+          }
+          if (sd && typeof sd === 'object') {
+            return {
+              data: String(sd.data ?? '').slice(0, 10),
+              horarioInicio: sd.horarioInicio ?? '08:00',
+              horarioFim: sd.horarioFim ?? '18:00',
+            };
+          }
+          return { data: String(sd).slice(0, 10), horarioInicio: '08:00', horarioFim: '18:00' };
+        });
+      })(),
       status: (row.status ?? 'NOVA') as DemandStatus,
       startDate: row.start_date ?? '',
       endDate: row.end_date ?? '',
@@ -2506,7 +2536,7 @@ const hasScheduleConflict = useCallback(
             c.setDate(c.getDate() + 1);
           }
         }
-        return d.specificDates.some(sd => reqDays.has(sd));
+        return d.specificDates.some(sd => reqDays.has(sd.data));
       }
 
       const eff = getEffectiveDemandRange(d);
@@ -2532,7 +2562,7 @@ const hasScheduleConflict = useCallback(
             c.setDate(c.getDate() + 1);
           }
         }
-        return allocDemand.specificDates.some(sd => reqDays.has(sd));
+        return allocDemand.specificDates.some(sd => reqDays.has(sd.data));
       }
 
       // ✅ conflito por DIA (CONTÍNUO)
@@ -2620,7 +2650,7 @@ const hasScheduleConflict = useCallback(
         const isDiasEspecificos = demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates) && demand.specificDates.length > 0;
         const reqDays = new Set<string>();
         if (isDiasEspecificos) {
-          (demand.specificDates as string[]).forEach((d: string) => reqDays.add(d));
+          demand.specificDates!.forEach((e) => reqDays.add(e.data));
         } else {
           const c = toDayStart(reqStart);
           const e = toDayStart(reqEnd);
@@ -2644,7 +2674,7 @@ const hasScheduleConflict = useCallback(
           const hasExplicit = instructorAllocations.some((a: InstructorAllocation) => a.demandId === d.id);
           if (hasExplicit) return false;
           if (d.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(d.specificDates) && d.specificDates.length > 0) {
-            return d.specificDates.some((sd: string) => reqDays.has(sd));
+            return d.specificDates.some((sd) => reqDays.has(sd.data));
           }
           const eff = getEffectiveDemandRange(d);
           if (isDiasEspecificos) {
@@ -2659,7 +2689,7 @@ const hasScheduleConflict = useCallback(
           const allocDemand = demands.find((dm: Demand) => dm.id === a.demandId);
           if (allocDemand?.id === demand.id) return false;
           if (allocDemand && allocDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(allocDemand.specificDates) && allocDemand.specificDates.length > 0) {
-            return allocDemand.specificDates.some((sd: string) => reqDays.has(sd));
+            return allocDemand.specificDates.some((sd) => reqDays.has(sd.data));
           }
           if (isDiasEspecificos) {
             return [...reqDays].some(day => dayInRange(day, a.startDate, a.endDate));
@@ -2671,7 +2701,7 @@ const hasScheduleConflict = useCallback(
       // Verifica conflito de agenda respeitando dias específicos da demanda de entrada
       const hasScheduleConflictForDemand = (instructorId: string): boolean => {
         if (demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates) && demand.specificDates.length > 0) {
-          return (demand.specificDates as string[]).some(date => hasScheduleConflict(instructorId, date, date, demand.id));
+          return demand.specificDates!.some(entry => hasScheduleConflict(instructorId, entry.data, entry.data, demand.id));
         }
         return hasScheduleConflict(instructorId, effective.start, effective.end, demand.id);
       };

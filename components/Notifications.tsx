@@ -32,6 +32,12 @@ const Notifications: React.FC = () => {
   const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
   const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
 
+  const fmtDate = (dateStr: string) =>
+    new Date(dateStr).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+
+  const formatPeriod = (startDate: string, endDate: string) =>
+    `${fmtDate(startDate)} → ${fmtDate(endDate)}`;
+
   const normalizeModality = (raw: any) =>
     String(raw ?? '').trim().toUpperCase().replaceAll('-', '').replaceAll(' ', '');
 
@@ -157,6 +163,7 @@ const Notifications: React.FC = () => {
             {getTrainingName(d.trainingId)}
           </p>
           <p className="text-[9px] font-bold text-slate-400 uppercase truncate">{getCompanyName(d.companyId)}</p>
+          <p className="text-[9px] font-bold text-slate-400 tabular-nums">{formatPeriod(d.startDate, d.endDate)}</p>
         </div>
       </div>
       <div className="flex items-center gap-1.5 shrink-0">

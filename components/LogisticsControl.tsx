@@ -51,13 +51,21 @@ type DemandDocument = {
 };
 
 const LogisticsControl: React.FC = () => {
-  const { demands, companies, trainings, instructors, updateDemand } = useApp();
+  const { demands, companies, trainings, instructors, updateDemand, notificationTarget, setNotificationTarget } = useApp();
 
   const getInstructorName = (id?: string) => instructors.find(i => i.id === id)?.name;
 
   const [filterText, setFilterText] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('WEEK');
   const [referenceDate, setReferenceDate] = useState<Date>(new Date());
+
+  // Navegação a partir de Notificações
+  useEffect(() => {
+    if (notificationTarget?.view === 'logistics-control') {
+      setFilterText(notificationTarget.demandId);
+      setNotificationTarget(null);
+    }
+  }, [notificationTarget]);
 
   // ✅ normalizador (evita mismatch de id tipo "#DEM-1" vs "DEM-1")
   const normId = (v: any) => String(v ?? '').trim().replace(/^#/, '');
@@ -352,7 +360,8 @@ const LogisticsControl: React.FC = () => {
 
         if (!matchesSearch) return false;
 
-        // 📅 Filtro de período — suporta dias específicos
+        // 📅 Filtro de período — ignorado quando há busca de texto ativa
+        if (filterText) return true;
         const fromStr = periodBounds.start.toISOString().slice(0, 10);
         const toStr = periodBounds.end.toISOString().slice(0, 10);
         return demandIntersectsRange(d, fromStr, toStr);

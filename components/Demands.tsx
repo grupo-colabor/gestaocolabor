@@ -140,7 +140,7 @@ const [isExportDemandsOpen, setIsExportDemandsOpen] = useState(false);
 // Navegação a partir de Notificações
 useEffect(() => {
   if (notificationTarget?.view === 'demands') {
-    setFilter(`#${notificationTarget.demandId}`);
+    setFilter(notificationTarget.demandId);
     setNotificationTarget(null);
   }
 }, [notificationTarget]);

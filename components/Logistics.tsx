@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../App';
 import { Instructor, LogisticAllocation } from '../types';
 import { 
@@ -63,6 +64,13 @@ const Logistics: React.FC = () => {
   // Modal de datas do acompanhante (dias avulsos)
   const [isCompanionDatesOpen, setIsCompanionDatesOpen] = useState(false);
   const [pendingCompanionInstructorId, setPendingCompanionInstructorId] = useState<string | null>(null);
+
+  // Body scroll lock when any modal is open
+  useEffect(() => {
+    const anyOpen = isCompanionDatesOpen || isCompanionPickerOpen || isResourceModalOpen || !!pendingForceAlloc;
+    document.body.style.overflow = anyOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [isCompanionDatesOpen, isCompanionPickerOpen, isResourceModalOpen, pendingForceAlloc]);
   const [companionSelectedDays, setCompanionSelectedDays] = useState<string[]>([]);
   const [companionDayInput, setCompanionDayInput] = useState('');
 
@@ -732,7 +740,7 @@ const handleSaveCompanionDays = () => {
                     </div>
 
                     {/* ✅ PICKER SIMPLES (modal leve) */}
-                    {isCompanionDatesOpen && selectedDemand && pendingCompanionInstructorId && (
+                    {isCompanionDatesOpen && selectedDemand && pendingCompanionInstructorId && createPortal(
                   <div className="fixed inset-0 z-[130] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
                     <div className="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
                       <div className="p-4 border-b border-slate-100 flex items-center justify-between">
@@ -839,7 +847,7 @@ const handleSaveCompanionDays = () => {
                       </div>
                     </div>
                   </div>
-                )}
+                , document.body)}
                     <div className="grid grid-cols-1 gap-3">
                       {recommendation.suggested.length > 0 ? recommendation.suggested.map((instructor) => (
                         <div key={instructor.id} className="p-4 rounded-xl border border-slate-200 bg-white hover:border-blue-300 transition-all flex items-center justify-between group">
@@ -1017,7 +1025,7 @@ const handleSaveCompanionDays = () => {
                       </div>
                     </div>
                   {/* ✅ PICKER DE ACOMPANHANTE (seleciona instrutor) */}
-                  {isCompanionPickerOpen && selectedDemand && (
+                  {isCompanionPickerOpen && selectedDemand && createPortal(
                     <div className="fixed inset-0 z-[120] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
                       <div className="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
                         <div className="p-4 border-b border-slate-100 flex items-center justify-between">
@@ -1074,8 +1082,8 @@ const handleSaveCompanionDays = () => {
                         </div>
                       </div>
                     </div>
-                  )}
-                    
+                  , document.body)}
+
                 </section>
               </div>
 
@@ -1093,7 +1101,7 @@ const handleSaveCompanionDays = () => {
       </div>
 
       {/* MODAL ALOCAÇÃO CTM */}
-      {isResourceModalOpen && selectedDemand && (
+      {isResourceModalOpen && selectedDemand && createPortal(
         <div className="fixed inset-0 z-[210] bg-black/70 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-scale-up">
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
@@ -1157,10 +1165,10 @@ const handleSaveCompanionDays = () => {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
 
       {/* Modal de confirmação: alocar instrutor já alocado no dia */}
-      {pendingForceAlloc && selectedDemand && (
+      {pendingForceAlloc && selectedDemand && createPortal(
         <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-2xl border border-amber-200 shadow-2xl overflow-hidden">
             <div className="p-6 border-b border-amber-100 flex items-start gap-3">
@@ -1193,7 +1201,7 @@ const handleSaveCompanionDays = () => {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
     </div>
   );
 };

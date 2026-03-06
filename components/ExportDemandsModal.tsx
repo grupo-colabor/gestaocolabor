@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   Filter,
@@ -315,11 +316,16 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
   [demands]);
 
   /* ---------- render ---------- */
+  useEffect(() => {
+    document.body.style.overflow = isOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const exportCount = selectedIds.size > 0 ? selectedIds.size : filteredDemands.length;
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/70 backdrop-blur-md p-4 animate-fade-in">
       <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-6xl overflow-hidden flex flex-col max-h-[92vh] border border-white/20">
 
@@ -545,7 +551,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
 
       </div>
     </div>
-  );
+  , document.body);
 };
 
 export default ExportDemandsModal;

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { usePagination } from '../hooks/usePagination';
 import Pagination from './Pagination';
 
@@ -199,6 +200,13 @@ useEffect(() => {
 
   // Resource Modal State (CTM)
   const [isResourceModalOpen, setIsResourceModalOpen] = useState(false);
+
+  // Body scroll lock when any modal is open
+  useEffect(() => {
+    const anyOpen = isModalOpen || isAllocationModalOpen || !!pendingConflictAllocation || isResourceModalOpen || confirmCancel || confirmDelete || confirmReactivate;
+    document.body.style.overflow = anyOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [isModalOpen, isAllocationModalOpen, pendingConflictAllocation, isResourceModalOpen, confirmCancel, confirmDelete, confirmReactivate]);
   const [resourceForm, setResourceForm] = useState({
     startDate: '',
     endDate: ''
@@ -2340,9 +2348,9 @@ const companionInstructorIds = useMemo(() => {
         </div>
       </div>
 
-      {isModalOpen && (
+      {isModalOpen && createPortal(
         <div
-          className="fixed inset-0 z-[100] bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center p-4 no-print"
+          className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 no-print"
           onClick={() => {
             setConfirmDelete(false);
             setConfirmCancel(false);
@@ -3301,10 +3309,10 @@ const companionInstructorIds = useMemo(() => {
             })()}
           </div>
         </div>
-      )}
+      , document.body)}
 
       {/* MODAL DE ALOCAÇÃO DE INSTRUTOR */}
-      {isAllocationModalOpen && (
+      {isAllocationModalOpen && createPortal(
         <div className="fixed inset-0 z-[210] bg-black/70 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-scale-up">
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
@@ -3364,10 +3372,10 @@ const companionInstructorIds = useMemo(() => {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
 
       {/* MODAL DE CONFIRMAÇÃO DE CONFLITO DE INSTRUTOR */}
-      {pendingConflictAllocation && (
+      {pendingConflictAllocation && createPortal(
         <div className="fixed inset-0 z-[220] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-2xl border border-amber-200 shadow-2xl overflow-hidden">
             <div className="p-6 border-b border-amber-100 flex items-start gap-3">
@@ -3397,10 +3405,10 @@ const companionInstructorIds = useMemo(() => {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
 
       {/* MODAL DE ALOCAÇÃO DE RECURSO (CTM) */}
-      {isResourceModalOpen && (
+      {isResourceModalOpen && createPortal(
         <div className="fixed inset-0 z-[210] bg-black/70 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-scale-up">
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
@@ -3456,10 +3464,10 @@ const companionInstructorIds = useMemo(() => {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
 
       {/* MODAL DE MOTIVO DE CANCELAMENTO */}
-      {confirmCancel && (
+      {confirmCancel && createPortal(
         <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-white p-8 rounded-3xl max-w-md w-full shadow-2xl space-y-6 border border-slate-100">
             <div className="flex flex-col items-center gap-3 text-center">
@@ -3521,9 +3529,9 @@ const companionInstructorIds = useMemo(() => {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
 
-      {confirmDelete && (
+      {confirmDelete && createPortal(
           <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-4">
               <div className="bg-white p-8 rounded-2xl max-sm text-center space-y-4">
                   <Trash2 size={48} className="mx-auto text-red-500" />
@@ -3535,9 +3543,9 @@ const companionInstructorIds = useMemo(() => {
                   </div>
               </div>
           </div>
-      )}
+      , document.body)}
 
-      {confirmReactivate && (
+      {confirmReactivate && createPortal(
           <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-4">
               <div className="bg-white p-8 rounded-2xl max-sm text-center space-y-4">
                   <RefreshCw size={48} className="mx-auto text-blue-500" />
@@ -3549,7 +3557,7 @@ const companionInstructorIds = useMemo(() => {
                   </div>
               </div>
           </div>
-      )}
+      , document.body)}
 
       {/* ===== MODAL EXPORTAÇÃO DE DEMANDAS (Excel) ===== */}
       <ExportDemandsModal

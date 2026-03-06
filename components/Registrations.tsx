@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../App';
 import {
   Company,
@@ -119,6 +120,13 @@ const Registrations: React.FC = () => {
 
   // --- Instructor Modal State ---
   const [isInstructorModalOpen, setIsInstructorModalOpen] = useState(false);
+
+  // Body scroll lock when any modal is open
+  useEffect(() => {
+    const anyOpen = isCompanyModalOpen || isTrainingModalOpen || isInstructorModalOpen;
+    document.body.style.overflow = anyOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [isCompanyModalOpen, isTrainingModalOpen, isInstructorModalOpen]);
   const [editingInstructorId, setEditingInstructorId] = useState<string | null>(null);
 
   // ✅ Estado de submit do modal de instrutor
@@ -1459,8 +1467,8 @@ const handleRemoveBaseItem = async (item: string) => {
       </div>
 
       {/* --- MODAL DE EMPRESAS --- */}
-      {isCompanyModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm p-4 animate-fade-in">
+      {isCompanyModalOpen && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col max-h-[90vh] overflow-hidden">
             <div className="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
               <div><h2 className="text-xl font-bold text-gray-800">{editingCompanyId ? 'Editar Empresa' : 'Nova Empresa'}</h2></div>
@@ -1531,11 +1539,11 @@ const handleRemoveBaseItem = async (item: string) => {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
 
       {/* --- MODAL DE TREINAMENTOS --- */}
-      {isTrainingModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm p-4 animate-fade-in">
+      {isTrainingModalOpen && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col max-h-[90vh] overflow-hidden">
             <div className="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
               <div><h2 className="text-xl font-bold text-gray-800">{editingTrainingId ? 'Editar Treinamento' : 'Novo Treinamento'}</h2></div>
@@ -1600,11 +1608,11 @@ const handleRemoveBaseItem = async (item: string) => {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
 
       {/* --- MODAL DE INSTRUTORES --- */}
-      {isInstructorModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm p-4 animate-fade-in">
+      {isInstructorModalOpen && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col max-h-[90vh] overflow-hidden">
             <div className="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
               <div><h2 className="text-xl font-bold text-gray-800">{editingInstructorId ? 'Editar Instrutor' : 'Novo Instrutor'}</h2></div>
@@ -1861,7 +1869,7 @@ const handleRemoveBaseItem = async (item: string) => {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
     </div>
   );
 };

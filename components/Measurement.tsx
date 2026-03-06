@@ -1,5 +1,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../App';
 import { Measurement, Demand, MeasurementStatus, ExpenseCategory, Attachment, OtherExpenseItem } from '../types';
 import { usePagination } from '../hooks/usePagination';
@@ -188,6 +189,12 @@ const MeasurementView: React.FC = () => {
   const [selectedMeasurement, setSelectedMeasurement] = useState<Measurement | null>(null);
 
   const [isExportSelectionOpen, setIsExportSelectionOpen] = useState(false);
+
+  // Body scroll lock when any modal is open
+  useEffect(() => {
+    document.body.style.overflow = (isModalOpen || isExportSelectionOpen) ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [isModalOpen, isExportSelectionOpen]);
   const [exportFilters, setExportFilters] = useState({
     startDate: '',
     endDate: '',
@@ -1181,7 +1188,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
         </div>
       </div>
 
-      {isExportSelectionOpen && (
+      {isExportSelectionOpen && createPortal(
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/70 backdrop-blur-md p-4 animate-fade-in">
           <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-6xl overflow-hidden flex flex-col max-h-[92vh] border border-white/20">
             <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
@@ -1335,9 +1342,9 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
 
-      {isModalOpen && selectedMeasurement && (
+      {isModalOpen && selectedMeasurement && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-slate-50 rounded-[2rem] shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[95vh] border border-white">
             <div className="px-7 pt-6 pb-5 border-b border-slate-200 bg-white space-y-3">
@@ -1586,7 +1593,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
     </div>
   );
 };

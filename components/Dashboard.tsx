@@ -319,6 +319,7 @@ const Dashboard: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<TabType>('GERAL');
   const [showHelp, setShowHelp] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const [showNoInstructorTooltip, setShowNoInstructorTooltip] = useState(false);
   const [showNoMeasurementTooltip, setShowNoMeasurementTooltip] = useState(false);
   const noInstructorTimerRef = useRef<ReturnType<typeof setTimeout>>();
@@ -1667,6 +1668,309 @@ const pendingLogisticsDemands = useMemo(() => {
     );
   };
 
+  // ─── Excel Export ────────────────────────────────────────────────────────────
+  const handleExportDashboard = async (mode: 'current' | 'all') => {
+    setShowExportMenu(false);
+    const ExcelJS = (await import('exceljs')).default;
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Colabor';
+    wb.created = new Date();
+
+    const fmt = (v: number) =>
+      new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+    const toVal = (v: any): number => {
+      const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v);
+      return Number(n) || 0;
+    };
+    const normCat = (c: any) => String(c ?? '').toUpperCase().trim();
+    const sumByCat = (ms: typeof filteredMeasurements, cats: string | string[]) => {
+      const cl = (Array.isArray(cats) ? cats : [cats]).map(c => c.toUpperCase());
+      return ms.reduce((acc, m) =>
+        acc + m.attachments.filter((a: any) => cl.includes(normCat(a.category))).reduce((s: number, a: any) => s + toVal(a.value), 0), 0);
+    };
+
+    const styleHeader = (row: any) => {
+      row.eachCell(cell => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+        cell.alignment = { vertical: 'middle', wrapText: true };
+        cell.border = { bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } } };
+      });
+      row.height = 22;
+    };
+
+    const styleSection = (row: any) => {
+      row.eachCell(cell => {
+        cell.font = { bold: true, size: 9 };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+      });
+      row.height = 18;
+    };
+
+    const addSection = (
+      ws: any,
+      title: string,
+      headers: string[],
+      rows: (string | number)[][]
+    ) => {
+      ws.addRow([]);
+      const titleRow = ws.addRow([title]);
+      styleSection(titleRow);
+      ws.mergeCells(titleRow.number, 1, titleRow.number, headers.length);
+      const hRow = ws.addRow(headers);
+      styleHeader(hRow);
+      rows.forEach(r => {
+        const dr = ws.addRow(r);
+        dr.eachCell(cell => { cell.font = { size: 10 }; cell.alignment = { vertical: 'middle' }; });
+      });
+    };
+
+    const buildGeral = (ws: any) => {
+      ws.columns = [{ width: 28 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 20 }];
+      // KPIs
+      const noInstr = filteredDemands.filter(d => {
+        const s = getCalculatedStatus(d); return s !== 'CANCELADA' && s !== 'CONCLUIDA' && !isOnlineDemand(d) && !d.instructorId;
+      }).length;
+      addSection(ws, 'KPIs Gerais', ['Indicador', 'Valor'],
+        [
+          ['Total de Demandas', filteredDemands.length],
+          ['Horas Ministradas', `${totalHours}h`],
+          ['Pendência de Alocação', noInstr],
+          ['Treinamentos Concluídos', filteredDemands.filter(d => getCalculatedStatus(d) === 'CONCLUIDA').length],
+          ['Demandas Canceladas', filteredDemands.filter(d => d.status === 'CANCELADA').length],
+        ]
+      );
+      // Status
+      const statusRows = Object.keys(STATUS_LABELS).map(k => [STATUS_LABELS[k], filteredDemands.filter(d => getCalculatedStatus(d) === k).length]);
+      addSection(ws, 'Distribuição por Status', ['Status', 'Qtd'], statusRows);
+      // Regional
+      const regRows = regions.map(r => [r.name, filteredDemands.filter(d => d.regionId === r.id).length]).sort((a, b) => (b[1] as number) - (a[1] as number));
+      addSection(ws, 'Volume por Região', ['Região', 'Qtd'], regRows);
+      // Local
+      const localCounts: Record<string, number> = {};
+      filteredDemands.forEach(d => { const v = (d.trainingLocal ?? '').trim(); if (v) localCounts[v] = (localCounts[v] || 0) + 1; });
+      addSection(ws, 'Volume por Local do Treinamento', ['Local', 'Qtd'],
+        Object.entries(localCounts).sort((a, b) => b[1] - a[1]).map(([n, v]) => [n, v]));
+      // Corredor
+      const corrCounts: Record<string, number> = {};
+      filteredDemands.forEach(d => { const v = (d.corredor ?? '').trim(); if (v) corrCounts[v] = (corrCounts[v] || 0) + 1; });
+      addSection(ws, 'Volume por Corredor', ['Corredor', 'Qtd'],
+        Object.entries(corrCounts).sort((a, b) => b[1] - a[1]).map(([n, v]) => [n, v]));
+      // UF
+      const ufCounts: Record<string, number> = {};
+      filteredDemands.forEach(d => { const v = (d.demandState ?? '').trim(); if (v) ufCounts[v] = (ufCounts[v] || 0) + 1; });
+      addSection(ws, 'Volume por Estado (UF)', ['UF', 'Qtd'],
+        Object.entries(ufCounts).sort((a, b) => b[1] - a[1]).map(([n, v]) => [n, v]));
+    };
+
+    const buildOperacional = (ws: any) => {
+      ws.columns = [{ width: 28 }, { width: 16 }, { width: 16 }, { width: 24 }, { width: 20 }, { width: 20 }];
+      const next30 = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const next7  = new Date(today.getTime() + 7  * 24 * 60 * 60 * 1000);
+      const concluded  = filteredDemands.filter(d => getCalculatedStatus(d) === 'CONCLUIDA');
+      const activeDmds = filteredDemands.filter(d => getCalculatedStatus(d) !== 'CANCELADA');
+      const execRate   = activeDmds.length > 0 ? Math.round((concluded.length / activeDmds.length) * 100) : 0;
+      const noInstr = filteredDemands.filter(d => {
+        const s = getCalculatedStatus(d); return s !== 'CANCELADA' && s !== 'CONCLUIDA' && !isOnlineDemand(d) && !d.instructorId;
+      }).length;
+      addSection(ws, 'KPIs Operacionais', ['Indicador', 'Valor'],
+        [
+          ['Aguardando Instrutor', noInstr],
+          ['Alocadas', filteredDemands.filter(d => getCalculatedStatus(d) === 'ALOCADA').length],
+          ['Em Execução Hoje', filteredDemands.filter(d => getCalculatedStatus(d) === 'EM_ANDAMENTO').length],
+          ['Próximos 30 Dias', filteredDemands.filter(d => { const s = new Date(d.startDate); return s > today && s <= next30; }).length],
+          ['Taxa de Execução', `${execRate}%`],
+        ]
+      );
+      // Top Treinamentos
+      const tCounts: Record<string, number> = {};
+      filteredDemands.forEach(d => { const n = getTrainingName(d.trainingId); if (n !== 'N/A') tCounts[n] = (tCounts[n] || 0) + 1; });
+      addSection(ws, 'Top Treinamentos', ['Treinamento', 'Qtd'],
+        Object.entries(tCounts).sort((a, b) => b[1] - a[1]).map(([n, v]) => [n, v]));
+      // Ranking Instrutores
+      const iCounts: Record<string, number> = {};
+      filteredDemands.filter(d => d.instructorId).forEach(d => { iCounts[d.instructorId!] = (iCounts[d.instructorId!] || 0) + 1; });
+      addSection(ws, 'Demandas por Instrutor', ['Instrutor', 'Qtd'],
+        Object.entries(iCounts).sort((a, b) => b[1] - a[1]).map(([id, v]) => [instructors.find(i => i.id === id)?.name || id, v]));
+      // Modalidade
+      const modalTotal = filteredDemands.length || 1;
+      addSection(ws, 'Modalidade', ['Modalidade', 'Qtd', '% do Total'],
+        [
+          ['Presencial',    filteredDemands.filter(d => getDemandModality(d) === 'PRESENCIAL').length,                    `${Math.round(filteredDemands.filter(d => getDemandModality(d) === 'PRESENCIAL').length / modalTotal * 100)}%`],
+          ['Online / EAD',  filteredDemands.filter(d => ['ONLINE','EAD'].includes(getDemandModality(d))).length,          `${Math.round(filteredDemands.filter(d => ['ONLINE','EAD'].includes(getDemandModality(d))).length / modalTotal * 100)}%`],
+          ['Híbrido',       filteredDemands.filter(d => getDemandModality(d) === 'HIBRIDO').length,                       `${Math.round(filteredDemands.filter(d => getDemandModality(d) === 'HIBRIDO').length / modalTotal * 100)}%`],
+        ]
+      );
+      // Agenda 7 dias
+      const agenda7 = filteredDemands.filter(d => {
+        const s = getCalculatedStatus(d); if (s === 'CANCELADA' || s === 'CONCLUIDA') return false;
+        const start = new Date(d.startDate); const end = new Date(d.endDate);
+        return start <= next7 && end >= today;
+      }).sort((a, b) => a.startDate.localeCompare(b.startDate));
+      addSection(ws, 'Agenda — Próximos 7 Dias', ['ID', 'Início', 'Empresa', 'Treinamento', 'Instrutor', 'Status'],
+        agenda7.map(d => [
+          d.id,
+          new Date(d.startDate).toLocaleDateString('pt-BR'),
+          getCompanyName(d.companyId),
+          getTrainingName(d.trainingId),
+          instructors.find(i => i.id === d.instructorId)?.name || '—',
+          STATUS_LABELS[getCalculatedStatus(d)] || getCalculatedStatus(d),
+        ])
+      );
+    };
+
+    const buildInstrutores = (ws: any) => {
+      ws.columns = [{ width: 28 }, { width: 16 }, { width: 16 }, { width: 20 }, { width: 16 }];
+      const next30 = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const activeInstructors = instructors.filter(i => i.status === 'ATIVO');
+      const busyNext30Ids = new Set(
+        demands.filter(d => { const s = getCalculatedStatus(d); if (s === 'CANCELADA' || s === 'CONCLUIDA' || !d.instructorId) return false; const st = new Date(d.startDate); const en = new Date(d.endDate); return en >= today && st <= next30; }).map(d => d.instructorId!)
+      );
+      const instrWithDemandIds = new Set(filteredDemands.filter(d => d.instructorId).map(d => d.instructorId!));
+      // KPIs
+      const reuseStats = activeInstructors.filter(inst => {
+        const distinct = new Set(demands.filter(d => d.instructorId === inst.id && getCalculatedStatus(d) === 'CONCLUIDA').map(d => d.trainingId));
+        return distinct.size >= 2;
+      }).length;
+      const reuseRate = activeInstructors.length > 0 ? Math.round((reuseStats / activeInstructors.length) * 100) : 0;
+      const depRisk = trainings.filter(t => t.status === 'ATIVO' && instructors.filter(i => i.skills.some(s => s.trainingId === t.id && s.level >= 3)).length <= 1).length;
+      addSection(ws, 'KPIs Instrutores', ['Indicador', 'Valor'],
+        [
+          ['Ativos', activeInstructors.length],
+          ['Disponíveis nos próximos 30d', activeInstructors.filter(i => !busyNext30Ids.has(i.id)).length],
+          ['Sem demanda no período', activeInstructors.filter(i => !instrWithDemandIds.has(i.id)).length],
+          ['Taxa de Reaproveitamento', `${reuseRate}%`],
+          ['Risco de Dependência (trein.)', depRisk],
+          ['Horas Concluídas (período)', `${totalHours}h`],
+        ]
+      );
+      // Workload
+      addSection(ws, 'Performance — Horas Concluídas no Período', ['Instrutor', 'Horas'],
+        activeInstructors.map(inst => {
+          const hrs = filteredDemands.filter(d => d.instructorId === inst.id && getCalculatedStatus(d) === 'CONCLUIDA').reduce((s, d) => s + getTrainingHours(d.trainingId), 0);
+          return [inst.name, hrs];
+        }).filter(r => (r[1] as number) > 0).sort((a, b) => (b[1] as number) - (a[1] as number))
+      );
+      // Disponíveis 30d
+      addSection(ws, 'Disponíveis nos Próximos 30 Dias', ['Instrutor', 'Região(ões)'],
+        activeInstructors.filter(i => !busyNext30Ids.has(i.id)).map(i => [i.name, i.regionIds.map(rid => regions.find(r => r.id === rid)?.name || rid).join(', ')])
+      );
+      // Sem demanda
+      addSection(ws, 'Sem Demanda no Período', ['Instrutor', 'Região(ões)'],
+        activeInstructors.filter(i => !instrWithDemandIds.has(i.id)).map(i => [i.name, i.regionIds.map(rid => regions.find(r => r.id === rid)?.name || rid).join(', ')])
+      );
+      // Risco dependência
+      const depRows = trainings.filter(t => t.status === 'ATIVO').map(t => ({
+        name: t.name, count: instructors.filter(i => i.skills.some(s => s.trainingId === t.id && s.level >= 3)).length
+      })).filter(r => r.count <= 1).sort((a, b) => a.count - b.count);
+      addSection(ws, 'Risco de Dependência por Treinamento', ['Treinamento', 'Instrutores Aptos (nível ≥ 3)'],
+        depRows.map(r => [r.name, r.count])
+      );
+      // Distribuição geográfica
+      addSection(ws, 'Distribuição Geográfica', ['Região', 'Instrutores Habilitados', 'Demandas no Período'],
+        regions.map(r => [r.name, activeInstructors.filter(i => i.regionIds?.includes(r.id)).length, filteredDemands.filter(d => d.regionId === r.id).length])
+          .filter(r => (r[1] as number) > 0 || (r[2] as number) > 0).sort((a, b) => (b[2] as number) - (a[2] as number))
+      );
+    };
+
+    const buildClientes = (ws: any) => {
+      ws.columns = [{ width: 30 }, { width: 16 }, { width: 24 }];
+      const clientData = companies.map(c => [c.name, filteredDemands.filter(d => d.companyId === c.id).length] as [string, number])
+        .sort((a, b) => b[1] - a[1]).filter(c => c[1] > 0);
+      addSection(ws, 'Clientes mais Ativos', ['Empresa', 'Volume de Demandas'], clientData);
+      // Treinamentos por categoria
+      const catCounts: Record<string, number> = {};
+      trainings.forEach(t => {
+        const c = filteredDemands.filter(d => d.trainingId === t.id).length;
+        catCounts[t.category] = (catCounts[t.category] || 0) + c;
+      });
+      addSection(ws, 'Demandas por Categoria de Treinamento', ['Categoria', 'Qtd'],
+        Object.entries(catCounts).sort((a, b) => b[1] - a[1]).filter(([, v]) => v > 0).map(([n, v]) => [n, v])
+      );
+    };
+
+    const buildCustos = (ws: any) => {
+      ws.columns = [{ width: 28 }, { width: 20 }, { width: 20 }, { width: 20 }];
+      const hospTotal = sumByCat(filteredMeasurements, 'HOSPEDAGEM');
+      const locoTotal = sumByCat(filteredMeasurements, 'LOCOMOCAO');
+      const cafeTotal = sumByCat(filteredMeasurements, 'CAFE');
+      const almoTotal = sumByCat(filteredMeasurements, 'ALMOCO');
+      const jantTotal = sumByCat(filteredMeasurements, 'JANTAR');
+      const outTotal  = sumByCat(filteredMeasurements, 'OUTROS');
+      const ticketMedio = filteredMeasurements.length > 0 ? totalCosts / filteredMeasurements.length : 0;
+      const naoIniciada = filteredDemands.filter(d => getCalculatedStatus(d) === 'CONCLUIDA' && (!filteredMeasurements.some(m => m.demandId === d.id) || filteredMeasurements.find(m => m.demandId === d.id)?.status === 'NAO_INICIADA')).length;
+      addSection(ws, 'KPIs de Custos', ['Indicador', 'Valor'],
+        [
+          ['Total em Despesas', fmt(totalCosts)],
+          ['Ticket Médio / Medição', fmt(ticketMedio)],
+          [`Medições (${filteredMeasurements.length} total)`, filteredMeasurements.length],
+          ['Não Iniciadas (dem. concluídas)', naoIniciada],
+          ['Pronta Faturamento', filteredMeasurements.filter(m => m.status === 'PRONTA_FATURAMENTO').length],
+          ['Faturadas', filteredMeasurements.filter(m => m.status === 'FATURADA').length],
+        ]
+      );
+      addSection(ws, 'Despesas por Categoria', ['Categoria', 'Total'],
+        [
+          ['Hospedagem', fmt(hospTotal)],
+          ['Locomoção', fmt(locoTotal)],
+          ['Café da Manhã', fmt(cafeTotal)],
+          ['Almoço', fmt(almoTotal)],
+          ['Jantar', fmt(jantTotal)],
+          ['Outros', fmt(outTotal)],
+        ]
+      );
+      addSection(ws, 'Status das Medições', ['Status', 'Qtd'],
+        [
+          ['Não Iniciada', naoIniciada],
+          ['Em Lançamento', filteredMeasurements.filter(m => m.status === 'LANCAMENTO').length],
+          ['Em Conferência', filteredMeasurements.filter(m => m.status === 'CONFERENCIA').length],
+          ['Pronta Faturamento', filteredMeasurements.filter(m => m.status === 'PRONTA_FATURAMENTO').length],
+          ['Faturada', filteredMeasurements.filter(m => m.status === 'FATURADA').length],
+        ]
+      );
+      // Top instrutores por custo
+      const instrCostRows = instructors.map(inst => {
+        const ids = new Set(filteredDemands.filter(d => d.instructorId === inst.id).map(d => d.id));
+        const cost = filteredMeasurements.filter(m => ids.has(m.demandId)).reduce((acc, m) => acc + m.attachments.reduce((s: number, a: any) => s + toVal(a.value), 0), 0);
+        return [inst.name, fmt(cost), cost] as [string, string, number];
+      }).filter(r => r[2] > 0).sort((a, b) => b[2] - a[2]).map(([n, f]) => [n, f]);
+      addSection(ws, 'Custo por Instrutor', ['Instrutor', 'Total de Despesas'], instrCostRows);
+    };
+
+    const TAB_CONFIG: { id: TabType; label: string; build: (ws: any) => void }[] = [
+      { id: 'GERAL',       label: 'Visão Geral',  build: buildGeral },
+      { id: 'OPERACIONAL', label: 'Operacional',  build: buildOperacional },
+      { id: 'INSTRUTORES', label: 'Instrutores',  build: buildInstrutores },
+      { id: 'CLIENTES',    label: 'Clientes',     build: buildClientes },
+      { id: 'CUSTOS',      label: 'Custos',       build: buildCustos },
+    ];
+
+    const tabs = mode === 'current' ? TAB_CONFIG.filter(t => t.id === activeTab) : TAB_CONFIG;
+
+    for (const tab of tabs) {
+      const ws = wb.addWorksheet(tab.label);
+      // Metadata row
+      const meta = ws.addRow([`Dashboard Colabor — ${tab.label}`, '', `Exportado em: ${new Date().toLocaleDateString('pt-BR')}`]);
+      meta.getCell(1).font = { bold: true, size: 12 };
+      meta.getCell(3).font = { size: 9, italic: true, color: { argb: 'FF94A3B8' } };
+      meta.getCell(3).alignment = { horizontal: 'right' };
+      ws.mergeCells(meta.number, 1, meta.number, 2);
+      tab.build(ws);
+    }
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = mode === 'current'
+      ? `dashboard-${activeTab.toLowerCase()}_${dateStr}.xlsx`
+      : `todos-os-dashboards_${dateStr}.xlsx`;
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -1696,6 +2000,42 @@ const pendingLogisticsDemands = useMemo(() => {
                 {tab.label}
               </button>
             ))}
+          </div>
+
+          {/* Botão exportar */}
+          <div className="relative">
+            <button
+              onClick={() => setShowExportMenu(v => !v)}
+              title="Exportar dashboard"
+              className={`p-2 rounded-xl border transition-all ${
+                showExportMenu
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+                  : 'bg-white border-slate-200 text-slate-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50'
+              } shadow-sm`}
+            >
+              <Download size={16} />
+            </button>
+            {showExportMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
+                <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden min-w-[220px]">
+                  <button
+                    onClick={() => handleExportDashboard('current')}
+                    className="w-full px-4 py-3 text-left text-xs font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors border-b border-slate-100"
+                  >
+                    <Download size={13} className="text-emerald-500" />
+                    Exportar este dashboard
+                  </button>
+                  <button
+                    onClick={() => handleExportDashboard('all')}
+                    className="w-full px-4 py-3 text-left text-xs font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
+                  >
+                    <Download size={13} className="text-blue-500" />
+                    Exportar todos os dashboards
+                  </button>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Botão de ajuda contextual */}

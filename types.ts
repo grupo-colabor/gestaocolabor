@@ -224,6 +224,9 @@ export interface Demand {
   // Status de confirmação visual na agenda
   confirmationStatus?: 'CONFIRMADO' | 'A_CONFIRMAR';
 
+  // Cancelamento
+  cancelReason?: string; // motivo do cancelamento (ex: 'No-Show', 'Baixo quórum', etc.)
+
   // Legado / Outros
   corredor?: string;
   localizador?: string;

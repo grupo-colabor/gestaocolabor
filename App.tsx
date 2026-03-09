@@ -881,6 +881,7 @@ const syncCompanionAllocationsFromDb = useCallback(async () => {
       analyst: row.analyst ?? undefined,
       matriculador: row.matriculador ?? undefined,
       confirmationStatus: (row.confirmation_status || undefined) as 'CONFIRMADO' | 'A_CONFIRMAR' | undefined,
+      cancelReason: row.cancel_reason ?? undefined,
     } as Demand;
   }, []);
 
@@ -917,6 +918,7 @@ const syncCompanionAllocationsFromDb = useCallback(async () => {
     analyst: cleanOrNull((d as any).analyst),
     matriculador: cleanOrNull((d as any).matriculador),
     confirmation_status: cleanOrNull((d as any).confirmationStatus),
+    cancel_reason: cleanOrNull((d as any).cancelReason),
   };
 
   if (extra?.id) payload.id = extra.id;

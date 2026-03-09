@@ -39,6 +39,7 @@ export type DemandRow = {
   analyst: string | null;
   matriculador: string | null;
   confirmation_status: string | null;
+  cancel_reason: string | null;
 };
 
 /**
@@ -57,7 +58,7 @@ export async function fetchDemands(): Promise<DemandRow[]> {
       instructor_id,
       requester, observations, approver, analyst, matriculador,
       created_at, updated_at, corredor, demand_state,
-      confirmation_status
+      confirmation_status, cancel_reason
     `)
     .order('number', { ascending: false });
 

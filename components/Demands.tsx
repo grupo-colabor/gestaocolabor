@@ -873,6 +873,7 @@ const formatDateOnlySafe = (dateStr?: string) => {
     const cancelData = {
       ...formDemand as Demand,
       status: 'CANCELADA' as DemandStatus,
+      cancelReason: selectedCancelReason,
       cancelledAt: new Date().toISOString(),
       cancelInfo: {
         reason: selectedCancelReason,
@@ -915,6 +916,7 @@ const formatDateOnlySafe = (dateStr?: string) => {
       status: 'NOVA' as DemandStatus,
       instructorId: undefined,
       cancelledAt: undefined,
+      cancelReason: undefined,
       cancelInfo: undefined
     };
     
@@ -2414,19 +2416,21 @@ const companionInstructorIds = useMemo(() => {
                   <div className="p-6 overflow-y-auto flex-1 space-y-4 bg-slate-50" ref={printRef}>
                     
                     {/* Alerta de Cancelamento */}
-                    {currentStatus === 'CANCELADA' && (formDemand.cancelledAt || formDemand.cancelInfo) && (
+                    {currentStatus === 'CANCELADA' && (
                       <div className="bg-red-50 p-4 rounded-xl border border-red-100 flex flex-col gap-2 text-red-700">
                         <div className="flex items-center gap-3">
                           <Ban size={20} />
                           <div>
                             <p className="font-bold text-sm uppercase">Demanda Cancelada</p>
-                            <p className="text-xs">Cancelamento registrado em {new Date(formDemand.cancelInfo?.date || formDemand.cancelledAt || '').toLocaleString('pt-BR')}</p>
+                            {(formDemand.cancelInfo?.date || formDemand.cancelledAt) && (
+                              <p className="text-xs">Cancelamento registrado em {new Date(formDemand.cancelInfo?.date || formDemand.cancelledAt || '').toLocaleString('pt-BR')}</p>
+                            )}
                           </div>
                         </div>
-                        {formDemand.cancelInfo && (
+                        {(formDemand.cancelReason || formDemand.cancelInfo) && (
                           <div className="mt-2 text-xs border-t border-red-100 pt-2">
-                            <p><strong>Motivo:</strong> {formDemand.cancelInfo.reason}</p>
-                            {formDemand.cancelInfo.note && <p><strong>Observação:</strong> {formDemand.cancelInfo.note}</p>}
+                            <p><strong>Motivo:</strong> {formDemand.cancelReason || formDemand.cancelInfo?.reason}</p>
+                            {formDemand.cancelInfo?.note && <p><strong>Observação:</strong> {formDemand.cancelInfo.note}</p>}
                           </div>
                         )}
                       </div>
@@ -3468,6 +3472,7 @@ const companionInstructorIds = useMemo(() => {
                 "Falta de instrutor",
                 "Reagendamento",
                 "Solicitação do cliente",
+                "No-Show",
                 "Outro"
               ].map((reason) => (
                 <label key={reason} className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all cursor-pointer ${selectedCancelReason === reason ? 'border-orange-500 bg-orange-50' : 'border-slate-100 hover:border-slate-200'}`}>

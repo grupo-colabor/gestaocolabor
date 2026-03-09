@@ -232,8 +232,9 @@ const MeasurementView: React.FC = () => {
   const filteredMeasurements = useMemo(() => {
     return measurements.filter(m => {
       const d = demands.find(demand => demand.id === m.demandId);
-      // FILTRO: Ignorar se a demanda não existe ou se está CANCELADA
-      if (!d || d.status === 'CANCELADA') return false;
+      // FILTRO: Ignorar se a demanda não existe ou se está CANCELADA (exceto No-Show, que aparece na medição)
+      if (!d) return false;
+      if (d.status === 'CANCELADA' && d.cancelReason !== 'No-Show') return false;
 
       const matchesText =
         d.id.toLowerCase().includes(filter.toLowerCase()) ||
@@ -262,7 +263,7 @@ const MeasurementView: React.FC = () => {
     [...new Set(
       measurements
         .map(m => demands.find(d => d.id === m.demandId))
-        .filter((d): d is Demand => !!d && d.status !== 'CANCELADA')
+        .filter((d): d is Demand => !!d && (d.status !== 'CANCELADA' || d.cancelReason === 'No-Show'))
         .map(d => d.corredor)
         .filter((v): v is string => !!v)
     )].sort(),
@@ -272,7 +273,7 @@ const MeasurementView: React.FC = () => {
     [...new Set(
       measurements
         .map(m => demands.find(d => d.id === m.demandId))
-        .filter((d): d is Demand => !!d && d.status !== 'CANCELADA')
+        .filter((d): d is Demand => !!d && (d.status !== 'CANCELADA' || d.cancelReason === 'No-Show'))
         .map(d => d.trainingLocal)
         .filter((v): v is string => !!v && v !== 'N/A')
     )].sort(),
@@ -291,8 +292,9 @@ const MeasurementView: React.FC = () => {
   const exportableList = useMemo(() => {
     return measurements.filter(m => {
       const d = demands.find(demand => demand.id === m.demandId);
-      // FILTRO: Ignorar se a demanda não existe ou se está CANCELADA na exportação
-      if (!d || d.status === 'CANCELADA') return false;
+      // FILTRO: Ignorar se a demanda não existe ou se está CANCELADA (exceto No-Show, que aparece na medição)
+      if (!d) return false;
+      if (d.status === 'CANCELADA' && d.cancelReason !== 'No-Show') return false;
 
       const currentDemandStatus = getCalculatedDemandStatus(d);
 
@@ -1148,9 +1150,17 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
             <tbody className="divide-y divide-gray-100">
               {paginatedMeasurements.map(m => {
                 const d = demands.find(demand => demand.id === m.demandId);
+                const isNoShow = d?.status === 'CANCELADA' && d?.cancelReason === 'No-Show';
                 return (
-                  <tr key={m.id} className="hover:bg-gray-50 transition-colors text-sm text-gray-700">
-                    <td className="p-4 font-bold text-blue-600">{d?.id}</td>
+                  <tr key={m.id} className={`transition-colors text-sm text-gray-700 ${isNoShow ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}>
+                    <td className="p-4 font-bold text-blue-600">
+                      <div className="flex items-center gap-2">
+                        {d?.id}
+                        {isNoShow && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-red-600 text-white tracking-widest">No-Show</span>
+                        )}
+                      </div>
+                    </td>
                     <td className="p-4 text-xs text-gray-500">{d?.clientDemandId || '—'}</td>
                     <td className="p-4 font-medium">{getCompanyName(d?.companyId || '')}</td>
                     <td className="p-4">{getTrainingName(d?.trainingId || '')}</td>
@@ -1266,18 +1276,19 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                     const isSelected = selectedForExport.has(m.id);
                     const mTotals = getMeasurementTotals(m);
                     const cDemandStatus = d ? getCalculatedDemandStatus(d) : 'N/A';
-                    
+                    const isNoShow = d?.status === 'CANCELADA' && d?.cancelReason === 'No-Show';
+
                     return (
-                      <div 
-                        key={m.id} 
+                      <div
+                        key={m.id}
                         onClick={() => toggleExportSelection(m.id)}
-                        className={`p-4 rounded-[1.5rem] border-2 transition-all cursor-pointer group flex items-center gap-4 
-                          ${isSelected ? 'bg-blue-50/50 border-blue-200' : 'bg-white border-slate-50 hover:border-slate-100'}`}
+                        className={`p-4 rounded-[1.5rem] border-2 transition-all cursor-pointer group flex items-center gap-4
+                          ${isSelected ? 'bg-blue-50/50 border-blue-200' : isNoShow ? 'bg-red-50/50 border-red-100 hover:border-red-200' : 'bg-white border-slate-50 hover:border-slate-100'}`}
                       >
                         <div className={`transition-colors ${isSelected ? 'text-blue-600' : 'text-slate-200 group-hover:text-slate-300'}`}>
                           {isSelected ? <CheckSquare size={24} /> : <Square size={24} />}
                         </div>
-                        
+
                         <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
                           <div className="md:col-span-5">
                             <h4 className="text-sm font-black text-slate-800 truncate" title={getTrainingName(d?.trainingId || '')}>{getTrainingName(d?.trainingId || '')}</h4>
@@ -1287,6 +1298,9 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                               <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded shadow-sm ${STATUS_STYLING[cDemandStatus] || 'bg-slate-200'}`}>
                                 {cDemandStatus.replace('_', ' ')}
                               </span>
+                              {isNoShow && (
+                                <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-red-600 text-white tracking-widest">No-Show</span>
+                              )}
                             </div>
                           </div>
 

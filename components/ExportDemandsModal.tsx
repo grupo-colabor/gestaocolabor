@@ -210,10 +210,9 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
       { header: 'Status',                key: 'status',           width: 16 },
       { header: 'Modalidade',            key: 'modalidade',       width: 16 },
       { header: 'Corredor',              key: 'corredor',         width: 18 },
-      { header: 'Aprovador',             key: 'aprovador',        width: 20 },
-      { header: 'Analista',              key: 'analista',         width: 18 },
-      { header: 'Transporte',            key: 'transporte',       width: 16 },
-      { header: 'Hospedagem',            key: 'hospedagem',       width: 16 },
+      { header: 'Aprovador',             key: 'aprovador',              width: 20 },
+      { header: 'Analista',              key: 'analista',               width: 18 },
+      { header: 'Motivo do Cancelamento', key: 'motivoCancelamento',    width: 26 },
     ];
 
     // Estiliza o cabeçalho (linha 1): fundo escuro + texto branco + negrito
@@ -243,10 +242,9 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
         status:          getCalculatedStatus(d).replace('_', ' '),
         modalidade:      d.modality || '',
         corredor:        d.corredor || '',
-        aprovador:       d.approver || '',
-        analista:        d.analyst || '',
-        transporte:      d.transportType || '',
-        hospedagem:      d.accommodationType || '',
+        aprovador:            d.approver || '',
+        analista:             d.analyst || '',
+        motivoCancelamento:   d.status === 'CANCELADA' ? (d.cancelReason || '—') : '',
       });
 
       // Demandas noturnas (≥ 18:00): negrito + fundo laranja-claro em toda a linha
@@ -261,7 +259,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
     // AutoFilter cobrindo todas as colunas (19) e todas as linhas com dados
     worksheet.autoFilter = {
       from: { row: 1, column: 1 },
-      to:   { row: toExport.length + 1, column: 20 },
+      to:   { row: toExport.length + 1, column: 19 },
     };
 
     // Gera o arquivo e faz o download

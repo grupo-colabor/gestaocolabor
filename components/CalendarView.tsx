@@ -376,7 +376,10 @@ const getDemandFromItem = (item: any): Demand | null => {
         const d = demands.find(dm => dm.id === a.demandId);
         if (!d || d.status === 'CANCELADA') return;
 
-        const { start, end } = getDayBoundsForIteration(a.startDate, a.endDate);
+        const { start, end } = getDayBoundsForIteration(
+          ensureDateTimeForDisplay(a.startDate, 'start'),
+          ensureDateTimeForDisplay(a.endDate,   'end')
+        );
         const cursor = new Date(start);
         const training = trainings.find(t => t.id === d.trainingId);
        const company = companies.find(c => c.id === d.companyId);
@@ -1790,13 +1793,8 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                 </div>
               </td>
 
-              {/* COLUNA LOCAL (CTM) — igual à dos instrutores */}
-              <td className="p-4 border-r border-b border-gray-200 bg-[#fffbeb] sticky left-[200px] z-20 w-[85px] min-w-[85px]">
-                {/* vazio */}
-              </td>
-
-              {/* COLUNA ATENDE (CTM) — igual à dos instrutores */}
-              <td className="p-4 border-r border-b border-gray-200 bg-[#fffbeb] sticky left-[285px] z-20 w-[85px] min-w-[85px]">
+              {/* COLUNA LOCAL (CTM) */}
+              <td className="p-4 border-r border-b border-gray-200 bg-[#fffbeb] sticky left-[200px] z-20 w-[90px] min-w-[90px]">
                 {/* vazio */}
               </td>
                 {daysInView.map(day => {

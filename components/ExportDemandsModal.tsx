@@ -104,8 +104,6 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
     const normalize = (s: string) => (s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
     return demands.filter(d => {
-      if (d.status === 'CANCELADA' && !filters.status) return true; // mostrar canceladas se sem filtro de status
-
       if (filters.companyId && d.companyId !== filters.companyId) return false;
       if (filters.trainingId && d.trainingId !== filters.trainingId) return false;
       if (filters.regionId && d.regionId !== filters.regionId) return false;

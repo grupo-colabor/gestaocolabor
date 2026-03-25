@@ -470,6 +470,9 @@ const Dashboard: React.FC = () => {
   // --- Comparação de N Períodos ---
   const [extraPeriods, setExtraPeriods] = useState<ExtraPeriod[]>([]);
   const [hiddenSeries, setHiddenSeries] = useState<Record<string, boolean>>({});
+
+  // --- Toggle gráfico Treinamentos por Categoria ---
+  const [categoryChartMode, setCategoryChartMode] = useState<'qty' | 'hours'>('qty');
   const toggleSeries = (key: string) => setHiddenSeries(prev => ({ ...prev, [key]: !prev[key] }));
 
   // --- Geração de Relatório ---
@@ -1921,6 +1924,19 @@ const pendingLogisticsDemands = useMemo(() => {
       value: value as number
     })).sort((a, b) => b.value - a.value).filter(v => v.value > 0);
 
+    const trainingCategoryHoursData: { name: string; value: number }[] = Object.entries(
+      trainings.reduce((acc, t) => {
+        const hours = filteredDemands.filter(d => d.trainingId === t.id).length * getTrainingHours(t.id);
+        acc[t.category] = (acc[t.category] || 0) + hours;
+        return acc;
+      }, {} as Record<string, number>)
+    ).map(([name, value]) => ({
+      name: String(name),
+      value: value as number
+    })).sort((a, b) => b.value - a.value).filter(v => v.value > 0);
+
+    const activeCategoryData = categoryChartMode === 'qty' ? trainingCategoryData : trainingCategoryHoursData;
+
     return (
       <div className="space-y-6 animate-fade-in" ref={(el) => { chartRefsMap.current['CLIENTES'] = el; }}>
         {compareMode && (
@@ -1961,15 +1977,28 @@ const pendingLogisticsDemands = useMemo(() => {
           </div>
 
           <div className="bg-white p-6 rounded-2xl border border-slate-200 h-96 shadow-sm flex flex-col">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Treinamentos por Categoria</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Treinamentos por Categoria</h3>
+              <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
+                {(['qty', 'hours'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setCategoryChartMode(mode)}
+                    className={`px-2.5 py-1 text-[9px] font-black uppercase tracking-widest rounded-md transition-all ${categoryChartMode === mode ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    {mode === 'qty' ? 'Quantidade' : 'Horas'}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="flex-1 min-h-0">
-              {trainingCategoryData.length > 0 ? (
+              {activeCategoryData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={trainingCategoryData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} dataKey="value" stroke="none">
-                      {trainingCategoryData.map((_, i) => <Cell key={i} fill={COLORS.CHART_PALETTE[i % COLORS.CHART_PALETTE.length]} />)}
+                    <Pie data={activeCategoryData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} dataKey="value" stroke="none">
+                      {activeCategoryData.map((_, i) => <Cell key={i} fill={COLORS.CHART_PALETTE[i % COLORS.CHART_PALETTE.length]} />)}
                     </Pie>
-                    <Tooltip />
+                    <Tooltip formatter={(v: number) => categoryChartMode === 'qty' ? [`${v} treinamentos`, ''] : [`${v}h ministradas`, '']} />
                     <Legend iconType="circle" wrapperStyle={{ fontSize: '9px', fontWeight: 'bold' }} />
                   </PieChart>
                 </ResponsiveContainer>

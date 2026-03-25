@@ -9,13 +9,15 @@ import {
   Clock, TrendingUp, TrendingDown, AlertTriangle, Building2, MapPin,
   Truck, DollarSign, Award, Target, Zap, ShieldAlert,
   Download, MousePointer2,
-  Info, Ban, ChevronDown, ChevronUp, Bell, Package, FileText, UserCheck, Hotel, Car,
+  Info, Ban, Bell, Package, FileText, UserCheck, Hotel, Car,
   HelpCircle, X, ArrowLeftRight
 } from 'lucide-react';
 import { Demand } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { demandIntersectsRange } from '../domain/demandDays';
 import Pagination from './Pagination';
+import ReportModal from './ReportModal';
+import type { ReportInput } from '../utils/reportTypes';
 import {
   fetchLogisticAllocations,
   LogisticAllocationRow
@@ -42,6 +44,14 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 type TabType = 'GERAL' | 'OPERACIONAL' | 'INSTRUTORES' | 'CLIENTES' | 'CUSTOS';
+
+const PERIOD_COLORS = ['#378ADD', '#1D9E75', '#EF9F27', '#D85A30', '#7F77DD', '#D4537E'] as const;
+
+interface ExtraPeriod {
+  id: string;
+  startDate: string;
+  endDate: string;
+}
 
 type RankedItem = { name: string; value: number };
 
@@ -346,7 +356,6 @@ const Dashboard: React.FC = () => {
   const noInstructorTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const noMeasurementTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const [showCancelledList, setShowCancelledList] = useState(false);
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const today = new Date();
 
   // ✅ Supabase (controle logístico): demand_id -> logistic_allocations
@@ -458,31 +467,52 @@ const Dashboard: React.FC = () => {
     return "";
   };
 
-  // --- Comparação de Períodos ---
-  const [compareMode, setCompareMode] = useState(false);
-  const [compareFilters, setCompareFilters] = useState({ startDate: '', endDate: '' });
+  // --- Comparação de N Períodos ---
+  const [extraPeriods, setExtraPeriods] = useState<ExtraPeriod[]>([]);
+  const [hiddenSeries, setHiddenSeries] = useState<Record<string, boolean>>({});
+  const toggleSeries = (key: string) => setHiddenSeries(prev => ({ ...prev, [key]: !prev[key] }));
 
-  const handleCompareMonthChange = (val: string) => {
-    if (!val) {
-      setCompareFilters({ startDate: '', endDate: '' });
-      return;
-    }
-    const [year, month] = val.split('-').map(Number);
-    const firstDay = `${year}-${String(month).padStart(2, '0')}-01`;
-    const lastDayDate = new Date(year, month, 0);
-    const lastDay = `${year}-${String(month).padStart(2, '0')}-${String(lastDayDate.getDate()).padStart(2, '0')}`;
-    setCompareFilters({ startDate: firstDay, endDate: lastDay });
+  // --- Geração de Relatório ---
+  const [showReportModal, setShowReportModal] = useState(false);
+  /** Refs para captura de gráficos via html2canvas (um por aba) */
+  const chartRefsMap = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // Backward compat — usados pelos gráficos existentes, não alterar
+  const compareMode    = extraPeriods.length > 0;
+  const compareFilters = extraPeriods[0] ?? { startDate: '', endDate: '' };
+
+  const addExtraPeriod = () => {
+    if (extraPeriods.length >= 5) return;
+    setExtraPeriods(prev => [
+      ...prev,
+      { id: Math.random().toString(36).slice(2), startDate: '', endDate: '' }
+    ]);
   };
 
-  const getCompareMonthSelectorValue = () => {
-    if (!compareFilters.startDate || !compareFilters.endDate) return "";
-    const [sY, sM, sD] = compareFilters.startDate.split('-');
-    const [eY, eM, eD] = compareFilters.endDate.split('-');
+  const removeExtraPeriod = (id: string) =>
+    setExtraPeriods(prev => prev.filter(p => p.id !== id));
+
+  const updateExtraPeriod = (id: string, patch: Partial<Pick<ExtraPeriod, 'startDate' | 'endDate'>>) =>
+    setExtraPeriods(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p));
+
+  const handleExtraMonthChange = (id: string, val: string) => {
+    if (!val) { updateExtraPeriod(id, { startDate: '', endDate: '' }); return; }
+    const [year, month] = val.split('-').map(Number);
+    const firstDay  = `${year}-${String(month).padStart(2, '0')}-01`;
+    const lastDayDate = new Date(year, month, 0);
+    const lastDay   = `${year}-${String(month).padStart(2, '0')}-${String(lastDayDate.getDate()).padStart(2, '0')}`;
+    updateExtraPeriod(id, { startDate: firstDay, endDate: lastDay });
+  };
+
+  const getExtraMonthValue = (p: ExtraPeriod) => {
+    if (!p.startDate || !p.endDate) return '';
+    const [sY, sM, sD] = p.startDate.split('-');
+    const [eY, eM, eD] = p.endDate.split('-');
     if (sY === eY && sM === eM && sD === '01') {
       const lastDay = new Date(Number(eY), Number(eM), 0).getDate();
       if (Number(eD) === lastDay) return `${sY}-${sM}`;
     }
-    return "";
+    return '';
   };
 
   const getPeriodLabel = (start: string, end: string) => {
@@ -548,13 +578,14 @@ const Dashboard: React.FC = () => {
     return measurements.filter(m => demandIds.has(m.demandId));
   }, [measurements, filteredDemands]);
 
-  // --- Período de Comparação ---
+  // --- Período de Comparação (P2 = extraPeriods[0]) ---
   const filteredDemands2 = useMemo(() => {
-    if (!compareMode) return [];
+    if (extraPeriods.length === 0) return [];
+    const p = extraPeriods[0];
     return demands.filter(d => {
       const currentStatus = getCalculatedStatus(d);
-      if (compareFilters.startDate || compareFilters.endDate) {
-        if (!demandIntersectsRange(d, compareFilters.startDate || undefined, compareFilters.endDate || undefined)) return false;
+      if (p.startDate || p.endDate) {
+        if (!demandIntersectsRange(d, p.startDate || undefined, p.endDate || undefined)) return false;
       }
       if (filters.companyId && d.companyId !== filters.companyId) return false;
       if (filters.regionId && d.regionId !== filters.regionId) return false;
@@ -564,13 +595,13 @@ const Dashboard: React.FC = () => {
       if (filters.demandState && (d.demandState ?? '') !== filters.demandState) return false;
       return true;
     });
-  }, [demands, compareFilters, compareMode, filters.companyId, filters.status, filters.regionId, filters.trainingLocal, filters.corredor, filters.demandState, trainings]);
+  }, [demands, extraPeriods, filters.companyId, filters.status, filters.regionId, filters.trainingLocal, filters.corredor, filters.demandState, trainings]);
 
   const filteredMeasurements2 = useMemo(() => {
-    if (!compareMode) return [];
+    if (extraPeriods.length === 0) return [];
     const demandIds = new Set(filteredDemands2.map(d => d.id));
     return measurements.filter(m => demandIds.has(m.demandId));
-  }, [measurements, filteredDemands2, compareMode]);
+  }, [measurements, filteredDemands2, extraPeriods.length]);
 
   // ✅ Helpers: lê status do Supabase logistic_allocations
   const isCarOkFromAlloc = (alloc?: LogisticAllocationRow) => {
@@ -668,24 +699,166 @@ const pendingLogisticsDemands = useMemo(() => {
   }, [filteredMeasurements]);
 
   const totalHours2 = useMemo(() => {
-    if (!compareMode) return 0;
+    if (extraPeriods.length === 0) return 0;
     return filteredDemands2
       .filter(d => getCalculatedStatus(d) === 'CONCLUIDA')
       .reduce((acc: number, d) => acc + getTrainingHours(d.trainingId), 0);
-  }, [filteredDemands2, trainings, compareMode]);
+  }, [filteredDemands2, trainings, extraPeriods.length]);
 
   const totalCosts2 = useMemo(() => {
-    if (!compareMode) return 0;
+    if (extraPeriods.length === 0) return 0;
     return filteredMeasurements2.reduce((acc: number, m) => {
       return acc + m.attachments.reduce((sum: number, att) => {
         const val = typeof att.value === 'string' ? parseFloat(att.value.replace(',', '.')) : Number(att.value);
         return sum + (Number(val) || 0);
       }, 0);
     }, 0);
-  }, [filteredMeasurements2, compareMode]);
+  }, [filteredMeasurements2, extraPeriods.length]);
+
+  // --- Todos os períodos (P1…PN) para KPICards multi-período ---
+  const allFilteredDemandsList = useMemo(() => {
+    if (extraPeriods.length === 0) return [filteredDemands];
+    return [filteredDemands, filteredDemands2, ...extraPeriods.slice(1).map(p =>
+      demands.filter(d => {
+        const currentStatus = getCalculatedStatus(d);
+        if (p.startDate || p.endDate) {
+          if (!demandIntersectsRange(d, p.startDate || undefined, p.endDate || undefined)) return false;
+        }
+        if (filters.companyId && d.companyId !== filters.companyId) return false;
+        if (filters.regionId && d.regionId !== filters.regionId) return false;
+        if (filters.status && currentStatus !== filters.status) return false;
+        if (filters.trainingLocal && (d.trainingLocal ?? '') !== filters.trainingLocal) return false;
+        if (filters.corredor && (d.corredor ?? '') !== filters.corredor) return false;
+        if (filters.demandState && (d.demandState ?? '') !== filters.demandState) return false;
+        return true;
+      })
+    )];
+  }, [filteredDemands, filteredDemands2, demands, extraPeriods, filters.companyId, filters.status, filters.regionId, filters.trainingLocal, filters.corredor, filters.demandState, trainings]);
+
+  const allFilteredMeasurementsList = useMemo(() => {
+    return allFilteredDemandsList.map(dList => {
+      const ids = new Set(dList.map((d: any) => d.id));
+      return measurements.filter((m: any) => ids.has(m.demandId));
+    });
+  }, [allFilteredDemandsList, measurements]);
+
+  /** Cria o array `periods` para KPICard; retorna undefined quando não há comparação */
+  const mkPeriods = (getValue: (dList: any[], mList: any[]) => any) =>
+    compareMode
+      ? allFilteredDemandsList.map((dList, i) => ({
+          value: getValue(dList, allFilteredMeasurementsList[i] ?? []),
+          color: PERIOD_COLORS[i % PERIOD_COLORS.length],
+          label: `P${i + 1}`,
+        }))
+      : undefined;
+
+  /** Dados consolidados para geração de relatório (recalculado apenas quando os períodos mudam) */
+  const reportInput = useMemo((): ReportInput => {
+    const pv = (fn: (d: any[], m: any[]) => any) =>
+      allFilteredDemandsList.map((d, i) => fn(d, allFilteredMeasurementsList[i] ?? []));
+
+    const noInstructor = (d: any[]) =>
+      d.filter((x: any) => {
+        const s = getCalculatedStatus(x);
+        if (s === 'CANCELADA' || s === 'CONCLUIDA') return false;
+        if (isOnlineDemand(x)) return false;
+        return !x.instructorId;
+      }).length;
+
+    const calcCosts = (_d: any[], m: any[]) =>
+      m.reduce((acc: number, x: any) =>
+        acc + x.attachments.reduce((s: number, a: any) => {
+          const v = typeof a.value === 'string' ? parseFloat(a.value.replace(',', '.')) : Number(a.value);
+          return s + (Number(v) || 0);
+        }, 0), 0);
+
+    return {
+      title: '',
+      generatedAt: new Date(),
+      periods: allFilteredDemandsList.map((_, i) => ({
+        label:     `P${i + 1}`,
+        color:     PERIOD_COLORS[i % PERIOD_COLORS.length],
+        startDate: i === 0 ? (filters.startDate || '') : (extraPeriods[i - 1]?.startDate || ''),
+        endDate:   i === 0 ? (filters.endDate   || '') : (extraPeriods[i - 1]?.endDate   || ''),
+      })),
+      activeFilters: [
+        ...(filters.companyId    ? [{ label: 'Empresa',   value: companies.find(c => c.id === filters.companyId)?.name || '' }] : []),
+        ...(filters.regionId     ? [{ label: 'Região',    value: regions.find(r => r.id === filters.regionId)?.name   || '' }] : []),
+        ...(filters.status       ? [{ label: 'Status',    value: STATUS_LABELS[filters.status] || filters.status }] : []),
+        ...(filters.trainingLocal? [{ label: 'Local',     value: filters.trainingLocal }] : []),
+        ...(filters.corredor     ? [{ label: 'Corredor',  value: filters.corredor }] : []),
+        ...(filters.demandState  ? [{ label: 'UF',        value: filters.demandState }] : []),
+      ],
+      chartElements: chartRefsMap.current,
+      tabs: [
+        {
+          id: 'GERAL', label: 'Geral',
+          kpis: [
+            { title: 'Total de Demandas',      values: pv(d => d.length) },
+            { title: 'Horas Ministradas',      values: pv(d => d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)) },
+            { title: 'Pendência de Alocação',  values: pv(noInstructor), positiveIsGood: false },
+            { title: 'Treinamentos Concluídos',values: pv(d => d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').length) },
+            { title: 'Demandas Canceladas',    values: pv(d => d.filter((x: any) => x.status === 'CANCELADA').length), positiveIsGood: false },
+          ],
+          rankings: [{
+            title: 'Volume por Região',
+            rows: regions.map(r => ({
+              name:   r.name,
+              values: allFilteredDemandsList.map(d => d.filter((x: any) => x.regionId === r.id).length),
+            })).filter(r => r.values.some(v => v > 0)).sort((a, b) => b.values[0] - a.values[0]),
+          }],
+        },
+        {
+          id: 'OPERACIONAL', label: 'Operacional',
+          kpis: [
+            { title: 'Aguardando Instrutor', values: pv(noInstructor), positiveIsGood: false },
+            { title: 'Alocadas',             values: pv(d => d.filter((x: any) => getCalculatedStatus(x) === 'ALOCADA').length) },
+            { title: 'Concluídas',           values: pv(d => d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').length) },
+            { title: 'Taxa de Execução',     values: pv(d => { const c = d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA'); const a = d.filter((x: any) => getCalculatedStatus(x) !== 'CANCELADA'); return a.length > 0 ? `${Math.round((c.length / a.length) * 100)}%` : '0%'; }) },
+          ],
+        },
+        {
+          id: 'INSTRUTORES', label: 'Instrutores',
+          kpis: [
+            { title: 'Horas Concluídas',     values: pv(d => d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)) },
+            { title: 'Sem Demanda no Período', values: pv(d => { const w = new Set(d.filter((x: any) => x.instructorId).map((x: any) => x.instructorId)); return instructors.filter((i: any) => i.status === 'ATIVO' && !w.has(i.id)).length; }), positiveIsGood: false },
+          ],
+          rankings: [{
+            title: 'Carga Horária por Instrutor',
+            rows: instructors.filter((i: any) => i.status === 'ATIVO').map((inst: any) => ({
+              name:   inst.name,
+              values: allFilteredDemandsList.map(d => d.filter((x: any) => x.instructorId === inst.id && getCalculatedStatus(x) === 'CONCLUIDA').reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)),
+            })).filter(r => r.values.some((v: number) => v > 0)).sort((a, b) => b.values[0] - a.values[0]).slice(0, 10),
+          }],
+        },
+        {
+          id: 'CLIENTES', label: 'Clientes',
+          kpis: [
+            { title: 'Total de Demandas', values: pv(d => d.length) },
+          ],
+          rankings: [{
+            title: 'Volume por Cliente',
+            rows: companies.map(c => ({
+              name:   c.name,
+              values: allFilteredDemandsList.map(d => d.filter((x: any) => x.companyId === c.id).length),
+            })).filter(r => r.values.some(v => v > 0)).sort((a, b) => b.values[0] - a.values[0]).slice(0, 10),
+          }],
+        },
+        {
+          id: 'CUSTOS', label: 'Custos',
+          kpis: [
+            { title: 'Total em Despesas',   values: pv(calcCosts), isCurrency: true },
+            { title: 'Pronta Faturamento', values: pv((_d, m) => m.filter((x: any) => x.status === 'PRONTA_FATURAMENTO').length) },
+            { title: 'Faturadas',          values: pv((_d, m) => m.filter((x: any) => x.status === 'FATURADA').length) },
+            { title: 'Ticket Médio',       values: pv((d, m) => { const cost = calcCosts(d, m); return m.length > 0 ? cost / m.length : 0; }), isCurrency: true },
+          ],
+        },
+      ],
+    };
+  }, [allFilteredDemandsList, allFilteredMeasurementsList, filters, companies, regions, instructors, trainings, extraPeriods]);
 
   // --- Componentes de UI ---
-  const KPICard = ({ title, value, subtext, icon: Icon, colorClass, isCurrency = false, isTrend = false, compareValue, positiveIsGood = true }: any) => {
+  const KPICard = ({ title, value, subtext, icon: Icon, colorClass, isCurrency = false, isTrend = false, compareValue, positiveIsGood = true, periods }: any) => {
     const fmt = (v: any) => isCurrency
       ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v))
       : v;
@@ -697,6 +870,44 @@ const pendingLogisticsDemands = useMemo(() => {
       }
       return Number(v) || 0;
     };
+
+    // --- Multi-período (2+ períodos) ---
+    if (periods && periods.length >= 2) {
+      const first = periods[0];
+      return (
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-start justify-between hover:shadow-md transition-all group">
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 group-hover:text-slate-600 transition-colors">{title}</p>
+            <div className="space-y-1">
+              {periods.map((p: any, i: number) => {
+                const delta = i > 0 ? toNum(p.value) - toNum(first.value) : null;
+                const pct = delta !== null && toNum(first.value) !== 0
+                  ? Math.round((delta / toNum(first.value)) * 100)
+                  : null;
+                const isGood = delta !== null && (positiveIsGood ? delta >= 0 : delta <= 0);
+                return (
+                  <div key={i} className="flex items-center gap-1.5 flex-wrap">
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: p.color }} />
+                    <span className="text-[8px] font-black uppercase tracking-wider" style={{ color: p.color }}>{p.label}</span>
+                    <span className={`font-black text-slate-800 leading-none ${i === 0 ? 'text-xl' : 'text-base text-slate-600'}`}>{fmt(p.value)}</span>
+                    {delta !== null && (
+                      <span className={`text-[9px] font-black flex items-center gap-0.5 ${isGood ? 'text-emerald-600' : 'text-red-500'}`}>
+                        {isGood ? '↑' : '↓'}{delta >= 0 ? '+' : ''}{isCurrency ? fmt(delta) : delta}
+                        {pct !== null && <span className="opacity-70">({pct > 0 ? '+' : ''}{pct}%)</span>}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {subtext && <p className="text-[10px] text-slate-500 font-bold mt-1.5 uppercase flex items-center gap-1">{subtext}</p>}
+          </div>
+          <div className={`p-3 rounded-xl ${colorClass} group-hover:scale-110 transition-transform shrink-0 ml-3`}>
+            <Icon size={20} />
+          </div>
+        </div>
+      );
+    }
 
     const showCompare = compareMode && compareValue !== undefined;
     const delta = showCompare ? toNum(value) - toNum(compareValue) : null;
@@ -776,11 +987,29 @@ const pendingLogisticsDemands = useMemo(() => {
       color: (COLORS[key as keyof typeof COLORS] as string) || '#CBD5E1'
     })).filter(d => d.value > 0) : [];
 
-    const regionalData = regions.map(r => ({
-      name: r.name,
-      value: filteredDemands.filter(d => d.regionId === r.id).length,
-      ...(compareMode ? { value2: filteredDemands2.filter(d => d.regionId === r.id).length } : {})
-    })).sort((a, b) => b.value - a.value);
+    // Para 3+ períodos: dados agrupados por status (barras agrupadas)
+    const statusBarData = extraPeriods.length >= 2
+      ? Object.keys(STATUS_LABELS).map(key => {
+          const row: any = { name: STATUS_LABELS[key] };
+          allFilteredDemandsList.forEach((dList, i) => {
+            row[`P${i + 1}`] = dList.filter(d => getCalculatedStatus(d) === key).length;
+          });
+          return row;
+        }).filter(row => allFilteredDemandsList.some((_, i) => (row[`P${i + 1}`] ?? 0) > 0))
+      : [];
+
+    const regionalData = regions.map(r => {
+      const row: any = {
+        name: r.name,
+        value: filteredDemands.filter(d => d.regionId === r.id).length,
+      };
+      if (compareMode) {
+        allFilteredDemandsList.slice(1).forEach((dList, i) => {
+          row[`value${i + 2}`] = dList.filter(d => d.regionId === r.id).length;
+        });
+      }
+      return row;
+    }).sort((a: any, b: any) => b.value - a.value);
 
     // --- Dados para insights Local/Corredor/UF ---
     const buildTop = (src: Demand[], extract: (d: Demand) => string, limit = 10) => {
@@ -832,21 +1061,29 @@ const pendingLogisticsDemands = useMemo(() => {
     const cancelledDemands2 = compareMode ? filteredDemands2.filter(d => d.status === 'CANCELADA') : [];
 
     return (
-      <div className="space-y-6 animate-fade-in">
+      <div className="space-y-6 animate-fade-in" ref={(el) => { chartRefsMap.current['GERAL'] = el; }}>
 
         {compareMode && (
-          <div className="flex items-center gap-4 px-1 text-[9px] font-black uppercase tracking-widest">
-            <span className="flex items-center gap-1.5 text-blue-500"><span className="inline-block w-2.5 h-2.5 rounded bg-blue-400" /> P1: {getPeriodLabel(filters.startDate, filters.endDate)}</span>
-            <span className="flex items-center gap-1.5 text-emerald-600"><span className="inline-block w-2.5 h-2.5 rounded bg-emerald-400" /> P2: {getPeriodLabel(compareFilters.startDate, compareFilters.endDate)}</span>
+          <div className="flex flex-wrap items-center gap-3 px-1 text-[9px] font-black uppercase tracking-widest">
+            <span className="flex items-center gap-1.5" style={{ color: PERIOD_COLORS[0] }}>
+              <span className="inline-block w-2.5 h-2.5 rounded" style={{ background: PERIOD_COLORS[0] }} />
+              P1: {getPeriodLabel(filters.startDate, filters.endDate)}
+            </span>
+            {extraPeriods.map((p, i) => (
+              <span key={p.id} className="flex items-center gap-1.5" style={{ color: PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length] }}>
+                <span className="inline-block w-2.5 h-2.5 rounded" style={{ background: PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length] }} />
+                P{i + 2}: {getPeriodLabel(p.startDate, p.endDate)}
+              </span>
+            ))}
           </div>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          <KPICard title="Total de Demandas" value={filteredDemands.length} compareValue={compareMode ? filteredDemands2.length : undefined} icon={Briefcase} colorClass="bg-blue-50 text-blue-600" />
-          <KPICard title="Horas Ministradas" value={`${totalHours}h`} compareValue={compareMode ? `${totalHours2}h` : undefined} icon={Clock} colorClass="bg-emerald-50 text-emerald-600" subtext="Execuções Finalizadas" />
-          <KPICard title="Pendência de Alocação" value={noInstructorDemands.length} compareValue={compareMode ? noInstructorDemands2.length : undefined} positiveIsGood={false} icon={AlertCircle} colorClass="bg-amber-50 text-amber-600" />
-          <KPICard title="Treinamentos Concluídos" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'CONCLUIDA').length} compareValue={compareMode ? filteredDemands2.filter(d => getCalculatedStatus(d) === 'CONCLUIDA').length : undefined} icon={CheckCircle} colorClass="bg-indigo-50 text-indigo-600" />
-          <KPICard title="Demandas Canceladas" value={cancelledDemands.length} compareValue={compareMode ? cancelledDemands2.length : undefined} positiveIsGood={false} icon={Ban} colorClass="bg-slate-100 text-slate-500" subtext="Histórico Inativo" />
+          <KPICard title="Total de Demandas" value={filteredDemands.length} compareValue={compareMode ? filteredDemands2.length : undefined} periods={mkPeriods(d => d.length)} icon={Briefcase} colorClass="bg-blue-50 text-blue-600" />
+          <KPICard title="Horas Ministradas" value={`${totalHours}h`} compareValue={compareMode ? `${totalHours2}h` : undefined} periods={mkPeriods(d => `${d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)}h`)} icon={Clock} colorClass="bg-emerald-50 text-emerald-600" subtext="Execuções Finalizadas" />
+          <KPICard title="Pendência de Alocação" value={noInstructorDemands.length} compareValue={compareMode ? noInstructorDemands2.length : undefined} positiveIsGood={false} periods={mkPeriods(d => d.filter((x: any) => { const s = getCalculatedStatus(x); if (s === 'CANCELADA' || s === 'CONCLUIDA') return false; if (isOnlineDemand(x)) return false; return !x.instructorId; }).length)} icon={AlertCircle} colorClass="bg-amber-50 text-amber-600" />
+          <KPICard title="Treinamentos Concluídos" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'CONCLUIDA').length} compareValue={compareMode ? filteredDemands2.filter(d => getCalculatedStatus(d) === 'CONCLUIDA').length : undefined} periods={mkPeriods(d => d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').length)} icon={CheckCircle} colorClass="bg-indigo-50 text-indigo-600" />
+          <KPICard title="Demandas Canceladas" value={cancelledDemands.length} compareValue={compareMode ? cancelledDemands2.length : undefined} positiveIsGood={false} periods={mkPeriods(d => d.filter((x: any) => x.status === 'CANCELADA').length)} icon={Ban} colorClass="bg-slate-100 text-slate-500" subtext="Histórico Inativo" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -856,10 +1093,25 @@ const pendingLogisticsDemands = useMemo(() => {
               <Target size={14} />
             </h3>
             <div className="flex-1 min-h-0">
-              {compareMode ? (
+              {compareMode && extraPeriods.length >= 2 ? (
+                /* 3+ períodos → barras agrupadas por status */
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={statusBarData} margin={{ top: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 'bold' }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9 }} />
+                    <Tooltip cursor={{ fill: '#F8FAFC' }} />
+                    <Legend iconType="circle" wrapperStyle={{ fontSize: '9px', fontWeight: 'bold', cursor: 'pointer' }} onClick={(e: any) => toggleSeries(`status-${e.dataKey}`)} />
+                    {allFilteredDemandsList.map((_, i) => (
+                      <Bar key={i} dataKey={`P${i + 1}`} name={`P${i + 1}`} fill={PERIOD_COLORS[i % PERIOD_COLORS.length]} radius={[3, 3, 0, 0]} barSize={14} hide={hiddenSeries[`status-P${i + 1}`]} />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : compareMode ? (
+                /* 2 períodos → dois donuts lado a lado */
                 <div className="flex h-full gap-2">
                   <div className="flex-1 flex flex-col">
-                    <p className="text-[8px] font-black text-blue-400 uppercase text-center mb-1">P1</p>
+                    <p className="text-[8px] font-black uppercase text-center mb-1" style={{ color: PERIOD_COLORS[0] }}>P1</p>
                     {statusData.length > 0 ? (
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
@@ -874,7 +1126,7 @@ const pendingLogisticsDemands = useMemo(() => {
                   </div>
                   <div className="w-px bg-slate-100 shrink-0" />
                   <div className="flex-1 flex flex-col">
-                    <p className="text-[8px] font-black text-emerald-500 uppercase text-center mb-1">P2</p>
+                    <p className="text-[8px] font-black uppercase text-center mb-1" style={{ color: PERIOD_COLORS[1] }}>P2</p>
                     {statusData2.length > 0 ? (
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
@@ -889,6 +1141,7 @@ const pendingLogisticsDemands = useMemo(() => {
                   </div>
                 </div>
               ) : statusData.length > 0 ? (
+                /* 1 período → donut simples */
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={statusData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={5} dataKey="value">
@@ -917,9 +1170,11 @@ const pendingLogisticsDemands = useMemo(() => {
                     <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold' }} />
                     <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
                     <Tooltip cursor={{ fill: '#F8FAFC' }} />
-                    {compareMode && <Legend wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />}
-                    <Bar dataKey="value" name="P1" fill="#3B82F6" radius={[4, 4, 0, 0]} barSize={compareMode ? 20 : 40} />
-                    {compareMode && <Bar dataKey="value2" name="P2" fill="#10B981" radius={[4, 4, 0, 0]} barSize={20} />}
+                    {compareMode && <Legend wrapperStyle={{ fontSize: '10px', fontWeight: 'bold', cursor: 'pointer' }} onClick={(e: any) => toggleSeries(`regional-${e.dataKey}`)} />}
+                    <Bar dataKey="value" name="P1" fill={PERIOD_COLORS[0]} radius={[4, 4, 0, 0]} barSize={compareMode ? Math.max(8, Math.floor(36 / allFilteredDemandsList.length)) : 40} hide={hiddenSeries['regional-value']} />
+                    {compareMode && allFilteredDemandsList.slice(1).map((_, i) => (
+                      <Bar key={i + 2} dataKey={`value${i + 2}`} name={`P${i + 2}`} fill={PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length]} radius={[4, 4, 0, 0]} barSize={Math.max(8, Math.floor(36 / allFilteredDemandsList.length))} hide={hiddenSeries[`regional-value${i + 2}`]} />
+                    ))}
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -931,9 +1186,13 @@ const pendingLogisticsDemands = useMemo(() => {
 
         {/* --- INSIGHTS: Local / Corredor / UF --- */}
         {compareMode && (
-          <div className="flex items-center gap-3 text-[9px] font-black uppercase tracking-widest px-1">
-            <span className="flex items-center gap-1 text-blue-500"><span className="w-2 h-1.5 rounded-sm inline-block bg-blue-400" /> Barra azul = P1</span>
-            <span className="flex items-center gap-1 text-emerald-600"><span className="w-2 h-1.5 rounded-sm inline-block bg-emerald-400" /> Barra verde = P2</span>
+          <div className="flex flex-wrap items-center gap-3 text-[9px] font-black uppercase tracking-widest px-1">
+            {allFilteredDemandsList.map((_, i) => (
+              <span key={i} className="flex items-center gap-1" style={{ color: PERIOD_COLORS[i % PERIOD_COLORS.length] }}>
+                <span className="w-2 h-1.5 rounded-sm inline-block" style={{ background: PERIOD_COLORS[i % PERIOD_COLORS.length] }} />
+                P{i + 1}
+              </span>
+            ))}
           </div>
         )}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1085,22 +1344,30 @@ const pendingLogisticsDemands = useMemo(() => {
     const execRate2 = compareMode && activeDmds2.length > 0 ? Math.round((concluded2.length / activeDmds2.length) * 100) : undefined;
 
     return (
-      <div className="space-y-6 animate-fade-in">
+      <div className="space-y-6 animate-fade-in" ref={(el) => { chartRefsMap.current['OPERACIONAL'] = el; }}>
 
         {compareMode && (
-          <div className="flex items-center gap-4 px-1 text-[9px] font-black uppercase tracking-widest">
-            <span className="flex items-center gap-1.5 text-blue-500"><span className="inline-block w-2.5 h-2.5 rounded bg-blue-400" /> P1: {getPeriodLabel(filters.startDate, filters.endDate)}</span>
-            <span className="flex items-center gap-1.5 text-emerald-600"><span className="inline-block w-2.5 h-2.5 rounded bg-emerald-400" /> P2: {getPeriodLabel(compareFilters.startDate, compareFilters.endDate)}</span>
+          <div className="flex flex-wrap items-center gap-3 px-1 text-[9px] font-black uppercase tracking-widest">
+            <span className="flex items-center gap-1.5" style={{ color: PERIOD_COLORS[0] }}>
+              <span className="inline-block w-2.5 h-2.5 rounded" style={{ background: PERIOD_COLORS[0] }} />
+              P1: {getPeriodLabel(filters.startDate, filters.endDate)}
+            </span>
+            {extraPeriods.map((p, i) => (
+              <span key={p.id} className="flex items-center gap-1.5" style={{ color: PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length] }}>
+                <span className="inline-block w-2.5 h-2.5 rounded" style={{ background: PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length] }} />
+                P{i + 2}: {getPeriodLabel(p.startDate, p.endDate)}
+              </span>
+            ))}
           </div>
         )}
 
         {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <KPICard title="Aguardando Instrutor" value={noInstructor} compareValue={noInstructor2} positiveIsGood={false} icon={AlertCircle} colorClass="bg-orange-50 text-orange-600" />
-          <KPICard title="Alocadas" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'ALOCADA').length} compareValue={alocadas2} icon={Calendar} colorClass="bg-blue-50 text-blue-600" />
-          <KPICard title="Em Execução Hoje" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'EM_ANDAMENTO').length} icon={Zap} colorClass="bg-emerald-50 text-emerald-600" />
+          <KPICard title="Aguardando Instrutor" value={noInstructor} compareValue={noInstructor2} positiveIsGood={false} periods={mkPeriods(d => d.filter((x: any) => { const s = getCalculatedStatus(x); if (s === 'CANCELADA' || s === 'CONCLUIDA') return false; if (isOnlineDemand(x)) return false; return !x.instructorId; }).length)} icon={AlertCircle} colorClass="bg-orange-50 text-orange-600" />
+          <KPICard title="Alocadas" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'ALOCADA').length} compareValue={alocadas2} periods={mkPeriods(d => d.filter((x: any) => getCalculatedStatus(x) === 'ALOCADA').length)} icon={Calendar} colorClass="bg-blue-50 text-blue-600" />
+          <KPICard title="Em Execução Hoje" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'EM_ANDAMENTO').length} periods={mkPeriods(d => d.filter((x: any) => getCalculatedStatus(x) === 'EM_ANDAMENTO').length)} icon={Zap} colorClass="bg-emerald-50 text-emerald-600" />
           <KPICard title="Próximos 30 Dias" value={filteredDemands.filter(d => { const s = new Date(d.startDate); return s > today && s <= next30; }).length} icon={Clock} colorClass="bg-indigo-50 text-indigo-600" />
-          <KPICard title="Taxa de Execução" value={`${execRate}%`} compareValue={compareMode && execRate2 !== undefined ? `${execRate2}%` : undefined} icon={TrendingUp} colorClass="bg-teal-50 text-teal-600" subtext={`${concluded.length} de ${activeDmds.length} concluídas`} />
+          <KPICard title="Taxa de Execução" value={`${execRate}%`} compareValue={compareMode && execRate2 !== undefined ? `${execRate2}%` : undefined} periods={mkPeriods(d => { const conc = d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA'); const act = d.filter((x: any) => getCalculatedStatus(x) !== 'CANCELADA'); return act.length > 0 ? `${Math.round((conc.length / act.length) * 100)}%` : '0%'; })} icon={TrendingUp} colorClass="bg-teal-50 text-teal-600" subtext={`${concluded.length} de ${activeDmds.length} concluídas`} />
         </div>
 
         {/* Top Treinamentos + Demandas por Instrutor + Perfil do Período */}
@@ -1285,15 +1552,17 @@ const pendingLogisticsDemands = useMemo(() => {
 
     const instructorWorkload = buildWorkload(filteredDemands);
     const instructorWorkload2 = compareMode ? buildWorkload(filteredDemands2) : [];
-    // Merge into single dataset for grouped bar chart
+    // Merge into single dataset for N-period grouped bar chart
     const workloadData = compareMode ? (() => {
-      const map2 = new Map(instructorWorkload2.map(i => [i.name, i.hours]));
-      const names = [...new Set([...instructorWorkload.map(i => i.name), ...instructorWorkload2.map(i => i.name)])];
-      return names.slice(0, 10).map(name => ({
-        name,
-        hours: instructorWorkload.find(i => i.name === name)?.hours ?? 0,
-        hours2: map2.get(name) ?? 0,
-      }));
+      const allWorkloads = allFilteredDemandsList.map(dList => buildWorkload(dList));
+      const names = [...new Set(allWorkloads.flatMap(wl => wl.map(i => i.name)))];
+      return names.slice(0, 10).map(name => {
+        const row: any = { name };
+        allWorkloads.forEach((wl, i) => {
+          row[i === 0 ? 'hours' : `hours${i + 1}`] = wl.find(x => x.name === name)?.hours ?? 0;
+        });
+        return row;
+      });
     })() : instructorWorkload;
 
     // --- Risco de dependência ---
@@ -1378,12 +1647,20 @@ const pendingLogisticsDemands = useMemo(() => {
       : undefined;
 
     return (
-      <div className="space-y-6 animate-fade-in">
+      <div className="space-y-6 animate-fade-in" ref={(el) => { chartRefsMap.current['INSTRUTORES'] = el; }}>
 
         {compareMode && (
-          <div className="flex items-center gap-4 px-1 text-[9px] font-black uppercase tracking-widest">
-            <span className="flex items-center gap-1.5 text-blue-500"><span className="inline-block w-2.5 h-2.5 rounded bg-blue-400" /> P1: {getPeriodLabel(filters.startDate, filters.endDate)}</span>
-            <span className="flex items-center gap-1.5 text-emerald-600"><span className="inline-block w-2.5 h-2.5 rounded bg-emerald-400" /> P2: {getPeriodLabel(compareFilters.startDate, compareFilters.endDate)}</span>
+          <div className="flex flex-wrap items-center gap-3 px-1 text-[9px] font-black uppercase tracking-widest">
+            <span className="flex items-center gap-1.5" style={{ color: PERIOD_COLORS[0] }}>
+              <span className="inline-block w-2.5 h-2.5 rounded" style={{ background: PERIOD_COLORS[0] }} />
+              P1: {getPeriodLabel(filters.startDate, filters.endDate)}
+            </span>
+            {extraPeriods.map((p, i) => (
+              <span key={p.id} className="flex items-center gap-1.5" style={{ color: PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length] }}>
+                <span className="inline-block w-2.5 h-2.5 rounded" style={{ background: PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length] }} />
+                P{i + 2}: {getPeriodLabel(p.startDate, p.endDate)}
+              </span>
+            ))}
           </div>
         )}
 
@@ -1391,10 +1668,10 @@ const pendingLogisticsDemands = useMemo(() => {
         <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
           <KPICard title="Ativos" value={activeInstructors.length} icon={Users} colorClass="bg-blue-50 text-blue-600" />
           <KPICard title="Disponíveis (30d)" value={availableNext30.length} icon={Calendar} colorClass="bg-emerald-50 text-emerald-600" subtext="Sem alocação prevista" />
-          <KPICard title="Sem Demanda" value={noDemandsInPeriod.length} compareValue={noDemandsInPeriod2} positiveIsGood={false} icon={AlertCircle} colorClass="bg-amber-50 text-amber-600" subtext="No período filtrado" />
-          <KPICard title="Reaproveitamento" value={`${reuseRate}%`} compareValue={compareMode && reuseRate2 !== undefined ? `${reuseRate2}%` : undefined} icon={TrendingUp} colorClass="bg-violet-50 text-violet-600" subtext="Com ≥ 2 tipos concluídos" />
+          <KPICard title="Sem Demanda" value={noDemandsInPeriod.length} compareValue={noDemandsInPeriod2} positiveIsGood={false} periods={mkPeriods(d => { const withDemand = new Set(d.filter((x: any) => x.instructorId).map((x: any) => x.instructorId!)); return activeInstructors.filter((i: any) => !withDemand.has(i.id)).length; })} icon={AlertCircle} colorClass="bg-amber-50 text-amber-600" subtext="No período filtrado" />
+          <KPICard title="Reaproveitamento" value={`${reuseRate}%`} compareValue={compareMode && reuseRate2 !== undefined ? `${reuseRate2}%` : undefined} periods={mkPeriods(d => { const rate = activeInstructors.length > 0 ? Math.round((activeInstructors.filter((i: any) => new Set(d.filter((x: any) => x.instructorId === i.id && getCalculatedStatus(x) === 'CONCLUIDA').map((x: any) => x.trainingId)).size >= 2).length / activeInstructors.length) * 100) : 0; return `${rate}%`; })} icon={TrendingUp} colorClass="bg-violet-50 text-violet-600" subtext="Com ≥ 2 tipos concluídos" />
           <KPICard title="Risco Dependência" value={dependencyRisk.length} icon={ShieldAlert} colorClass="bg-red-50 text-red-600" subtext="Treinamentos c/ ≤ 1 instr." />
-          <KPICard title="Produtividade Global" value={`${totalHours}h`} compareValue={compareMode ? `${totalHours2}h` : undefined} icon={Award} colorClass="bg-indigo-50 text-indigo-600" subtext="Horas concluídas" />
+          <KPICard title="Produtividade Global" value={`${totalHours}h`} compareValue={compareMode ? `${totalHours2}h` : undefined} periods={mkPeriods(d => `${d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)}h`)} icon={Award} colorClass="bg-indigo-50 text-indigo-600" subtext="Horas concluídas" />
         </div>
 
         {/* Top Performance + Risco Dependência */}
@@ -1412,9 +1689,11 @@ const pendingLogisticsDemands = useMemo(() => {
                     <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold' }} />
                     <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
                     <Tooltip cursor={{ fill: '#F8FAFC' }} formatter={(v: number) => [`${v}h`, 'Horas']} />
-                    {compareMode && <Legend wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />}
-                    <Bar dataKey="hours" name="P1" fill="#10B981" radius={[4, 4, 0, 0]} barSize={compareMode ? 16 : 36} />
-                    {compareMode && <Bar dataKey="hours2" name="P2" fill="#3B82F6" radius={[4, 4, 0, 0]} barSize={16} />}
+                    {compareMode && <Legend wrapperStyle={{ fontSize: '10px', fontWeight: 'bold', cursor: 'pointer' }} onClick={(e: any) => toggleSeries(`workload-${e.dataKey}`)} />}
+                    <Bar dataKey="hours" name="P1" fill={PERIOD_COLORS[0]} radius={[4, 4, 0, 0]} barSize={compareMode ? Math.max(8, Math.floor(32 / allFilteredDemandsList.length)) : 36} hide={hiddenSeries['workload-hours']} />
+                    {compareMode && allFilteredDemandsList.slice(1).map((_, i) => (
+                      <Bar key={i + 1} dataKey={i === 0 ? 'hours2' : `hours${i + 1}`} name={`P${i + 2}`} fill={PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length]} radius={[4, 4, 0, 0]} barSize={Math.max(8, Math.floor(32 / allFilteredDemandsList.length))} hide={hiddenSeries[`workload-${i === 0 ? 'hours2' : `hours${i + 1}`}`]} />
+                    ))}
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -1618,11 +1897,18 @@ const pendingLogisticsDemands = useMemo(() => {
   };
 
   const renderClientes = () => {
-    const clientData = companies.map(c => ({
-      name: c.name,
-      volume: filteredDemands.filter(d => d.companyId === c.id).length,
-      ...(compareMode ? { volume2: filteredDemands2.filter(d => d.companyId === c.id).length } : {})
-    })).sort((a, b) => b.volume - a.volume).slice(0, 8).filter(c => c.volume > 0);
+    const clientData = companies.map(c => {
+      const row: any = {
+        name: c.name,
+        volume: filteredDemands.filter(d => d.companyId === c.id).length,
+      };
+      if (compareMode) {
+        allFilteredDemandsList.slice(1).forEach((dList, i) => {
+          row[`volume${i + 2}`] = dList.filter(d => d.companyId === c.id).length;
+        });
+      }
+      return row;
+    }).sort((a: any, b: any) => b.volume - a.volume).slice(0, 8).filter((c: any) => c.volume > 0);
 
     const trainingCategoryData: { name: string; value: number }[] = Object.entries(
       trainings.reduce((acc, t) => {
@@ -1636,11 +1922,19 @@ const pendingLogisticsDemands = useMemo(() => {
     })).sort((a, b) => b.value - a.value).filter(v => v.value > 0);
 
     return (
-      <div className="space-y-6 animate-fade-in">
+      <div className="space-y-6 animate-fade-in" ref={(el) => { chartRefsMap.current['CLIENTES'] = el; }}>
         {compareMode && (
-          <div className="flex items-center gap-4 px-1 text-[9px] font-black uppercase tracking-widest">
-            <span className="flex items-center gap-1.5 text-blue-500"><span className="inline-block w-2.5 h-2.5 rounded bg-blue-400" /> P1: {getPeriodLabel(filters.startDate, filters.endDate)}</span>
-            <span className="flex items-center gap-1.5 text-emerald-600"><span className="inline-block w-2.5 h-2.5 rounded bg-emerald-400" /> P2: {getPeriodLabel(compareFilters.startDate, compareFilters.endDate)}</span>
+          <div className="flex flex-wrap items-center gap-3 px-1 text-[9px] font-black uppercase tracking-widest">
+            <span className="flex items-center gap-1.5" style={{ color: PERIOD_COLORS[0] }}>
+              <span className="inline-block w-2.5 h-2.5 rounded" style={{ background: PERIOD_COLORS[0] }} />
+              P1: {getPeriodLabel(filters.startDate, filters.endDate)}
+            </span>
+            {extraPeriods.map((p, i) => (
+              <span key={p.id} className="flex items-center gap-1.5" style={{ color: PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length] }}>
+                <span className="inline-block w-2.5 h-2.5 rounded" style={{ background: PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length] }} />
+                P{i + 2}: {getPeriodLabel(p.startDate, p.endDate)}
+              </span>
+            ))}
           </div>
         )}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1653,9 +1947,11 @@ const pendingLogisticsDemands = useMemo(() => {
                     <XAxis type="number" hide />
                     <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold' }} />
                     <Tooltip />
-                    {compareMode && <Legend wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />}
-                    <Bar dataKey="volume" name="P1" fill="#3B82F6" radius={[0, 4, 4, 0]} barSize={compareMode ? 10 : undefined} />
-                    {compareMode && <Bar dataKey="volume2" name="P2" fill="#10B981" radius={[0, 4, 4, 0]} barSize={10} />}
+                    {compareMode && <Legend wrapperStyle={{ fontSize: '10px', fontWeight: 'bold', cursor: 'pointer' }} onClick={(e: any) => toggleSeries(`client-${e.dataKey}`)} />}
+                    <Bar dataKey="volume" name="P1" fill={PERIOD_COLORS[0]} radius={[0, 4, 4, 0]} barSize={compareMode ? Math.max(6, Math.floor(22 / allFilteredDemandsList.length)) : undefined} hide={hiddenSeries['client-volume']} />
+                    {compareMode && allFilteredDemandsList.slice(1).map((_, i) => (
+                      <Bar key={i + 2} dataKey={`volume${i + 2}`} name={`P${i + 2}`} fill={PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length]} radius={[0, 4, 4, 0]} barSize={Math.max(6, Math.floor(22 / allFilteredDemandsList.length))} hide={hiddenSeries[`client-volume${i + 2}`]} />
+                    ))}
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -1814,23 +2110,49 @@ const pendingLogisticsDemands = useMemo(() => {
       ].filter(e => e.value > 0);
     })() : [];
 
+    // Para 3+ períodos: barras agrupadas por categoria de despesa
+    const expenseBarData = extraPeriods.length >= 2
+      ? [
+          { name: 'Hospedagem', cats: 'HOSPEDAGEM' },
+          { name: 'Locomoção',  cats: 'LOCOMOCAO'  },
+          { name: 'Café da Manhã', cats: 'CAFE'     },
+          { name: 'Almoço',     cats: 'ALMOCO'      },
+          { name: 'Jantar',     cats: 'JANTAR'       },
+          { name: 'Outros',     cats: 'OUTROS'       },
+        ].map(cat => {
+          const row: any = { name: cat.name };
+          allFilteredMeasurementsList.forEach((mList, i) => {
+            row[`P${i + 1}`] = sumByCategory(mList as any, cat.cats);
+          });
+          return row;
+        }).filter(row => allFilteredMeasurementsList.some((_, i) => (row[`P${i + 1}`] ?? 0) > 0))
+      : [];
+
     return (
-      <div className="space-y-6 animate-fade-in">
+      <div className="space-y-6 animate-fade-in" ref={(el) => { chartRefsMap.current['CUSTOS'] = el; }}>
 
         {compareMode && (
-          <div className="flex items-center gap-4 px-1 text-[9px] font-black uppercase tracking-widest">
-            <span className="flex items-center gap-1.5 text-blue-500"><span className="inline-block w-2.5 h-2.5 rounded bg-blue-400" /> P1: {getPeriodLabel(filters.startDate, filters.endDate)}</span>
-            <span className="flex items-center gap-1.5 text-emerald-600"><span className="inline-block w-2.5 h-2.5 rounded bg-emerald-400" /> P2: {getPeriodLabel(compareFilters.startDate, compareFilters.endDate)}</span>
+          <div className="flex flex-wrap items-center gap-3 px-1 text-[9px] font-black uppercase tracking-widest">
+            <span className="flex items-center gap-1.5" style={{ color: PERIOD_COLORS[0] }}>
+              <span className="inline-block w-2.5 h-2.5 rounded" style={{ background: PERIOD_COLORS[0] }} />
+              P1: {getPeriodLabel(filters.startDate, filters.endDate)}
+            </span>
+            {extraPeriods.map((p, i) => (
+              <span key={p.id} className="flex items-center gap-1.5" style={{ color: PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length] }}>
+                <span className="inline-block w-2.5 h-2.5 rounded" style={{ background: PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length] }} />
+                P{i + 2}: {getPeriodLabel(p.startDate, p.endDate)}
+              </span>
+            ))}
           </div>
         )}
 
         {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <KPICard title="Total em Despesas" value={totalCosts} compareValue={compareMode ? totalCosts2 : undefined} isCurrency icon={DollarSign} colorClass="bg-amber-50 text-amber-600" />
-          <KPICard title="Ticket Médio/Medição" value={ticketMedio} compareValue={ticketMedio2} isCurrency icon={Zap} colorClass="bg-blue-50 text-blue-600" subtext={`${filteredMeasurements.length} medições`} />
-          <KPICard title="Não Iniciadas" value={naoIniciadaCount} compareValue={naoIniciada2} positiveIsGood={false} icon={Clock} colorClass="bg-orange-50 text-orange-600" subtext="Demandas concluídas" />
-          <KPICard title="Pronta Faturamento" value={filteredMeasurements.filter(m => m.status === 'PRONTA_FATURAMENTO').length} compareValue={compareMode ? filteredMeasurements2.filter(m => m.status === 'PRONTA_FATURAMENTO').length : undefined} icon={CheckCircle} colorClass="bg-violet-50 text-violet-600" />
-          <KPICard title="Faturadas" value={filteredMeasurements.filter(m => m.status === 'FATURADA').length} compareValue={compareMode ? filteredMeasurements2.filter(m => m.status === 'FATURADA').length : undefined} icon={Award} colorClass="bg-emerald-50 text-emerald-600" />
+          <KPICard title="Total em Despesas" value={totalCosts} compareValue={compareMode ? totalCosts2 : undefined} isCurrency periods={mkPeriods((_d, m) => m.reduce((acc: number, x: any) => acc + x.attachments.reduce((s: number, a: any) => { const v = typeof a.value === 'string' ? parseFloat(a.value.replace(',', '.')) : Number(a.value); return s + (Number(v) || 0); }, 0), 0))} icon={DollarSign} colorClass="bg-amber-50 text-amber-600" />
+          <KPICard title="Ticket Médio/Medição" value={ticketMedio} compareValue={ticketMedio2} isCurrency periods={mkPeriods((_d, m) => { const cost = m.reduce((acc: number, x: any) => acc + x.attachments.reduce((s: number, a: any) => { const v = typeof a.value === 'string' ? parseFloat(a.value.replace(',', '.')) : Number(a.value); return s + (Number(v) || 0); }, 0), 0); return m.length > 0 ? cost / m.length : 0; })} icon={Zap} colorClass="bg-blue-50 text-blue-600" subtext={`${filteredMeasurements.length} medições`} />
+          <KPICard title="Não Iniciadas" value={naoIniciadaCount} compareValue={naoIniciada2} positiveIsGood={false} periods={mkPeriods((d, m) => { const conc = d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA'); return conc.filter((x: any) => !m.some((mx: any) => mx.demandId === x.id) || m.find((mx: any) => mx.demandId === x.id)?.status === 'NAO_INICIADA').length; })} icon={Clock} colorClass="bg-orange-50 text-orange-600" subtext="Demandas concluídas" />
+          <KPICard title="Pronta Faturamento" value={filteredMeasurements.filter(m => m.status === 'PRONTA_FATURAMENTO').length} compareValue={compareMode ? filteredMeasurements2.filter(m => m.status === 'PRONTA_FATURAMENTO').length : undefined} periods={mkPeriods((_d, m) => m.filter((x: any) => x.status === 'PRONTA_FATURAMENTO').length)} icon={CheckCircle} colorClass="bg-violet-50 text-violet-600" />
+          <KPICard title="Faturadas" value={filteredMeasurements.filter(m => m.status === 'FATURADA').length} compareValue={compareMode ? filteredMeasurements2.filter(m => m.status === 'FATURADA').length : undefined} periods={mkPeriods((_d, m) => m.filter((x: any) => x.status === 'FATURADA').length)} icon={Award} colorClass="bg-emerald-50 text-emerald-600" />
         </div>
 
         {/* Mix de Despesas + Média por Categoria */}
@@ -1840,10 +2162,25 @@ const pendingLogisticsDemands = useMemo(() => {
           <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '22rem' }}>
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 shrink-0">Mix de Despesas</h3>
             <div className="flex-1 min-h-0">
-              {compareMode ? (
+              {compareMode && extraPeriods.length >= 2 ? (
+                /* 3+ períodos → barras agrupadas por categoria */
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={expenseBarData} margin={{ top: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 'bold' }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9 }} tickFormatter={(v) => formatCurrency(v)} />
+                    <Tooltip formatter={(v: number) => formatCurrency(v)} cursor={{ fill: '#F8FAFC' }} />
+                    <Legend iconType="circle" wrapperStyle={{ fontSize: '9px', fontWeight: 'bold', cursor: 'pointer' }} onClick={(e: any) => toggleSeries(`expense-${e.dataKey}`)} />
+                    {allFilteredDemandsList.map((_, i) => (
+                      <Bar key={i} dataKey={`P${i + 1}`} name={`P${i + 1}`} fill={PERIOD_COLORS[i % PERIOD_COLORS.length]} radius={[3, 3, 0, 0]} barSize={14} hide={hiddenSeries[`expense-P${i + 1}`]} />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : compareMode ? (
+                /* 2 períodos → dois donuts lado a lado */
                 <div className="flex h-full gap-2">
                   <div className="flex-1 flex flex-col">
-                    <p className="text-[8px] font-black text-blue-400 uppercase text-center mb-1">P1</p>
+                    <p className="text-[8px] font-black uppercase text-center mb-1" style={{ color: PERIOD_COLORS[0] }}>P1</p>
                     {expenseData.length > 0 ? (
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
@@ -1858,7 +2195,7 @@ const pendingLogisticsDemands = useMemo(() => {
                   </div>
                   <div className="w-px bg-slate-100 shrink-0" />
                   <div className="flex-1 flex flex-col">
-                    <p className="text-[8px] font-black text-emerald-500 uppercase text-center mb-1">P2</p>
+                    <p className="text-[8px] font-black uppercase text-center mb-1" style={{ color: PERIOD_COLORS[1] }}>P2</p>
                     {expenseData2.length > 0 ? (
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
@@ -1873,6 +2210,7 @@ const pendingLogisticsDemands = useMemo(() => {
                   </div>
                 </div>
               ) : expenseData.length > 0 ? (
+                /* 1 período → donut simples */
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={expenseData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} dataKey="value" stroke="none">
@@ -2386,48 +2724,26 @@ const pendingLogisticsDemands = useMemo(() => {
 
       {/* Filtros Globais */}
       <div className="bg-white p-4 rounded-[1.5rem] shadow-sm border border-slate-200">
-        <div className="flex flex-wrap gap-4 items-end">
-          <div className="min-w-[160px]">
-            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Calendar size={10} /> Período (Mês/Ano)</label>
-            <select
-              className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white capitalize"
-              value={getMonthSelectorValue()}
-              onChange={(e) => handleMonthFilterChange(e.target.value)}
-            >
-              <option value="">Todos</option>
-              {availableMonths.map(([key, label]) => (
-                <option key={key} value={key}>{label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex-1 min-w-[200px]">
-            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Calendar size={10} /> Intervalo Customizado</label>
-            <div className="flex gap-2">
-              <input type="date" className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner bg-slate-50/50" value={filters.startDate} onChange={e => setFilters(prev => ({ ...prev, startDate: e.target.value }))} />
-              <input type="date" className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner bg-slate-50/50" value={filters.endDate} onChange={e => setFilters(prev => ({ ...prev, endDate: e.target.value }))} />
-            </div>
-          </div>
-
-          <div className="min-w-[160px]">
+        <div className="flex flex-wrap gap-3 items-end">
+          <div className="min-w-[130px] flex-1">
             <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Building2 size={10} /> Empresa</label>
-            <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.companyId} onChange={e => setFilters(prev => ({ ...prev, companyId: e.target.value }))}>
+            <select className="w-full border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.companyId} onChange={e => setFilters(prev => ({ ...prev, companyId: e.target.value }))}>
               <option value="">Todas</option>
               {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
 
-          <div className="min-w-[160px]">
+          <div className="min-w-[120px] flex-1">
             <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><MapPin size={10} /> Região</label>
-            <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.regionId} onChange={e => setFilters(prev => ({ ...prev, regionId: e.target.value }))}>
+            <select className="w-full border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.regionId} onChange={e => setFilters(prev => ({ ...prev, regionId: e.target.value }))}>
               <option value="">Todas</option>
               {regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
           </div>
 
-          <div className="min-w-[160px]">
+          <div className="min-w-[120px] flex-1">
             <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Filter size={10} /> Status (Real)</label>
-            <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.status} onChange={e => setFilters(prev => ({ ...prev, status: e.target.value }))}>
+            <select className="w-full border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.status} onChange={e => setFilters(prev => ({ ...prev, status: e.target.value }))}>
               <option value="">Todos</option>
               {Object.entries(STATUS_LABELS).map(([k, v]) => (
                 <option key={k} value={k}>{v}</option>
@@ -2435,121 +2751,158 @@ const pendingLogisticsDemands = useMemo(() => {
             </select>
           </div>
 
+          <div className="min-w-[130px] flex-1">
+            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><MapPin size={10} /> Local do Treinamento</label>
+            <select className="w-full border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.trainingLocal} onChange={e => setFilters(prev => ({ ...prev, trainingLocal: e.target.value }))}>
+              <option value="">Todos</option>
+              {availableTrainingLocals.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
+
+          <div className="min-w-[110px] flex-1">
+            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Truck size={10} /> Corredor</label>
+            <select className="w-full border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.corredor} onChange={e => setFilters(prev => ({ ...prev, corredor: e.target.value }))}>
+              <option value="">Todos</option>
+              {availableCorredores.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
+
+          <div className="min-w-[100px] flex-1">
+            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Target size={10} /> Estado (UF)</label>
+            <select className="w-full border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.demandState} onChange={e => setFilters(prev => ({ ...prev, demandState: e.target.value }))}>
+              <option value="">Todos</option>
+              {availableStates.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
+
           <button
             onClick={() => setFilters({ startDate: '', endDate: '', companyId: '', regionId: '', status: '', trainingLocal: '', corredor: '', demandState: '' })}
-            className="px-4 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-red-500 transition-colors"
+            className="px-4 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-red-500 transition-colors shrink-0"
           >
             Limpar
           </button>
-
-          <button
-            onClick={() => {
-              setCompareMode(v => !v);
-              if (compareMode) setCompareFilters({ startDate: '', endDate: '' });
-            }}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${
-              compareMode
-                ? 'bg-violet-50 border-violet-300 text-violet-700 shadow-sm'
-                : 'bg-white border-slate-200 text-slate-400 hover:text-violet-600 hover:border-violet-200 hover:bg-violet-50'
-            }`}
-          >
-            <ArrowLeftRight size={12} />
-            {compareMode ? 'Comparação Ativa' : 'Comparar Períodos'}
-          </button>
         </div>
 
-        {/* Seletor de Período de Comparação */}
-        {compareMode && (
-          <div className="mt-3 pt-3 border-t border-violet-100">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-2 h-2 rounded-full bg-violet-400" />
-              <span className="text-[9px] font-black text-violet-500 uppercase tracking-widest">Período de Comparação (P2)</span>
-              {(filters.startDate || filters.endDate) && (
-                <span className="text-[9px] text-slate-400 font-bold">
-                  — P1: {getPeriodLabel(filters.startDate, filters.endDate)}
-                </span>
-              )}
+        {/* ── Lista de Períodos ──────────────────────────────────────── */}
+        <div className="mt-3 pt-3 border-t border-slate-100 space-y-2">
+
+          {/* P1 — período principal (sempre presente) */}
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex items-center gap-1.5 shrink-0 w-8">
+              <span
+                className="w-2.5 h-2.5 rounded-full shrink-0"
+                style={{ background: PERIOD_COLORS[0] }}
+              />
+              <span className="text-[9px] font-black text-slate-400 uppercase">P1</span>
             </div>
-            <div className="flex flex-wrap gap-4 items-end">
-              <div className="min-w-[160px]">
-                <label className="block text-[9px] font-black text-violet-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Calendar size={10} /> Mês/Ano (P2)</label>
-                <select
-                  className="w-full border border-violet-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-violet-400 shadow-sm bg-white capitalize"
-                  value={getCompareMonthSelectorValue()}
-                  onChange={(e) => handleCompareMonthChange(e.target.value)}
-                >
-                  <option value="">Todos</option>
-                  {availableMonths.map(([key, label]) => (
-                    <option key={key} value={key}>{label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex-1 min-w-[200px]">
-                <label className="block text-[9px] font-black text-violet-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Calendar size={10} /> Intervalo Customizado (P2)</label>
-                <div className="flex gap-2">
-                  <input type="date" className="flex-1 border border-violet-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-violet-400 shadow-inner bg-violet-50/30" value={compareFilters.startDate} onChange={e => setCompareFilters(prev => ({ ...prev, startDate: e.target.value }))} />
-                  <input type="date" className="flex-1 border border-violet-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-violet-400 shadow-inner bg-violet-50/30" value={compareFilters.endDate} onChange={e => setCompareFilters(prev => ({ ...prev, endDate: e.target.value }))} />
-                </div>
-              </div>
-              <button
-                onClick={() => setCompareFilters({ startDate: '', endDate: '' })}
-                className="px-4 py-2 text-[10px] font-black text-violet-400 uppercase tracking-widest hover:text-red-500 transition-colors"
+            <div className="min-w-[150px]">
+              <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Mês/Ano</label>
+              <select
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white capitalize"
+                value={getMonthSelectorValue()}
+                onChange={e => handleMonthFilterChange(e.target.value)}
               >
-                Limpar P2
-              </button>
+                <option value="">Todos</option>
+                {availableMonths.map(([key, label]) => (
+                  <option key={key} value={key}>{label}</option>
+                ))}
+              </select>
             </div>
-            {(compareFilters.startDate || compareFilters.endDate) && (
-              <div className="mt-2 flex items-center gap-4 text-[9px] font-bold text-slate-400">
-                <span className="flex items-center gap-1">
-                  <span className="inline-block w-2 h-2 rounded-sm bg-blue-400" /> P1: {getPeriodLabel(filters.startDate, filters.endDate)}
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="inline-block w-2 h-2 rounded-sm bg-emerald-400" /> P2: {getPeriodLabel(compareFilters.startDate, compareFilters.endDate)}
-                </span>
+            <div className="flex gap-2 flex-1 min-w-[200px]">
+              <input
+                type="date"
+                className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner bg-slate-50/50"
+                value={filters.startDate}
+                onChange={e => setFilters(prev => ({ ...prev, startDate: e.target.value }))}
+              />
+              <input
+                type="date"
+                className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner bg-slate-50/50"
+                value={filters.endDate}
+                onChange={e => setFilters(prev => ({ ...prev, endDate: e.target.value }))}
+              />
+            </div>
+            {/* espaço reservado para alinhar com o X dos períodos extras */}
+            <div className="w-6 shrink-0" />
+          </div>
+
+          {/* P2…PN — períodos extras */}
+          {extraPeriods.map((p, idx) => {
+            const colorIdx = (idx + 1) % PERIOD_COLORS.length;
+            const color    = PERIOD_COLORS[colorIdx];
+            return (
+              <div key={p.id} className="flex flex-wrap items-end gap-3">
+                <div className="flex items-center gap-1.5 shrink-0 w-8">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
+                  <span className="text-[9px] font-black text-slate-400 uppercase">P{idx + 2}</span>
+                </div>
+                <div className="min-w-[150px]">
+                  <label className="block text-[9px] font-black uppercase tracking-widest mb-1.5" style={{ color }}>Mês/Ano</label>
+                  <select
+                    className="w-full border rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 shadow-sm bg-white capitalize"
+                    style={{ borderColor: `${color}55`, '--tw-ring-color': color } as React.CSSProperties}
+                    value={getExtraMonthValue(p)}
+                    onChange={e => handleExtraMonthChange(p.id, e.target.value)}
+                  >
+                    <option value="">Todos</option>
+                    {availableMonths.map(([key, label]) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex gap-2 flex-1 min-w-[200px]">
+                  <input
+                    type="date"
+                    className="flex-1 border rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 shadow-inner bg-slate-50/50"
+                    style={{ borderColor: `${color}55` }}
+                    value={p.startDate}
+                    onChange={e => updateExtraPeriod(p.id, { startDate: e.target.value })}
+                  />
+                  <input
+                    type="date"
+                    className="flex-1 border rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 shadow-inner bg-slate-50/50"
+                    style={{ borderColor: `${color}55` }}
+                    value={p.endDate}
+                    onChange={e => updateExtraPeriod(p.id, { endDate: e.target.value })}
+                  />
+                </div>
+                <button
+                  onClick={() => removeExtraPeriod(p.id)}
+                  title="Remover período"
+                  className="w-6 shrink-0 flex items-center justify-center text-slate-300 hover:text-red-500 transition-colors"
+                >
+                  <X size={14} />
+                </button>
               </div>
+            );
+          })}
+
+          {/* Botão adicionar + aviso de limite + Gerar relatório */}
+          <div className="flex items-center gap-3 pt-0.5 flex-wrap">
+            <button
+              onClick={addExtraPeriod}
+              disabled={extraPeriods.length >= 5}
+              className="flex items-center gap-1 text-[10px] font-black text-blue-500 uppercase tracking-widest hover:text-blue-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <ArrowLeftRight size={11} />
+              + Adicionar período
+            </button>
+            {extraPeriods.length >= 5 && (
+              <span className="text-[9px] font-bold text-slate-400">
+                Máximo de 6 períodos atingido
+              </span>
+            )}
+            {compareMode && (
+              <button
+                onClick={() => setShowReportModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-sm transition-all"
+              >
+                <Download size={11} />
+                Gerar relatório
+              </button>
             )}
           </div>
-        )}
-
-        {/* Toggle Filtros Avançados */}
-        <button
-          onClick={() => setShowAdvancedFilters(prev => !prev)}
-          className="mt-3 text-[10px] font-black text-blue-600 uppercase tracking-widest hover:text-blue-800 transition-colors flex items-center gap-1"
-        >
-          {showAdvancedFilters ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-          {showAdvancedFilters ? 'Ocultar Filtros Avançados' : 'Mostrar Filtros Avançados'}
-          {(filters.trainingLocal || filters.corredor || filters.demandState) && (
-            <span className="ml-1 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[8px]">Ativo</span>
-          )}
-        </button>
-
-        {showAdvancedFilters && (
-          <div className="flex flex-wrap gap-4 items-end mt-3 pt-3 border-t border-slate-100">
-            <div className="min-w-[160px]">
-              <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><MapPin size={10} /> Local do Treinamento</label>
-              <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.trainingLocal} onChange={e => setFilters(prev => ({ ...prev, trainingLocal: e.target.value }))}>
-                <option value="">Todos</option>
-                {availableTrainingLocals.map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
-            </div>
-
-            <div className="min-w-[160px]">
-              <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Truck size={10} /> Corredor</label>
-              <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.corredor} onChange={e => setFilters(prev => ({ ...prev, corredor: e.target.value }))}>
-                <option value="">Todos</option>
-                {availableCorredores.map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
-            </div>
-
-            <div className="min-w-[160px]">
-              <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Target size={10} /> Estado (UF)</label>
-              <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.demandState} onChange={e => setFilters(prev => ({ ...prev, demandState: e.target.value }))}>
-                <option value="">Todos</option>
-                {availableStates.map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
-            </div>
-          </div>
-        )}
+        </div>
       </div>
 
       <div className="min-h-[500px]">
@@ -2562,6 +2915,13 @@ const pendingLogisticsDemands = useMemo(() => {
 
       {/* Drawer de ajuda */}
       {showHelp && <HelpDrawer tab={activeTab} onClose={() => setShowHelp(false)} />}
+
+      {/* Modal de geração de relatório */}
+      <ReportModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        reportInput={reportInput}
+      />
     </div>
   );
 };

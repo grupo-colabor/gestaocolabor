@@ -6,11 +6,11 @@ import {
 import { useApp } from '../App';
 import {
   Filter, Calendar, Users, Briefcase, AlertCircle, CheckCircle,
-  Clock, TrendingUp, AlertTriangle, Building2, MapPin,
+  Clock, TrendingUp, TrendingDown, AlertTriangle, Building2, MapPin,
   Truck, DollarSign, Award, Target, Zap, ShieldAlert,
   Download, MousePointer2,
   Info, Ban, ChevronDown, ChevronUp, Bell, Package, FileText, UserCheck, Hotel, Car,
-  HelpCircle, X
+  HelpCircle, X, ArrowLeftRight
 } from 'lucide-react';
 import { Demand } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
@@ -45,15 +45,17 @@ type TabType = 'GERAL' | 'OPERACIONAL' | 'INSTRUTORES' | 'CLIENTES' | 'CUSTOS';
 
 type RankedItem = { name: string; value: number };
 
-/** Lista ranqueada com barras inline e expansão do grupo "Outros" */
+/** Lista ranqueada com barras inline e expansão do grupo "Outros". Suporta modo de comparação com items2. */
 const RankedListChart: React.FC<{
   items: RankedItem[];
   othersDetail: RankedItem[];
   barColor: string;
   emptyLabel?: string;
   valueFormatter?: (v: number) => string;
-}> = ({ items, othersDetail, barColor, emptyLabel = 'Sem dados', valueFormatter }) => {
+  items2?: RankedItem[];
+}> = ({ items, othersDetail, barColor, emptyLabel = 'Sem dados', valueFormatter, items2 }) => {
   const [expanded, setExpanded] = useState(false);
+  const isCompare = items2 !== undefined;
 
   const allItems = expanded
     ? [...items, ...othersDetail]
@@ -61,7 +63,8 @@ const RankedListChart: React.FC<{
       ? [...items, { name: `Outros (${othersDetail.length} locais)`, value: othersDetail.reduce((s, i) => s + i.value, 0), isOthers: true } as any]
       : items;
 
-  const max = Math.max(...[...items, ...othersDetail].map(i => i.value), 1);
+  const map2 = new Map((items2 ?? []).map(i => [i.name, i.value]));
+  const max = Math.max(...[...items, ...othersDetail].map(i => i.value), ...(items2 ?? []).map(i => i.value), 1);
 
   if (items.length === 0 && othersDetail.length === 0) {
     return (
@@ -75,6 +78,7 @@ const RankedListChart: React.FC<{
     <div className="flex flex-col gap-1 overflow-y-auto flex-1 min-h-0 pr-0.5">
       {allItems.map((item: any, idx: number) => {
         const isOthersRow = item.isOthers;
+        const val2 = isCompare && !isOthersRow ? (map2.get(item.name) ?? 0) : undefined;
         return (
           <div key={item.name + idx}>
             <div
@@ -90,15 +94,32 @@ const RankedListChart: React.FC<{
               >
                 {item.name}
               </span>
-              <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all ${isOthersRow ? 'bg-slate-300' : barColor}`}
-                  style={{ width: `${Math.round((item.value / max) * 100)}%` }}
-                />
+              <div className="flex-1 flex flex-col gap-0.5">
+                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${isOthersRow ? 'bg-slate-300' : barColor}`}
+                    style={{ width: `${Math.round((item.value / max) * 100)}%` }}
+                  />
+                </div>
+                {isCompare && !isOthersRow && (
+                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all bg-emerald-400"
+                      style={{ width: `${Math.round(((Number(val2) || 0) / max) * 100)}%` }}
+                    />
+                  </div>
+                )}
               </div>
-              <span className={`text-[10px] font-black shrink-0 text-right ${isOthersRow ? 'text-slate-400' : 'text-slate-700'} ${valueFormatter ? 'w-20' : 'w-5'}`}>
-                {valueFormatter ? valueFormatter(item.value) : item.value}
-              </span>
+              <div className={`shrink-0 text-right ${valueFormatter ? 'w-20' : 'w-5'}`}>
+                <div className={`text-[10px] font-black ${isOthersRow ? 'text-slate-400' : 'text-slate-700'}`}>
+                  {valueFormatter ? valueFormatter(item.value) : item.value}
+                </div>
+                {isCompare && !isOthersRow && (
+                  <div className="text-[9px] font-bold text-emerald-600">
+                    {valueFormatter ? valueFormatter(val2 ?? 0) : (val2 ?? 0)}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         );
@@ -437,6 +458,40 @@ const Dashboard: React.FC = () => {
     return "";
   };
 
+  // --- Comparação de Períodos ---
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareFilters, setCompareFilters] = useState({ startDate: '', endDate: '' });
+
+  const handleCompareMonthChange = (val: string) => {
+    if (!val) {
+      setCompareFilters({ startDate: '', endDate: '' });
+      return;
+    }
+    const [year, month] = val.split('-').map(Number);
+    const firstDay = `${year}-${String(month).padStart(2, '0')}-01`;
+    const lastDayDate = new Date(year, month, 0);
+    const lastDay = `${year}-${String(month).padStart(2, '0')}-${String(lastDayDate.getDate()).padStart(2, '0')}`;
+    setCompareFilters({ startDate: firstDay, endDate: lastDay });
+  };
+
+  const getCompareMonthSelectorValue = () => {
+    if (!compareFilters.startDate || !compareFilters.endDate) return "";
+    const [sY, sM, sD] = compareFilters.startDate.split('-');
+    const [eY, eM, eD] = compareFilters.endDate.split('-');
+    if (sY === eY && sM === eM && sD === '01') {
+      const lastDay = new Date(Number(eY), Number(eM), 0).getDate();
+      if (Number(eD) === lastDay) return `${sY}-${sM}`;
+    }
+    return "";
+  };
+
+  const getPeriodLabel = (start: string, end: string) => {
+    if (!start && !end) return 'Todo o período';
+    const fmt = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: '2-digit' });
+    if (start && end) return `${fmt(start)} – ${fmt(end)}`;
+    return start ? `A partir de ${fmt(start)}` : `Até ${fmt(end)}`;
+  };
+
   // --- Modalidade ---
   const normalizeModality = (raw: any) =>
     String(raw ?? '')
@@ -492,6 +547,30 @@ const Dashboard: React.FC = () => {
     const demandIds = new Set(filteredDemands.map(d => d.id));
     return measurements.filter(m => demandIds.has(m.demandId));
   }, [measurements, filteredDemands]);
+
+  // --- Período de Comparação ---
+  const filteredDemands2 = useMemo(() => {
+    if (!compareMode) return [];
+    return demands.filter(d => {
+      const currentStatus = getCalculatedStatus(d);
+      if (compareFilters.startDate || compareFilters.endDate) {
+        if (!demandIntersectsRange(d, compareFilters.startDate || undefined, compareFilters.endDate || undefined)) return false;
+      }
+      if (filters.companyId && d.companyId !== filters.companyId) return false;
+      if (filters.regionId && d.regionId !== filters.regionId) return false;
+      if (filters.status && currentStatus !== filters.status) return false;
+      if (filters.trainingLocal && (d.trainingLocal ?? '') !== filters.trainingLocal) return false;
+      if (filters.corredor && (d.corredor ?? '') !== filters.corredor) return false;
+      if (filters.demandState && (d.demandState ?? '') !== filters.demandState) return false;
+      return true;
+    });
+  }, [demands, compareFilters, compareMode, filters.companyId, filters.status, filters.regionId, filters.trainingLocal, filters.corredor, filters.demandState, trainings]);
+
+  const filteredMeasurements2 = useMemo(() => {
+    if (!compareMode) return [];
+    const demandIds = new Set(filteredDemands2.map(d => d.id));
+    return measurements.filter(m => demandIds.has(m.demandId));
+  }, [measurements, filteredDemands2, compareMode]);
 
   // ✅ Helpers: lê status do Supabase logistic_allocations
   const isCarOkFromAlloc = (alloc?: LogisticAllocationRow) => {
@@ -588,24 +667,80 @@ const pendingLogisticsDemands = useMemo(() => {
     }, 0);
   }, [filteredMeasurements]);
 
+  const totalHours2 = useMemo(() => {
+    if (!compareMode) return 0;
+    return filteredDemands2
+      .filter(d => getCalculatedStatus(d) === 'CONCLUIDA')
+      .reduce((acc: number, d) => acc + getTrainingHours(d.trainingId), 0);
+  }, [filteredDemands2, trainings, compareMode]);
+
+  const totalCosts2 = useMemo(() => {
+    if (!compareMode) return 0;
+    return filteredMeasurements2.reduce((acc: number, m) => {
+      return acc + m.attachments.reduce((sum: number, att) => {
+        const val = typeof att.value === 'string' ? parseFloat(att.value.replace(',', '.')) : Number(att.value);
+        return sum + (Number(val) || 0);
+      }, 0);
+    }, 0);
+  }, [filteredMeasurements2, compareMode]);
+
   // --- Componentes de UI ---
-  const KPICard = ({ title, value, subtext, icon: Icon, colorClass, isCurrency = false, isTrend = false }: any) => (
-    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-start justify-between hover:shadow-md transition-all group">
-      <div>
-        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-slate-600 transition-colors">{title}</p>
-        <div className="flex items-baseline gap-2">
-          <h3 className="text-2xl font-black text-slate-800">
-            {isCurrency ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value)) : value}
-          </h3>
-          {isTrend && <span className="text-[10px] font-bold text-emerald-500 flex items-center gap-0.5"><TrendingUp size={10} /> +12%</span>}
+  const KPICard = ({ title, value, subtext, icon: Icon, colorClass, isCurrency = false, isTrend = false, compareValue, positiveIsGood = true }: any) => {
+    const fmt = (v: any) => isCurrency
+      ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v))
+      : v;
+
+    const toNum = (v: any): number => {
+      if (typeof v === 'string') {
+        const clean = v.replace('%', '').replace('h', '').replace(/[R$\s.]/g, '').replace(',', '.');
+        return parseFloat(clean) || 0;
+      }
+      return Number(v) || 0;
+    };
+
+    const showCompare = compareMode && compareValue !== undefined;
+    const delta = showCompare ? toNum(value) - toNum(compareValue) : null;
+    const pct = delta !== null && toNum(compareValue) !== 0
+      ? Math.round((delta / toNum(compareValue)) * 100)
+      : null;
+    const isGood = delta !== null && (positiveIsGood ? delta >= 0 : delta <= 0);
+
+    return (
+      <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-start justify-between hover:shadow-md transition-all group">
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-slate-600 transition-colors">{title}</p>
+          {showCompare ? (
+            <>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[8px] font-black text-blue-400 uppercase tracking-wider bg-blue-50 px-1 rounded">P1</span>
+                <span className="text-xl font-black text-slate-800">{fmt(value)}</span>
+              </div>
+              <div className="flex items-baseline gap-1.5 mt-0.5">
+                <span className="text-[8px] font-black text-emerald-500 uppercase tracking-wider bg-emerald-50 px-1 rounded">P2</span>
+                <span className="text-base font-black text-slate-500">{fmt(compareValue)}</span>
+              </div>
+              {delta !== null && (
+                <div className={`flex items-center gap-1 mt-1 text-[10px] font-black ${isGood ? 'text-emerald-600' : 'text-red-500'}`}>
+                  {isGood ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+                  {delta >= 0 ? '+' : ''}{isCurrency ? fmt(delta) : delta}
+                  {pct !== null && <span className="opacity-70">({pct > 0 ? '+' : ''}{pct}%)</span>}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="flex items-baseline gap-2">
+              <h3 className="text-2xl font-black text-slate-800">{fmt(value)}</h3>
+              {isTrend && <span className="text-[10px] font-bold text-emerald-500 flex items-center gap-0.5"><TrendingUp size={10} /> +12%</span>}
+            </div>
+          )}
+          {subtext && <p className="text-[10px] text-slate-500 font-bold mt-1.5 uppercase flex items-center gap-1">{subtext}</p>}
         </div>
-        {subtext && <p className="text-[10px] text-slate-500 font-bold mt-2 uppercase flex items-center gap-1">{subtext}</p>}
+        <div className={`p-3 rounded-xl ${colorClass} group-hover:scale-110 transition-transform shrink-0 ml-3`}>
+          <Icon size={20} />
+        </div>
       </div>
-      <div className={`p-3 rounded-xl ${colorClass} group-hover:scale-110 transition-transform`}>
-        <Icon size={20} />
-      </div>
-    </div>
-  );
+    );
+  };
 
   const AlertBar = ({ message, type = 'warning', children, onMouseEnter, onMouseLeave }: { message: string, type?: 'warning' | 'error' | 'info', children?: React.ReactNode, onMouseEnter?: () => void, onMouseLeave?: () => void }) => {
     const styles = {
@@ -635,15 +770,22 @@ const pendingLogisticsDemands = useMemo(() => {
       color: (COLORS[key as keyof typeof COLORS] as string) || '#CBD5E1'
     })).filter(d => d.value > 0);
 
+    const statusData2 = compareMode ? Object.keys(STATUS_LABELS).map(key => ({
+      name: STATUS_LABELS[key],
+      value: filteredDemands2.filter(d => getCalculatedStatus(d) === key).length,
+      color: (COLORS[key as keyof typeof COLORS] as string) || '#CBD5E1'
+    })).filter(d => d.value > 0) : [];
+
     const regionalData = regions.map(r => ({
       name: r.name,
-      value: filteredDemands.filter(d => d.regionId === r.id).length
+      value: filteredDemands.filter(d => d.regionId === r.id).length,
+      ...(compareMode ? { value2: filteredDemands2.filter(d => d.regionId === r.id).length } : {})
     })).sort((a, b) => b.value - a.value);
 
     // --- Dados para insights Local/Corredor/UF ---
-    const buildTop = (extract: (d: Demand) => string, limit = 10) => {
+    const buildTop = (src: Demand[], extract: (d: Demand) => string, limit = 10) => {
       const counts: Record<string, number> = {};
-      filteredDemands.forEach(d => {
+      src.forEach(d => {
         const v = (extract(d) ?? '').trim();
         if (!v) return;
         counts[v] = (counts[v] || 0) + 1;
@@ -654,9 +796,13 @@ const pendingLogisticsDemands = useMemo(() => {
       return { items, othersDetail };
     };
 
-    const localData = buildTop(d => d.trainingLocal ?? '');
-    const corredorData = buildTop(d => d.corredor ?? '');
-    const ufData = buildTop(d => d.demandState ?? '');
+    const localData    = buildTop(filteredDemands, d => d.trainingLocal ?? '');
+    const corredorData = buildTop(filteredDemands, d => d.corredor ?? '');
+    const ufData       = buildTop(filteredDemands, d => d.demandState ?? '');
+
+    const localData2    = compareMode ? buildTop(filteredDemands2, d => d.trainingLocal ?? '') : null;
+    const corredorData2 = compareMode ? buildTop(filteredDemands2, d => d.corredor ?? '') : null;
+    const ufData2       = compareMode ? buildTop(filteredDemands2, d => d.demandState ?? '') : null;
 
     // REGRAS DE ALERTA OPERACIONAIS
     const noInstructorDemands = filteredDemands.filter(d => {
@@ -665,6 +811,13 @@ const pendingLogisticsDemands = useMemo(() => {
       if (isOnlineDemand(d)) return false;
       return !d.instructorId;
     });
+
+    const noInstructorDemands2 = compareMode ? filteredDemands2.filter(d => {
+      const status = getCalculatedStatus(d);
+      if (status === 'CANCELADA' || status === 'CONCLUIDA') return false;
+      if (isOnlineDemand(d)) return false;
+      return !d.instructorId;
+    }) : [];
 
     const noMeasurementDemands = filteredDemands.filter(d => {
       const isConcluido = getCalculatedStatus(d) === 'CONCLUIDA';
@@ -675,17 +828,25 @@ const pendingLogisticsDemands = useMemo(() => {
     });
 
     // DEMANDAS CANCELADAS
-    const cancelledDemands = filteredDemands.filter(d => d.status === 'CANCELADA');
+    const cancelledDemands  = filteredDemands.filter(d => d.status === 'CANCELADA');
+    const cancelledDemands2 = compareMode ? filteredDemands2.filter(d => d.status === 'CANCELADA') : [];
 
     return (
       <div className="space-y-6 animate-fade-in">
 
+        {compareMode && (
+          <div className="flex items-center gap-4 px-1 text-[9px] font-black uppercase tracking-widest">
+            <span className="flex items-center gap-1.5 text-blue-500"><span className="inline-block w-2.5 h-2.5 rounded bg-blue-400" /> P1: {getPeriodLabel(filters.startDate, filters.endDate)}</span>
+            <span className="flex items-center gap-1.5 text-emerald-600"><span className="inline-block w-2.5 h-2.5 rounded bg-emerald-400" /> P2: {getPeriodLabel(compareFilters.startDate, compareFilters.endDate)}</span>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          <KPICard title="Total de Demandas" value={filteredDemands.length} icon={Briefcase} colorClass="bg-blue-50 text-blue-600" />
-          <KPICard title="Horas Ministradas" value={`${totalHours}h`} icon={Clock} colorClass="bg-emerald-50 text-emerald-600" subtext="Execuções Finalizadas" />
-          <KPICard title="Pendência de Alocação" value={noInstructorDemands.length} icon={AlertCircle} colorClass="bg-amber-50 text-amber-600" />
-          <KPICard title="Treinamentos Concluídos" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'CONCLUIDA').length} icon={CheckCircle} colorClass="bg-indigo-50 text-indigo-600" />
-          <KPICard title="Demandas Canceladas" value={cancelledDemands.length} icon={Ban} colorClass="bg-slate-100 text-slate-500" subtext="Histórico Inativo" />
+          <KPICard title="Total de Demandas" value={filteredDemands.length} compareValue={compareMode ? filteredDemands2.length : undefined} icon={Briefcase} colorClass="bg-blue-50 text-blue-600" />
+          <KPICard title="Horas Ministradas" value={`${totalHours}h`} compareValue={compareMode ? `${totalHours2}h` : undefined} icon={Clock} colorClass="bg-emerald-50 text-emerald-600" subtext="Execuções Finalizadas" />
+          <KPICard title="Pendência de Alocação" value={noInstructorDemands.length} compareValue={compareMode ? noInstructorDemands2.length : undefined} positiveIsGood={false} icon={AlertCircle} colorClass="bg-amber-50 text-amber-600" />
+          <KPICard title="Treinamentos Concluídos" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'CONCLUIDA').length} compareValue={compareMode ? filteredDemands2.filter(d => getCalculatedStatus(d) === 'CONCLUIDA').length : undefined} icon={CheckCircle} colorClass="bg-indigo-50 text-indigo-600" />
+          <KPICard title="Demandas Canceladas" value={cancelledDemands.length} compareValue={compareMode ? cancelledDemands2.length : undefined} positiveIsGood={false} icon={Ban} colorClass="bg-slate-100 text-slate-500" subtext="Histórico Inativo" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -695,7 +856,39 @@ const pendingLogisticsDemands = useMemo(() => {
               <Target size={14} />
             </h3>
             <div className="flex-1 min-h-0">
-              {statusData.length > 0 ? (
+              {compareMode ? (
+                <div className="flex h-full gap-2">
+                  <div className="flex-1 flex flex-col">
+                    <p className="text-[8px] font-black text-blue-400 uppercase text-center mb-1">P1</p>
+                    {statusData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie data={statusData} cx="50%" cy="50%" innerRadius={45} outerRadius={70} paddingAngle={4} dataKey="value">
+                            {statusData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
+                          </Pie>
+                          <Tooltip />
+                          <Legend verticalAlign="bottom" align="center" iconType="circle" wrapperStyle={{ fontSize: '9px', fontWeight: 'bold' }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    ) : <div className="flex-1 flex items-center justify-center text-slate-300 italic text-xs">Sem dados</div>}
+                  </div>
+                  <div className="w-px bg-slate-100 shrink-0" />
+                  <div className="flex-1 flex flex-col">
+                    <p className="text-[8px] font-black text-emerald-500 uppercase text-center mb-1">P2</p>
+                    {statusData2.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie data={statusData2} cx="50%" cy="50%" innerRadius={45} outerRadius={70} paddingAngle={4} dataKey="value">
+                            {statusData2.map((entry, index) => <Cell key={`cell2-${index}`} fill={entry.color} />)}
+                          </Pie>
+                          <Tooltip />
+                          <Legend verticalAlign="bottom" align="center" iconType="circle" wrapperStyle={{ fontSize: '9px', fontWeight: 'bold' }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    ) : <div className="flex-1 flex items-center justify-center text-slate-300 italic text-xs">Sem dados para P2</div>}
+                  </div>
+                </div>
+              ) : statusData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={statusData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={5} dataKey="value">
@@ -724,7 +917,9 @@ const pendingLogisticsDemands = useMemo(() => {
                     <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold' }} />
                     <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
                     <Tooltip cursor={{ fill: '#F8FAFC' }} />
-                    <Bar dataKey="value" fill="#3B82F6" radius={[4, 4, 0, 0]} barSize={40} />
+                    {compareMode && <Legend wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />}
+                    <Bar dataKey="value" name="P1" fill="#3B82F6" radius={[4, 4, 0, 0]} barSize={compareMode ? 20 : 40} />
+                    {compareMode && <Bar dataKey="value2" name="P2" fill="#10B981" radius={[4, 4, 0, 0]} barSize={20} />}
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -735,6 +930,12 @@ const pendingLogisticsDemands = useMemo(() => {
         </div>
 
         {/* --- INSIGHTS: Local / Corredor / UF --- */}
+        {compareMode && (
+          <div className="flex items-center gap-3 text-[9px] font-black uppercase tracking-widest px-1">
+            <span className="flex items-center gap-1 text-blue-500"><span className="w-2 h-1.5 rounded-sm inline-block bg-blue-400" /> Barra azul = P1</span>
+            <span className="flex items-center gap-1 text-emerald-600"><span className="w-2 h-1.5 rounded-sm inline-block bg-emerald-400" /> Barra verde = P2</span>
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Volume por Local do Treinamento */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
@@ -753,6 +954,7 @@ const pendingLogisticsDemands = useMemo(() => {
               items={localData.items}
               othersDetail={localData.othersDetail}
               barColor="bg-blue-500"
+              items2={localData2?.items}
             />
           </div>
 
@@ -773,6 +975,7 @@ const pendingLogisticsDemands = useMemo(() => {
               items={corredorData.items}
               othersDetail={corredorData.othersDetail}
               barColor="bg-emerald-500"
+              items2={corredorData2?.items}
             />
           </div>
 
@@ -793,6 +996,7 @@ const pendingLogisticsDemands = useMemo(() => {
               items={ufData.items}
               othersDetail={ufData.othersDetail}
               barColor="bg-amber-500"
+              items2={ufData2?.items}
             />
           </div>
         </div>
@@ -829,27 +1033,27 @@ const pendingLogisticsDemands = useMemo(() => {
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
     // Top treinamentos no período
-    const tCounts: Record<string, number> = {};
-    filteredDemands.forEach(d => {
-      const name = trainings.find(t => t.id === d.trainingId)?.name;
-      if (name) tCounts[name] = (tCounts[name] || 0) + 1;
-    });
-    const tSorted = Object.entries(tCounts).sort((a, b) => b[1] - a[1]);
-    const topTrainings    = tSorted.slice(0, 8).map(([name, value]) => ({ name, value }));
-    const othersTrainings = tSorted.slice(8).map(([name, value]) => ({ name, value }));
+    const buildTrainingTop = (src: Demand[], limit = 8) => {
+      const counts: Record<string, number> = {};
+      src.forEach(d => {
+        const name = trainings.find(t => t.id === d.trainingId)?.name;
+        if (name) counts[name] = (counts[name] || 0) + 1;
+      });
+      const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+      return { items: sorted.slice(0, limit).map(([name, value]) => ({ name, value })), others: sorted.slice(limit).map(([name, value]) => ({ name, value })) };
+    };
+    const { items: topTrainings, others: othersTrainings } = buildTrainingTop(filteredDemands);
+    const topTrainings2 = compareMode ? buildTrainingTop(filteredDemands2).items : undefined;
 
     // Ranking instrutores por demandas no período
-    const iCounts: Record<string, number> = {};
-    filteredDemands.filter(d => d.instructorId).forEach(d => {
-      iCounts[d.instructorId!] = (iCounts[d.instructorId!] || 0) + 1;
-    });
-    const topInstructors = Object.entries(iCounts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 8)
-      .map(([id, value]) => ({
-        name: instructors.find(i => i.id === id)?.name || id,
-        value
-      }));
+    const buildInstructorTop = (src: Demand[], limit = 8) => {
+      const counts: Record<string, number> = {};
+      src.filter(d => d.instructorId).forEach(d => { counts[d.instructorId!] = (counts[d.instructorId!] || 0) + 1; });
+      return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, limit)
+        .map(([id, value]) => ({ name: instructors.find(i => i.id === id)?.name || id, value }));
+    };
+    const topInstructors  = buildInstructorTop(filteredDemands);
+    const topInstructors2 = compareMode ? buildInstructorTop(filteredDemands2) : undefined;
 
     // Modalidade
     const modalTotal = filteredDemands.length || 1;
@@ -868,16 +1072,35 @@ const pendingLogisticsDemands = useMemo(() => {
       CANCELADA:   'bg-red-100 text-red-500',
     };
 
+    // Valores de comparação para Operacional
+    const noInstructor2 = compareMode ? filteredDemands2.filter(d => {
+      const s = getCalculatedStatus(d);
+      if (s === 'CANCELADA' || s === 'CONCLUIDA') return false;
+      if (isOnlineDemand(d)) return false;
+      return !d.instructorId;
+    }).length : undefined;
+    const alocadas2 = compareMode ? filteredDemands2.filter(d => getCalculatedStatus(d) === 'ALOCADA').length : undefined;
+    const concluded2 = compareMode ? filteredDemands2.filter(d => getCalculatedStatus(d) === 'CONCLUIDA') : [];
+    const activeDmds2 = compareMode ? filteredDemands2.filter(d => getCalculatedStatus(d) !== 'CANCELADA') : [];
+    const execRate2 = compareMode && activeDmds2.length > 0 ? Math.round((concluded2.length / activeDmds2.length) * 100) : undefined;
+
     return (
       <div className="space-y-6 animate-fade-in">
 
+        {compareMode && (
+          <div className="flex items-center gap-4 px-1 text-[9px] font-black uppercase tracking-widest">
+            <span className="flex items-center gap-1.5 text-blue-500"><span className="inline-block w-2.5 h-2.5 rounded bg-blue-400" /> P1: {getPeriodLabel(filters.startDate, filters.endDate)}</span>
+            <span className="flex items-center gap-1.5 text-emerald-600"><span className="inline-block w-2.5 h-2.5 rounded bg-emerald-400" /> P2: {getPeriodLabel(compareFilters.startDate, compareFilters.endDate)}</span>
+          </div>
+        )}
+
         {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <KPICard title="Aguardando Instrutor" value={noInstructor} icon={AlertCircle} colorClass="bg-orange-50 text-orange-600" />
-          <KPICard title="Alocadas" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'ALOCADA').length} icon={Calendar} colorClass="bg-blue-50 text-blue-600" />
+          <KPICard title="Aguardando Instrutor" value={noInstructor} compareValue={noInstructor2} positiveIsGood={false} icon={AlertCircle} colorClass="bg-orange-50 text-orange-600" />
+          <KPICard title="Alocadas" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'ALOCADA').length} compareValue={alocadas2} icon={Calendar} colorClass="bg-blue-50 text-blue-600" />
           <KPICard title="Em Execução Hoje" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'EM_ANDAMENTO').length} icon={Zap} colorClass="bg-emerald-50 text-emerald-600" />
           <KPICard title="Próximos 30 Dias" value={filteredDemands.filter(d => { const s = new Date(d.startDate); return s > today && s <= next30; }).length} icon={Clock} colorClass="bg-indigo-50 text-indigo-600" />
-          <KPICard title="Taxa de Execução" value={`${execRate}%`} icon={TrendingUp} colorClass="bg-teal-50 text-teal-600" subtext={`${concluded.length} de ${activeDmds.length} concluídas`} />
+          <KPICard title="Taxa de Execução" value={`${execRate}%`} compareValue={compareMode && execRate2 !== undefined ? `${execRate2}%` : undefined} icon={TrendingUp} colorClass="bg-teal-50 text-teal-600" subtext={`${concluded.length} de ${activeDmds.length} concluídas`} />
         </div>
 
         {/* Top Treinamentos + Demandas por Instrutor + Perfil do Período */}
@@ -889,7 +1112,7 @@ const pendingLogisticsDemands = useMemo(() => {
               <span>Top Treinamentos</span>
               <Package size={13} className="text-slate-300" />
             </h3>
-            <RankedListChart items={topTrainings} othersDetail={othersTrainings} barColor="bg-violet-500" emptyLabel="Sem treinamentos no período" />
+            <RankedListChart items={topTrainings} othersDetail={othersTrainings} barColor="bg-violet-500" emptyLabel="Sem treinamentos no período" items2={topTrainings2} />
           </div>
 
           {/* Demandas por Instrutor */}
@@ -898,7 +1121,7 @@ const pendingLogisticsDemands = useMemo(() => {
               <span>Demandas por Instrutor</span>
               <UserCheck size={13} className="text-slate-300" />
             </h3>
-            <RankedListChart items={topInstructors} othersDetail={[]} barColor="bg-blue-500" emptyLabel="Sem instrutores alocados" />
+            <RankedListChart items={topInstructors} othersDetail={[]} barColor="bg-blue-500" emptyLabel="Sem instrutores alocados" items2={topInstructors2} />
           </div>
 
           {/* Perfil do Período */}
@@ -1053,12 +1276,25 @@ const pendingLogisticsDemands = useMemo(() => {
     const activeInstructors = instructors.filter(i => i.status === 'ATIVO');
 
     // --- Workload (horas concluídas no período filtrado) ---
-    const instructorWorkload = activeInstructors.map(inst => {
-      const hours = filteredDemands
+    const buildWorkload = (src: Demand[]) => activeInstructors.map(inst => {
+      const hours = src
         .filter(d => d.instructorId === inst.id && getCalculatedStatus(d) === 'CONCLUIDA')
         .reduce((sum: number, d) => sum + getTrainingHours(d.trainingId), 0);
       return { name: inst.name.split(' ')[0], hours };
     }).sort((a, b) => b.hours - a.hours).slice(0, 10).filter(i => i.hours > 0);
+
+    const instructorWorkload = buildWorkload(filteredDemands);
+    const instructorWorkload2 = compareMode ? buildWorkload(filteredDemands2) : [];
+    // Merge into single dataset for grouped bar chart
+    const workloadData = compareMode ? (() => {
+      const map2 = new Map(instructorWorkload2.map(i => [i.name, i.hours]));
+      const names = [...new Set([...instructorWorkload.map(i => i.name), ...instructorWorkload2.map(i => i.name)])];
+      return names.slice(0, 10).map(name => ({
+        name,
+        hours: instructorWorkload.find(i => i.name === name)?.hours ?? 0,
+        hours2: map2.get(name) ?? 0,
+      }));
+    })() : instructorWorkload;
 
     // --- Risco de dependência ---
     const dependencyRisk = trainings.filter(t => t.status === 'ATIVO').map(t => ({
@@ -1129,17 +1365,36 @@ const pendingLogisticsDemands = useMemo(() => {
       return { category: shortCat, aptCount, demandCount, ratio, barPct };
     }).sort((a, b) => b.demandCount - a.demandCount).filter(c => c.demandCount > 0 || c.aptCount > 0);
 
+    // Valores de comparação para Instrutores
+    const noDemandsInPeriod2 = compareMode
+      ? activeInstructors.filter(i => !new Set(filteredDemands2.filter(d => d.instructorId).map(d => d.instructorId!)).has(i.id)).length
+      : undefined;
+    const reuseStats2 = compareMode ? activeInstructors.map(inst => {
+      const distinct = new Set(filteredDemands2.filter(d => d.instructorId === inst.id && getCalculatedStatus(d) === 'CONCLUIDA').map(d => d.trainingId));
+      return { count: distinct.size };
+    }) : [];
+    const reuseRate2 = compareMode && activeInstructors.length > 0
+      ? Math.round((reuseStats2.filter(x => x.count >= 2).length / activeInstructors.length) * 100)
+      : undefined;
+
     return (
       <div className="space-y-6 animate-fade-in">
+
+        {compareMode && (
+          <div className="flex items-center gap-4 px-1 text-[9px] font-black uppercase tracking-widest">
+            <span className="flex items-center gap-1.5 text-blue-500"><span className="inline-block w-2.5 h-2.5 rounded bg-blue-400" /> P1: {getPeriodLabel(filters.startDate, filters.endDate)}</span>
+            <span className="flex items-center gap-1.5 text-emerald-600"><span className="inline-block w-2.5 h-2.5 rounded bg-emerald-400" /> P2: {getPeriodLabel(compareFilters.startDate, compareFilters.endDate)}</span>
+          </div>
+        )}
 
         {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
           <KPICard title="Ativos" value={activeInstructors.length} icon={Users} colorClass="bg-blue-50 text-blue-600" />
           <KPICard title="Disponíveis (30d)" value={availableNext30.length} icon={Calendar} colorClass="bg-emerald-50 text-emerald-600" subtext="Sem alocação prevista" />
-          <KPICard title="Sem Demanda" value={noDemandsInPeriod.length} icon={AlertCircle} colorClass="bg-amber-50 text-amber-600" subtext="No período filtrado" />
-          <KPICard title="Reaproveitamento" value={`${reuseRate}%`} icon={TrendingUp} colorClass="bg-violet-50 text-violet-600" subtext="Com ≥ 2 tipos concluídos" />
+          <KPICard title="Sem Demanda" value={noDemandsInPeriod.length} compareValue={noDemandsInPeriod2} positiveIsGood={false} icon={AlertCircle} colorClass="bg-amber-50 text-amber-600" subtext="No período filtrado" />
+          <KPICard title="Reaproveitamento" value={`${reuseRate}%`} compareValue={compareMode && reuseRate2 !== undefined ? `${reuseRate2}%` : undefined} icon={TrendingUp} colorClass="bg-violet-50 text-violet-600" subtext="Com ≥ 2 tipos concluídos" />
           <KPICard title="Risco Dependência" value={dependencyRisk.length} icon={ShieldAlert} colorClass="bg-red-50 text-red-600" subtext="Treinamentos c/ ≤ 1 instr." />
-          <KPICard title="Produtividade Global" value={`${totalHours}h`} icon={Award} colorClass="bg-indigo-50 text-indigo-600" subtext="Horas concluídas" />
+          <KPICard title="Produtividade Global" value={`${totalHours}h`} compareValue={compareMode ? `${totalHours2}h` : undefined} icon={Award} colorClass="bg-indigo-50 text-indigo-600" subtext="Horas concluídas" />
         </div>
 
         {/* Top Performance + Risco Dependência */}
@@ -1150,14 +1405,16 @@ const pendingLogisticsDemands = useMemo(() => {
               <Award size={13} className="text-slate-300" />
             </h3>
             <div className="flex-1 min-h-0">
-              {instructorWorkload.length > 0 ? (
+              {workloadData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={instructorWorkload} margin={{ top: 10 }}>
+                  <BarChart data={workloadData} margin={{ top: 10 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
                     <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold' }} />
                     <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
                     <Tooltip cursor={{ fill: '#F8FAFC' }} formatter={(v: number) => [`${v}h`, 'Horas']} />
-                    <Bar dataKey="hours" fill="#10B981" radius={[4, 4, 0, 0]} barSize={36} />
+                    {compareMode && <Legend wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />}
+                    <Bar dataKey="hours" name="P1" fill="#10B981" radius={[4, 4, 0, 0]} barSize={compareMode ? 16 : 36} />
+                    {compareMode && <Bar dataKey="hours2" name="P2" fill="#3B82F6" radius={[4, 4, 0, 0]} barSize={16} />}
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -1363,7 +1620,8 @@ const pendingLogisticsDemands = useMemo(() => {
   const renderClientes = () => {
     const clientData = companies.map(c => ({
       name: c.name,
-      volume: filteredDemands.filter(d => d.companyId === c.id).length
+      volume: filteredDemands.filter(d => d.companyId === c.id).length,
+      ...(compareMode ? { volume2: filteredDemands2.filter(d => d.companyId === c.id).length } : {})
     })).sort((a, b) => b.volume - a.volume).slice(0, 8).filter(c => c.volume > 0);
 
     const trainingCategoryData: { name: string; value: number }[] = Object.entries(
@@ -1379,6 +1637,12 @@ const pendingLogisticsDemands = useMemo(() => {
 
     return (
       <div className="space-y-6 animate-fade-in">
+        {compareMode && (
+          <div className="flex items-center gap-4 px-1 text-[9px] font-black uppercase tracking-widest">
+            <span className="flex items-center gap-1.5 text-blue-500"><span className="inline-block w-2.5 h-2.5 rounded bg-blue-400" /> P1: {getPeriodLabel(filters.startDate, filters.endDate)}</span>
+            <span className="flex items-center gap-1.5 text-emerald-600"><span className="inline-block w-2.5 h-2.5 rounded bg-emerald-400" /> P2: {getPeriodLabel(compareFilters.startDate, compareFilters.endDate)}</span>
+          </div>
+        )}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-slate-200 h-96 shadow-sm flex flex-col">
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Clientes mais Ativos (Volume)</h3>
@@ -1389,7 +1653,9 @@ const pendingLogisticsDemands = useMemo(() => {
                     <XAxis type="number" hide />
                     <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold' }} />
                     <Tooltip />
-                    <Bar dataKey="volume" fill="#3B82F6" radius={[0, 4, 4, 0]} />
+                    {compareMode && <Legend wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />}
+                    <Bar dataKey="volume" name="P1" fill="#3B82F6" radius={[0, 4, 4, 0]} barSize={compareMode ? 10 : undefined} />
+                    {compareMode && <Bar dataKey="volume2" name="P2" fill="#10B981" radius={[0, 4, 4, 0]} barSize={10} />}
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -1522,16 +1788,49 @@ const pendingLogisticsDemands = useMemo(() => {
 
     const ticketMedio = filteredMeasurements.length > 0 ? totalCosts / filteredMeasurements.length : 0;
 
+    // Valores de comparação para Custos
+    const ticketMedio2 = compareMode && filteredMeasurements2.length > 0 ? totalCosts2 / filteredMeasurements2.length : undefined;
+    const naoIniciada2 = compareMode ? (() => {
+      const concluded2 = filteredDemands2.filter(d => getCalculatedStatus(d) === 'CONCLUIDA');
+      return concluded2.filter(d =>
+        !filteredMeasurements2.some(m => m.demandId === d.id) ||
+        filteredMeasurements2.find(m => m.demandId === d.id)?.status === 'NAO_INICIADA'
+      ).length;
+    })() : undefined;
+    const expenseData2: { name: string; value: number }[] = compareMode ? (() => {
+      const toVal2 = (v: any): number => { const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v); return Number(n) || 0; };
+      const normCat2 = (c: any) => String(c ?? '').toUpperCase().trim();
+      const sumCat2 = (cats: string | string[]) => {
+        const catList = (Array.isArray(cats) ? cats : [cats]).map(c => c.toUpperCase());
+        return filteredMeasurements2.reduce((acc, m) => acc + m.attachments.filter((a: any) => catList.includes(normCat2(a.category))).reduce((s: number, a: any) => s + toVal2(a.value), 0), 0);
+      };
+      return [
+        { name: 'Hospedagem', value: sumCat2('HOSPEDAGEM') },
+        { name: 'Locomoção', value: sumCat2('LOCOMOCAO') },
+        { name: 'Café da Manhã', value: sumCat2('CAFE') },
+        { name: 'Almoço', value: sumCat2('ALMOCO') },
+        { name: 'Jantar', value: sumCat2('JANTAR') },
+        { name: 'Outros', value: sumCat2('OUTROS') },
+      ].filter(e => e.value > 0);
+    })() : [];
+
     return (
       <div className="space-y-6 animate-fade-in">
 
+        {compareMode && (
+          <div className="flex items-center gap-4 px-1 text-[9px] font-black uppercase tracking-widest">
+            <span className="flex items-center gap-1.5 text-blue-500"><span className="inline-block w-2.5 h-2.5 rounded bg-blue-400" /> P1: {getPeriodLabel(filters.startDate, filters.endDate)}</span>
+            <span className="flex items-center gap-1.5 text-emerald-600"><span className="inline-block w-2.5 h-2.5 rounded bg-emerald-400" /> P2: {getPeriodLabel(compareFilters.startDate, compareFilters.endDate)}</span>
+          </div>
+        )}
+
         {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <KPICard title="Total em Despesas" value={totalCosts} isCurrency icon={DollarSign} colorClass="bg-amber-50 text-amber-600" />
-          <KPICard title="Ticket Médio/Medição" value={ticketMedio} isCurrency icon={Zap} colorClass="bg-blue-50 text-blue-600" subtext={`${filteredMeasurements.length} medições`} />
-          <KPICard title="Não Iniciadas" value={naoIniciadaCount} icon={Clock} colorClass="bg-orange-50 text-orange-600" subtext="Demandas concluídas" />
-          <KPICard title="Pronta Faturamento" value={filteredMeasurements.filter(m => m.status === 'PRONTA_FATURAMENTO').length} icon={CheckCircle} colorClass="bg-violet-50 text-violet-600" />
-          <KPICard title="Faturadas" value={filteredMeasurements.filter(m => m.status === 'FATURADA').length} icon={Award} colorClass="bg-emerald-50 text-emerald-600" />
+          <KPICard title="Total em Despesas" value={totalCosts} compareValue={compareMode ? totalCosts2 : undefined} isCurrency icon={DollarSign} colorClass="bg-amber-50 text-amber-600" />
+          <KPICard title="Ticket Médio/Medição" value={ticketMedio} compareValue={ticketMedio2} isCurrency icon={Zap} colorClass="bg-blue-50 text-blue-600" subtext={`${filteredMeasurements.length} medições`} />
+          <KPICard title="Não Iniciadas" value={naoIniciadaCount} compareValue={naoIniciada2} positiveIsGood={false} icon={Clock} colorClass="bg-orange-50 text-orange-600" subtext="Demandas concluídas" />
+          <KPICard title="Pronta Faturamento" value={filteredMeasurements.filter(m => m.status === 'PRONTA_FATURAMENTO').length} compareValue={compareMode ? filteredMeasurements2.filter(m => m.status === 'PRONTA_FATURAMENTO').length : undefined} icon={CheckCircle} colorClass="bg-violet-50 text-violet-600" />
+          <KPICard title="Faturadas" value={filteredMeasurements.filter(m => m.status === 'FATURADA').length} compareValue={compareMode ? filteredMeasurements2.filter(m => m.status === 'FATURADA').length : undefined} icon={Award} colorClass="bg-emerald-50 text-emerald-600" />
         </div>
 
         {/* Mix de Despesas + Média por Categoria */}
@@ -1541,7 +1840,39 @@ const pendingLogisticsDemands = useMemo(() => {
           <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '22rem' }}>
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 shrink-0">Mix de Despesas</h3>
             <div className="flex-1 min-h-0">
-              {expenseData.length > 0 ? (
+              {compareMode ? (
+                <div className="flex h-full gap-2">
+                  <div className="flex-1 flex flex-col">
+                    <p className="text-[8px] font-black text-blue-400 uppercase text-center mb-1">P1</p>
+                    {expenseData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie data={expenseData} cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="value" stroke="none">
+                            {expenseData.map((_, i) => <Cell key={i} fill={COLORS.CHART_PALETTE[i % COLORS.CHART_PALETTE.length]} />)}
+                          </Pie>
+                          <Tooltip formatter={(val: number) => formatCurrency(val)} />
+                          <Legend iconType="circle" wrapperStyle={{ fontSize: '9px', fontWeight: 'bold' }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    ) : <div className="flex-1 flex items-center justify-center text-slate-300 italic text-xs">Sem dados P1</div>}
+                  </div>
+                  <div className="w-px bg-slate-100 shrink-0" />
+                  <div className="flex-1 flex flex-col">
+                    <p className="text-[8px] font-black text-emerald-500 uppercase text-center mb-1">P2</p>
+                    {expenseData2.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie data={expenseData2} cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="value" stroke="none">
+                            {expenseData2.map((_, i) => <Cell key={i} fill={COLORS.CHART_PALETTE[i % COLORS.CHART_PALETTE.length]} />)}
+                          </Pie>
+                          <Tooltip formatter={(val: number) => formatCurrency(val)} />
+                          <Legend iconType="circle" wrapperStyle={{ fontSize: '9px', fontWeight: 'bold' }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    ) : <div className="flex-1 flex items-center justify-center text-slate-300 italic text-xs">Sem dados P2</div>}
+                  </div>
+                </div>
+              ) : expenseData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={expenseData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} dataKey="value" stroke="none">
@@ -2110,7 +2441,75 @@ const pendingLogisticsDemands = useMemo(() => {
           >
             Limpar
           </button>
+
+          <button
+            onClick={() => {
+              setCompareMode(v => !v);
+              if (compareMode) setCompareFilters({ startDate: '', endDate: '' });
+            }}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${
+              compareMode
+                ? 'bg-violet-50 border-violet-300 text-violet-700 shadow-sm'
+                : 'bg-white border-slate-200 text-slate-400 hover:text-violet-600 hover:border-violet-200 hover:bg-violet-50'
+            }`}
+          >
+            <ArrowLeftRight size={12} />
+            {compareMode ? 'Comparação Ativa' : 'Comparar Períodos'}
+          </button>
         </div>
+
+        {/* Seletor de Período de Comparação */}
+        {compareMode && (
+          <div className="mt-3 pt-3 border-t border-violet-100">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-2 h-2 rounded-full bg-violet-400" />
+              <span className="text-[9px] font-black text-violet-500 uppercase tracking-widest">Período de Comparação (P2)</span>
+              {(filters.startDate || filters.endDate) && (
+                <span className="text-[9px] text-slate-400 font-bold">
+                  — P1: {getPeriodLabel(filters.startDate, filters.endDate)}
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-4 items-end">
+              <div className="min-w-[160px]">
+                <label className="block text-[9px] font-black text-violet-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Calendar size={10} /> Mês/Ano (P2)</label>
+                <select
+                  className="w-full border border-violet-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-violet-400 shadow-sm bg-white capitalize"
+                  value={getCompareMonthSelectorValue()}
+                  onChange={(e) => handleCompareMonthChange(e.target.value)}
+                >
+                  <option value="">Todos</option>
+                  {availableMonths.map(([key, label]) => (
+                    <option key={key} value={key}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex-1 min-w-[200px]">
+                <label className="block text-[9px] font-black text-violet-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Calendar size={10} /> Intervalo Customizado (P2)</label>
+                <div className="flex gap-2">
+                  <input type="date" className="flex-1 border border-violet-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-violet-400 shadow-inner bg-violet-50/30" value={compareFilters.startDate} onChange={e => setCompareFilters(prev => ({ ...prev, startDate: e.target.value }))} />
+                  <input type="date" className="flex-1 border border-violet-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-violet-400 shadow-inner bg-violet-50/30" value={compareFilters.endDate} onChange={e => setCompareFilters(prev => ({ ...prev, endDate: e.target.value }))} />
+                </div>
+              </div>
+              <button
+                onClick={() => setCompareFilters({ startDate: '', endDate: '' })}
+                className="px-4 py-2 text-[10px] font-black text-violet-400 uppercase tracking-widest hover:text-red-500 transition-colors"
+              >
+                Limpar P2
+              </button>
+            </div>
+            {(compareFilters.startDate || compareFilters.endDate) && (
+              <div className="mt-2 flex items-center gap-4 text-[9px] font-bold text-slate-400">
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-2 h-2 rounded-sm bg-blue-400" /> P1: {getPeriodLabel(filters.startDate, filters.endDate)}
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-2 h-2 rounded-sm bg-emerald-400" /> P2: {getPeriodLabel(compareFilters.startDate, compareFilters.endDate)}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Toggle Filtros Avançados */}
         <button

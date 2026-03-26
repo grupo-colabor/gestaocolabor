@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../App';
+import { logAction } from '../services/auditLog';
 import { Instructor, LogisticAllocation } from '../types';
 import { 
   Briefcase, 
@@ -150,6 +151,18 @@ const handleAddCompanion = (companionInstructorId: string) => {
 
 const handleRemoveCompanion = (allocationId: string) => {
   removeCompanionAllocation(allocationId);
+  logAction({
+    modulo: 'Programação',
+    acao: 'Cancelar',
+    descricao: [
+      `Acompanhante removido`,
+      selectedDemand ? `Empresa: ${getCompanyName(selectedDemand.companyId)}` : null,
+      selectedDemand ? `Treinamento: ${getTrainingName(selectedDemand.trainingId)}` : null,
+      `Alocação ID: ${allocationId}`,
+    ].filter(Boolean).join(' | '),
+    dadosAntes: { allocationId },
+    dadosDepois: { demandId: selectedDemand?.id },
+  });
   setNotification({ type: 'success', message: 'Acompanhante removido.' });
 };
 
@@ -228,6 +241,18 @@ const handleSaveCompanionDays = () => {
     });
   });
 
+  logAction({
+    modulo: 'Programação',
+    acao: 'Confirmar',
+    descricao: [
+      `Acompanhante adicionado`,
+      selectedDemand ? `Empresa: ${getCompanyName(selectedDemand.companyId)}` : null,
+      selectedDemand ? `Treinamento: ${getTrainingName(selectedDemand.trainingId)}` : null,
+      `Instrutor: ${instructors.find((i: any) => i.id === pendingCompanionInstructorId)?.name || pendingCompanionInstructorId}`,
+      `Dias: ${companionSelectedDays.join(', ')}`,
+    ].filter(Boolean).join(' | '),
+    dadosDepois: { demandId: selectedDemand?.id, instructorId: pendingCompanionInstructorId, days: companionSelectedDays },
+  });
   setNotification({ type: 'success', message: 'Dias do acompanhante salvos com sucesso.' });
   closeCompanionDatesModal();
 };
@@ -312,6 +337,17 @@ const handleSaveCompanionDays = () => {
 
     const success = allocateInstructor(selectedDemandId, instructor.id);
     if (success) {
+      logAction({
+        modulo: 'Programação',
+        acao: 'Criar',
+        descricao: [
+          `Instrutor alocado`,
+          `Empresa: ${getCompanyName(selectedDemand.companyId)}`,
+          `Treinamento: ${getTrainingName(selectedDemand.trainingId)}`,
+          `Instrutor: ${instructor.name}`,
+        ].join(' | '),
+        dadosDepois: { demandId: selectedDemandId, instructorId: instructor.id, instructorName: instructor.name },
+      });
       setSelectedDemandId(null);
     }
   };
@@ -322,7 +358,19 @@ const handleSaveCompanionDays = () => {
 
   const handleConfirmForceAlloc = () => {
     if (!pendingForceAlloc) return;
-    handleAllocate(pendingForceAlloc);
+    const allocatedInstructor = pendingForceAlloc;
+    handleAllocate(allocatedInstructor);
+    logAction({
+      modulo: 'Programação',
+      acao: 'Confirmar',
+      descricao: [
+        `Alocação forçada confirmada`,
+        selectedDemand ? `Empresa: ${getCompanyName(selectedDemand.companyId)}` : null,
+        selectedDemand ? `Treinamento: ${getTrainingName(selectedDemand.trainingId)}` : null,
+        `Instrutor: ${(allocatedInstructor as any).name || (allocatedInstructor as any).id || ''}`,
+      ].filter(Boolean).join(' | '),
+      dadosDepois: { demandId: selectedDemand?.id, instructorId: (allocatedInstructor as any).id },
+    });
     setPendingForceAlloc(null);
   };
 
@@ -379,6 +427,17 @@ const handleSaveCompanionDays = () => {
     };
 
     addResourceAllocation(newAllocation);
+    logAction({
+      modulo: 'Programação',
+      acao: 'Criar',
+      descricao: [
+        `CTM alocado`,
+        `Empresa: ${getCompanyName(selectedDemand.companyId)}`,
+        `Treinamento: ${getTrainingName(selectedDemand.trainingId)}`,
+        `Período: ${startDateTime.slice(0, 10)} a ${endDateTime.slice(0, 10)}`,
+      ].join(' | '),
+      dadosDepois: newAllocation,
+    });
     setIsResourceModalOpen(false);
   };
 
@@ -417,6 +476,18 @@ const handleSaveCompanionDays = () => {
         practiceStartDate: practiceStartDateTime,
         practiceEndDate: practiceEndDateTime
       });
+      logAction({
+        modulo: 'Programação',
+        acao: 'Editar',
+        descricao: [
+          `Período prática híbrida definido`,
+          `Empresa: ${getCompanyName(selectedDemand.companyId)}`,
+          `Treinamento: ${getTrainingName(selectedDemand.trainingId)}`,
+          `Prática: ${practiceStartDateTime.slice(0, 10)} a ${practiceEndDateTime.slice(0, 10)}`,
+        ].join(' | '),
+        dadosAntes: { practiceStartDate: selectedDemand.practiceStartDate, practiceEndDate: selectedDemand.practiceEndDate },
+        dadosDepois: { demandId: selectedDemand.id, practiceStartDate: practiceStartDateTime, practiceEndDate: practiceEndDateTime },
+      });
     }
 
     return ok;
@@ -444,11 +515,33 @@ const handleSaveCompanionDays = () => {
     practiceStartDate: undefined,
     practiceEndDate: undefined
   });
+  logAction({
+    modulo: 'Programação',
+    acao: 'Cancelar',
+    descricao: [
+      `Prática híbrida removida`,
+      `Empresa: ${getCompanyName(selectedDemand.companyId)}`,
+      `Treinamento: ${getTrainingName(selectedDemand.trainingId)}`,
+    ].join(' | '),
+    dadosAntes: { practiceStartDate: selectedDemand.practiceStartDate, practiceEndDate: selectedDemand.practiceEndDate },
+    dadosDepois: { demandId: selectedDemand.id },
+  });
 };
 
   const handleRemoveResource = () => {
     if (currentResourceAllocation) {
       removeResourceAllocation(currentResourceAllocation.id);
+      logAction({
+        modulo: 'Programação',
+        acao: 'Cancelar',
+        descricao: [
+          `CTM removido`,
+          selectedDemand ? `Empresa: ${getCompanyName(selectedDemand.companyId)}` : null,
+          selectedDemand ? `Treinamento: ${getTrainingName(selectedDemand.trainingId)}` : null,
+          `Período: ${currentResourceAllocation.startDate?.slice(0, 10)} a ${currentResourceAllocation.endDate?.slice(0, 10)}`,
+        ].filter(Boolean).join(' | '),
+        dadosAntes: currentResourceAllocation,
+      });
     }
   };
 

@@ -15,6 +15,7 @@ import {
   Calendar
 } from 'lucide-react';
 import { calculateDemandStatus } from '../domain/demandStatus';
+import { logAction } from '../services/auditLog';
 import { Demand, EvidenceData } from '../types';
 import EvidenceDetails from './EvidenceDetails';
 import { usePagination } from '../hooks/usePagination';
@@ -199,6 +200,31 @@ const getEvidenceAutoStatus = (
 
   const handleUpdateEvidence = async (updated: EvidenceData) => {
   await updateEvidence(updated.demandId, updated);
+  const _dem = demands.find(d => d.id === updated.demandId);
+  const _before = evidenceStore[updated.demandId];
+  const _diffParts: string[] = [];
+  if (_before) {
+    const attB = (_before.attendanceList || []).length, attA = (updated.attendanceList || []).length;
+    if (attB !== attA) _diffParts.push(`Lista de presença: ${attB} → ${attA} arquivo(s)`);
+    const cerB = (_before.certificates || []).length, cerA = (updated.certificates || []).length;
+    if (cerB !== cerA) _diffParts.push(`Certificados: ${cerB} → ${cerA} arquivo(s)`);
+    const phB = (_before.photos || []).length, phA = (updated.photos || []).length;
+    if (phB !== phA) _diffParts.push(`Fotos: ${phB} → ${phA} arquivo(s)`);
+    if ((_before.notes || '') !== (updated.notes || ''))
+      _diffParts.push(`Anotações: "${_before.notes || '—'}" → "${updated.notes || '—'}"`);
+  }
+  logAction({
+    modulo: 'Evidências',
+    acao: 'Enviar',
+    descricao: [
+      `Evidências atualizadas`,
+      _dem ? `Empresa: ${getCompanyName(_dem.companyId)}` : null,
+      _dem ? `Treinamento: ${getTrainingName(_dem.trainingId)}` : `Demanda ID ${updated.demandId}`,
+      _diffParts.length ? `Alterações: ${_diffParts.join(' | ')}` : null,
+    ].filter(Boolean).join(' | '),
+    dadosAntes: _before ?? undefined,
+    dadosDepois: updated,
+  });
 };
 
 

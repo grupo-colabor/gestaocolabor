@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../App';
+import { logAction } from '../services/auditLog';
 import {
   ChevronLeft,
   ChevronRight,
@@ -916,6 +917,13 @@ const handleSaveManual = async () => {
 
   try {
     await addAgendaItem(item); // ✅ aqui é a diferença
+    const instructorName = instructors.find(i => i.id === selectedSlot.instructorId)?.name || selectedSlot.instructorId;
+    logAction({
+      modulo: 'Agendamento',
+      acao: 'Criar',
+      descricao: `Agenda criada: ${item.title} — Instrutor: ${instructorName} | ${item.startDate?.slice(0, 10) ?? ''} a ${item.endDate?.slice(0, 10) ?? ''}`,
+      dadosDepois: item,
+    });
     setIsModalOpen(false);
   } catch (e) {
     setNotification({ type: 'error', message: 'Falha ao salvar registro manual (agenda_items). Veja o console/erros do Supabase.' });
@@ -959,6 +967,12 @@ const handleSaveManual = async () => {
     };
 
     setMobileResourceEvents(prev => [...prev, newEvent]);
+    logAction({
+      modulo: 'Agendamento',
+      acao: 'Criar',
+      descricao: `CTM criado: ${newEvent.title} | ${newEvent.startDate?.slice(0, 10) ?? ''} a ${newEvent.endDate?.slice(0, 10) ?? ''}${formDescription ? ` | Obs: ${formDescription}` : ''}`,
+      dadosDepois: newEvent,
+    });
     setIsModalOpen(false);
   };
 
@@ -974,6 +988,25 @@ const handleSaveManual = async () => {
       if (demand) updateDemand({ ...demand, observations: modalObs });
     }
 
+    {
+      const instructorName = (() => {
+        const iId = (activeItem as any).instructorId;
+        return iId ? (instructors.find((i: any) => i.id === iId)?.name || iId) : null;
+      })();
+      const nd = (d: any) => d ? String(d).slice(0, 10) : null;
+      logAction({
+        modulo: 'Agendamento',
+        acao: 'Editar',
+        descricao: [
+          `Observação editada: ${activeItem.title || activeItem.id}`,
+          instructorName ? `Instrutor: ${instructorName}` : null,
+          nd(activeItem.startDate) ? `Data: ${nd(activeItem.startDate)}` : null,
+          `De: "${activeItem.description || '—'}" Para: "${modalObs}"`,
+        ].filter(Boolean).join(' | '),
+        dadosAntes: { description: activeItem.description },
+        dadosDepois: { description: modalObs },
+      });
+    }
     setNotification({ message: 'Observação atualizada com sucesso.', type: 'success' });
     setIsModalOpen(false);
   };
@@ -1013,6 +1046,12 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
     removeAgendaItem(activeItem.id); // MANUAL (ou qualquer outro que caia aqui)
   }
 
+  logAction({
+    modulo: 'Agendamento',
+    acao: 'Cancelar',
+    descricao: `Agenda removida: ${activeItem.title || activeItem.id} | ${(activeItem.startDate ?? '').slice(0, 10)} a ${(activeItem.endDate ?? '').slice(0, 10)}`,
+    dadosAntes: activeItem,
+  });
   setIsModalOpen(false);
 };
 

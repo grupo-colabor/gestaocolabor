@@ -80,6 +80,8 @@ import { useAuth } from '../contexts/AuthContext';
 /* ===== SERVICES (SUPABASE) ===== */
 
 import { upsertMeasurementByDemandId } from '../services/measurements';
+import { logAction } from '../services/auditLog';
+import { supabase } from '../lib/supabase';
 
 import {
   uploadAndUpsertDemandPdf,
@@ -859,6 +861,25 @@ const formatDateOnlySafe = (dateStr?: string) => {
       }
 
       deleteDemand(formDemand.id);
+      logAction({
+        modulo: 'Demandas',
+        acao: 'Cancelar',
+        descricao: [
+          `Demanda ${formDemand.id} excluída`,
+          `Empresa: ${getCompanyName(formDemand.companyId!)}`,
+          `Treinamento: ${getTrainingName(formDemand.trainingId!)}`,
+          `Início: ${formatDateTime(formDemand.startDate)}`,
+        ].join(' | '),
+        dadosAntes: formDemand,
+        dadosDepois: null,
+      });
+      // Marca todos os logs históricos dessa demanda como pertencentes a uma demanda excluída
+      supabase
+        .from('audit_logs')
+        .update({ demanda_excluida: true })
+        .like('descricao', `%${formDemand.id}%`)
+        .lt('created_at', new Date().toISOString())
+        .then(() => {/* fire-and-forget */});
       setShowDeleteMessage(true);
       setConfirmDelete(false);
       setTimeout(() => setShowDeleteMessage(false), 3000);
@@ -883,6 +904,19 @@ const formatDateOnlySafe = (dateStr?: string) => {
     };
     
     updateDemand(cancelData);
+    logAction({
+      modulo: 'Demandas',
+      acao: 'Cancelar',
+      descricao: [
+        `Demanda ${cancelData.id} cancelada`,
+        `Empresa: ${getCompanyName(cancelData.companyId)}`,
+        `Treinamento: ${getTrainingName(cancelData.trainingId)}`,
+        `Motivo: ${cancelData.cancelReason || 'não informado'}`,
+        cancelTextNote ? `Obs: ${cancelTextNote}` : null,
+      ].filter(Boolean).join(' | '),
+      dadosAntes: formDemand,
+      dadosDepois: cancelData,
+    });
     setFormDemand(cancelData);
     setConfirmCancel(false);
     setSelectedCancelReason('');
@@ -1365,9 +1399,80 @@ const handleSave = async () => {
       }
       demandId = created.id;
       sanitizedDemand.id = created.id;
+      logAction({
+        modulo: 'Demandas',
+        acao: 'Criar',
+        descricao: [
+          `Demanda ${sanitizedDemand.id} criada`,
+          `Empresa: ${getCompanyName(sanitizedDemand.companyId)}`,
+          `Treinamento: ${getTrainingName(sanitizedDemand.trainingId)}`,
+          `Início: ${formatDateTime(sanitizedDemand.startDate)}`,
+          sanitizedDemand.trainingLocal ? `Local: ${sanitizedDemand.trainingLocal}` : null,
+        ].filter(Boolean).join(' | '),
+        dadosDepois: sanitizedDemand,
+      });
     } else {
       await Promise.resolve(updateDemand(sanitizedDemand));
       demandId = demandId ?? sanitizedDemand.id;
+      {
+        const before = activeDemand;
+        const diffParts: string[] = [];
+        if (before) {
+          const nd = (d: any) => d ? new Date(d).toISOString() : '';
+
+          // Informações gerais
+          if (before.companyId !== sanitizedDemand.companyId)
+            diffParts.push(`Empresa: ${getCompanyName(before.companyId)} → ${getCompanyName(sanitizedDemand.companyId)}`);
+          if (before.trainingId !== sanitizedDemand.trainingId)
+            diffParts.push(`Treinamento: ${getTrainingName(before.trainingId)} → ${getTrainingName(sanitizedDemand.trainingId)}`);
+          if (before.trainingLocal !== sanitizedDemand.trainingLocal)
+            diffParts.push(`Local: ${before.trainingLocal || '—'} → ${sanitizedDemand.trainingLocal || '—'}`);
+          if (before.regionId !== sanitizedDemand.regionId)
+            diffParts.push(`Região: ${getRegionName(before.regionId)} → ${getRegionName(sanitizedDemand.regionId)}`);
+          if ((before.corredor || '') !== (sanitizedDemand.corredor || ''))
+            diffParts.push(`Corredor: ${before.corredor || '—'} → ${sanitizedDemand.corredor || '—'}`);
+          if ((before.demandState || '') !== (sanitizedDemand.demandState || ''))
+            diffParts.push(`Estado: ${before.demandState || '—'} → ${sanitizedDemand.demandState || '—'}`);
+          if (before.modality !== sanitizedDemand.modality)
+            diffParts.push(`Modalidade: ${before.modality} → ${sanitizedDemand.modality}`);
+          if ((before.requester || '') !== (sanitizedDemand.requester || ''))
+            diffParts.push(`Solicitante: ${before.requester || '—'} → ${sanitizedDemand.requester || '—'}`);
+          if (nd(before.startDate) !== nd(sanitizedDemand.startDate))
+            diffParts.push(`Início: ${formatDateTime(before.startDate)} → ${formatDateTime(sanitizedDemand.startDate)}`);
+          if (nd(before.endDate) !== nd(sanitizedDemand.endDate))
+            diffParts.push(`Fim: ${formatDateTime(before.endDate)} → ${formatDateTime(sanitizedDemand.endDate)}`);
+          if ((before.observations || '') !== (sanitizedDemand.observations || ''))
+            diffParts.push(`Observações: ${before.observations || '—'} → ${sanitizedDemand.observations || '—'}`);
+
+          // Dados internos
+          if ((before.approver || '') !== (sanitizedDemand.approver || ''))
+            diffParts.push(`Aprovador: ${before.approver || '—'} → ${sanitizedDemand.approver || '—'}`);
+          if ((before.analyst || '') !== (sanitizedDemand.analyst || ''))
+            diffParts.push(`Analista: ${before.analyst || '—'} → ${sanitizedDemand.analyst || '—'}`);
+          if ((before.matriculador || '') !== (sanitizedDemand.matriculador || ''))
+            diffParts.push(`Matriculador: ${before.matriculador || '—'} → ${sanitizedDemand.matriculador || '—'}`);
+
+          // Logística
+          if ((before.transportType || '') !== (sanitizedDemand.transportType || ''))
+            diffParts.push(`Transporte: ${before.transportType || '—'} → ${sanitizedDemand.transportType || '—'}`);
+          if ((before.accommodationType || '') !== (sanitizedDemand.accommodationType || ''))
+            diffParts.push(`Hospedagem: ${before.accommodationType || '—'} → ${sanitizedDemand.accommodationType || '—'}`);
+
+          // Instrutor / Status
+          if (before.instructorId !== sanitizedDemand.instructorId)
+            diffParts.push(`Instrutor: ${getInstructorName(before.instructorId)} → ${getInstructorName(sanitizedDemand.instructorId)}`);
+          if (before.status !== sanitizedDemand.status)
+            diffParts.push(`Status: ${before.status} → ${sanitizedDemand.status}`);
+        }
+        const diffDesc = diffParts.length ? ` — Alterações: ${diffParts.join(' | ')}` : '';
+        logAction({
+          modulo: 'Demandas',
+          acao: 'Editar',
+          descricao: `Demanda ${sanitizedDemand.id} editada${diffDesc}`,
+          dadosAntes: before ?? undefined,
+          dadosDepois: sanitizedDemand,
+        });
+      }
     }
 
     if (!demandId) {

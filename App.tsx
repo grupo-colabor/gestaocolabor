@@ -21,7 +21,8 @@ import {
   CheckCircle2,
   AlertCircle,
   FileSearch,
-  Bell
+  Bell,
+  Shield
 } from 'lucide-react';
 
 import type {
@@ -63,6 +64,7 @@ import MeasurementView from './components/Measurement';
 import Evidences from './components/Evidences';
 import Notifications from './components/Notifications';
 import AuthGate from './components/AuthGate';
+import AuditPage from './components/Audit';
 import { fetchTrainings } from './services/trainings';
 import { fetchCompanies, insertCompany, updateCompanyById, CompanyRow } from './services/companies';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -129,7 +131,8 @@ type View =
   | 'logistics'
   | 'logistics-control'
   | 'measurement'
-  | 'evidences';
+  | 'evidences'
+  | 'audit';
 
 interface AppState {
   companies: Company[];
@@ -2973,7 +2976,8 @@ const ROLE_PERMISSIONS: Record<string, View[]> = {
     'logistics',
     'logistics-control',
     'measurement',
-    'evidences'
+    'evidences',
+    'audit'
   ],
   analista: [
     'dashboard',
@@ -2983,7 +2987,7 @@ const ROLE_PERMISSIONS: Record<string, View[]> = {
     'registrations',
     'logistics',
     'logistics-control',
-    'evidences'
+    'evidences',
   ],
   coordenador: ['calendar'] // apenas visualização
 };
@@ -3112,6 +3116,8 @@ const renderContent = () => {
         return <MeasurementView />;
       case 'evidences':
         return <Evidences />;
+      case 'audit':
+        return <AuditPage />;
       default:
         return <Dashboard />;
     }
@@ -3248,6 +3254,15 @@ const renderContent = () => {
               label="Cadastros"
               active={currentView === 'registrations'}
               onClick={() => setCurrentView('registrations')}
+            />
+          )}
+
+          {canAccessView(profile?.role, 'audit') && (
+            <SidebarButton
+              icon={Shield}
+              label="Auditoria"
+              active={currentView === 'audit'}
+              onClick={() => setCurrentView('audit')}
             />
           )}
         </nav>

@@ -18,6 +18,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mj
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { demandIntersectsRange } from '../domain/demandDays';
 import { supabase } from '../lib/supabase';
+import { logAction } from '../services/auditLog';
 
 const STAGE_LABELS: Record<MeasurementStatus, string> = {
   NAO_INICIADA: 'Não iniciada',
@@ -443,7 +444,57 @@ const totals = useMemo(() => {
           value: typeof a.value === 'string' ? (parseFloat(a.value.replace(',', '.')) || 0) : a.value
         }))
       };
+      const _beforeMeasurement = measurements.find(m => m.id === selectedMeasurement.id);
       updateMeasurement(cleaned);
+      {
+        const _dem = demands.find(d => d.id === selectedMeasurement.demandId);
+        const _totalsAfter = getMeasurementTotals(cleaned);
+        const _totalsBefore = _beforeMeasurement ? getMeasurementTotals(_beforeMeasurement) : null;
+        const _expB = (_beforeMeasurement?.expenses as any) ?? {};
+        const _expA = (cleaned.expenses as any) ?? {};
+        const fmt = (v: number) => `R$ ${v.toFixed(2).replace('.', ',')}`;
+
+        const _diffParts: string[] = [];
+        if ((_expB.classHours ?? '') !== (_expA.classHours ?? ''))
+          _diffParts.push(`Horas: ${_expB.classHours ?? '—'} → ${_expA.classHours ?? '—'}h`);
+        if ((_expB.hourRate ?? '') !== (_expA.hourRate ?? ''))
+          _diffParts.push(`Valor hora/aula: ${_expB.hourRate ?? '—'} → ${_expA.hourRate ?? '—'}`);
+        if (_totalsBefore && _totalsBefore.hospedagem !== _totalsAfter.hospedagem)
+          _diffParts.push(`Hospedagem: ${fmt(_totalsBefore.hospedagem)} → ${fmt(_totalsAfter.hospedagem)}`);
+        if (_totalsBefore && _totalsBefore.locomocao !== _totalsAfter.locomocao)
+          _diffParts.push(`Locomoção: ${fmt(_totalsBefore.locomocao)} → ${fmt(_totalsAfter.locomocao)}`);
+        if (_totalsBefore && _totalsBefore.cafe !== _totalsAfter.cafe)
+          _diffParts.push(`Café da manhã: ${fmt(_totalsBefore.cafe)} → ${fmt(_totalsAfter.cafe)}`);
+        if (_totalsBefore && _totalsBefore.almoco !== _totalsAfter.almoco)
+          _diffParts.push(`Almoço: ${fmt(_totalsBefore.almoco)} → ${fmt(_totalsAfter.almoco)}`);
+        if (_totalsBefore && _totalsBefore.jantar !== _totalsAfter.jantar)
+          _diffParts.push(`Jantar: ${fmt(_totalsBefore.jantar)} → ${fmt(_totalsAfter.jantar)}`);
+        if (_totalsBefore && _totalsBefore.outros !== _totalsAfter.outros)
+          _diffParts.push(`Outras despesas: ${fmt(_totalsBefore.outros)} → ${fmt(_totalsAfter.outros)}`);
+        if (_totalsBefore && _totalsBefore.total !== _totalsAfter.total)
+          _diffParts.push(`Subtotal: ${fmt(_totalsBefore.total)} → ${fmt(_totalsAfter.total)}`);
+        if (_beforeMeasurement?.status !== cleaned.status)
+          _diffParts.push(`Etapa: ${_beforeMeasurement?.status ?? '—'} → ${cleaned.status}`);
+
+        const _hourClassTotal = (_expA.classHours ?? 0) * (_expA.hourRate ?? 0);
+
+        logAction({
+          modulo: 'Medição',
+          acao: 'Registrar',
+          descricao: [
+            `Medição registrada`,
+            _dem ? `Empresa: ${getCompanyName(_dem.companyId)}` : null,
+            _dem ? `Treinamento: ${getTrainingName(_dem.trainingId)}` : `Demanda ID ${selectedMeasurement.demandId}`,
+            _expA.classHours != null ? `Horas: ${_expA.classHours}h` : null,
+            _expA.hourRate != null ? `Valor hora/aula: ${_expA.hourRate}` : null,
+            _hourClassTotal ? `Total hora/aula: ${fmt(_hourClassTotal)}` : null,
+            `Subtotal: ${fmt(_totalsAfter.total)}`,
+            _diffParts.length ? `Alterações: ${_diffParts.join(' | ')}` : null,
+          ].filter(Boolean).join(' | '),
+          dadosAntes: _beforeMeasurement ?? undefined,
+          dadosDepois: cleaned,
+        });
+      }
 
       const demand = demands.find(d => d.id === selectedMeasurement.demandId);
       if (demand) {

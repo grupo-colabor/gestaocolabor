@@ -2364,6 +2364,10 @@ const companionInstructorIds = useMemo(() => {
                 Região {sort.key === 'region' && (sort.dir === 'asc' ? '↑' : '↓')}
               </th>
 
+              <th className="p-4 select-none">
+                Corredor
+              </th>
+
               <th
                 className="p-4 cursor-pointer select-none"
                 onClick={() => toggleSort('startDate')}
@@ -2406,6 +2410,7 @@ const companionInstructorIds = useMemo(() => {
                     <td className="p-4 font-medium">{getCompanyName(demand.companyId)}</td>
                     <td className="p-4 max-w-xs truncate" title={getTrainingName(demand.trainingId)}>{getTrainingName(demand.trainingId)}</td>
                     <td className="p-4">{getRegionName(demand.regionId)}</td>
+                    <td className="p-4">{demand.corredor || '—'}</td>
                     <td className="p-4 whitespace-nowrap">{formatDateTime(demand.startDate.split('T')[0])}</td>
                     <td className="p-4 font-medium text-gray-900">{getInstructorName(principalInstructorByDemandId[demand.id])}</td>
                     <td className="p-4 text-center">
@@ -2426,7 +2431,7 @@ const companionInstructorIds = useMemo(() => {
                 );
               }) : (
                 <tr>
-                  <td colSpan={8} className="p-20 text-center text-slate-400">
+                  <td colSpan={9} className="p-20 text-center text-slate-400">
                     <div className="flex flex-col items-center gap-3">
                       <Eraser size={40} className="opacity-20" />
                       <p className="font-medium">Nenhuma demanda encontrada.</p>
@@ -2768,8 +2773,8 @@ const companionInstructorIds = useMemo(() => {
                                     <DataViewField label="Fim" value={formatDateTime(formDemand.endDate)} icon={Calendar} />
                                   </>
                                 )}
-                                <DataViewField label="Região" value={getRegionName(formDemand.regionId!)} icon={MapPin} />
                                 <DataViewField label="Corredor" value={formDemand.corredor} icon={MapPin} />
+                                <DataViewField label="Região" value={getRegionName(formDemand.regionId!)} icon={MapPin} />
                                 <DataViewField label="Estado" value={formDemand.demandState} icon={MapPin} />
                                 <DataViewField label="Modalidade" value={formDemand.modality} icon={Info} />
                                 <DataViewField label="Solicitante" value={formDemand.requester} icon={User} />

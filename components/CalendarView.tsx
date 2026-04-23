@@ -1711,71 +1711,60 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                         );
                       })()}
 
-                      {/* Linha principal */}
-                      <span className="text-[9px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-2" title={cellItem.data.title}>
-                        {cellItem.data.title}
-                      </span>
-
-                      {/* Linha secundária: ID SAP / Pedido Cliente */}
-                      {(() => {
+                      {/* Card content: structured for DEMANDA/ALLOCATION, fallback for others */}
+                      {(cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION') ? (() => {
                         const demandId =
                           cellItem.data.source === 'ALLOCATION'
                             ? cellItem.data.demandId
                             : cellItem.data.demandId || cellItem.data.id;
-
                         const demand = demands.find(d => d.id === demandId);
-                        if (!demand?.clientDemandId) return null;
-
-                        return (
-                          <span className="text-[9px] font-semibold text-white/85 tracking-tight mt-0.5">
-                            {demand.clientDemandId}
-                          </span>
+                        const company = companies.find(c => c.id === demand?.companyId);
+                        const training = trainings.find(t => t.id === demand?.trainingId);
+                        const hasCompanion = hasCompanionForDemand(demandId);
+                        const hasCTM = !!demandId && resourceAllocations.some(
+                          a => a.resourceType === 'CENTRO_TREINAMENTO_MOVEL' && a.demandId === demandId
                         );
-                      })()}
-
-                      {/* ACOMPANHANTE (badge no card principal) */}
-                      {(cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION') &&
-                        (() => {
-                          const demandId =
-                            cellItem.data.source === 'ALLOCATION'
-                              ? cellItem.data.demandId
-                              : cellItem.data.demandId || cellItem.data.id;
-
-                          const hasCompanion = hasCompanionForDemand(demandId);
-                          if (!hasCompanion) return null;
-
-                          return (
-                            <span className="flex items-center justify-center opacity-80 leading-none">
-                              <span className="text-[7px] font-black uppercase tracking-tight">
-                                C/ ACOMPANHANTE
+                        const trainingLabel = [demand?.id ?? cellItem.data.id, company?.name, training?.nr ?? training?.name].filter(Boolean).join(' • ');
+                        return (
+                          <>
+                            {/* Linha 1: DEM-505 • VALE • SINAL - REC */}
+                            <span className="text-[8px] font-black uppercase tracking-tighter w-full text-center leading-tight line-clamp-2" title={trainingLabel}>
+                              {trainingLabel}
+                            </span>
+                            {/* Linha 2: Local do Treinamento (sem emoji, fonte levemente maior) */}
+                            {demand?.trainingLocal && demand.trainingLocal !== 'N/A' && (
+                              <span className="text-[8px] font-semibold text-white/90 w-full text-center leading-tight">
+                                {demand.trainingLocal}
                               </span>
-                            </span>
-                          );
-                        })()}
-
-                      {/* CTM */}
-                      {(cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION') &&
-                        (() => {
-                          const demandId =
-                            cellItem.data.source === 'ALLOCATION'
-                              ? cellItem.data.demandId
-                              : cellItem.data.demandId || cellItem.data.id;
-
-                          const hasCTM =
-                            !!demandId &&
-                            resourceAllocations.some(
-                              a => a.resourceType === 'CENTRO_TREINAMENTO_MOVEL' && a.demandId === demandId
-                            );
-
-                          if (!hasCTM) return null;
-
-                          return (
-                            <span className="mt-0.5 flex items-center justify-center gap-1 opacity-80 pt-[1px]">
-                              <Truck size={10} strokeWidth={2.75} />
-                              <span className="text-[7px] font-black uppercase tracking-tight">CTM</span>
-                            </span>
-                          );
-                        })()}
+                            )}
+                            {/* Linha 3: ID SAP / Pedido Cliente */}
+                            {demand?.clientDemandId && (
+                              <span className="text-[7px] font-semibold text-white/85 w-full text-center leading-tight">
+                                {demand.clientDemandId}
+                              </span>
+                            )}
+                            {/* Linha 4: Badges na mesma linha */}
+                            {(hasCompanion || hasCTM) && (
+                              <span className="flex items-center justify-center gap-1.5 mt-0.5 opacity-80 w-full">
+                                {hasCompanion && (
+                                  <span className="text-[7px] font-black uppercase tracking-tight">C/ ACOMP.</span>
+                                )}
+                                {hasCompanion && hasCTM && <span className="text-[6px] opacity-50">|</span>}
+                                {hasCTM && (
+                                  <span className="flex items-center gap-0.5">
+                                    <Truck size={9} strokeWidth={2.75} />
+                                    <span className="text-[7px] font-black uppercase tracking-tight">CTM</span>
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                          </>
+                        );
+                      })() : (
+                        <span className="text-[9px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-2" title={cellItem.data.title}>
+                          {cellItem.data.title}
+                        </span>
+                      )}
                     </div>
                   )}
 

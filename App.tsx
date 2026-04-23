@@ -285,7 +285,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const { user, loading } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [regions] = useState<Region[]>(MOCK_REGIONS);
   const [areas] = useState<Area[]>(MOCK_AREAS);
 
   // ✅ Agora carrega do banco; fallback = mock caso dê erro (somente se quiser)
@@ -410,7 +409,17 @@ const [operationalBases, setOperationalBases] = useState<OperationalBases>({
   locadoras: [],
   tiposTreinamento: [],
   funcoesAgenda: [],
+  regioes: [],
 });
+
+const regions = useMemo<Region[]>(() => {
+  if (AUTH_MODE === 'supabase' && operationalBases.regioes.length > 0) {
+    return operationalBases.regioes.map(
+      name => MOCK_REGIONS.find(r => r.name === name) ?? { id: name, name, status: 'ATIVO' as const }
+    );
+  }
+  return MOCK_REGIONS.filter(r => r.status === 'ATIVO');
+}, [operationalBases.regioes, AUTH_MODE]);
 
 // ✅ Carregar Bases Operacionais do Supabase - aguarda sessão
 useEffect(() => {
@@ -456,6 +465,7 @@ useEffect(() => {
           locadoras: [],
           tiposTreinamento: [],
           funcoesAgenda: [],
+          regioes: [],
         };
 
         for (const row of rows) {

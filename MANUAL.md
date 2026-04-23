@@ -97,7 +97,7 @@ Painel de controle com métricas, gráficos e indicadores de saúde operacional 
 - **Mês/Ano**: Seletor principal; filtra todos os dados da tela
 - **Período personalizado**: Data início e data fim
 - **Empresa**: Filtra por cliente específico
-- **Região**: Sudeste, Norte, Nordeste ou Sul
+- **Região**: Sudeste, Norte, Nordeste
 - **Status**: NOVA, PENDENTE, ALOCADA, EM_ANDAMENTO, CONCLUÍDA, CANCELADA
 - **Local do Treinamento**: Valores dinâmicos
 - **Corredor**: Responsável operacional
@@ -166,7 +166,7 @@ Clique em **+ Nova Demanda**. O modal abre em branco.
 | Campo | Tipo | Obrigatório | Descrição |
 |-------|------|-------------|-----------|
 | Empresa | Dropdown | ✓ | Cliente que solicitou o treinamento |
-| Região | Dropdown | ✓ | Sudeste, Norte, Nordeste ou Sul |
+| Região | Dropdown | ✓ | Sudeste, Norte, Nordeste |
 | Treinamento | Dropdown | ✓ | Treinamento a ser realizado |
 | Modalidade | Dropdown | ✓ | PRESENCIAL, ONLINE, HÍBRIDO ou TUTORIA |
 | Modo de Datas | Radio | ✓ | CONTÍNUO ou DIAS ESPECÍFICOS |
@@ -495,7 +495,7 @@ Cadastro dos instrutores que realizam os treinamentos.
 
 **Campos:**
 - Nome, E-mail, Status (Ativo/Inativo)
-- Regiões de Atuação (multi-seleção): Sudeste, Norte, Nordeste, Sul
+- Regiões de Atuação (multi-seleção): Sudeste, Norte, Nordeste
 - Local de Residência
 - Função na Agenda: Instrutor, Coordenador ou Motorista
 - **Skills/Competências**: para cada habilidade, selecione o treinamento e o nível (1 a 4)
@@ -663,7 +663,7 @@ Grupo B · Grupo BE · Grupo C · Grupo CE · Grupo CS · Grupo F · Grupo FS ·
 
 ### Regiões
 
-Sudeste · Norte · Nordeste · Sul
+Sudeste · Norte · Nordeste
 
 ### Funções na Agenda
 

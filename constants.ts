@@ -5,7 +5,7 @@ export const MOCK_REGIONS: Region[] = [
   { id: '1', name: 'Sudeste', status: 'ATIVO' },
   { id: '2', name: 'Norte', status: 'ATIVO' },
   { id: '3', name: 'Nordeste', status: 'ATIVO' },
-  { id: '4', name: 'Sul', status: 'ATIVO' },
+  { id: '4', name: 'Sul', status: 'INATIVO' },
 ];
 
 export const MOCK_AREAS: Area[] = [
@@ -213,19 +213,7 @@ export const MOCK_INSTRUCTORS: Instructor[] = [
     ],
     observations: 'Técnico em Segurança. Vasta experiência em resgate em altura e espaços confinados. Requer hotel em deslocamentos longos.'
   },
-  { 
-    id: '6', 
-    name: 'Letícia Santos Guerra', 
-    regionIds: ['4'], 
-    status: 'ATIVO', 
-    skills: [
-      { trainingId: '8', level: 4 }, 
-      { trainingId: '1', level: 2 }, 
-      { trainingId: '2', level: 3 }  
-    ],
-    observations: 'Consultora de segurança. Excelente didática para treinamentos online e teóricos. Focada na região Sul.'
-  },
-  { 
+  {
     id: '7', 
     name: 'Fernando Silva Rezende', 
     regionIds: ['2'], 

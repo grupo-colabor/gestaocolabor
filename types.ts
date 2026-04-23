@@ -301,7 +301,8 @@ export type OperationalBaseKey =
   | 'tiposTreinamento'
   | 'locaisTreinamento'
   | 'funcoesAgenda'
-  | 'matriculadores';
+  | 'matriculadores'
+  | 'regioes';
 
 export interface OperationalBases {
   aprovadores: string[];
@@ -315,6 +316,7 @@ export interface OperationalBases {
   locadoras: string[];
   tiposTreinamento: string[];
   funcoesAgenda: string[];
+  regioes: string[];
 }
 
 // --- EVIDÊNCIAS ---

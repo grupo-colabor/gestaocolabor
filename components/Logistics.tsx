@@ -330,9 +330,10 @@ const handleSaveCompanionDays = () => {
     }
 
     // Lógica unificada para alocação
-    const isException = !instructor.regionIds.includes(selectedDemand.regionId);
+    const demandState = (selectedDemand.demandState || '').trim().toUpperCase();
+    const isException = !!demandState && (instructor.residenceLocation || '').trim().toUpperCase() !== demandState;
     if (isException) {
-      alert("Este instrutor não pertence à região da demanda. Alocação por exceção.");
+      alert("Este instrutor não reside no estado da demanda. Alocação por exceção.");
     }
 
     const success = allocateInstructor(selectedDemandId, instructor.id);
@@ -607,7 +608,13 @@ const handleSaveCompanionDays = () => {
                     
                     <div className="flex flex-wrap gap-y-2 gap-x-4 items-center text-[11px] text-slate-500">
                       <div className="flex items-center"><CalendarIcon size={12} className="mr-1" /> {new Date(demand.startDate).toLocaleDateString('pt-BR')}</div>
-                      <div className="flex items-center"><MapPin size={12} className="mr-1" /> {getRegionName(demand.regionId)}</div>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <MapPin size={12} className="mr-0.5" />
+                        <span>{getRegionName(demand.regionId)}</span>
+                        {demand.trainingLocal && demand.trainingLocal !== 'N/A' && <><span className="text-slate-300">|</span><span>{demand.trainingLocal}</span></>}
+                        {demand.corredor && <><span className="text-slate-300">|</span><span>{demand.corredor}</span></>}
+                        {demand.demandState && <><span className="text-slate-300">|</span><span>{demand.demandState}</span></>}
+                      </div>
                     </div>
                   </div>
                   <ChevronRight size={18} className={`mt-2 transition-transform ${selectedDemandId === demand.id ? 'text-blue-600 translate-x-1' : 'text-slate-300 group-hover:text-slate-400'}`} />
@@ -646,9 +653,12 @@ const handleSaveCompanionDays = () => {
                       <CalendarIcon size={16} className="mr-2 text-blue-500" />
                       {new Date(selectedDemand.startDate).toLocaleDateString('pt-BR')} <ArrowRight size={12} className="mx-2" /> {new Date(selectedDemand.endDate).toLocaleDateString('pt-BR')}
                     </div>
-                    <div className="flex md:justify-end items-center text-sm font-bold text-slate-700">
-                      <MapPin size={16} className="mr-2 text-blue-500" />
-                      {getRegionName(selectedDemand.regionId)}
+                    <div className="flex md:justify-end flex-wrap items-center gap-1 text-sm font-bold text-slate-700">
+                      <MapPin size={16} className="mr-1 text-blue-500 shrink-0" />
+                      <span>{getRegionName(selectedDemand.regionId)}</span>
+                      {selectedDemand.trainingLocal && selectedDemand.trainingLocal !== 'N/A' && <><span className="text-slate-300">|</span><span>{selectedDemand.trainingLocal}</span></>}
+                      {selectedDemand.corredor && <><span className="text-slate-300">|</span><span>{selectedDemand.corredor}</span></>}
+                      {selectedDemand.demandState && <><span className="text-slate-300">|</span><span>{selectedDemand.demandState}</span></>}
                     </div>
                   </div>
                 </div>
@@ -823,12 +833,12 @@ const handleSaveCompanionDays = () => {
 
                 {/* --- INSTRUTORES --- */}
                 <section className="space-y-8">
-                  {/* Grupo 1: Sugeridos (Mesma Região) */}
+                  {/* Grupo 1: Sugeridos (Mesmo Estado) */}
                   <div>
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                         <MapPin size={16} className="text-blue-500" />
-                        Instrutores Sugeridos (Região da Demanda)
+                        Instrutores Sugeridos (Estado da Demanda)
                       </h3>
                     </div>
 
@@ -970,7 +980,7 @@ const handleSaveCompanionDays = () => {
                     </div>
                   </div>
 
-                  {/* Grupo 2: Exceções (Fora da Região) */}
+                  {/* Grupo 2: Exceções (Fora do Estado) */}
                   {recommendation.exceptions.length > 0 && (
                     <div>
                       <div className="relative mb-6">
@@ -980,7 +990,7 @@ const handleSaveCompanionDays = () => {
                         <div className="relative flex justify-center">
                           <span className="bg-white px-4 text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 border border-slate-200 rounded-full py-1">
                             <AlertTriangle size={12} className="text-amber-500" />
-                            Outros instrutores disponíveis (fora da região)
+                            Outros instrutores disponíveis (fora do estado)
                           </span>
                         </div>
                       </div>

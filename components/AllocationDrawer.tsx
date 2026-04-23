@@ -630,8 +630,11 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
                     <div className="flex items-center gap-3 mt-1 text-[9px] text-slate-500 font-bold">
                       <span className="flex items-center gap-0.5"><CalendarIcon size={10} /> {formatDateBR(demand.startDate)} — {formatDateBR(demand.endDate)}</span>
                     </div>
-                    <div className="flex items-center gap-2 mt-1">
+                    <div className="flex flex-wrap items-center gap-1 mt-1">
                       <span className="flex items-center gap-0.5 text-[9px] text-slate-500 font-bold"><MapPin size={10} /> {getRegionName(demand.regionId)}</span>
+                      {demand.trainingLocal && demand.trainingLocal !== 'N/A' && <><span className="text-slate-300 text-[9px]">·</span><span className="text-[9px] text-slate-500 font-bold">{demand.trainingLocal}</span></>}
+                      {demand.corredor && <><span className="text-slate-300 text-[9px]">·</span><span className="text-[9px] text-slate-500 font-bold">{demand.corredor}</span></>}
+                      {demand.demandState && <><span className="text-slate-300 text-[9px]">·</span><span className="text-[9px] text-slate-500 font-bold">{demand.demandState}</span></>}
                       <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded border ${
                         demand.modality === 'HIBRIDO' ? 'bg-purple-50 text-purple-700 border-purple-200'
                         : demand.modality === 'PRESENCIAL' ? 'bg-blue-50 text-blue-700 border-blue-200'
@@ -666,9 +669,14 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
               <p className="text-[10px] font-semibold text-blue-600 flex items-center gap-1.5 mt-0.5">
                 <GraduationCap size={12} className="text-blue-400" /> {getTrainingName(selectedDemand.trainingId)}
               </p>
-              <div className="flex items-center gap-3 mt-1.5 text-[10px] font-bold text-slate-500">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-[10px] font-bold text-slate-500">
                 <span><CalendarIcon size={10} className="inline mr-0.5" />{formatDateBR(selectedDemand.startDate)} — {formatDateBR(selectedDemand.endDate)}</span>
-                <span><MapPin size={10} className="inline mr-0.5" />{getRegionName(selectedDemand.regionId)}</span>
+                <span className="flex flex-wrap items-center gap-1">
+                  <MapPin size={10} className="inline mr-0.5" />{getRegionName(selectedDemand.regionId)}
+                  {selectedDemand.trainingLocal && selectedDemand.trainingLocal !== 'N/A' && <><span className="text-slate-300">·</span><span>{selectedDemand.trainingLocal}</span></>}
+                  {selectedDemand.corredor && <><span className="text-slate-300">·</span><span>{selectedDemand.corredor}</span></>}
+                  {selectedDemand.demandState && <><span className="text-slate-300">·</span><span>{selectedDemand.demandState}</span></>}
+                </span>
               </div>
 
               {/* HYBRID: practice period */}

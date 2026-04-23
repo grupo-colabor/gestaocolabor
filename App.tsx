@@ -2749,18 +2749,22 @@ const hasScheduleConflict = useCallback(
         })
         .sort((a, b) => b.score - a.score);
 
+      const demandState = (demand.demandState || '').trim().toUpperCase();
+      const isSameState = (i: { residenceLocation?: string }) =>
+        !!demandState && (i.residenceLocation || '').trim().toUpperCase() === demandState;
+
       return {
         suggested: activeCapableInstructors.filter(
           i =>
-            !demand.regionId ||
+            !demandState ||
             demand.trainingLocal === 'N/A' ||
-            i.regionIds?.includes(demand.regionId)
+            isSameState(i)
         ),
         exceptions: activeCapableInstructors.filter(
           i =>
-            demand.regionId &&
+            !!demandState &&
             demand.trainingLocal !== 'N/A' &&
-            !i.regionIds?.includes(demand.regionId)
+            !isSameState(i)
         ),
         alreadyAllocated,
       };

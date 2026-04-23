@@ -184,7 +184,8 @@ useEffect(() => {
     status: '',
     startDate: '',
     endDate: '',
-    trainingLocal: ''
+    trainingLocal: '',
+    corredor: ''
   });
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
@@ -477,6 +478,7 @@ const filteredDemands = useMemo(() => {
       if (advancedFilters.endDate && d.startDate.split('T')[0] > advancedFilters.endDate) return false;
 
       if (advancedFilters.trainingLocal && (d.trainingLocal || '') !== advancedFilters.trainingLocal) return false;
+      if (advancedFilters.corredor && (d.corredor || '') !== advancedFilters.corredor) return false;
 
       return true;
     })
@@ -758,7 +760,8 @@ useEffect(() => {
       status: '',
       startDate: '',
       endDate: '',
-      trainingLocal: ''
+      trainingLocal: '',
+      corredor: ''
     });
   };
 
@@ -2318,6 +2321,21 @@ const companionInstructorIds = useMemo(() => {
                       .filter(Boolean)
                   ) as Set<string>).sort().map(loc => (
                     <option key={loc} value={loc}>{loc}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Corredor */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-tight">Corredor</label>
+                <select
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={advancedFilters.corredor}
+                  onChange={(e) => setAdvancedFilters({...advancedFilters, corredor: e.target.value})}
+                >
+                  <option value="">Todos os Corredores</option>
+                  {(operationalBases.corredores ?? []).sort().map(c => (
+                    <option key={c} value={c}>{c}</option>
                   ))}
                 </select>
               </div>

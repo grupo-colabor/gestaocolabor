@@ -375,8 +375,8 @@ const AuditPage: React.FC = () => {
             <Shield size={22} className="text-blue-600" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Auditoria</h1>
-            <p className="text-sm text-gray-500">Histórico de ações do sistema (somente leitura)</p>
+            <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Auditoria</h1>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Histórico de ações do sistema (somente leitura)</p>
           </div>
         </div>
         <button

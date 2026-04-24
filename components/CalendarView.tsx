@@ -1597,7 +1597,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                             onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleItemCardClick(instructor, allocItem); }}
                             className={`flex-1 min-h-0 w-full rounded-md border shadow-sm px-1 flex items-center justify-center text-center overflow-hidden transition-all active:scale-95 cursor-pointer ${aBg} ${aText} ${aBorder}`}
                           >
-                            <span className="text-[8px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-1" title={allocItem.title}>
+                            <span className="text-[10px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-1" title={allocItem.title}>
                               {allocItem.title}
                             </span>
                           </div>
@@ -1704,7 +1704,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
 
                         return (
                           <div className="w-full mb-1 flex justify-center">
-                            <span className="px-2 py-[2px] rounded-md text-[8px] font-black uppercase tracking-widest bg-white/20 text-white border border-white/25">
+                            <span className="px-2 py-[2px] rounded-md text-[10px] font-black uppercase tracking-widest bg-white/20 text-white border border-white/25">
                               ACOMPANHANTE
                             </span>
                           </div>
@@ -1728,18 +1728,18 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                         return (
                           <>
                             {/* Linha 1: DEM-505 • VALE • SINAL - REC */}
-                            <span className="text-[8px] font-black uppercase tracking-tighter w-full text-center leading-tight line-clamp-2" title={trainingLabel}>
+                            <span className="text-[11px] font-black uppercase tracking-tighter w-full text-center leading-tight line-clamp-2" title={trainingLabel}>
                               {trainingLabel}
                             </span>
                             {/* Linha 2: Local do Treinamento (sem emoji, fonte levemente maior) */}
                             {demand?.trainingLocal && demand.trainingLocal !== 'N/A' && (
-                              <span className="text-[8px] font-semibold text-white/90 w-full text-center leading-tight">
+                              <span className="text-[12px] font-semibold text-white/90 w-full text-center leading-tight">
                                 {demand.trainingLocal}
                               </span>
                             )}
                             {/* Linha 3: ID SAP / Pedido Cliente */}
                             {demand?.clientDemandId && (
-                              <span className="text-[7px] font-semibold text-white/85 w-full text-center leading-tight">
+                              <span className="text-[10px] font-semibold text-white/85 w-full text-center leading-tight">
                                 {demand.clientDemandId}
                               </span>
                             )}
@@ -1747,13 +1747,13 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                             {(hasCompanion || hasCTM) && (
                               <span className="flex items-center justify-center gap-1.5 mt-0.5 opacity-80 w-full">
                                 {hasCompanion && (
-                                  <span className="text-[7px] font-black uppercase tracking-tight">C/ ACOMP.</span>
+                                  <span className="text-[9px] font-black uppercase tracking-tight">C/ ACOMP.</span>
                                 )}
-                                {hasCompanion && hasCTM && <span className="text-[6px] opacity-50">|</span>}
+                                {hasCompanion && hasCTM && <span className="text-[7px] opacity-50">|</span>}
                                 {hasCTM && (
                                   <span className="flex items-center gap-0.5">
                                     <Truck size={9} strokeWidth={2.75} />
-                                    <span className="text-[7px] font-black uppercase tracking-tight">CTM</span>
+                                    <span className="text-[9px] font-black uppercase tracking-tight">CTM</span>
                                   </span>
                                 )}
                               </span>

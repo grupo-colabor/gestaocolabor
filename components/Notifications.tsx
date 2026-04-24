@@ -193,6 +193,18 @@ const Notifications: React.FC = () => {
       return s !== 'CANCELADA';
     }), [demands, trainings]);
 
+  // Ordena: vencidas (mais antigas primeiro) → próximas (mais próximas primeiro)
+  const sortByUrgency = (a: any, b: any) => {
+    const now = new Date();
+    const dateA = new Date(a.startDate);
+    const dateB = new Date(b.startDate);
+    const aOverdue = dateA < now;
+    const bOverdue = dateB < now;
+    if (aOverdue && bOverdue) return dateA.getTime() - dateB.getTime();
+    if (!aOverdue && !bOverdue) return dateA.getTime() - dateB.getTime();
+    return aOverdue ? -1 : 1;
+  };
+
   const pendingLogistics = useMemo(() => {
     if (isLoadingPendencies) return [];
     return activeDemands.filter(d => {
@@ -202,7 +214,7 @@ const Notifications: React.FC = () => {
       const alloc = logisticsByDemandId[normId(d.id)];
       if (!alloc) return false;
       return String(alloc.overall_status ?? 'PENDENTE').toUpperCase() !== 'CONCLUIDA';
-    });
+    }).sort(sortByUrgency);
   }, [activeDemands, logisticsByDemandId, isLoadingPendencies, trainings]);
 
   const pendingEvidences = useMemo(() =>
@@ -210,7 +222,7 @@ const Notifications: React.FC = () => {
       if (getCalculatedStatus(d) !== 'CONCLUIDA') return false;
       if (isOnlineDemand(d)) return false;
       return getEvidenceAutoStatus(d.id) !== 'COMPLETA';
-    }), [demands, trainings, getEvidenceAutoStatus]);
+    }).sort(sortByUrgency), [demands, trainings, getEvidenceAutoStatus]);
 
   const noInstructorDemands = useMemo(() =>
     activeDemands.filter(d => {
@@ -218,7 +230,7 @@ const Notifications: React.FC = () => {
       if (status === 'CANCELADA' || status === 'CONCLUIDA') return false;
       if (isOnlineDemand(d)) return false;
       return !d.instructorId;
-    }), [activeDemands, trainings]);
+    }).sort(sortByUrgency), [activeDemands, trainings]);
 
   const noMeasurementDemands = useMemo(() =>
     demands.filter(d => {
@@ -226,10 +238,10 @@ const Notifications: React.FC = () => {
       if (!d.instructorId) return false;
       const m = measurements.find(m => m.demandId === d.id);
       return !m || m.status === 'NAO_INICIADA';
-    }), [demands, measurements, trainings]);
+    }).sort(sortByUrgency), [demands, measurements, trainings]);
 
   const cancelledDemands = useMemo(() =>
-    demands.filter(d => d.status === 'CANCELADA'),
+    demands.filter(d => d.status === 'CANCELADA').sort(sortByUrgency),
   [demands]);
 
   const totalAlerts = pendingLogistics.length + pendingEvidences.length + noInstructorDemands.length + noMeasurementDemands.length;

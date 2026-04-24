@@ -44,6 +44,12 @@ import { SKILL_LABELS } from '../constants';
 import { supabase } from '../lib/supabase';
 import { AUTH_MODE } from '../config/authMode';
 import { deleteOperationalBaseItem } from '../services/operationalBases';
+import {
+  fetchLocationAssociations,
+  upsertLocationAssociation,
+  deleteLocationAssociation,
+  type LocationAssociation
+} from '../services/locationAssociations';
 import { useAuth, type Role } from '../contexts/AuthContext';
 import { fetchMyProfile, updateMyProfile, fetchAllProfiles, type ProfileData } from '../services/profiles';
 import { createUser } from '../services/users';
@@ -170,6 +176,15 @@ const Registrations: React.FC = () => {
   const [newBaseItem, setNewBaseItem] = useState('');
   const [editingBaseIdx, setEditingBaseIdx] = useState<number | null>(null);
   const [editBaseValue, setEditBaseValue] = useState('');
+
+  // --- Bases sub-tab & Associations State ---
+  const [basesSubTab, setBasesSubTab] = useState<'listas' | 'associacoes'>('listas');
+  const [locationAssociations, setLocationAssociations] = useState<LocationAssociation[]>([]);
+  const [isAssocLoading, setIsAssocLoading] = useState(false);
+  const [isAssocModalOpen, setIsAssocModalOpen] = useState(false);
+  const [editingAssocId, setEditingAssocId] = useState<string | null>(null);
+  const [assocForm, setAssocForm] = useState({ local: '', regiao: '', corredor: '', uf: '' });
+  const [isSavingAssoc, setIsSavingAssoc] = useState(false);
 
   // --- Auth Context ---
   const { profile, isAdmin, signOut } = useAuth();
@@ -670,6 +685,62 @@ const Registrations: React.FC = () => {
 
 
   // --- Operational Bases Handlers ---
+  // --- Associations Handlers ---
+  useEffect(() => {
+    if (activeTab === 'bases' && basesSubTab === 'associacoes') {
+      loadAssociations();
+    }
+  }, [activeTab, basesSubTab]);
+
+  const loadAssociations = async () => {
+    setIsAssocLoading(true);
+    try {
+      const data = await fetchLocationAssociations();
+      setLocationAssociations(data);
+    } catch (err: any) {
+      console.error('[Associations] load error:', err);
+    } finally {
+      setIsAssocLoading(false);
+    }
+  };
+
+  const handleOpenAssocModal = (assoc?: LocationAssociation) => {
+    if (assoc) {
+      setEditingAssocId(assoc.id);
+      setAssocForm({ local: assoc.local, regiao: assoc.regiao, corredor: assoc.corredor, uf: assoc.uf });
+    } else {
+      setEditingAssocId(null);
+      setAssocForm({ local: '', regiao: '', corredor: '', uf: '' });
+    }
+    setIsAssocModalOpen(true);
+  };
+
+  const handleSaveAssoc = async () => {
+    if (!assocForm.local.trim()) return alert('Local de Treinamento é obrigatório.');
+    setIsSavingAssoc(true);
+    try {
+      await upsertLocationAssociation(
+        editingAssocId ? { ...assocForm, id: editingAssocId } : assocForm
+      );
+      await loadAssociations();
+      setIsAssocModalOpen(false);
+    } catch (err: any) {
+      alert(`Erro ao salvar associação: ${err.message}`);
+    } finally {
+      setIsSavingAssoc(false);
+    }
+  };
+
+  const handleDeleteAssoc = async (id: string) => {
+    if (!confirm('Deseja excluir esta associação?')) return;
+    try {
+      await deleteLocationAssociation(id);
+      setLocationAssociations(prev => prev.filter(a => a.id !== id));
+    } catch (err: any) {
+      alert(`Erro ao excluir: ${err.message}`);
+    }
+  };
+
   const handleAddBaseItem = () => {
     if (!newBaseItem.trim()) return;
     const currentList = operationalBases[activeBaseKey] ?? [];
@@ -934,109 +1005,310 @@ const handleRemoveBaseItem = async (item: string) => {
         {/* --- BASES OPERACIONAIS --- */}
         {activeTab === 'bases' && (
           <div className="animate-fade-in flex flex-col h-full">
-            <div className="mb-6">
+            <div className="mb-4">
               <h2 className="text-lg font-bold text-gray-700">Gerenciamento de Bases Operacionais</h2>
               <p className="text-sm text-gray-500">Mantenha as listas de autocompletes e opções do sistema atualizadas.</p>
             </div>
 
-            <div className="flex flex-col lg:flex-row gap-6 flex-1">
-              {/* Menu Lateral da Base */}
-              <div className="w-full lg:w-64 space-y-1">
-                {(Object.keys(BASE_LABELS) as OperationalBaseKey[]).filter(key => key !== 'tiposTreinamento').map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => {
-                      setActiveBaseKey(key);
-                      setEditingBaseIdx(null);
-                    }}
-                    className={`w-full text-left px-4 py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-between group
-                      ${activeBaseKey === key
-                        ? 'bg-blue-50 text-blue-700 border-2 border-blue-200'
-                        : 'bg-white text-gray-600 border border-transparent hover:bg-gray-50 hover:border-gray-200'}`}
-                  >
-                    {BASE_LABELS[key]}
-                    <span className="bg-gray-100 text-gray-500 text-[10px] px-2 py-0.5 rounded-full font-black group-hover:bg-blue-100 group-hover:text-blue-600">
-                      {(operationalBases?.[key] ?? []).length}
-                    </span>
-                  </button>
-                ))}
-              </div>
+            {/* Sub-tabs */}
+            <div className="flex gap-1 bg-gray-100 p-1 rounded-xl mb-6 w-fit">
+              <button
+                type="button"
+                onClick={() => setBasesSubTab('listas')}
+                className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${basesSubTab === 'listas' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Listas
+              </button>
+              <button
+                type="button"
+                onClick={() => setBasesSubTab('associacoes')}
+                className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${basesSubTab === 'associacoes' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Associações
+              </button>
+            </div>
 
-              {/* Lista e Adição */}
-              <div className="flex-1 flex flex-col bg-gray-50 rounded-2xl border border-gray-200 overflow-hidden shadow-inner">
-                <div className="p-4 bg-white border-b border-gray-200">
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <Plus className="absolute left-3 top-3 text-gray-400" size={18} />
-                      <input
-                        type="text"
-                        placeholder={`Adicionar novo ${BASE_LABELS[activeBaseKey].toLowerCase()}...`}
-                        className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                        value={newBaseItem}
-                        onChange={(e) => setNewBaseItem(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleAddBaseItem()}
-                      />
-                    </div>
+            {/* ── Sub-tab: Listas ── */}
+            {basesSubTab === 'listas' && (
+              <div className="flex flex-col lg:flex-row gap-6 flex-1">
+                {/* Menu Lateral da Base */}
+                <div className="w-full lg:w-64 space-y-1">
+                  {(Object.keys(BASE_LABELS) as OperationalBaseKey[]).filter(key => key !== 'tiposTreinamento').map((key) => (
                     <button
+                      key={key}
                       type="button"
-                      onClick={handleAddBaseItem}
-                      className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md hover:bg-blue-700 transition"
+                      onClick={() => {
+                        setActiveBaseKey(key);
+                        setEditingBaseIdx(null);
+                      }}
+                      className={`w-full text-left px-4 py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-between group
+                        ${activeBaseKey === key
+                          ? 'bg-blue-50 text-blue-700 border-2 border-blue-200'
+                          : 'bg-white text-gray-600 border border-transparent hover:bg-gray-50 hover:border-gray-200'}`}
                     >
-                      Adicionar
+                      {BASE_LABELS[key]}
+                      <span className="bg-gray-100 text-gray-500 text-[10px] px-2 py-0.5 rounded-full font-black group-hover:bg-blue-100 group-hover:text-blue-600">
+                        {(operationalBases?.[key] ?? []).length}
+                      </span>
                     </button>
-                  </div>
+                  ))}
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                  {operationalBases[activeBaseKey].map((item, idx) => (
-                    <div key={`${item}-${idx}`} className="flex items-center justify-between bg-white p-3 rounded-xl border border-gray-200 group hover:border-blue-300 transition-colors shadow-sm">
-                      {editingBaseIdx === idx ? (
-                        <div className="flex-1 flex gap-2">
-                          <input
-                            autoFocus
-                            className="flex-1 border-b-2 border-blue-500 outline-none font-bold text-sm"
-                            value={editBaseValue}
-                            onChange={(e) => setEditBaseValue(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && saveEditBaseItem()}
-                          />
-                          <button type="button" onClick={saveEditBaseItem} className="text-green-600 hover:bg-green-50 p-1 rounded transition"><Check size={18} /></button>
-                          <button type="button" onClick={() => setEditingBaseIdx(null)} className="text-gray-400 hover:bg-gray-50 p-1 rounded transition"><X size={18} /></button>
-                        </div>
-                      ) : (
-                        <>
-                          <span className="text-sm font-medium text-gray-700">{item}</span>
-                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                              type="button"
-                              onClick={() => startEditBaseItem(idx, item)}
-                              className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
-                              title="Editar"
-                            >
-                              <Edit3 size={16} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveBaseItem(item)}
-                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
-                              title="Remover"
-                            >
-                              <Trash2 size={16} />
-                            </button>
+                {/* Lista e Adição */}
+                <div className="flex-1 flex flex-col bg-gray-50 rounded-2xl border border-gray-200 overflow-hidden shadow-inner">
+                  <div className="p-4 bg-white border-b border-gray-200">
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Plus className="absolute left-3 top-3 text-gray-400" size={18} />
+                        <input
+                          type="text"
+                          placeholder={`Adicionar novo ${BASE_LABELS[activeBaseKey].toLowerCase()}...`}
+                          className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                          value={newBaseItem}
+                          onChange={(e) => setNewBaseItem(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleAddBaseItem()}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleAddBaseItem}
+                        className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md hover:bg-blue-700 transition"
+                      >
+                        Adicionar
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                    {operationalBases[activeBaseKey].map((item, idx) => (
+                      <div key={`${item}-${idx}`} className="flex items-center justify-between bg-white p-3 rounded-xl border border-gray-200 group hover:border-blue-300 transition-colors shadow-sm">
+                        {editingBaseIdx === idx ? (
+                          <div className="flex-1 flex gap-2">
+                            <input
+                              autoFocus
+                              className="flex-1 border-b-2 border-blue-500 outline-none font-bold text-sm"
+                              value={editBaseValue}
+                              onChange={(e) => setEditBaseValue(e.target.value)}
+                              onKeyDown={(e) => e.key === 'Enter' && saveEditBaseItem()}
+                            />
+                            <button type="button" onClick={saveEditBaseItem} className="text-green-600 hover:bg-green-50 p-1 rounded transition"><Check size={18} /></button>
+                            <button type="button" onClick={() => setEditingBaseIdx(null)} className="text-gray-400 hover:bg-gray-50 p-1 rounded transition"><X size={18} /></button>
                           </div>
-                        </>
-                      )}
+                        ) : (
+                          <>
+                            <span className="text-sm font-medium text-gray-700">{item}</span>
+                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                type="button"
+                                onClick={() => startEditBaseItem(idx, item)}
+                                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                                title="Editar"
+                              >
+                                <Edit3 size={16} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveBaseItem(item)}
+                                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                                title="Remover"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                    {currentBaseItems.length === 0 && (
+                      <div className="text-center py-12 text-gray-400 italic">
+                        Nenhum item cadastrado nesta base.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Sub-tab: Associações ── */}
+            {basesSubTab === 'associacoes' && (
+              <div className="flex flex-col gap-4 flex-1">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-500">Vincule cada Local de Treinamento ao seu Corredor, Estado (UF) e Região para preenchimento automático nas demandas.</p>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenAssocModal()}
+                    className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md hover:bg-blue-700 transition"
+                  >
+                    <Plus size={16} /> Nova Associação
+                  </button>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+                  {isAssocLoading ? (
+                    <div className="flex items-center justify-center py-16 text-gray-400">
+                      <Loader2 size={24} className="animate-spin mr-2" /> Carregando...
                     </div>
-                  ))}
-                  {currentBaseItems.length === 0 && (
-                    <div className="text-center py-12 text-gray-400 italic">
-                      Nenhum item cadastrado nesta base.
-                    </div>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 border-b border-gray-200">
+                        <tr>
+                          <th className="text-left px-4 py-3 font-bold text-gray-600">Local</th>
+                          <th className="text-left px-4 py-3 font-bold text-gray-600">Corredor</th>
+                          <th className="text-left px-4 py-3 font-bold text-gray-600">Estado (UF)</th>
+                          <th className="text-left px-4 py-3 font-bold text-gray-600">Região</th>
+                          <th className="px-4 py-3 font-bold text-gray-600 text-right">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {locationAssociations.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="text-center py-12 text-gray-400 italic">
+                              Nenhuma associação cadastrada.
+                            </td>
+                          </tr>
+                        )}
+                        {locationAssociations.map(assoc => {
+                          const isNA = assoc.local === 'N/A';
+                          return (
+                            <tr key={assoc.id} className={`hover:bg-gray-50 transition-colors ${isNA ? 'bg-amber-50' : ''}`}>
+                              <td className="px-4 py-3 font-medium text-gray-800">
+                                {assoc.local}
+                                {isNA && (
+                                  <span className="ml-2 inline-flex items-center text-[10px] font-black uppercase bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200">
+                                    ONLINE
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-gray-600">{assoc.corredor || <span className="text-gray-300">—</span>}</td>
+                              <td className="px-4 py-3 text-gray-600">{assoc.uf || <span className="text-gray-300">—</span>}</td>
+                              <td className="px-4 py-3 text-gray-600">{assoc.regiao || <span className="text-gray-300">—</span>}</td>
+                              <td className="px-4 py-3 text-right">
+                                {isNA ? (
+                                  <span className="text-xs text-gray-400 italic">Não editável</span>
+                                ) : (
+                                  <div className="flex gap-1 justify-end">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenAssocModal(assoc)}
+                                      className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                                      title="Editar"
+                                    >
+                                      <Edit3 size={15} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteAssoc(assoc.id)}
+                                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                                      title="Excluir"
+                                    >
+                                      <Trash2 size={15} />
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   )}
                 </div>
               </div>
-            </div>
+            )}
           </div>
+        )}
+
+        {/* ── Modal: Nova / Editar Associação ── */}
+        {isAssocModalOpen && createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+              <div className="flex items-center justify-between p-6 border-b border-gray-100">
+                <h3 className="text-base font-bold text-gray-800">
+                  {editingAssocId ? 'Editar Associação' : 'Nova Associação'}
+                </h3>
+                <button type="button" onClick={() => setIsAssocModalOpen(false)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Local de Treinamento *</label>
+                  {operationalBases.locaisTreinamento.length > 0 ? (
+                    <select
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                      value={assocForm.local}
+                      onChange={(e) => setAssocForm({ ...assocForm, local: e.target.value })}
+                    >
+                      <option value="">Selecione...</option>
+                      {operationalBases.locaisTreinamento.map(l => <option key={l} value={l}>{l}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                      value={assocForm.local}
+                      onChange={(e) => setAssocForm({ ...assocForm, local: e.target.value })}
+                      placeholder="Ex: Brucutu"
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Corredor</label>
+                  <select
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    value={assocForm.corredor}
+                    onChange={(e) => setAssocForm({ ...assocForm, corredor: e.target.value })}
+                  >
+                    <option value="">Selecione...</option>
+                    {(operationalBases.corredores ?? []).map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Estado (UF)</label>
+                  <select
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    value={assocForm.uf}
+                    onChange={(e) => setAssocForm({ ...assocForm, uf: e.target.value })}
+                  >
+                    <option value="">Selecione...</option>
+                    {(operationalBases.locaisAgencia ?? []).map(u => <option key={u} value={u}>{u}</option>)}
+                    {assocForm.uf && !(operationalBases.locaisAgencia ?? []).includes(assocForm.uf) && (
+                      <option value={assocForm.uf}>{assocForm.uf}</option>
+                    )}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Região</label>
+                  <select
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    value={assocForm.regiao}
+                    onChange={(e) => setAssocForm({ ...assocForm, regiao: e.target.value })}
+                  >
+                    <option value="">Selecione...</option>
+                    {regions.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsAssocModalOpen(false)}
+                  className="px-5 py-2 text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg font-bold text-sm"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveAssoc}
+                  disabled={isSavingAssoc}
+                  className={`px-6 py-2 font-bold rounded-lg text-sm flex items-center gap-2 ${isSavingAssoc ? 'bg-gray-400 cursor-not-allowed text-white' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-md'}`}
+                >
+                  {isSavingAssoc ? <><Loader2 size={16} className="animate-spin" /> Salvando...</> : <><Save size={16} /> Salvar</>}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
         )}
 
         {/* Instrutores */}

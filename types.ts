@@ -319,6 +319,16 @@ export interface OperationalBases {
   regioes: string[];
 }
 
+// --- ASSOCIAÇÕES DE LOCAL ---
+
+export interface LocationAssociation {
+  id: string;
+  local: string;
+  regiao: string;
+  corredor: string;
+  uf: string;
+}
+
 // --- EVIDÊNCIAS ---
 
 export interface EvidenceFile {

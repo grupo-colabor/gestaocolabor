@@ -93,6 +93,7 @@ import {
 
 
 import { upsertLogisticByDemandId, fetchLogisticByDemandId } from '../services/logistics';
+import { fetchLocationAssociations, type LocationAssociation } from '../services/locationAssociations';
 import ExportDemandsModal from './ExportDemandsModal';
 
 
@@ -171,6 +172,10 @@ useEffect(() => {
   const [isSaving, setIsSaving] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
 
+  // Location associations for cascade autocomplete
+  const [locationAssociations, setLocationAssociations] = useState<LocationAssociation[]>([]);
+  const [autoFilledFields, setAutoFilledFields] = useState<Set<string>>(new Set());
+
   // Estados locais para motivo de cancelamento
   const [selectedCancelReason, setSelectedCancelReason] = useState<string>('');
   const [cancelTextNote, setCancelTextNote] = useState<string>('');
@@ -205,6 +210,16 @@ useEffect(() => {
   // Resource Modal State (CTM)
   const [isResourceModalOpen, setIsResourceModalOpen] = useState(false);
 
+  // Load location associations on mount
+  useEffect(() => {
+    fetchLocationAssociations().then(setLocationAssociations).catch(console.error);
+  }, []);
+
+  // Reset auto-fill state when modal closes
+  useEffect(() => {
+    if (!isModalOpen) setAutoFilledFields(new Set());
+  }, [isModalOpen]);
+
   // Body scroll lock when any modal is open
   useEffect(() => {
     const anyOpen = isModalOpen || isAllocationModalOpen || !!pendingConflictAllocation || isResourceModalOpen || confirmCancel || confirmDelete || confirmReactivate;
@@ -227,6 +242,94 @@ useEffect(() => {
 
   const toggleSection = (section: string) => {
     setOpenSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  // ── Helpers para cascade ──────────────────────────────────────────────────
+  // Retorna valor único se todos os registros concordam, null se ambíguo.
+  const uniqueVal = (arr: string[]): string | null =>
+    arr.length > 0 && new Set(arr).size === 1 ? arr[0] : null;
+
+  // Local → Corredor + Estado + Região  (match exato)
+  const handleTrainingLocalChange = (value: string) => {
+    const isNA = value === 'N/A';
+    const assoc = value && !isNA
+      ? locationAssociations.find(a => a.local === value)
+      : null;
+    const region = assoc ? regions.find(r => r.name === assoc.regiao) : null;
+
+    const newAutoFilled = new Set<string>();
+
+    setFormDemand(prev => {
+      const updates: Partial<typeof prev> = { trainingLocal: value };
+      if (isNA) {
+        updates.corredor   = 'N/A';
+        updates.demandState = 'N/A';
+        updates.regionId   = '';
+      } else if (assoc) {
+        if (assoc.corredor) updates.corredor   = assoc.corredor;
+        if (assoc.uf)       updates.demandState = assoc.uf;
+        if (region)         updates.regionId   = region.id;
+      }
+      return { ...prev, ...updates };
+    });
+
+    if (isNA) {
+      newAutoFilled.add('na_locked');
+    } else if (assoc) {
+      if (assoc.corredor) newAutoFilled.add('corredor');
+      if (assoc.uf)       newAutoFilled.add('demandState');
+      if (region)         newAutoFilled.add('regionId');
+    }
+    setAutoFilledFields(newAutoFilled);
+  };
+
+  // Corredor → Estado (se unívoco) + Região (se unívoca)
+  const handleCorredorChange = (value: string) => {
+    const matches = value
+      ? locationAssociations.filter(a => a.corredor === value && a.local !== 'N/A')
+      : [];
+
+    const uf     = uniqueVal(matches.map(a => a.uf).filter(Boolean));
+    const regiao = uniqueVal(matches.map(a => a.regiao).filter(Boolean));
+    const region = regiao ? regions.find(r => r.name === regiao) : null;
+
+    setFormDemand(prev => {
+      const updates: Partial<typeof prev> = { corredor: value };
+      if (uf)     updates.demandState = uf;
+      if (region) updates.regionId   = region.id;
+      return { ...prev, ...updates };
+    });
+
+    setAutoFilledFields(prev => {
+      const s = new Set(prev);
+      s.delete('corredor');                           // campo editado pelo usuário
+      if (uf)     s.add('demandState'); else s.delete('demandState');
+      if (region) s.add('regionId');    else s.delete('regionId');
+      return s;
+    });
+  };
+
+  // Estado (UF) → Região (se unívoca)
+  const handleEstadoChange = (value: string) => {
+    const matches = value
+      ? locationAssociations.filter(a => a.uf === value && a.local !== 'N/A')
+      : [];
+
+    const regiao = uniqueVal(matches.map(a => a.regiao).filter(Boolean));
+    const region = regiao ? regions.find(r => r.name === regiao) : null;
+
+    setFormDemand(prev => {
+      const updates: Partial<typeof prev> = { demandState: value };
+      if (region) updates.regionId = region.id;
+      return { ...prev, ...updates };
+    });
+
+    setAutoFilledFields(prev => {
+      const s = new Set(prev);
+      s.delete('demandState');                        // campo editado pelo usuário
+      if (region) s.add('regionId'); else s.delete('regionId');
+      return s;
+    });
   };
 
   // Shared Form State
@@ -2588,36 +2691,60 @@ const companionInstructorIds = useMemo(() => {
                                   formDemand.modality === 'ONLINE' ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''
                                 }`}
                                 value={formDemand.modality === 'ONLINE' ? '' : (formDemand.trainingLocal || '')}
-                                onChange={(e) => setFormDemand({ ...formDemand, trainingLocal: e.target.value })}
+                                onChange={(e) => handleTrainingLocalChange(e.target.value)}
                                 placeholder={formDemand.modality === 'ONLINE' ? 'N/A (ONLINE)' : 'Ex: Brucutu, Vitória...'}
                                 disabled={formDemand.modality === 'ONLINE'}
                               />
 
                               </div>
-                              <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Região</label><select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" value={formDemand.regionId} onChange={(e) => setFormDemand({...formDemand, regionId: e.target.value})}><option value="">Selecione...</option>{regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></div>
                               <div>
-                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Corredor</label>
-                              <input
-                                list="corredores-list"
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                                value={formDemand.corredor || ''}
-                                onChange={(e) => setFormDemand({ ...formDemand, corredor: e.target.value })}
-                                placeholder="Selecione ou digite..."
-                              />
-                            </div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Região</label>
+                                <select
+                                  className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${autoFilledFields.has('regionId') ? 'bg-gray-100' : ''} ${autoFilledFields.has('na_locked') ? 'bg-gray-200 cursor-not-allowed' : ''}`}
+                                  value={formDemand.regionId}
+                                  disabled={autoFilledFields.has('na_locked')}
+                                  onChange={(e) => {
+                                    setAutoFilledFields(prev => { const s = new Set(prev); s.delete('regionId'); return s; });
+                                    setFormDemand({...formDemand, regionId: e.target.value});
+                                  }}
+                                >
+                                  <option value="">Selecione...</option>
+                                  {regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                                </select>
+                              </div>
                               <div>
-                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Estado *</label>
-                              <select
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                                value={formDemand.demandState || ''}
-                                onChange={(e) => setFormDemand({ ...formDemand, demandState: e.target.value })}
-                              >
-                                <option value="">Selecione...</option>
-                                {(operationalBases.localidades ?? []).map((loc: string) => (
-                                  <option key={loc} value={loc}>{loc}</option>
-                                ))}
-                              </select>
-                            </div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Corredor</label>
+                                <input
+                                  list="corredores-list"
+                                  className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 ${autoFilledFields.has('corredor') ? 'bg-gray-100' : ''} ${autoFilledFields.has('na_locked') ? 'bg-gray-200 cursor-not-allowed' : ''}`}
+                                  value={formDemand.corredor || ''}
+                                  disabled={autoFilledFields.has('na_locked')}
+                                  onChange={(e) => handleCorredorChange(e.target.value)}
+                                  placeholder="Selecione ou digite..."
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Estado *</label>
+                                <select
+                                  className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 ${autoFilledFields.has('demandState') ? 'bg-gray-100' : ''} ${autoFilledFields.has('na_locked') ? 'bg-gray-200 cursor-not-allowed' : ''}`}
+                                  value={formDemand.demandState || ''}
+                                  disabled={autoFilledFields.has('na_locked')}
+                                  onChange={(e) => handleEstadoChange(e.target.value)}
+                                >
+                                  <option value="">Selecione...</option>
+                                  {autoFilledFields.has('na_locked') && <option value="N/A">N/A</option>}
+                                  {(() => {
+                                    const base = [...(operationalBases.localidades ?? []), ...(operationalBases.locaisAgencia ?? [])];
+                                    const unique = Array.from(new Set(base));
+                                    return unique.map((opt: string) => (
+                                      <option key={opt} value={opt}>{opt}</option>
+                                    ));
+                                  })()}
+                                  {formDemand.demandState && !autoFilledFields.has('na_locked') && !([...(operationalBases.localidades ?? []), ...(operationalBases.locaisAgencia ?? [])]).includes(formDemand.demandState) && (
+                                    <option value={formDemand.demandState}>{formDemand.demandState}</option>
+                                  )}
+                                </select>
+                              </div>
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tipo de Atendimento</label><input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-slate-100 text-slate-700 font-bold" value={formDemand.modality || '---'} readOnly /><p className="text-[10px] text-slate-400 mt-1">Campo automático (puxado do Treinamento).</p></div>
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Solicitante</label><input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={formDemand.requester || ''} onChange={(e) => setFormDemand({...formDemand, requester: e.target.value})} /></div>
                               

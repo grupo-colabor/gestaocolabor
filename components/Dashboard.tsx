@@ -422,7 +422,6 @@ const Dashboard: React.FC = () => {
       if (!d.startDate) return;
       const date = new Date(d.startDate);
       if (isNaN(date.getTime())) return;
-
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       const label = date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
       unique.set(key, label);

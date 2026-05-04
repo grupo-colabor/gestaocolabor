@@ -1271,8 +1271,8 @@ const handleRemoveBaseItem = async (item: string) => {
                     onChange={(e) => setAssocForm({ ...assocForm, uf: e.target.value })}
                   >
                     <option value="">Selecione...</option>
-                    {(operationalBases.locaisAgencia ?? []).map(u => <option key={u} value={u}>{u}</option>)}
-                    {assocForm.uf && !(operationalBases.locaisAgencia ?? []).includes(assocForm.uf) && (
+                    {Array.from(new Set([...(operationalBases.localidades ?? []), ...(operationalBases.locaisAgencia ?? [])])).map(u => <option key={u} value={u}>{u}</option>)}
+                    {assocForm.uf && !Array.from(new Set([...(operationalBases.localidades ?? []), ...(operationalBases.locaisAgencia ?? [])])).includes(assocForm.uf) && (
                       <option value={assocForm.uf}>{assocForm.uf}</option>
                     )}
                   </select>

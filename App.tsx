@@ -22,7 +22,9 @@ import {
   AlertCircle,
   FileSearch,
   Bell,
-  Shield
+  Shield,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 import type {
@@ -3047,6 +3049,15 @@ const canAccessView = (role: string | undefined, view: View) => {
 
 const App: React.FC = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() =>
+    localStorage.getItem('sidebarCollapsed') === 'true'
+  );
+  const toggleSidebar = () => {
+    setIsSidebarCollapsed(prev => {
+      localStorage.setItem('sidebarCollapsed', String(!prev));
+      return !prev;
+    });
+  };
   const { notification, setNotification, currentView, setCurrentView } = useApp();
   const { user, profile, initializing, loading, signOut } = useAuth();
 
@@ -3178,15 +3189,24 @@ const renderContent = () => {
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 flex-shrink-0 bg-gray-900 shadow-xl transform transition-transform duration-300 lg:static lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 flex-shrink-0 bg-gray-900 shadow-xl transform transition-all duration-300 lg:static lg:translate-x-0 ${
           isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
+        } ${isSidebarCollapsed ? 'w-16' : 'w-64'}`}
       >
-        <div className="flex items-center justify-between p-6 border-b border-gray-800">
-          <span className="text-xl font-bold text-white">COLABOR</span>
-          <button onClick={() => setIsMobileMenuOpen(false)} className="lg:hidden text-gray-400">
-            <X size={24} />
-          </button>
+        <div className={`flex items-center border-b border-gray-800 transition-all duration-300 ${isSidebarCollapsed ? 'justify-center p-4' : 'justify-between p-6'}`}>
+          {!isSidebarCollapsed && <span className="text-xl font-bold text-white">COLABOR</span>}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={toggleSidebar}
+              className="hidden lg:flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-800 p-1.5 rounded-lg transition-colors"
+              title={isSidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}
+            >
+              {isSidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+            </button>
+            <button onClick={() => setIsMobileMenuOpen(false)} className="lg:hidden text-gray-400">
+              <X size={24} />
+            </button>
+          </div>
         </div>
 
         <nav className="mt-6 space-y-1">
@@ -3196,6 +3216,7 @@ const renderContent = () => {
               label="Dashboard"
               active={currentView === 'dashboard'}
               onClick={() => setCurrentView('dashboard')}
+              collapsed={isSidebarCollapsed}
             />
           )}
 
@@ -3205,6 +3226,7 @@ const renderContent = () => {
               label="Notificações"
               active={currentView === 'notifications'}
               onClick={() => setCurrentView('notifications')}
+              collapsed={isSidebarCollapsed}
             />
           )}
 
@@ -3214,6 +3236,7 @@ const renderContent = () => {
               label="Demandas"
               active={currentView === 'demands'}
               onClick={() => setCurrentView('demands')}
+              collapsed={isSidebarCollapsed}
             />
           )}
 
@@ -3223,6 +3246,7 @@ const renderContent = () => {
               label="Programação"
               active={currentView === 'logistics'}
               onClick={() => setCurrentView('logistics')}
+              collapsed={isSidebarCollapsed}
             />
           )}
 
@@ -3232,6 +3256,7 @@ const renderContent = () => {
               label="Controle Logístico"
               active={currentView === 'logistics-control'}
               onClick={() => setCurrentView('logistics-control')}
+              collapsed={isSidebarCollapsed}
             />
           )}
 
@@ -3241,6 +3266,7 @@ const renderContent = () => {
               label="Medição"
               active={currentView === 'measurement'}
               onClick={() => setCurrentView('measurement')}
+              collapsed={isSidebarCollapsed}
             />
           )}
 
@@ -3250,6 +3276,7 @@ const renderContent = () => {
               label="Evidências"
               active={currentView === 'evidences'}
               onClick={() => setCurrentView('evidences')}
+              collapsed={isSidebarCollapsed}
             />
           )}
 
@@ -3259,6 +3286,7 @@ const renderContent = () => {
               label="Agenda"
               active={currentView === 'calendar'}
               onClick={() => setCurrentView('calendar')}
+              collapsed={isSidebarCollapsed}
             />
           )}
 
@@ -3268,6 +3296,7 @@ const renderContent = () => {
               label="Cadastros"
               active={currentView === 'registrations'}
               onClick={() => setCurrentView('registrations')}
+              collapsed={isSidebarCollapsed}
             />
           )}
 
@@ -3277,6 +3306,7 @@ const renderContent = () => {
               label="Auditoria"
               active={currentView === 'audit'}
               onClick={() => setCurrentView('audit')}
+              collapsed={isSidebarCollapsed}
             />
           )}
         </nav>
@@ -3301,21 +3331,26 @@ const SidebarButton = ({
   icon: Icon,
   label,
   active,
-  onClick
+  onClick,
+  collapsed = false,
 }: {
   icon: any;
   label: string;
   active: boolean;
   onClick: () => void;
+  collapsed?: boolean;
 }) => (
   <button
     onClick={onClick}
-    className={`w-full flex items-center space-x-3 px-6 py-3 transition ${
+    title={collapsed ? label : undefined}
+    className={`w-full flex items-center transition-all duration-300 py-3 ${
+      collapsed ? 'justify-center px-0' : 'space-x-3 px-6'
+    } ${
       active ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-400 hover:bg-gray-800 hover:text-white'
     }`}
   >
     <Icon size={20} />
-    <span className="font-medium">{label}</span>
+    {!collapsed && <span className="font-medium">{label}</span>}
   </button>
 );
 

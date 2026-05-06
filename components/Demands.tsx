@@ -153,7 +153,8 @@ useEffect(() => {
     | 'id'
     | 'company'
     | 'training'
-    | 'region'
+    | 'demandState'
+    | 'trainingLocal'
     | 'startDate'
     | 'instructor'
     | 'status';
@@ -623,8 +624,10 @@ const filteredDemands = useMemo(() => {
           return getCompanyName(a.companyId);
         case 'training':
           return getTrainingName(a.trainingId);
-        case 'region':
-          return getRegionName(a.regionId);
+        case 'demandState':
+          return a.demandState || '';
+        case 'trainingLocal':
+          return a.trainingLocal || '';
         case 'startDate':
           return a.startDate || '';
         case 'instructor':
@@ -644,8 +647,10 @@ const filteredDemands = useMemo(() => {
           return getCompanyName(b.companyId);
         case 'training':
           return getTrainingName(b.trainingId);
-        case 'region':
-          return getRegionName(b.regionId);
+        case 'demandState':
+          return b.demandState || '';
+        case 'trainingLocal':
+          return b.trainingLocal || '';
         case 'startDate':
           return b.startDate || '';
         case 'instructor':
@@ -2480,9 +2485,16 @@ const companionInstructorIds = useMemo(() => {
 
               <th
                 className="p-4 cursor-pointer select-none"
-                onClick={() => toggleSort('region')}
+                onClick={() => toggleSort('demandState')}
               >
-                Região {sort.key === 'region' && (sort.dir === 'asc' ? '↑' : '↓')}
+                Estado {sort.key === 'demandState' && (sort.dir === 'asc' ? '↑' : '↓')}
+              </th>
+
+              <th
+                className="p-4 cursor-pointer select-none"
+                onClick={() => toggleSort('trainingLocal')}
+              >
+                Unidade/Local {sort.key === 'trainingLocal' && (sort.dir === 'asc' ? '↑' : '↓')}
               </th>
 
               <th className="p-4 select-none">
@@ -2530,7 +2542,8 @@ const companionInstructorIds = useMemo(() => {
                     <td className="p-4 font-bold text-blue-600">{demand.id}</td>
                     <td className="p-4 font-medium">{getCompanyName(demand.companyId)}</td>
                     <td className="p-4 max-w-xs truncate" title={getTrainingName(demand.trainingId)}>{getTrainingName(demand.trainingId)}</td>
-                    <td className="p-4">{getRegionName(demand.regionId)}</td>
+                    <td className="p-4">{demand.demandState || '—'}</td>
+                    <td className="p-4">{demand.trainingLocal || '—'}</td>
                     <td className="p-4">{demand.corredor || '—'}</td>
                     <td className="p-4 whitespace-nowrap">{formatDateTime(demand.startDate.split('T')[0])}</td>
                     <td className="p-4 font-medium text-gray-900">{getInstructorName(principalInstructorByDemandId[demand.id])}</td>
@@ -2552,7 +2565,7 @@ const companionInstructorIds = useMemo(() => {
                 );
               }) : (
                 <tr>
-                  <td colSpan={9} className="p-20 text-center text-slate-400">
+                  <td colSpan={10} className="p-20 text-center text-slate-400">
                     <div className="flex flex-col items-center gap-3">
                       <Eraser size={40} className="opacity-20" />
                       <p className="font-medium">Nenhuma demanda encontrada.</p>

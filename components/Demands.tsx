@@ -191,7 +191,8 @@ useEffect(() => {
     startDate: '',
     endDate: '',
     trainingLocal: '',
-    corredor: ''
+    corredor: '',
+    demandState: ''
   });
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
@@ -583,6 +584,7 @@ const filteredDemands = useMemo(() => {
 
       if (advancedFilters.trainingLocal && (d.trainingLocal || '') !== advancedFilters.trainingLocal) return false;
       if (advancedFilters.corredor && (d.corredor || '') !== advancedFilters.corredor) return false;
+      if (advancedFilters.demandState && (d.demandState || '') !== advancedFilters.demandState) return false;
 
       return true;
     })
@@ -869,7 +871,8 @@ useEffect(() => {
       startDate: '',
       endDate: '',
       trainingLocal: '',
-      corredor: ''
+      corredor: '',
+      demandState: ''
     });
   };
 
@@ -2411,6 +2414,25 @@ const companionInstructorIds = useMemo(() => {
                 >
                   <option value="">Todas as Regiões</option>
                   {regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+              </div>
+
+              {/* Estado */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-tight">Estado</label>
+                <select
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={advancedFilters.demandState}
+                  onChange={(e) => setAdvancedFilters({...advancedFilters, demandState: e.target.value})}
+                >
+                  <option value="">Todos os Estados</option>
+                  {Array.from(new Set(
+                    demands
+                      .map(d => (d.demandState || '').trim())
+                      .filter(Boolean)
+                  ) as Set<string>).sort().map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
                 </select>
               </div>
 

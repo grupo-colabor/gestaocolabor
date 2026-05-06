@@ -2615,6 +2615,7 @@ const companionInstructorIds = useMemo(() => {
         <div
           className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 no-print"
           onClick={() => {
+            if (modalMode === 'CREATE') return;
             setConfirmDelete(false);
             setConfirmCancel(false);
             setConfirmReactivate(false);

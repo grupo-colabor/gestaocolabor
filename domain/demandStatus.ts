@@ -136,6 +136,18 @@ const isNightShift = (start?: string | Date | null, end?: string | Date | null) 
   return s.total >= nightStart || e.total <= nightEnd || e.total < s.total;
 };
 
+/** Retorna apenas o label base sem o tag noturno "(N)". */
+export function formatDemandBaseLabel(input: {
+  trainingNr?: string;
+  companyName?: string;
+}): string {
+  const trainingNr = String(input.trainingNr ?? '').trim();
+  const companyName = String(input.companyName ?? '').trim();
+  return trainingNr && companyName
+    ? `${trainingNr} - ${companyName}`
+    : trainingNr || companyName || 'Demanda';
+}
+
 // ✅ Label centralizado para a Agenda (inclui marcação Noturno "(N)")
 export function formatDemandLabel(input: {
   trainingNr?: string;

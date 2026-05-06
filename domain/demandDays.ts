@@ -140,5 +140,20 @@ export function getDemandDaySet(demand: DemandLike): Set<string> {
   return new Set(getDemandDays(demand));
 }
 
+/**
+ * Retorna o horarioInicio para um dia específico da demanda.
+ * - DIAS_ESPECIFICOS: usa o horarioInicio do specificDate correspondente
+ * - CONTINUO (fallback): extrai HH:MM do startDate da demanda
+ */
+export function getDayHorarioInicio(demand: DemandLike, dayKey: string): string {
+  if (demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates)) {
+    const entry = demand.specificDates.find(e => e.data === dayKey);
+    if (entry?.horarioInicio) return entry.horarioInicio;
+  }
+  const s = String(demand.startDate ?? '');
+  const timePart = s.length >= 16 ? s.slice(11, 16) : '';
+  return timePart || '08:00';
+}
+
 // Re-export toDateKey para uso em outros componentes
 export { toDateKey };

@@ -22,8 +22,8 @@ import {
 import { AgendaItem, AgendaType, Demand, Instructor } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { useAuth } from '../contexts/AuthContext';
-import { formatDemandLabel } from '../domain/demandStatus';
-import { isDemandDay } from '../domain/demandDays';
+import { formatDemandLabel, formatDemandBaseLabel } from '../domain/demandStatus';
+import { isDemandDay, getDayHorarioInicio } from '../domain/demandDays';
 import AllocationDrawer, { type DrawerState, type AllocationPreview } from './AllocationDrawer';
 
 // Configuração visual para cada tipo de compromisso
@@ -385,20 +385,17 @@ const getDemandFromItem = (item: any): Demand | null => {
         const training = trainings.find(t => t.id === d.trainingId);
        const company = companies.find(c => c.id === d.companyId);
 
-        const base = formatDemandLabel({
-        trainingNr: training?.nr,
-        companyName: company?.name,
-        startDate: ensureDateTimeForDisplay(a.startDate, 'start'),
-        endDate: ensureDateTimeForDisplay(a.endDate, 'end')
-      });
-
-      const formattedTitle = `${d.id} • ${base}`;
-
+        const baseLabel = formatDemandBaseLabel({
+          trainingNr: training?.nr,
+          companyName: company?.name,
+        });
 
         while (cursor <= end) {
-          map[formatDateKey(cursor)] = {
+          const dayKey = formatDateKey(cursor);
+          const nightTag = getDayHorarioInicio(d, dayKey) >= '18:00' ? ' (N)' : '';
+          map[dayKey] = {
             id: a.id,
-            title: formattedTitle,
+            title: `${d.id} • ${baseLabel}${nightTag}`,
             source: 'MIRROR',
             start: a.startDate,
             end: a.endDate,
@@ -478,30 +475,26 @@ const getDemandFromItem = (item: any): Demand | null => {
       const training = trainings.find(t => t.id === d.trainingId);
       const company = companies.find(c => c.id === d.companyId);
 
-      const base = formatDemandLabel({
-      trainingNr: training?.nr,
-      companyName: company?.name,
-      startDate: ensureDateTimeForDisplay(a.startDate, 'start'),
-      endDate: ensureDateTimeForDisplay(a.endDate, 'end')
-    });
-
-    const formattedTitle = `${d.id} • ${base}`;
-
-
+      const baseLabel = formatDemandBaseLabel({
+        trainingNr: training?.nr,
+        companyName: company?.name,
+      });
 
       const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
       while (cursor <= end) {
         // ✅ DIAS ESPECÍFICOS: pula dias que não fazem parte da demanda
         if (isDemandDay(d, cursor)) {
-          const allocKey = `${a.instructorId}-${formatDateKey(cursor)}`;
+          const dayKey = formatDateKey(cursor);
+          const nightTag = getDayHorarioInicio(d, dayKey) >= '18:00' ? ' (N)' : '';
+          const allocKey = `${a.instructorId}-${dayKey}`;
           const allocItem: UnifiedItem = {
             id: a.id,
             instructorId: a.instructorId,
             startDate: displayStart,
             endDate: displayEnd,
             type: 'TREINAMENTO',
-            title: formattedTitle,
+            title: `${d.id} • ${baseLabel}${nightTag}`,
             source: 'ALLOCATION',
             description: d.trainingLocal,
             calculatedStatus: cStatus,
@@ -548,26 +541,24 @@ companionAllocations.forEach(ca => {
   const training = trainings.find(t => t.id === d.trainingId);
   const company = companies.find(c => c.id === d.companyId);
 
-  const base = formatDemandLabel({
+  const baseLabel = formatDemandBaseLabel({
     trainingNr: training?.nr,
     companyName: company?.name,
-    startDate: ensureDateTimeForDisplay(ca.startDate, 'start'),
-    endDate: ensureDateTimeForDisplay(ca.endDate, 'end')
   });
-
-  const formattedTitle = `${d.id} • ${base}`;
   const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
   while (cursor <= end) {
     // ✅ DIAS ESPECÍFICOS: pula dias que não fazem parte da demanda
     if (isDemandDay(d, cursor)) {
-      map[`${ca.instructorId}-${formatDateKey(cursor)}`] = {
+      const dayKey = formatDateKey(cursor);
+      const nightTag = getDayHorarioInicio(d, dayKey) >= '18:00' ? ' (N)' : '';
+      map[`${ca.instructorId}-${dayKey}`] = {
         id: ca.id,
         instructorId: ca.instructorId,
         startDate: displayStart,
         endDate: displayEnd,
         type: 'TREINAMENTO',
-        title: formattedTitle,
+        title: `${d.id} • ${baseLabel}${nightTag}`,
         source: 'COMPANION',
         description: d.trainingLocal,
         calculatedStatus: cStatus,

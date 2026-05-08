@@ -143,7 +143,7 @@ export function getDemandDaySet(demand: DemandLike): Set<string> {
 /**
  * Retorna o horarioInicio para um dia específico da demanda.
  * - DIAS_ESPECIFICOS: usa o horarioInicio do specificDate correspondente
- * - CONTINUO (fallback): extrai HH:MM do startDate da demanda
+ * - CONTINUO: todos os dias herdam a hora do startDate (turno único)
  */
 export function getDayHorarioInicio(demand: DemandLike, dayKey: string): string {
   if (demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates)) {

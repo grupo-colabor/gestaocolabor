@@ -392,7 +392,8 @@ const getDemandFromItem = (item: any): Demand | null => {
 
         while (cursor <= end) {
           const dayKey = formatDateKey(cursor);
-          const nightTag = getDayHorarioInicio(d, dayKey) >= '18:00' ? ' (N)' : '';
+          const _h = getDayHorarioInicio(d, dayKey);
+          const nightTag = (_h >= '18:00' || _h < '06:00') ? ' (N)' : '';
           map[dayKey] = {
             id: a.id,
             title: `${d.id} • ${baseLabel}${nightTag}`,
@@ -486,7 +487,8 @@ const getDemandFromItem = (item: any): Demand | null => {
         // ✅ DIAS ESPECÍFICOS: pula dias que não fazem parte da demanda
         if (isDemandDay(d, cursor)) {
           const dayKey = formatDateKey(cursor);
-          const nightTag = getDayHorarioInicio(d, dayKey) >= '18:00' ? ' (N)' : '';
+          const _h = getDayHorarioInicio(d, dayKey);
+          const nightTag = (_h >= '18:00' || _h < '06:00') ? ' (N)' : '';
           const allocKey = `${a.instructorId}-${dayKey}`;
           const allocItem: UnifiedItem = {
             id: a.id,
@@ -551,7 +553,8 @@ companionAllocations.forEach(ca => {
     // ✅ DIAS ESPECÍFICOS: pula dias que não fazem parte da demanda
     if (isDemandDay(d, cursor)) {
       const dayKey = formatDateKey(cursor);
-      const nightTag = getDayHorarioInicio(d, dayKey) >= '18:00' ? ' (N)' : '';
+      const _h = getDayHorarioInicio(d, dayKey);
+      const nightTag = (_h >= '18:00' || _h < '06:00') ? ' (N)' : '';
       map[`${ca.instructorId}-${dayKey}`] = {
         id: ca.id,
         instructorId: ca.instructorId,
@@ -588,21 +591,22 @@ companionAllocations.forEach(ca => {
 
         const cursor = new Date(start);
 
-        const formattedTitle = buildDemandTitle(d);
-
-
+        const baseTitle = buildDemandTitle(d);
         const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
         while (cursor <= end) {
           // ✅ DIAS ESPECÍFICOS: pula dias que não fazem parte da demanda
           if (isDemandDay(d, cursor)) {
-            map[`${d.instructorId}-${formatDateKey(cursor)}`] = {
+            const dayKey = formatDateKey(cursor);
+            const _h = getDayHorarioInicio(d, dayKey);
+            const nightTag = (_h >= '18:00' || _h < '06:00') ? ' (N)' : '';
+            map[`${d.instructorId}-${dayKey}`] = {
               id: d.id,
               instructorId: d.instructorId!,
               startDate: effectiveStart,
               endDate: effectiveEnd,
               type: 'TREINAMENTO',
-              title: formattedTitle,
+              title: `${baseTitle}${nightTag}`,
               source: 'DEMANDA',
               description: d.trainingLocal,
               calculatedStatus: cStatus,
@@ -1715,7 +1719,9 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                         const hasCTM = !!demandId && resourceAllocations.some(
                           a => a.resourceType === 'CENTRO_TREINAMENTO_MOVEL' && a.demandId === demandId
                         );
-                        const trainingLabel = [demand?.id ?? cellItem.data.id, company?.name, training?.nr ?? training?.name].filter(Boolean).join(' • ');
+                        const _dayH = demand ? getDayHorarioInicio(demand, formatDateKey(day)) : '08:00';
+                        const _nightTag = (_dayH >= '18:00' || _dayH < '06:00') ? ' (N)' : '';
+                        const trainingLabel = [demand?.id ?? cellItem.data.id, company?.name, training?.nr ?? training?.name].filter(Boolean).join(' • ') + _nightTag;
                         return (
                           <>
                             {/* Linha 1: DEM-505 • VALE • SINAL - REC */}

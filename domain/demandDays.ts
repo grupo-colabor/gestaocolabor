@@ -155,5 +155,25 @@ export function getDayHorarioInicio(demand: DemandLike, dayKey: string): string 
   return timePart || '08:00';
 }
 
+/**
+ * Monta o label do card da agenda para um dia específico.
+ * Fonte única de verdade — usar em todos os caminhos de renderização.
+ *
+ * Formato: "DEM-XXX • EMPRESA • TREINAMENTO (N)"
+ * O sufixo (N) é adicionado quando hora_inicio >= 18:00 ou < 06:00.
+ */
+export function buildCardLabel(
+  demand: DemandLike & { id: string },
+  dayKey: string,
+  opts: { companyName?: string; trainingNr?: string }
+): string {
+  const base = [demand.id, opts.companyName, opts.trainingNr]
+    .filter(Boolean)
+    .join(' • ');
+  const h = getDayHorarioInicio(demand, dayKey);
+  const nightTag = (h >= '18:00' || h < '06:00') ? ' (N)' : '';
+  return `${base}${nightTag}`;
+}
+
 // Re-export toDateKey para uso em outros componentes
 export { toDateKey };

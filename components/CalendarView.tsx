@@ -22,8 +22,7 @@ import {
 import { AgendaItem, AgendaType, Demand, Instructor } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { useAuth } from '../contexts/AuthContext';
-import { formatDemandLabel, formatDemandBaseLabel } from '../domain/demandStatus';
-import { isDemandDay, getDayHorarioInicio } from '../domain/demandDays';
+import { isDemandDay, buildCardLabel } from '../domain/demandDays';
 import AllocationDrawer, { type DrawerState, type AllocationPreview } from './AllocationDrawer';
 
 // Configuração visual para cada tipo de compromisso
@@ -300,16 +299,6 @@ const getDemandFromItem = (item: any): Demand | null => {
     const d = new Date(prev); d.setDate(d.getDate() + 7); return d;
   });
   
-  const buildDemandTitle = React.useCallback(
-  (d: Demand) => {
-    const training = trainings.find(t => t.id === d.trainingId);
-    const company = companies.find(c => c.id === d.companyId);
-
-    return `${d.id} • ${company?.name ?? 'Empresa'} • ${training?.nr ?? 'Treinamento'}`;
-  },
-  [trainings, companies]
-);
-
   const daysInView = useMemo(() => {
   // Se tiver range (De/Até), renderiza exatamente o range (inclusive)
   if (filterDateFrom && filterDateTo) {
@@ -383,20 +372,13 @@ const getDemandFromItem = (item: any): Demand | null => {
         );
         const cursor = new Date(start);
         const training = trainings.find(t => t.id === d.trainingId);
-       const company = companies.find(c => c.id === d.companyId);
-
-        const baseLabel = formatDemandBaseLabel({
-          trainingNr: training?.nr,
-          companyName: company?.name,
-        });
+        const company = companies.find(c => c.id === d.companyId);
 
         while (cursor <= end) {
           const dayKey = formatDateKey(cursor);
-          const _h = getDayHorarioInicio(d, dayKey);
-          const nightTag = (_h >= '18:00' || _h < '06:00') ? ' (N)' : '';
           map[dayKey] = {
             id: a.id,
-            title: `${d.id} • ${baseLabel}${nightTag}`,
+            title: buildCardLabel(d, dayKey, { companyName: company?.name, trainingNr: training?.nr }),
             source: 'MIRROR',
             start: a.startDate,
             end: a.endDate,
@@ -475,20 +457,12 @@ const getDemandFromItem = (item: any): Demand | null => {
 
       const training = trainings.find(t => t.id === d.trainingId);
       const company = companies.find(c => c.id === d.companyId);
-
-      const baseLabel = formatDemandBaseLabel({
-        trainingNr: training?.nr,
-        companyName: company?.name,
-      });
-
       const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
       while (cursor <= end) {
         // ✅ DIAS ESPECÍFICOS: pula dias que não fazem parte da demanda
         if (isDemandDay(d, cursor)) {
           const dayKey = formatDateKey(cursor);
-          const _h = getDayHorarioInicio(d, dayKey);
-          const nightTag = (_h >= '18:00' || _h < '06:00') ? ' (N)' : '';
           const allocKey = `${a.instructorId}-${dayKey}`;
           const allocItem: UnifiedItem = {
             id: a.id,
@@ -496,7 +470,7 @@ const getDemandFromItem = (item: any): Demand | null => {
             startDate: displayStart,
             endDate: displayEnd,
             type: 'TREINAMENTO',
-            title: `${d.id} • ${baseLabel}${nightTag}`,
+            title: buildCardLabel(d, dayKey, { companyName: company?.name, trainingNr: training?.nr }),
             source: 'ALLOCATION',
             description: d.trainingLocal,
             calculatedStatus: cStatus,
@@ -542,26 +516,19 @@ companionAllocations.forEach(ca => {
 
   const training = trainings.find(t => t.id === d.trainingId);
   const company = companies.find(c => c.id === d.companyId);
-
-  const baseLabel = formatDemandBaseLabel({
-    trainingNr: training?.nr,
-    companyName: company?.name,
-  });
   const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
   while (cursor <= end) {
     // ✅ DIAS ESPECÍFICOS: pula dias que não fazem parte da demanda
     if (isDemandDay(d, cursor)) {
       const dayKey = formatDateKey(cursor);
-      const _h = getDayHorarioInicio(d, dayKey);
-      const nightTag = (_h >= '18:00' || _h < '06:00') ? ' (N)' : '';
       map[`${ca.instructorId}-${dayKey}`] = {
         id: ca.id,
         instructorId: ca.instructorId,
         startDate: displayStart,
         endDate: displayEnd,
         type: 'TREINAMENTO',
-        title: `${d.id} • ${baseLabel}${nightTag}`,
+        title: buildCardLabel(d, dayKey, { companyName: company?.name, trainingNr: training?.nr }),
         source: 'COMPANION',
         description: d.trainingLocal,
         calculatedStatus: cStatus,
@@ -591,22 +558,21 @@ companionAllocations.forEach(ca => {
 
         const cursor = new Date(start);
 
-        const baseTitle = buildDemandTitle(d);
+        const training = trainings.find(t => t.id === d.trainingId);
+        const company = companies.find(c => c.id === d.companyId);
         const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
         while (cursor <= end) {
           // ✅ DIAS ESPECÍFICOS: pula dias que não fazem parte da demanda
           if (isDemandDay(d, cursor)) {
             const dayKey = formatDateKey(cursor);
-            const _h = getDayHorarioInicio(d, dayKey);
-            const nightTag = (_h >= '18:00' || _h < '06:00') ? ' (N)' : '';
             map[`${d.instructorId}-${dayKey}`] = {
               id: d.id,
               instructorId: d.instructorId!,
               startDate: effectiveStart,
               endDate: effectiveEnd,
               type: 'TREINAMENTO',
-              title: `${baseTitle}${nightTag}`,
+              title: buildCardLabel(d, dayKey, { companyName: company?.name, trainingNr: training?.nr }),
               source: 'DEMANDA',
               description: d.trainingLocal,
               calculatedStatus: cStatus,
@@ -618,7 +584,7 @@ companionAllocations.forEach(ca => {
       });
 
     return { agendaByDay: map, allocByDayMulti: allocMulti };
-  }, [agendaItems, instructorAllocations, companionAllocations, demands, trainings, companies, buildDemandTitle]);
+  }, [agendaItems, instructorAllocations, companionAllocations, demands, trainings, companies]);
 
   const trainingCountInRange = useMemo(() => {
     // conta DEMANDAS únicas no range, respeitando filtroTrainingId/local
@@ -1719,9 +1685,9 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                         const hasCTM = !!demandId && resourceAllocations.some(
                           a => a.resourceType === 'CENTRO_TREINAMENTO_MOVEL' && a.demandId === demandId
                         );
-                        const _dayH = demand ? getDayHorarioInicio(demand, formatDateKey(day)) : '08:00';
-                        const _nightTag = (_dayH >= '18:00' || _dayH < '06:00') ? ' (N)' : '';
-                        const trainingLabel = [demand?.id ?? cellItem.data.id, company?.name, training?.nr ?? training?.name].filter(Boolean).join(' • ') + _nightTag;
+                        const trainingLabel = demand
+                          ? buildCardLabel(demand, formatDateKey(day), { companyName: company?.name, trainingNr: training?.nr ?? training?.name })
+                          : [cellItem.data.id, company?.name, training?.nr ?? training?.name].filter(Boolean).join(' • ');
                         return (
                           <>
                             {/* Linha 1: DEM-505 • VALE • SINAL - REC */}

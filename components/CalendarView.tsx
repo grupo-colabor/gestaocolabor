@@ -193,7 +193,6 @@ const CalendarView: React.FC = () => {
   const { profile } = useAuth();
   const isCoordinator = profile?.role === 'coordenador';
 
-  const [mobileResourceEvents, setMobileResourceEvents] = useState<MobileResourceEvent[]>([]);
   const [activeMobileEvent, setActiveMobileEvent] = useState<MobileResourceEvent | null>(null);
   const [isMobileContext, setIsMobileContext] = useState(false);
 
@@ -342,22 +341,24 @@ const getDemandFromItem = (item: any): Demand | null => {
       { title: string; source: 'MIRROR' | 'LOCAL'; id: string; start: string; end: string; description?: string }
     > = {};
 
-    // Local Maintenance/Events
-    mobileResourceEvents.forEach(evt => {
-      const { start, end } = getDayBoundsForIteration(evt.startDate, evt.endDate);
-      const cursor = new Date(start);
-      while (cursor <= end) {
-        map[formatDateKey(cursor)] = {
-          id: evt.id,
-          title: evt.title,
-          source: 'LOCAL',
-          start: evt.startDate,
-          end: evt.endDate,
-          description: evt.description
-        };
-        cursor.setDate(cursor.getDate() + 1);
-      }
-    });
+    // Manual CTM events (persisted in agenda_items with instructorId = 'MOBILE_RESOURCE')
+    agendaItems
+      .filter(item => item.instructorId === 'MOBILE_RESOURCE')
+      .forEach(item => {
+        const { start, end } = getDayBoundsForIteration(item.startDate, item.endDate);
+        const cursor = new Date(start);
+        while (cursor <= end) {
+          map[formatDateKey(cursor)] = {
+            id: item.id,
+            title: item.title,
+            source: 'LOCAL',
+            start: item.startDate,
+            end: item.endDate,
+            description: item.description
+          };
+          cursor.setDate(cursor.getDate() + 1);
+        }
+      });
 
     // Mirrored Resource Allocations (CTM por período)
     resourceAllocations
@@ -389,7 +390,7 @@ const getDemandFromItem = (item: any): Demand | null => {
       });
 
     return map;
-  }, [mobileResourceEvents, resourceAllocations, demands, trainings, companies]);
+  }, [agendaItems, resourceAllocations, demands, trainings, companies]);
 
   /** =========================
    *  2) AGENDA INSTRUTORES
@@ -892,49 +893,49 @@ const handleSaveManual = async () => {
 };
 
 
-  const handleSaveMobile = () => {
+  const handleSaveMobile = async () => {
     if (!selectedSlot || !formEndDate || !formDescription.trim()) return;
 
     const startDateTime = `${formatDateKey(selectedSlot.date)}T${formStartTime}`;
     const endDateTime = `${formEndDate}T${formEndTime}`;
-
-    // Mantém o conflito do CTM por período (dia) como já era
     const startDay = getDatePart(startDateTime);
     const endDay = getDatePart(endDateTime);
 
+    // Conflito com alocações de demanda (resource_allocations)
     if (hasResourceConflict(startDay, endDay)) {
       setNotification({ message: 'Não é possível registrar este período, pois já existe outro registro cadastrado.', type: 'error' });
       return;
     }
 
-    // Conflito com eventos locais (por dia) como já era
-    const hasLocalConflict = mobileResourceEvents.some(evt => {
-      const evtStart = getDatePart(evt.startDate);
-      const evtEnd = getDatePart(evt.endDate);
-      return startDay <= evtEnd && endDay >= evtStart;
-    });
-
-    if (hasLocalConflict) {
+    // Conflito com outros eventos manuais do CTM (agenda_items)
+    if (hasScheduleConflict('MOBILE_RESOURCE', startDateTime, endDateTime)) {
       setNotification({ message: 'Não é possível registrar este período, pois já existe outro registro cadastrado.', type: 'error' });
       return;
     }
 
-    const newEvent: MobileResourceEvent = {
-      id: `MOBILE-${Date.now()}`,
-      title: getAgendaLabel(formType),
+    const item: AgendaItem = {
+      id: `AG-${Date.now()}`,
+      instructorId: 'MOBILE_RESOURCE',
       startDate: startDateTime,
       endDate: endDateTime,
+      type: formType as AgendaType,
+      title: getAgendaLabel(formType),
+      source: 'MANUAL',
       description: formDescription
     };
 
-    setMobileResourceEvents(prev => [...prev, newEvent]);
-    logAction({
-      modulo: 'Agendamento',
-      acao: 'Criar',
-      descricao: `CTM criado: ${newEvent.title} | ${newEvent.startDate?.slice(0, 10) ?? ''} a ${newEvent.endDate?.slice(0, 10) ?? ''}${formDescription ? ` | Obs: ${formDescription}` : ''}`,
-      dadosDepois: newEvent,
-    });
-    setIsModalOpen(false);
+    try {
+      await addAgendaItem(item);
+      logAction({
+        modulo: 'Agendamento',
+        acao: 'Criar',
+        descricao: `CTM criado: ${item.title} | ${item.startDate.slice(0, 10)} a ${item.endDate.slice(0, 10)}${formDescription ? ` | Obs: ${formDescription}` : ''}`,
+        dadosDepois: item,
+      });
+      setIsModalOpen(false);
+    } catch (e) {
+      setNotification({ type: 'error', message: 'Falha ao salvar registro do CTM. Verifique o console.' });
+    }
   };
 
   const handleUpdateObservation = () => {
@@ -1019,7 +1020,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
 
 
   const handleRemoveMobileEvent = () => {
-    if (activeMobileEvent) setMobileResourceEvents(prev => prev.filter(e => e.id !== activeMobileEvent.id));
+    if (activeMobileEvent) removeAgendaItem(activeMobileEvent.id);
     setActiveMobileEvent(null);
   };
 

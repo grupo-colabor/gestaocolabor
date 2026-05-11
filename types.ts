@@ -35,7 +35,11 @@ export type AgendaType =
   | 'ESCRITORIO_BH'
   | 'ESCRITORIO_VITORIA'
   | 'HOME_OFFICE'
-  | 'EXTERNO';
+  | 'EXTERNO'
+  | 'MANUTENÇÃO'
+  | 'DESLOCAMENTO'
+  | 'EVENTO'
+  | 'RESERVADO';
 
 
 export type TransportType = 'Carro Alugado' | 'Carro Próprio' | 'Táxi' | 'N/A' | null;

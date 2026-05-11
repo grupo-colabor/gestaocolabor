@@ -654,7 +654,7 @@ companionAllocations.forEach(ca => {
     e.dataTransfer.setData('itemId', item.id);
   };
 
-  const handleDrop = (e: React.DragEvent, targetInstructorId: string) => {
+  const handleDrop = async (e: React.DragEvent, targetInstructorId: string) => {
     e.preventDefault();
     if (isCoordinator) return;
 
@@ -675,14 +675,21 @@ companionAllocations.forEach(ca => {
         return;
       }
 
+      // Remove agenda_items do instrutor anterior vinculados a esta demanda antes de mover
+      const staleAgendaItems = agendaItems.filter(
+        item => item.relatedDemandId === demand.id && item.instructorId === demand.instructorId
+      );
+      for (const item of staleAgendaItems) {
+        await removeAgendaItem(item.id);
+      }
+
       updateDemand({ ...demand, instructorId: targetInstructorId });
     } else if (source === 'ALLOCATION') {
       const allocation = instructorAllocations.find(a => a.id === itemId);
       if (!allocation) return;
       if (allocation.instructorId === targetInstructorId) return;
 
-      // ✅ ALTERAÇÃO (bugfix): não remover + recriar (isso derruba status da demanda)
-      // usamos update mantendo o mesmo id
+      // usamos update mantendo o mesmo id para não derrubar o status da demanda
       const demand = demands.find(d => d.id === allocation.demandId);
 
       const effectiveStart =
@@ -700,7 +707,20 @@ companionAllocations.forEach(ca => {
         return;
       }
 
+      // Remove agenda_items do instrutor anterior vinculados a esta demanda antes de mover
+      const staleAgendaItems = agendaItems.filter(
+        item => item.relatedDemandId === allocation.demandId && item.instructorId === allocation.instructorId
+      );
+      for (const item of staleAgendaItems) {
+        await removeAgendaItem(item.id);
+      }
+
       updateInstructorAllocation({ ...allocation, instructorId: targetInstructorId });
+
+      // Mantém demands.instructor_id sincronizado com a nova alocação
+      if (demand) {
+        updateDemand({ ...demand, instructorId: targetInstructorId });
+      }
     }
   };
 

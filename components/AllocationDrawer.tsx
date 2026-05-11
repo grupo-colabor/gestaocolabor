@@ -81,6 +81,7 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
     instructors,
     agendaItems,
     instructorAllocations,
+    operationalBases,
     recommendInstructors,
     allocateInstructor,
     hasScheduleConflict,
@@ -101,8 +102,9 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
   // Filters
   const [filterText, setFilterText] = useState('');
   const [filterCompanyId, setFilterCompanyId] = useState('TODOS');
-  const [filterRegionId, setFilterRegionId] = useState('TODOS');
   const [filterTrainingId, setFilterTrainingId] = useState('TODOS');
+  const [filterEstado, setFilterEstado] = useState('TODOS');
+  const [filterCorredor, setFilterCorredor] = useState('TODOS');
 
   // Companion day picker
   const [companionDayInput, setCompanionDayInput] = useState('');
@@ -177,8 +179,9 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
       )
       .filter(d => {
         if (filterCompanyId !== 'TODOS' && d.companyId !== filterCompanyId) return false;
-        if (filterRegionId !== 'TODOS' && d.regionId !== filterRegionId) return false;
         if (filterTrainingId !== 'TODOS' && d.trainingId !== filterTrainingId) return false;
+        if (filterEstado !== 'TODOS' && d.demandState !== filterEstado) return false;
+        if (filterCorredor !== 'TODOS' && d.corredor !== filterCorredor) return false;
         if (filterText) {
           const text = normalize(filterText);
           return normalize(getCompanyName(d.companyId)).includes(text) ||
@@ -188,7 +191,7 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
         return true;
       })
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
-  }, [demands, filterCompanyId, filterRegionId, filterTrainingId, filterText, companies, trainings]);
+  }, [demands, filterCompanyId, filterTrainingId, filterEstado, filterCorredor, filterText, companies, trainings]);
 
   const selectedDemand = useMemo(
     () => demands.find(d => d.id === selectedDemandId) || null,
@@ -213,10 +216,9 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
     );
     return {
       companies: companies.filter(c => pending.some(d => d.companyId === c.id)),
-      regions: regions.filter(r => pending.some(d => d.regionId === r.id)),
       trainings: trainings.filter(t => pending.some(d => d.trainingId === t.id)),
     };
-  }, [demands, companies, regions, trainings]);
+  }, [demands, companies, trainings]);
 
   // ============ CONFLICT DETAILS ============
 
@@ -592,18 +594,22 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
                   value={filterText} onChange={e => setFilterText(e.target.value)}
                 />
               </div>
-              <div className="grid grid-cols-3 gap-1.5">
+              <div className="grid grid-cols-2 gap-1.5">
                 <select className="border border-slate-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500" value={filterCompanyId} onChange={e => setFilterCompanyId(e.target.value)}>
                   <option value="TODOS">Empresa</option>
                   {filterOptions.companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
-                <select className="border border-slate-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500" value={filterRegionId} onChange={e => setFilterRegionId(e.target.value)}>
-                  <option value="TODOS">Região</option>
-                  {filterOptions.regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                </select>
                 <select className="border border-slate-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500" value={filterTrainingId} onChange={e => setFilterTrainingId(e.target.value)}>
                   <option value="TODOS">Treinamento</option>
                   {filterOptions.trainings.map(t => <option key={t.id} value={t.id}>{t.nr || t.name}</option>)}
+                </select>
+                <select className="border border-slate-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500" value={filterEstado} onChange={e => setFilterEstado(e.target.value)}>
+                  <option value="TODOS">Estado</option>
+                  {operationalBases.localidades.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                </select>
+                <select className="border border-slate-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500" value={filterCorredor} onChange={e => setFilterCorredor(e.target.value)}>
+                  <option value="TODOS">Corredor</option>
+                  {operationalBases.corredores.map(cor => <option key={cor} value={cor}>{cor}</option>)}
                 </select>
               </div>
             </div>

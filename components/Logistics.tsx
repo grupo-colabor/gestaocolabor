@@ -29,6 +29,7 @@ const Logistics: React.FC = () => {
     regions,
     instructors,
     resourceAllocations,
+    operationalBases,
     hasScheduleConflict,
     hasResourceConflict,
     recommendInstructors,
@@ -47,6 +48,8 @@ const Logistics: React.FC = () => {
 
   const [selectedDemandId, setSelectedDemandId] = useState<string | null>(null);
   const [filterText, setFilterText] = useState('');
+  const [filterEstado, setFilterEstado] = useState('');
+  const [filterCorredor, setFilterCorredor] = useState('');
 
   // Modal de Alocação de CTM
   const [isResourceModalOpen, setIsResourceModalOpen] = useState(false);
@@ -276,8 +279,8 @@ const handleSaveCompanionDays = () => {
 
   // Demandas Não Alocadas
   const unallocatedDemands = useMemo(() => {
-    return demands.filter(d => 
-      d.status !== 'CANCELADA' && 
+    return demands.filter(d =>
+      d.status !== 'CANCELADA' &&
       !d.instructorId &&
       d.modality?.toString().toUpperCase() !== 'ONLINE' &&
       d.trainingLocal !== 'N/A'
@@ -286,13 +289,15 @@ const handleSaveCompanionDays = () => {
       if (filterText) {
         const company = companies.find(c => c.id === d.companyId)?.name || '';
         const training = trainings.find(t => t.id === d.trainingId)?.name || '';
-        return company.toLowerCase().includes(filterText.toLowerCase()) || 
-               training.toLowerCase().includes(filterText.toLowerCase()) ||
-               d.id.toLowerCase().includes(filterText.toLowerCase());
+        if (!company.toLowerCase().includes(filterText.toLowerCase()) &&
+            !training.toLowerCase().includes(filterText.toLowerCase()) &&
+            !d.id.toLowerCase().includes(filterText.toLowerCase())) return false;
       }
+      if (filterEstado && d.demandState !== filterEstado) return false;
+      if (filterCorredor && d.corredor !== filterCorredor) return false;
       return true;
     });
-  }, [demands, filterText, companies, trainings]);
+  }, [demands, filterText, filterEstado, filterCorredor, companies, trainings]);
 
   // Alocação de Recurso para a demanda selecionada
   const currentResourceAllocation = useMemo(() => {
@@ -574,16 +579,38 @@ const handleSaveCompanionDays = () => {
         
         {/* --- COLUNA ESQUERDA: DEMANDAS --- */}
         <div className="lg:col-span-4 flex flex-col bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="p-4 border-b border-slate-100 bg-slate-50/50">
+          <div className="p-4 border-b border-slate-100 bg-slate-50/50 space-y-2">
             <div className="relative">
               <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
-              <input 
+              <input
                 type="text"
                 placeholder="Filtrar demandas..."
                 className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                 value={filterText}
                 onChange={(e) => setFilterText(e.target.value)}
               />
+            </div>
+            <div className="flex gap-2">
+              <select
+                value={filterEstado}
+                onChange={(e) => setFilterEstado(e.target.value)}
+                className="flex-1 py-2 px-3 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-600"
+              >
+                <option value="">Estado</option>
+                {operationalBases.localidades.map(loc => (
+                  <option key={loc} value={loc}>{loc}</option>
+                ))}
+              </select>
+              <select
+                value={filterCorredor}
+                onChange={(e) => setFilterCorredor(e.target.value)}
+                className="flex-1 py-2 px-3 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-600"
+              >
+                <option value="">Corredor</option>
+                {operationalBases.corredores.map(cor => (
+                  <option key={cor} value={cor}>{cor}</option>
+                ))}
+              </select>
             </div>
           </div>
           

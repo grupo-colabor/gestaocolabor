@@ -1844,9 +1844,11 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                       >
                         {isStart ? (
                           <div className="w-full max-h-full overflow-hidden flex flex-col items-center">
-                            <span className="text-[7px] font-black opacity-60 uppercase mb-0.5 tracking-tighter truncate w-full">
-                              {cellItem.type === 'MIRROR' ? 'ALOCADO' : 'MANUTENÇÃO'}
-                            </span>
+                            {cellItem.type === 'MIRROR' && (
+                              <span className="text-[7px] font-black opacity-60 uppercase mb-0.5 tracking-tighter truncate w-full">
+                                ALOCADO
+                              </span>
+                            )}
                             <p className="text-[8px] font-bold uppercase truncate w-full px-0.5 leading-none" title={cellItem.data.title}>{cellItem.data.title}</p>
                           </div>
                         ) : (

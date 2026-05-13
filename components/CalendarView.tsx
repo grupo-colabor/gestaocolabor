@@ -17,12 +17,13 @@ import {
   Tag,
   MapPin,
   MessageSquare,
-  UserPlus
+  UserPlus,
+  Moon
 } from 'lucide-react';
 import { AgendaItem, AgendaType, Demand, Instructor } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { useAuth } from '../contexts/AuthContext';
-import { isDemandDay, buildCardLabel } from '../domain/demandDays';
+import { isDemandDay, buildCardLabel, isDayNight } from '../domain/demandDays';
 import AllocationDrawer, { type DrawerState, type AllocationPreview } from './AllocationDrawer';
 
 // Configuração visual para cada tipo de compromisso
@@ -1706,6 +1707,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                         const hasCTM = !!demandId && resourceAllocations.some(
                           a => a.resourceType === 'CENTRO_TREINAMENTO_MOVEL' && a.demandId === demandId
                         );
+                        const isNight = !!demand && isDayNight(demand, formatDateKey(day));
                         const trainingLabel = demand
                           ? buildCardLabel(demand, formatDateKey(day), { companyName: company?.name, trainingNr: training?.nr ?? training?.name })
                           : [cellItem.data.id, company?.name, training?.nr ?? training?.name].filter(Boolean).join(' • ');
@@ -1728,7 +1730,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                               </span>
                             )}
                             {/* Linha 4: Badges na mesma linha */}
-                            {(hasCompanion || hasCTM) && (
+                            {(hasCompanion || hasCTM || isNight) && (
                               <span className="flex items-center justify-center gap-1.5 mt-0.5 opacity-80 w-full">
                                 {hasCompanion && (
                                   <span className="text-[9px] font-black uppercase tracking-tight">C/ ACOMP.</span>
@@ -1738,6 +1740,13 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                                   <span className="flex items-center gap-0.5">
                                     <Truck size={9} strokeWidth={2.75} />
                                     <span className="text-[9px] font-black uppercase tracking-tight">CTM</span>
+                                  </span>
+                                )}
+                                {(hasCompanion || hasCTM) && isNight && <span className="text-[7px] opacity-50">|</span>}
+                                {isNight && (
+                                  <span className="flex items-center gap-0.5">
+                                    <Moon size={8} strokeWidth={2.75} />
+                                    <span className="text-[9px] font-black uppercase tracking-tight">NOTURNO</span>
                                   </span>
                                 )}
                               </span>

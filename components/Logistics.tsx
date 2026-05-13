@@ -3,12 +3,12 @@ import { createPortal } from 'react-dom';
 import { useApp } from '../App';
 import { logAction } from '../services/auditLog';
 import { Instructor, LogisticAllocation } from '../types';
-import { 
-  Briefcase, 
-  ChevronRight, 
-  MapPin, 
-  Calendar as CalendarIcon, 
-  CheckCircle2, 
+import {
+  Briefcase,
+  ChevronRight,
+  MapPin,
+  Calendar as CalendarIcon,
+  CheckCircle2,
   ArrowRight,
   UserCheck,
   Building,
@@ -18,8 +18,10 @@ import {
   Truck,
   Info,
   X,
-  AlertTriangle
+  AlertTriangle,
+  Moon
 } from 'lucide-react';
+import { isNightDemand } from '../domain/demandDays';
 
 const Logistics: React.FC = () => {
   const {
@@ -642,6 +644,11 @@ const handleSaveCompanionDays = () => {
                         {demand.corredor && <><span className="text-slate-300">|</span><span>{demand.corredor}</span></>}
                         {demand.demandState && <><span className="text-slate-300">|</span><span>{demand.demandState}</span></>}
                       </div>
+                      {isNightDemand(demand) && (
+                        <span className="flex items-center gap-0.5 bg-indigo-950 text-indigo-100 border border-indigo-800 text-[9px] font-black uppercase px-1.5 py-0.5 rounded">
+                          <Moon size={9} strokeWidth={2.5} /> NOTURNO
+                        </span>
+                      )}
                     </div>
                   </div>
                   <ChevronRight size={18} className={`mt-2 transition-transform ${selectedDemandId === demand.id ? 'text-blue-600 translate-x-1' : 'text-slate-300 group-hover:text-slate-400'}`} />
@@ -675,17 +682,26 @@ const handleSaveCompanionDays = () => {
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 md:grid-cols-1 gap-3 md:text-right">
-                    <div className="flex md:justify-end items-center text-sm font-bold text-slate-700">
-                      <CalendarIcon size={16} className="mr-2 text-blue-500" />
-                      {new Date(selectedDemand.startDate).toLocaleDateString('pt-BR')} <ArrowRight size={12} className="mx-2" /> {new Date(selectedDemand.endDate).toLocaleDateString('pt-BR')}
+                  <div className="flex flex-col gap-2 md:items-end shrink-0">
+                    {/* Linha 1: Datas — sempre limpa, sem badge */}
+                    <div className="flex items-center gap-1 text-sm font-bold text-slate-700">
+                      <CalendarIcon size={16} className="shrink-0 text-blue-500" />
+                      <span>{new Date(selectedDemand.startDate).toLocaleDateString('pt-BR')}</span>
+                      <ArrowRight size={12} className="mx-1 shrink-0 text-slate-400" />
+                      <span>{new Date(selectedDemand.endDate).toLocaleDateString('pt-BR')}</span>
                     </div>
-                    <div className="flex md:justify-end flex-wrap items-center gap-1 text-sm font-bold text-slate-700">
-                      <MapPin size={16} className="mr-1 text-blue-500 shrink-0" />
+                    {/* Linha 2: Localização + badge NOTURNO */}
+                    <div className="flex flex-wrap items-center gap-1 text-sm font-bold text-slate-700">
+                      <MapPin size={16} className="shrink-0 text-blue-500" />
                       <span>{getRegionName(selectedDemand.regionId)}</span>
                       {selectedDemand.trainingLocal && selectedDemand.trainingLocal !== 'N/A' && <><span className="text-slate-300">|</span><span>{selectedDemand.trainingLocal}</span></>}
                       {selectedDemand.corredor && <><span className="text-slate-300">|</span><span>{selectedDemand.corredor}</span></>}
                       {selectedDemand.demandState && <><span className="text-slate-300">|</span><span>{selectedDemand.demandState}</span></>}
+                      {isNightDemand(selectedDemand) && (
+                        <span className="flex items-center gap-0.5 bg-indigo-950 text-indigo-100 border border-indigo-800 text-[9px] font-black uppercase px-1.5 py-0.5 rounded ml-1">
+                          <Moon size={9} strokeWidth={2.5} /> NOTURNO
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -175,5 +175,34 @@ export function buildCardLabel(
   return `${base}${nightTag}`;
 }
 
+/**
+ * Verifica se um dia específico da demanda tem turno noturno:
+ * início >= 18:00 ou término > 22:00.
+ */
+export function isDayNight(demand: DemandLike, dayKey: string): boolean {
+  if (demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates)) {
+    const entry = demand.specificDates.find(e => e.data === dayKey);
+    if (entry) return entry.horarioInicio >= '18:00' || entry.horarioFim > '22:00';
+  }
+  // CONTINUO: todos os dias herdam o turno do start/end da demanda
+  const s = String(demand.startDate ?? '');
+  const e = String(demand.endDate ?? '');
+  const st = s.length >= 16 ? s.slice(11, 16) : '';
+  const et = e.length >= 16 ? e.slice(11, 16) : '';
+  return (!!st && st >= '18:00') || (!!et && et > '22:00');
+}
+
+/**
+ * Retorna true se a demanda tem qualquer dia/turno noturno:
+ * início >= 18:00 ou término > 22:00.
+ * Para cards de lista e cabeçalho de detalhe.
+ */
+export function isNightDemand(demand: DemandLike): boolean {
+  if (demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates) && demand.specificDates.length > 0) {
+    return demand.specificDates.some(e => e.horarioInicio >= '18:00' || e.horarioFim > '22:00');
+  }
+  return isDayNight(demand, '');
+}
+
 // Re-export toDateKey para uso em outros componentes
 export { toDateKey };

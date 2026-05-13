@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom';
 import { useApp } from '../App';
 import { useAuth } from '../contexts/AuthContext';
-import { getDemandDays } from '../domain/demandDays';
+import { getDemandDays, isNightDemand } from '../domain/demandDays';
 import type { Demand, Instructor } from '../types';
 import {
   ChevronUp,
@@ -23,7 +23,8 @@ import {
   Check,
   Minimize2,
   Maximize2,
-  Globe
+  Globe,
+  Moon
 } from 'lucide-react';
 
 /* ======================================================
@@ -646,6 +647,11 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
                         : demand.modality === 'PRESENCIAL' ? 'bg-blue-50 text-blue-700 border-blue-200'
                         : 'bg-slate-50 text-slate-500 border-slate-200'
                       }`}>{demand.modality}</span>
+                      {isNightDemand(demand) && (
+                        <span className="flex items-center gap-0.5 bg-indigo-950 text-indigo-100 border border-indigo-800 text-[8px] font-black uppercase px-1.5 py-0.5 rounded">
+                          <Moon size={8} strokeWidth={2.5} /> NOTURNO
+                        </span>
+                      )}
                     </div>
                   </div>
                 </button>

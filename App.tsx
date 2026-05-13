@@ -305,6 +305,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   AUTH_MODE === 'supabase' ? [] : []
 );
   const [instructorAllocations, setInstructorAllocations] = useState<InstructorAllocation[]>([]);
+  // false em modo supabase até o primeiro sync completar; evita falso conflito durante carregamento
+  const [allocationsLoaded, setAllocationsLoaded] = useState(AUTH_MODE !== 'supabase');
   const [resourceAllocations, setResourceAllocations] = useState<LogisticAllocation[]>([]);
   const [companionAllocations, setCompanionAllocations] = useState<CompanionAllocation[]>([]);
   const addCompanionAllocation = useCallback((a: CompanionAllocation) => {
@@ -791,6 +793,7 @@ const syncInstructorAllocationsFromDb = useCallback(async () => {
     // ✅ Se demandas ainda não carregaram, só mapeia (sem limpar órfãos)
     if (demands.length === 0) {
       setInstructorAllocations((rows || []).map(mapInstructorAllocationFromDb));
+      setAllocationsLoaded(true);
       return;
     }
 
@@ -799,6 +802,7 @@ const syncInstructorAllocationsFromDb = useCallback(async () => {
     const valid = (rows || []).filter(r => demandIds.has(r.demand_id));
 
     setInstructorAllocations(valid.map(mapInstructorAllocationFromDb));
+    setAllocationsLoaded(true);
   } catch (e) {
     console.error('[InstructorAllocations] sync error', e);
   }
@@ -1157,11 +1161,10 @@ useEffect(() => {
     if (loading) return;
     if (!user) return;
 
-    // ✅ só sincroniza depois que demandas carregaram
-    if (demands.length === 0) return;
-
+    // Carrega em paralelo com demands; syncInstructorAllocationsFromDb já trata demands vazio
     syncInstructorAllocationsFromDb();
-  }, [AUTH_MODE, user, loading, demands.length, syncInstructorAllocationsFromDb]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [AUTH_MODE, user, loading]);
 
   useEffect(() => {
     if (AUTH_MODE !== 'supabase') return;
@@ -1204,6 +1207,12 @@ useEffect(() => {
   ========================= */
   const realtimeEnabled = AUTH_MODE === 'supabase' && !loading && !!user;
 
+  // Sync atômico: quando alocações mudam, recarrega demands + allocations juntos
+  // para eliminar a janela de inconsistência entre os dois debounces independentes
+  const syncDemandsAndAllocations = useCallback(async () => {
+    await Promise.all([syncDemandsFromDb(), syncInstructorAllocationsFromDb()]);
+  }, [syncDemandsFromDb, syncInstructorAllocationsFromDb]);
+
   // Demandas - tabela principal
   useRealtimeSync({
     table: 'demands',
@@ -1220,11 +1229,12 @@ useEffect(() => {
     debounceMs: 500
   });
 
-  // Alocações de instrutores
+  // Alocações de instrutores: sincroniza demands+allocations juntos (Fix 2)
+  // Subscription sempre ativa enquanto autenticado, sem depender de demands.length (Fix 3)
   useRealtimeSync({
     table: 'instructor_allocations',
-    onSync: syncInstructorAllocationsFromDb,
-    enabled: realtimeEnabled && demands.length > 0,
+    onSync: syncDemandsAndAllocations,
+    enabled: realtimeEnabled,
     debounceMs: 500
   });
 
@@ -2497,6 +2507,8 @@ const hasScheduleConflict = useCallback(
     excludeAgendaItemId?: string,
     excludeAllocationId?: string
   ): boolean => {
+    // Aguarda o primeiro sync de alocações para evitar falso conflito durante carregamento
+    if (!allocationsLoaded) return false;
 
     // --- Helpers locais (evita bug de UTC com "YYYY-MM-DD") ---
     const toDateOnly = (v?: string) => {
@@ -2536,7 +2548,8 @@ const hasScheduleConflict = useCallback(
     const demandConflict = demands.some(d => {
       if (excludeDemandId && d.id === excludeDemandId) return false;
       if (d.instructorId !== instructorId) return false;
-      if (d.status === 'CANCELADA') return false;
+      // Apenas demandas ativas bloqueiam via instructorId direto; CONCLUIDA/CANCELADA/etc. não
+      if (d.status !== 'PENDENTE' && d.status !== 'ALOCADA') return false;
 
       const hasExplicitAllocation = instructorAllocations.some(a => a.demandId === d.id);
       if (hasExplicitAllocation) return false;
@@ -2599,7 +2612,7 @@ const hasScheduleConflict = useCallback(
 
     return agendaConflict;
   },
-  [demands, instructorAllocations, agendaItems, getEffectiveDemandRange]
+  [demands, instructorAllocations, agendaItems, getEffectiveDemandRange, allocationsLoaded]
 );
 
 
@@ -2687,7 +2700,8 @@ const hasScheduleConflict = useCallback(
         const demandConflict = demands.some((d: Demand) => {
           if (d.id === demand.id) return false;
           if (d.instructorId !== instructorId) return false;
-          if (d.status === 'CANCELADA') return false;
+          // Apenas demandas ativas bloqueiam via instructorId direto; CONCLUIDA/CANCELADA/etc. não
+          if (d.status !== 'PENDENTE' && d.status !== 'ALOCADA') return false;
           const hasExplicit = instructorAllocations.some((a: InstructorAllocation) => a.demandId === d.id);
           if (hasExplicit) return false;
           if (d.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(d.specificDates) && d.specificDates.length > 0) {

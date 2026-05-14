@@ -62,16 +62,13 @@ export async function insertCompany(payload: {
 export async function updateCompanyById(
   id: string,
   payload: Partial<Omit<CompanyRow, "id" | "created_at">>
-): Promise<CompanyRow> {
-  const { data, error } = await supabase
+): Promise<void> {
+  const { error } = await supabase
     .from("companies")
     .update(payload)
-    .eq("id", id)
-    .select("id, name, razao_social, cnpj, segment, status, logistics_type, cidade, estado, observations, created_at")
-    .single();
+    .eq("id", id);
 
   if (error) throw error;
-  return data as CompanyRow;
 }
 
 export async function deleteCompanyById(id: string): Promise<void> {

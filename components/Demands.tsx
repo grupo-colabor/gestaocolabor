@@ -169,6 +169,8 @@ useEffect(() => {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [confirmReactivate, setConfirmReactivate] = useState(false);
+  const [confirmAllocationCase, setConfirmAllocationCase] = useState<'unqualified' | 'exception' | 'qualified' | null>(null);
+  const [pendingAllocationData, setPendingAllocationData] = useState<InstructorAllocation | null>(null);
   const [resourceError, setResourceError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
@@ -224,10 +226,10 @@ useEffect(() => {
 
   // Body scroll lock when any modal is open
   useEffect(() => {
-    const anyOpen = isModalOpen || isAllocationModalOpen || !!pendingConflictAllocation || isResourceModalOpen || confirmCancel || confirmDelete || confirmReactivate;
+    const anyOpen = isModalOpen || isAllocationModalOpen || !!pendingConflictAllocation || isResourceModalOpen || confirmCancel || confirmDelete || confirmReactivate || confirmAllocationCase !== null;
     document.body.style.overflow = anyOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
-  }, [isModalOpen, isAllocationModalOpen, pendingConflictAllocation, isResourceModalOpen, confirmCancel, confirmDelete, confirmReactivate]);
+  }, [isModalOpen, isAllocationModalOpen, pendingConflictAllocation, isResourceModalOpen, confirmCancel, confirmDelete, confirmReactivate, confirmAllocationCase]);
   const [resourceForm, setResourceForm] = useState({
     startDate: '',
     endDate: ''
@@ -1877,9 +1879,31 @@ const endLocal = usePractice
       return;
     }
 
-    addInstructorAllocation(newAllocation);
+    // Classificar qualificação e abrir diálogo de confirmação contextual
+    const { suggested, exceptions } = recommendInstructors(formDemand as any);
+    const suggestedIds = new Set(suggested.map((i: any) => i.id));
+    const exceptionIds = new Set(exceptions.map((i: any) => i.id));
+    const instrId = newAllocation.instructorId;
 
-    // LIMPEZA E FECHAMENTO
+    const allocationCase: 'unqualified' | 'exception' | 'qualified' =
+      (!suggestedIds.has(instrId) && !exceptionIds.has(instrId)) ? 'unqualified'
+      : exceptionIds.has(instrId) ? 'exception'
+      : 'qualified';
+
+    setPendingAllocationData(newAllocation);
+    setConfirmAllocationCase(allocationCase);
+  };
+
+  const handleExecuteAllocation = () => {
+    if (!pendingAllocationData) return;
+    addInstructorAllocation(pendingAllocationData);
+    if (formDemand.status === 'NOVA' || formDemand.status === 'PENDENTE') {
+      const updatedDemand = { ...formDemand, status: 'ALOCADA' as const };
+      updateDemand(updatedDemand as any);
+      setFormDemand(updatedDemand as any);
+    }
+    setPendingAllocationData(null);
+    setConfirmAllocationCase(null);
     setAllocationForm({ instructorId: '', startDate: '', endDate: '' });
     setIsAllocationModalOpen(false);
   };
@@ -1887,6 +1911,11 @@ const endLocal = usePractice
   const handleConfirmConflictAllocation = () => {
     if (!pendingConflictAllocation) return;
     addInstructorAllocation(pendingConflictAllocation);
+    if (formDemand.status === 'NOVA' || formDemand.status === 'PENDENTE') {
+      const updatedDemand = { ...formDemand, status: 'ALOCADA' as const };
+      updateDemand(updatedDemand as any);
+      setFormDemand(updatedDemand as any);
+    }
     setPendingConflictAllocation(null);
     setAllocationForm({ instructorId: '', startDate: '', endDate: '' });
     setIsAllocationModalOpen(false);
@@ -3599,41 +3628,87 @@ const companionInstructorIds = useMemo(() => {
               <button onClick={() => setIsAllocationModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={24}/></button>
             </div>
             <div className="p-6 space-y-4">
+              {/* Problema 3: contexto para o usuário */}
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2">
+                <Info size={14} className="text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-[10px] font-medium text-amber-800 leading-tight">
+                  Este recurso é destinado a adicionar instrutores <strong>acompanhantes</strong> a uma demanda já alocada. Para alocação principal, use a <strong>Programação</strong> ou <strong>Alocação Inteligente</strong>.
+                </p>
+              </div>
               {resourceError && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 animate-fade-in mb-2">
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 animate-fade-in">
                   <AlertCircle size={18} className="text-red-500 shrink-0 mt-0.5" />
-                  <p className="text-[11px] font-bold text-red-700 leading-tight">
-                    {resourceError}
-                  </p>
+                  <p className="text-[11px] font-bold text-red-700 leading-tight">{resourceError}</p>
                 </div>
               )}
-              <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Instrutor</label>
-                <select 
-                  className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
-                  value={allocationForm.instructorId}
-                  onChange={e => setAllocationForm({...allocationForm, instructorId: e.target.value})}
-                >
-                  <option value="">Selecione...</option>
-                  {instructors.filter(i => i.status === 'ATIVO').map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-                </select>
-              </div>
+              {/* Problema 2: select agrupado por qualificação */}
+              {(() => {
+                const { suggested, exceptions } = recommendInstructors(formDemand as any);
+                const suggestedIds = new Set(suggested.map((i: any) => i.id));
+                const exceptionIds = new Set(exceptions.map((i: any) => i.id));
+                const active = instructors.filter(i => i.status === 'ATIVO');
+                const qualified = active.filter(i => suggestedIds.has(i.id));
+                const exceptional = active.filter(i => exceptionIds.has(i.id));
+                const unqualified = active.filter(i => !suggestedIds.has(i.id) && !exceptionIds.has(i.id));
+                const selId = allocationForm.instructorId;
+                const selIsException = selId ? exceptionIds.has(selId) : false;
+                const selIsUnqualified = !!selId && !suggestedIds.has(selId) && !exceptionIds.has(selId);
+                return (
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Instrutor</label>
+                    <select
+                      className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+                      value={allocationForm.instructorId}
+                      onChange={e => setAllocationForm({...allocationForm, instructorId: e.target.value})}
+                    >
+                      <option value="">Selecione...</option>
+                      {qualified.length > 0 && (
+                        <optgroup label="✓ Qualificados">
+                          {qualified.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                        </optgroup>
+                      )}
+                      {exceptional.length > 0 && (
+                        <optgroup label="⚠ Exceção — Fora da Região">
+                          {exceptional.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                        </optgroup>
+                      )}
+                      {unqualified.length > 0 && (
+                        <optgroup label="✗ Sem qualificação para este treinamento">
+                          {unqualified.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                        </optgroup>
+                      )}
+                    </select>
+                    {selIsException && (
+                      <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2">
+                        <AlertTriangle size={13} className="text-amber-500 shrink-0 mt-0.5" />
+                        <p className="text-[10px] font-bold text-amber-700 leading-tight">Instrutor fora da região da demanda — será registrado como <span className="uppercase">Exceção</span>.</p>
+                      </div>
+                    )}
+                    {selIsUnqualified && (
+                      <div className="mt-2 p-2.5 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2">
+                        <AlertCircle size={13} className="text-red-500 shrink-0 mt-0.5" />
+                        <p className="text-[10px] font-bold text-red-700 leading-tight">Instrutor sem qualificação para este treinamento. Prossiga apenas se necessário.</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Data Início</label>
-                  <input 
-                    type="date" 
-                    className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" 
-                    value={allocationForm.startDate} 
+                  <input
+                    type="date"
+                    className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                    value={allocationForm.startDate}
                     onChange={e => setAllocationForm({...allocationForm, startDate: e.target.value})}
                   />
                 </div>
                 <div>
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Data Fim</label>
-                  <input 
-                    type="date" 
-                    className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" 
-                    value={allocationForm.endDate} 
+                  <input
+                    type="date"
+                    className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                    value={allocationForm.endDate}
                     onChange={e => setAllocationForm({...allocationForm, endDate: e.target.value})}
                   />
                 </div>
@@ -3648,6 +3723,34 @@ const companionInstructorIds = useMemo(() => {
             <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-3">
               <button onClick={() => setIsAllocationModalOpen(false)} className="flex-1 py-3 bg-white border border-slate-200 rounded-xl font-black text-[10px] uppercase tracking-widest text-slate-500">Cancelar</button>
               <button onClick={handleAddAllocation} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-blue-200">Confirmar</button>
+            </div>
+          </div>
+        </div>
+      , document.body)}
+
+      {/* MODAL DE CONFIRMAÇÃO DE ALOCAÇÃO */}
+      {confirmAllocationCase !== null && createPortal(
+        <div className="fixed inset-0 z-[215] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white p-8 rounded-2xl max-w-md w-full text-center space-y-4 shadow-2xl border border-slate-100">
+            {confirmAllocationCase === 'qualified'
+              ? <UserPlus size={44} className="mx-auto text-blue-500" />
+              : <AlertTriangle size={44} className="mx-auto text-amber-500" />}
+            <p className="text-sm text-slate-600 leading-relaxed">
+              {confirmAllocationCase === 'unqualified'
+                ? 'Atenção: o instrutor selecionado não possui qualificação para este treinamento. Este recurso é destinado a instrutores acompanhantes — não substitui a alocação principal via Programação ou Alocação Inteligente. Deseja confirmar mesmo assim?'
+                : confirmAllocationCase === 'exception'
+                ? 'Atenção: o instrutor selecionado é de outra região. Este recurso é destinado a instrutores acompanhantes — não substitui a alocação principal via Programação ou Alocação Inteligente. Deseja confirmar mesmo assim?'
+                : 'Este recurso é destinado a instrutores acompanhantes a uma demanda já alocada. Para alocação principal, use a Programação ou Alocação Inteligente. Deseja confirmar?'}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setConfirmAllocationCase(null); setPendingAllocationData(null); }}
+                className="flex-1 py-2 bg-slate-100 rounded-lg font-bold text-sm"
+              >Cancelar</button>
+              <button
+                onClick={handleExecuteAllocation}
+                className="flex-1 py-2 bg-blue-600 text-white rounded-lg font-bold text-sm"
+              >Sim, confirmar</button>
             </div>
           </div>
         </div>

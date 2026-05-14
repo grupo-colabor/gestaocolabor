@@ -1855,9 +1855,14 @@ const addDemand = useCallback(
       setNotification({ message: 'Empresa atualizada com sucesso!', type: 'success' });
     } catch (e: any) {
       console.error('[Company] update error', e);
+      // Rollback optimistic update re-syncing from DB
+      try {
+        const fresh = await fetchCompanies();
+        setCompanies(fresh.map(mapCompanyFromDb));
+      } catch {}
       setNotification({ message: `Erro ao atualizar empresa: ${e?.message || 'ver console'}`, type: 'error' });
     }
-  }, [AUTH_MODE, setNotification]);
+  }, [AUTH_MODE, mapCompanyFromDb, setNotification]);
 
   // ✅ Treinamentos (mock vs supabase)
   const addTraining = useCallback(

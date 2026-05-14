@@ -52,7 +52,7 @@ export async function insertCompany(payload: {
   const { data, error } = await supabase
     .from("companies")
     .insert(payload)
-    .select()
+    .select("id, name, razao_social, cnpj, segment, status, logistics_type, cidade, estado, observations, created_at")
     .single();
 
   if (error) throw error;
@@ -67,7 +67,7 @@ export async function updateCompanyById(
     .from("companies")
     .update(payload)
     .eq("id", id)
-    .select()
+    .select("id, name, razao_social, cnpj, segment, status, logistics_type, cidade, estado, observations, created_at")
     .single();
 
   if (error) throw error;

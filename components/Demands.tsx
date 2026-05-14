@@ -795,7 +795,7 @@ useEffect(() => {
 
         // ✅ status interno da logística (para VIEW não ficar "Pendente")
         logisticsTransport:
-        data.transport_mode === 'CARRO_ALUGADO' || data.transport_mode === 'CARRO_PROPRIO' || data.transport_mode === 'TAXI'
+        data.transport_mode === 'CARRO_ALUGADO' || data.transport_mode === 'CARRO_PROPRIO' || data.transport_mode === 'TAXI' || data.transport_mode === 'CARRO_APLICATIVO'
           ? 'CONFIRMADO'
           : data.transport_mode === 'NAO_NECESSARIO' || data.transport_mode === 'NA'
           ? 'NAO_NECESSARIO'
@@ -817,6 +817,8 @@ useEffect(() => {
           ? 'Carro Próprio'
           : data.transport_mode === 'TAXI'
           ? 'Táxi'
+          : data.transport_mode === 'CARRO_APLICATIVO'
+          ? 'Carro Aplicativo'
           : data.transport_mode === 'NAO_NECESSARIO' || data.transport_mode === 'NA'
           ? 'N/A'
           : null,
@@ -1373,6 +1375,7 @@ const mapTransportMode = (t: TransportType | null | undefined) => {
   if (t === 'Carro Alugado') return 'CARRO_ALUGADO';
   if (t === 'Carro Próprio') return 'CARRO_PROPRIO';
   if (t === 'Táxi') return 'TAXI';
+  if (t === 'Carro Aplicativo') return 'CARRO_APLICATIVO';
   return null;
 };
 
@@ -1614,6 +1617,8 @@ const handleSave = async () => {
       ? 'CARRO_PROPRIO'
       : sanitizedDemand.transportType === 'Táxi'
       ? 'TAXI'
+      : sanitizedDemand.transportType === 'Carro Aplicativo'
+      ? 'CARRO_APLICATIVO'
       : sanitizedDemand.transportType === 'N/A'
       ? 'NA'
       : null;
@@ -3159,7 +3164,7 @@ const companionInstructorIds = useMemo(() => {
                             <div className="space-y-6">
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Meio de Transporte</label>
                              <div className="flex gap-2">
-                                {(['Carro Alugado', 'Carro Próprio', 'Táxi', 'N/A'] as TransportType[]).map((t) => (
+                                {(['Carro Alugado', 'Carro Próprio', 'Táxi', 'Carro Aplicativo', 'N/A'] as TransportType[]).map((t) => (
                                   <button
                                     key={t}
                                     type="button"

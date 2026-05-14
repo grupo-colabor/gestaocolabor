@@ -42,7 +42,7 @@ export type AgendaType =
   | 'RESERVADO';
 
 
-export type TransportType = 'Carro Alugado' | 'Carro Próprio' | 'Táxi' | 'N/A' | null;
+export type TransportType = 'Carro Alugado' | 'Carro Próprio' | 'Táxi' | 'Carro Aplicativo' | 'N/A' | null;
 export type RentalCompany = 'Localiza' | 'Movida' | 'Outro';
 export type PaymentMethod = 'Faturado' | 'N/A' | 'PIX' | 'Balcão' | null;
 export type AccommodationType = 'Hotel' | 'N/A' | null;

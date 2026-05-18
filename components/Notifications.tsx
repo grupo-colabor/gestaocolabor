@@ -1,15 +1,11 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../App';
 import {
   Bell, FileText, AlertTriangle, DollarSign, Ban,
-  ChevronDown, ChevronUp, RefreshCw, ExternalLink
+  ChevronDown, ChevronUp, ExternalLink
 } from 'lucide-react';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { requiresInstructor, requiresLogistics } from '../domain/modalityRules';
-import {
-  fetchLogisticAllocations,
-  LogisticAllocationRow
-} from '../services/logisticAllocations';
 
 const PREVIEW_COUNT = 6;
 
@@ -29,6 +25,7 @@ const AlertCard = ({
   loading = false,
   isExpanded,
   onToggle,
+  customFooter,
 }: {
   title: string;
   subtitle: string;
@@ -43,6 +40,7 @@ const AlertCard = ({
   loading?: boolean;
   isExpanded: boolean;
   onToggle: () => void;
+  customFooter?: React.ReactNode;
 }) => {
   const visibleItems = isExpanded ? items : items.slice(0, PREVIEW_COUNT);
   const hiddenCount = items.length - PREVIEW_COUNT;
@@ -78,29 +76,33 @@ const AlertCard = ({
             ))}
           </div>
 
-          {hiddenCount > 0 && !isExpanded && (
-            <button
-              type="button"
-              onClick={onToggle}
-              className="mt-3 w-full p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center gap-2 hover:bg-blue-50 hover:border-blue-200 transition-colors group"
-            >
-              <ChevronDown size={13} className="text-slate-400 group-hover:text-blue-500" />
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-blue-500">
-                + {hiddenCount} outra{hiddenCount !== 1 ? 's' : ''} pendência{hiddenCount !== 1 ? 's' : ''}
-              </span>
-            </button>
-          )}
-          {isExpanded && items.length > PREVIEW_COUNT && (
-            <button
-              type="button"
-              onClick={onToggle}
-              className="mt-3 w-full p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center gap-2 hover:bg-slate-100 transition-colors group"
-            >
-              <ChevronUp size={13} className="text-slate-400 group-hover:text-slate-600" />
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-slate-600">
-                Recolher
-              </span>
-            </button>
+          {customFooter ?? (
+            <>
+              {hiddenCount > 0 && !isExpanded && (
+                <button
+                  type="button"
+                  onClick={onToggle}
+                  className="mt-3 w-full p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center gap-2 hover:bg-blue-50 hover:border-blue-200 transition-colors group"
+                >
+                  <ChevronDown size={13} className="text-slate-400 group-hover:text-blue-500" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-blue-500">
+                    + {hiddenCount} outra{hiddenCount !== 1 ? 's' : ''} pendência{hiddenCount !== 1 ? 's' : ''}
+                  </span>
+                </button>
+              )}
+              {isExpanded && items.length > PREVIEW_COUNT && (
+                <button
+                  type="button"
+                  onClick={onToggle}
+                  className="mt-3 w-full p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center gap-2 hover:bg-slate-100 transition-colors group"
+                >
+                  <ChevronUp size={13} className="text-slate-400 group-hover:text-slate-600" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-slate-600">
+                    Recolher
+                  </span>
+                </button>
+              )}
+            </>
           )}
         </div>
       )}
@@ -111,13 +113,11 @@ const AlertCard = ({
 const Notifications: React.FC = () => {
   const {
     demands, companies, trainings, measurements, getEvidenceAutoStatus,
-    setCurrentView, setNotificationTarget,
+    setCurrentView, setNotificationTarget, logisticAllocations,
   } = useApp();
 
   const normId = (v: any) => String(v ?? '').trim().replace(/^#/, '');
 
-  const [logisticsByDemandId, setLogisticsByDemandId] = useState<Record<string, LogisticAllocationRow>>({});
-  const [isLoadingPendencies, setIsLoadingPendencies] = useState(true);
   const [showCancelledList, setShowCancelledList] = useState(false);
 
   // Estado de expansão por bloco
@@ -142,11 +142,6 @@ const Notifications: React.FC = () => {
     return normalizeModality(t?.modality ?? d.modality);
   };
 
-  const isOnlineDemand = (d: any) => {
-    const m = getDemandModality(d);
-    return !requiresInstructor(m);
-  };
-
   const getCalculatedStatus = (d: any) =>
     calculateDemandStatus({
       startDate: d.startDate,
@@ -156,36 +151,6 @@ const Notifications: React.FC = () => {
       trainingLocal: d.trainingLocal,
       modality: getDemandModality(d),
     } as any);
-
-  const syncLogistics = useCallback(async () => {
-    setIsLoadingPendencies(true);
-    try {
-      const rows = await fetchLogisticAllocations();
-      const map: Record<string, LogisticAllocationRow> = {};
-      for (const r of rows || []) {
-        const key = normId(r?.demand_id);
-        if (key) map[key] = r;
-      }
-      setLogisticsByDemandId(map);
-    } catch {
-      setLogisticsByDemandId({});
-    } finally {
-      setIsLoadingPendencies(false);
-    }
-  }, []);
-
-  useEffect(() => { syncLogistics(); }, [syncLogistics]);
-
-  useEffect(() => {
-    const onFocus = () => syncLogistics();
-    const onVisibility = () => { if (!document.hidden) syncLogistics(); };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [syncLogistics]);
 
   // --- Blocos de alertas ---
   const activeDemands = useMemo(() =>
@@ -206,31 +171,63 @@ const Notifications: React.FC = () => {
     return aOverdue ? -1 : 1;
   };
 
+  const logisticsByDemandId = useMemo(() => {
+    const map: Record<string, typeof logisticAllocations[number]> = {};
+    for (const r of logisticAllocations) {
+      const key = normId(r?.demand_id);
+      if (key) map[key] = r;
+    }
+    return map;
+  }, [logisticAllocations]);
+
   const pendingLogistics = useMemo(() => {
-    if (isLoadingPendencies) return [];
     return activeDemands.filter(d => {
       if (!requiresLogistics(getDemandModality(d))) return false;
-      if (isOnlineDemand(d)) return false;
       const status = getCalculatedStatus(d);
-      if (status === 'CANCELADA' || status === 'CONCLUIDA') return false;
+      if (status === 'CONCLUIDA') return false;
       const alloc = logisticsByDemandId[normId(d.id)];
       if (!alloc) return false;
       return String(alloc.overall_status ?? 'PENDENTE').toUpperCase() !== 'CONCLUIDA';
     }).sort(sortByUrgency);
-  }, [activeDemands, logisticsByDemandId, isLoadingPendencies, trainings]);
+  }, [activeDemands, logisticsByDemandId, trainings]);
+
+  // Janela de 3 semanas: semana passada → próxima semana
+  const { inicioSemanaPassada, fimProximaSemana } = useMemo(() => {
+    const hoje = new Date();
+    const dayOfWeek = hoje.getDay(); // 0=Dom, 1=Seg, ..., 6=Sáb
+    const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const currentMonday = new Date(hoje);
+    currentMonday.setDate(hoje.getDate() - daysFromMonday);
+    currentMonday.setHours(0, 0, 0, 0);
+    const inicioSemanaPassada = new Date(currentMonday);
+    inicioSemanaPassada.setDate(currentMonday.getDate() - 7);
+    const fimProximaSemana = new Date(currentMonday);
+    fimProximaSemana.setDate(currentMonday.getDate() + 13);
+    fimProximaSemana.setHours(23, 59, 59, 999);
+    return { inicioSemanaPassada, fimProximaSemana };
+  }, []);
+
+  const pendingLogisticsWindow = useMemo(() => {
+    return pendingLogistics.filter(d => {
+      const inicio = new Date(d.startDate.slice(0, 10) + 'T00:00:00');
+      const naJanela = inicio >= inicioSemanaPassada && inicio <= fimProximaSemana;
+      const atrasada = inicio < inicioSemanaPassada && !d.instructorId;
+      return naJanela || atrasada;
+    });
+  }, [pendingLogistics, inicioSemanaPassada, fimProximaSemana]);
 
   const pendingEvidences = useMemo(() =>
     demands.filter(d => {
       if (getCalculatedStatus(d) !== 'CONCLUIDA') return false;
-      if (isOnlineDemand(d)) return false;
+      if (!requiresInstructor(getDemandModality(d))) return false;
       return getEvidenceAutoStatus(d.id) !== 'COMPLETA';
     }).sort(sortByUrgency), [demands, trainings, getEvidenceAutoStatus]);
 
   const noInstructorDemands = useMemo(() =>
     activeDemands.filter(d => {
       const status = getCalculatedStatus(d);
-      if (status === 'CANCELADA' || status === 'CONCLUIDA') return false;
-      if (isOnlineDemand(d)) return false;
+      if (status === 'CONCLUIDA') return false;
+      if (!requiresInstructor(getDemandModality(d))) return false;
       return !d.instructorId;
     }).sort(sortByUrgency), [activeDemands, trainings]);
 
@@ -299,39 +296,62 @@ const Notifications: React.FC = () => {
               {totalAlerts} pendência{totalAlerts !== 1 ? 's' : ''}
             </span>
           )}
-          <button
-            onClick={syncLogistics}
-            disabled={isLoadingPendencies}
-            className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-500 hover:bg-slate-50 transition shadow-sm disabled:opacity-50"
-          >
-            <RefreshCw size={13} className={isLoadingPendencies ? 'animate-spin' : ''} />
-            Atualizar
-          </button>
         </div>
       </div>
 
       {/* --- Bloco 1: Pendências Logísticas --- */}
-      <AlertCard
-        title="Pendências Logísticas"
-        subtitle={`${pendingLogistics.length} demanda${pendingLogistics.length !== 1 ? 's' : ''} aguardando tratativa operacional`}
-        count={pendingLogistics.length}
-        accentColor={pendingLogistics.length > 0 ? 'border-l-amber-400' : 'border-l-emerald-400'}
-        icon={Bell}
-        iconBg="bg-amber-50"
-        iconColor="text-amber-500"
-        badgeClass="bg-amber-100 text-amber-700"
-        items={pendingLogistics}
-        loading={isLoadingPendencies}
-        isExpanded={expandedBlocks['logistics'] ?? false}
-        onToggle={() => toggleBlock('logistics')}
-        renderItem={(d) => {
-          const alloc = logisticsByDemandId[normId(d.id)];
-          const overall = String(alloc?.overall_status ?? 'PENDENTE').toUpperCase();
-          return (
-            <DemandRow d={d} badge={overall} badgeCls="bg-amber-100 text-amber-700" targetView="logistics-control" />
-          );
-        }}
-      />
+      {(() => {
+        const seeAll = expandedBlocks['logistics'] ?? false;
+        const logisticItems = seeAll ? pendingLogistics : pendingLogisticsWindow;
+        const hiddenTotal = pendingLogistics.length - pendingLogisticsWindow.length;
+        return (
+          <AlertCard
+            title="Pendências Logísticas"
+            subtitle={`${pendingLogistics.length} demanda${pendingLogistics.length !== 1 ? 's' : ''} aguardando tratativa operacional`}
+            count={pendingLogistics.length}
+            accentColor={pendingLogistics.length > 0 ? 'border-l-amber-400' : 'border-l-emerald-400'}
+            icon={Bell}
+            iconBg="bg-amber-50"
+            iconColor="text-amber-500"
+            badgeClass="bg-amber-100 text-amber-700"
+            items={logisticItems}
+            isExpanded={true}
+            onToggle={() => {}}
+            renderItem={(d) => {
+              const alloc = logisticsByDemandId[normId(d.id)];
+              const overall = String(alloc?.overall_status ?? 'PENDENTE').toUpperCase();
+              return (
+                <DemandRow d={d} badge={overall} badgeCls="bg-amber-100 text-amber-700" targetView="logistics-control" />
+              );
+            }}
+            customFooter={
+              !seeAll && hiddenTotal > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => toggleBlock('logistics')}
+                  className="mt-3 w-full p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center gap-2 hover:bg-blue-50 hover:border-blue-200 transition-colors group"
+                >
+                  <ChevronDown size={13} className="text-slate-400 group-hover:text-blue-500" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-blue-500">
+                    ↓ Ver todas as {pendingLogistics.length} pendências logísticas
+                  </span>
+                </button>
+              ) : seeAll ? (
+                <button
+                  type="button"
+                  onClick={() => toggleBlock('logistics')}
+                  className="mt-3 w-full p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center gap-2 hover:bg-slate-100 transition-colors group"
+                >
+                  <ChevronUp size={13} className="text-slate-400 group-hover:text-slate-600" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-slate-600">
+                    Recolher
+                  </span>
+                </button>
+              ) : null
+            }
+          />
+        );
+      })()}
 
       {/* --- Bloco 2: Pendências de Evidência --- */}
       <AlertCard

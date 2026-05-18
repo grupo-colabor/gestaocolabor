@@ -113,6 +113,11 @@ import {
   deleteCompanionAllocationById
 } from './services/companionAllocations';
 
+import {
+  fetchLogisticAllocations,
+  LogisticAllocationRow
+} from './services/logisticAllocations';
+
 
 
 // ✅ Supabase client (precisa existir em ./lib/supabase)
@@ -148,6 +153,7 @@ interface AppState {
   agendaItems: AgendaItem[];
   instructorAllocations: InstructorAllocation[];
   resourceAllocations: LogisticAllocation[];
+  logisticAllocations: LogisticAllocationRow[];
   operationalBases: OperationalBases;
   notification: { message: string; type: 'info' | 'success' | 'error' } | null;
   nextDemandNumber: number;
@@ -309,6 +315,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // false em modo supabase até o primeiro sync completar; evita falso conflito durante carregamento
   const [allocationsLoaded, setAllocationsLoaded] = useState(AUTH_MODE !== 'supabase');
   const [resourceAllocations, setResourceAllocations] = useState<LogisticAllocation[]>([]);
+  const [logisticAllocations, setLogisticAllocations] = useState<LogisticAllocationRow[]>([]);
   const [companionAllocations, setCompanionAllocations] = useState<CompanionAllocation[]>([]);
   const addCompanionAllocation = useCallback((a: CompanionAllocation) => {
   // 1) Atualiza local (otimista)
@@ -775,6 +782,16 @@ const syncResourceAllocationsFromDb = useCallback(async () => {
   }
 }, [AUTH_MODE, mapResourceAllocationFromDb, demands.length]);
 
+const syncLogisticAllocationsFromDb = useCallback(async () => {
+  if (AUTH_MODE !== 'supabase') return;
+  try {
+    const rows = await fetchLogisticAllocations();
+    setLogisticAllocations(rows || []);
+  } catch (e) {
+    console.error('[LogisticAllocations] sync error', e);
+  }
+}, [AUTH_MODE]);
+
 const mapInstructorAllocationFromDb = useCallback((row: any): InstructorAllocation => {
   return {
     id: row.id,
@@ -1118,6 +1135,13 @@ useEffect(() => {
   syncResourceAllocationsFromDb();
 }, [AUTH_MODE, user, loading, demands.length, syncResourceAllocationsFromDb]);
 
+useEffect(() => {
+  if (AUTH_MODE !== 'supabase') return;
+  if (loading) return;
+  if (!user) return;
+  syncLogisticAllocationsFromDb();
+}, [AUTH_MODE, user, loading, syncLogisticAllocationsFromDb]);
+
 
 // ✅ Carregar Evidências do Supabase (fonte da verdade)
 useEffect(() => {
@@ -1252,6 +1276,14 @@ useEffect(() => {
     table: 'companion_allocations',
     onSync: syncCompanionAllocationsFromDb,
     enabled: realtimeEnabled && demands.length > 0,
+    debounceMs: 500
+  });
+
+  // Controle logístico (logistic_allocations)
+  useRealtimeSync({
+    table: 'logistic_allocations',
+    onSync: syncLogisticAllocationsFromDb,
+    enabled: realtimeEnabled,
     debounceMs: 500
   });
 
@@ -2877,6 +2909,7 @@ const hasScheduleConflict = useCallback(
       agendaItems,
       instructorAllocations,
       resourceAllocations,
+      logisticAllocations,
       operationalBases,
       notification,
       nextDemandNumber,
@@ -2937,6 +2970,7 @@ const hasScheduleConflict = useCallback(
       agendaItems,
       instructorAllocations,
       resourceAllocations,
+      logisticAllocations,
       operationalBases,
       notification,
       nextDemandNumber,

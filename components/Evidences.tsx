@@ -170,7 +170,7 @@ const getEvidenceAutoStatus = (
 
         return true;
       })
-      .sort((a, b) => b.startDate.localeCompare(a.startDate));
+      .sort((a, b) => a.startDate.localeCompare(b.startDate));
   }, [demands, filterId, startDateFilter, endDateFilter, filterCompanyId, filterTrainingId, filterInstructorId, filterLocal, instructorAllocations]);
 
   const {

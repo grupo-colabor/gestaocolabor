@@ -165,7 +165,8 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
       section: 'Cards de Indicadores',
       items: [
         { term: 'Total de Demandas', desc: 'Quantidade de demandas dentro do período e filtros selecionados.' },
-        { term: 'Horas Ministradas', desc: 'Soma das horas dos treinamentos com status CONCLUÍDA no período filtrado.' },
+        { term: 'Total de Horas', desc: 'Soma das horas de todas as demandas no período filtrado, independente do status.' },
+        { term: 'Horas Concluídas', desc: 'Soma das horas dos treinamentos com status CONCLUÍDA no período filtrado.' },
         { term: 'Taxa de Cancelamento', desc: 'Proporção de demandas canceladas sobre o total de demandas ativas (concluídas + canceladas).' },
         { term: 'Treinamentos Concluídos', desc: 'Número de demandas que atingiram o status CONCLUÍDA no período.' },
       ],
@@ -476,6 +477,11 @@ const Dashboard: React.FC = () => {
 
   // --- Geração de Relatório ---
   const [showReportModal, setShowReportModal] = useState(false);
+
+  // --- Toggle de visualização nos rankings de Local/Corredor/UF ---
+  const [localView, setLocalView] = useState<'count' | 'hours'>('count');
+  const [corredorView, setCorredorView] = useState<'count' | 'hours'>('count');
+  const [ufView, setUfView] = useState<'count' | 'hours'>('count');
   /** Refs para captura de gráficos via html2canvas (um por aba) */
   const chartRefsMap = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -691,6 +697,10 @@ const pendingLogisticsDemands = useMemo(() => {
       .reduce((acc: number, d) => acc + getTrainingHours(d.trainingId), 0);
   }, [filteredDemands, trainings]);
 
+  const totalAllHours = useMemo(() => {
+    return filteredDemands.reduce((acc: number, d) => acc + getTrainingHours(d.trainingId), 0);
+  }, [filteredDemands, trainings]);
+
   const totalCosts = useMemo(() => {
     return filteredMeasurements.reduce((acc: number, m) => {
       return acc + m.attachments.reduce((sum: number, att) => {
@@ -705,6 +715,11 @@ const pendingLogisticsDemands = useMemo(() => {
     return filteredDemands2
       .filter(d => getCalculatedStatus(d) === 'CONCLUIDA')
       .reduce((acc: number, d) => acc + getTrainingHours(d.trainingId), 0);
+  }, [filteredDemands2, trainings, extraPeriods.length]);
+
+  const totalAllHours2 = useMemo(() => {
+    if (extraPeriods.length === 0) return 0;
+    return filteredDemands2.reduce((acc: number, d) => acc + getTrainingHours(d.trainingId), 0);
   }, [filteredDemands2, trainings, extraPeriods.length]);
 
   const totalCosts2 = useMemo(() => {
@@ -1027,6 +1042,19 @@ const pendingLogisticsDemands = useMemo(() => {
       return { items, othersDetail };
     };
 
+    const buildTopHours = (src: Demand[], extract: (d: Demand) => string, limit = 10) => {
+      const sums: Record<string, number> = {};
+      src.forEach(d => {
+        const v = (extract(d) ?? '').trim();
+        if (!v) return;
+        sums[v] = (sums[v] || 0) + getTrainingHours(d.trainingId);
+      });
+      const sorted = Object.entries(sums).sort((a, b) => b[1] - a[1]);
+      const items = sorted.slice(0, limit).map(([name, value]) => ({ name, value }));
+      const othersDetail = sorted.slice(limit).map(([name, value]) => ({ name, value }));
+      return { items, othersDetail };
+    };
+
     const localData    = buildTop(filteredDemands, d => d.trainingLocal ?? '');
     const corredorData = buildTop(filteredDemands, d => d.corredor ?? '');
     const ufData       = buildTop(filteredDemands, d => d.demandState ?? '');
@@ -1034,6 +1062,14 @@ const pendingLogisticsDemands = useMemo(() => {
     const localData2    = compareMode ? buildTop(filteredDemands2, d => d.trainingLocal ?? '') : null;
     const corredorData2 = compareMode ? buildTop(filteredDemands2, d => d.corredor ?? '') : null;
     const ufData2       = compareMode ? buildTop(filteredDemands2, d => d.demandState ?? '') : null;
+
+    const localDisplay    = localView    === 'hours' ? buildTopHours(filteredDemands, d => d.trainingLocal ?? '') : localData;
+    const corredorDisplay = corredorView === 'hours' ? buildTopHours(filteredDemands, d => d.corredor ?? '') : corredorData;
+    const ufDisplay       = ufView       === 'hours' ? buildTopHours(filteredDemands, d => d.demandState ?? '') : ufData;
+
+    const localDisplay2    = compareMode ? (localView    === 'hours' ? buildTopHours(filteredDemands2, d => d.trainingLocal ?? '') : localData2) : null;
+    const corredorDisplay2 = compareMode ? (corredorView === 'hours' ? buildTopHours(filteredDemands2, d => d.corredor ?? '') : corredorData2) : null;
+    const ufDisplay2       = compareMode ? (ufView       === 'hours' ? buildTopHours(filteredDemands2, d => d.demandState ?? '') : ufData2) : null;
 
     // REGRAS DE ALERTA OPERACIONAIS
     const noInstructorDemands = filteredDemands.filter(d => {
@@ -1080,9 +1116,10 @@ const pendingLogisticsDemands = useMemo(() => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           <KPICard title="Total de Demandas" value={filteredDemands.length} compareValue={compareMode ? filteredDemands2.length : undefined} periods={mkPeriods(d => d.length)} icon={Briefcase} colorClass="bg-blue-50 text-blue-600" />
-          <KPICard title="Horas Ministradas" value={`${totalHours}h`} compareValue={compareMode ? `${totalHours2}h` : undefined} periods={mkPeriods(d => `${d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)}h`)} icon={Clock} colorClass="bg-emerald-50 text-emerald-600" subtext="Execuções Finalizadas" />
+          <KPICard title="Total de Horas" value={`${totalAllHours}h`} compareValue={compareMode ? `${totalAllHours2}h` : undefined} periods={mkPeriods(d => `${d.reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)}h`)} icon={Clock} colorClass="bg-violet-50 text-violet-600" subtext="Todas as Demandas" />
+          <KPICard title="Horas Concluídas" value={`${totalHours}h`} compareValue={compareMode ? `${totalHours2}h` : undefined} periods={mkPeriods(d => `${d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)}h`)} icon={Clock} colorClass="bg-emerald-50 text-emerald-600" subtext="Execuções Finalizadas" />
           <KPICard title="Pendência de Alocação" value={noInstructorDemands.length} compareValue={compareMode ? noInstructorDemands2.length : undefined} positiveIsGood={false} periods={mkPeriods(d => d.filter((x: any) => { const s = getCalculatedStatus(x); if (s === 'CANCELADA' || s === 'CONCLUIDA') return false; if (isOnlineDemand(x)) return false; return !x.instructorId; }).length)} icon={AlertCircle} colorClass="bg-amber-50 text-amber-600" />
           <KPICard title="Treinamentos Concluídos" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'CONCLUIDA').length} compareValue={compareMode ? filteredDemands2.filter(d => getCalculatedStatus(d) === 'CONCLUIDA').length : undefined} periods={mkPeriods(d => d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').length)} icon={CheckCircle} colorClass="bg-indigo-50 text-indigo-600" />
           <KPICard title="Demandas Canceladas" value={cancelledDemands.length} compareValue={compareMode ? cancelledDemands2.length : undefined} positiveIsGood={false} periods={mkPeriods(d => d.filter((x: any) => x.status === 'CANCELADA').length)} icon={Ban} colorClass="bg-slate-100 text-slate-500" subtext="Histórico Inativo" />
@@ -1203,19 +1240,24 @@ const pendingLogisticsDemands = useMemo(() => {
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between shrink-0">
               <span>Volume por Local</span>
               <div className="flex items-center gap-1.5">
-                {localData.othersDetail.length > 0 && (
+                {localDisplay.othersDetail.length > 0 && (
                   <span className="text-[9px] font-black bg-blue-50 text-blue-400 px-1.5 py-0.5 rounded-md">
-                    +{localData.othersDetail.length} ocultos
+                    +{localDisplay.othersDetail.length} ocultos
                   </span>
                 )}
                 <MapPin size={13} />
               </div>
             </h3>
+            <div className="flex gap-1 mb-3 shrink-0">
+              <button onClick={() => setLocalView('count')} className={`text-[9px] font-black px-2 py-0.5 rounded-md transition-colors ${localView === 'count' ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>Qtd. Treinamentos</button>
+              <button onClick={() => setLocalView('hours')} className={`text-[9px] font-black px-2 py-0.5 rounded-md transition-colors ${localView === 'hours' ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>Horas</button>
+            </div>
             <RankedListChart
-              items={localData.items}
-              othersDetail={localData.othersDetail}
+              items={localDisplay.items}
+              othersDetail={localDisplay.othersDetail}
               barColor="bg-blue-500"
-              items2={localData2?.items}
+              items2={localDisplay2?.items}
+              valueFormatter={localView === 'hours' ? v => `${v}h` : undefined}
             />
           </div>
 
@@ -1224,19 +1266,24 @@ const pendingLogisticsDemands = useMemo(() => {
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between shrink-0">
               <span>Volume por Corredor</span>
               <div className="flex items-center gap-1.5">
-                {corredorData.othersDetail.length > 0 && (
+                {corredorDisplay.othersDetail.length > 0 && (
                   <span className="text-[9px] font-black bg-emerald-50 text-emerald-400 px-1.5 py-0.5 rounded-md">
-                    +{corredorData.othersDetail.length} ocultos
+                    +{corredorDisplay.othersDetail.length} ocultos
                   </span>
                 )}
                 <Truck size={13} />
               </div>
             </h3>
+            <div className="flex gap-1 mb-3 shrink-0">
+              <button onClick={() => setCorredorView('count')} className={`text-[9px] font-black px-2 py-0.5 rounded-md transition-colors ${corredorView === 'count' ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>Qtd. Treinamentos</button>
+              <button onClick={() => setCorredorView('hours')} className={`text-[9px] font-black px-2 py-0.5 rounded-md transition-colors ${corredorView === 'hours' ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>Horas</button>
+            </div>
             <RankedListChart
-              items={corredorData.items}
-              othersDetail={corredorData.othersDetail}
+              items={corredorDisplay.items}
+              othersDetail={corredorDisplay.othersDetail}
               barColor="bg-emerald-500"
-              items2={corredorData2?.items}
+              items2={corredorDisplay2?.items}
+              valueFormatter={corredorView === 'hours' ? v => `${v}h` : undefined}
             />
           </div>
 
@@ -1245,19 +1292,24 @@ const pendingLogisticsDemands = useMemo(() => {
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between shrink-0">
               <span>Volume por Estado (UF)</span>
               <div className="flex items-center gap-1.5">
-                {ufData.othersDetail.length > 0 && (
+                {ufDisplay.othersDetail.length > 0 && (
                   <span className="text-[9px] font-black bg-amber-50 text-amber-400 px-1.5 py-0.5 rounded-md">
-                    +{ufData.othersDetail.length} ocultos
+                    +{ufDisplay.othersDetail.length} ocultos
                   </span>
                 )}
                 <Target size={13} />
               </div>
             </h3>
+            <div className="flex gap-1 mb-3 shrink-0">
+              <button onClick={() => setUfView('count')} className={`text-[9px] font-black px-2 py-0.5 rounded-md transition-colors ${ufView === 'count' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>Qtd. Treinamentos</button>
+              <button onClick={() => setUfView('hours')} className={`text-[9px] font-black px-2 py-0.5 rounded-md transition-colors ${ufView === 'hours' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>Horas</button>
+            </div>
             <RankedListChart
-              items={ufData.items}
-              othersDetail={ufData.othersDetail}
+              items={ufDisplay.items}
+              othersDetail={ufDisplay.othersDetail}
               barColor="bg-amber-500"
-              items2={ufData2?.items}
+              items2={ufDisplay2?.items}
+              valueFormatter={ufView === 'hours' ? v => `${v}h` : undefined}
             />
           </div>
         </div>

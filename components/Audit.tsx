@@ -3,6 +3,7 @@ import {
   Shield, ChevronDown, ChevronRight, Download,
   Filter, Search, LayoutList, FolderOpen, Folder,
 } from 'lucide-react';
+import ExcelJS from 'exceljs';
 import { fetchAuditLogs, type AuditLog, type AuditModulo } from '../services/auditLog';
 import { supabase } from '../lib/supabase';
 
@@ -35,13 +36,78 @@ function exportToCSV(logs: AuditLog[]): void {
     l.user_name, l.modulo, l.acao, l.descricao,
   ]);
   const csv = [headers, ...rows]
-    .map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    .map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';'))
     .join('\n');
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = `auditoria_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* -------------------------------------------------------
+   Excel export
+------------------------------------------------------- */
+async function exportToExcel(groups: DemandGroup[]): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Auditoria');
+
+  ws.columns = [
+    { key: 'data',      width: 22 },
+    { key: 'usuario',   width: 32 },
+    { key: 'modulo',    width: 16 },
+    { key: 'acao',      width: 14 },
+    { key: 'descricao', width: 90 },
+  ];
+
+  for (const group of groups) {
+    const label = group.demandId === 'outros'
+      ? 'Outros'
+      : `${group.demandId}${group.treinamento ? ' — ' + group.treinamento : ''}${group.empresa ? ' | ' + group.empresa : ''}`;
+
+    // Linha de cabeçalho da demanda — azul escuro
+    const demandRow = ws.addRow([label, '', '', '', '']);
+    ws.mergeCells(`A${demandRow.number}:E${demandRow.number}`);
+    const demandCell = demandRow.getCell(1);
+    demandCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1B3A6B' } };
+    demandCell.font = { color: { argb: 'FFFFFFFF' }, bold: true, size: 11 };
+    demandCell.alignment = { vertical: 'middle' };
+    demandRow.height = 20;
+
+    // Linha de cabeçalho das colunas — cinza claro
+    const colRow = ws.addRow(['Data/hora', 'Usuário', 'Módulo', 'Ação', 'Descrição']);
+    colRow.eachCell(cell => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E8E8' } };
+      cell.font = { bold: true };
+    });
+
+    // Linhas de registro
+    for (const moduleGroup of group.modules) {
+      for (const log of moduleGroup.logs) {
+        ws.addRow([
+          new Date(log.created_at).toLocaleString('pt-BR'),
+          log.user_name,
+          log.modulo,
+          log.acao,
+          log.descricao,
+        ]);
+      }
+    }
+
+    // Linha em branco separadora
+    ws.addRow([]);
+  }
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `auditoria_${new Date().toISOString().slice(0, 10)}.xlsx`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -379,15 +445,26 @@ const AuditPage: React.FC = () => {
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Histórico de ações do sistema (somente leitura)</p>
           </div>
         </div>
-        <button
-          onClick={() => exportToCSV(tab === 'cronologico' ? filtered : logs)}
-          disabled={loading || logs.length === 0}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm
-            font-semibold hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          <Download size={16} />
-          Exportar CSV
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => exportToCSV(tab === 'cronologico' ? filtered : logs)}
+            disabled={loading || logs.length === 0}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm
+              font-semibold hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Download size={16} />
+            Exportar CSV
+          </button>
+          <button
+            onClick={() => { void exportToExcel(filteredDemandGroups); }}
+            disabled={loading || logs.length === 0}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm
+              font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Download size={16} />
+            Exportar Excel
+          </button>
+        </div>
       </div>
 
       {/* Abas */}

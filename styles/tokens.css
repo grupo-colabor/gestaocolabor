@@ -1,0 +1,63 @@
+:root {
+  --surface-0: #FFFFFF;
+  --surface-1: #F9F9F9;
+  --surface-2: #F2F2F2;
+
+  --border-subtle:  #E5E5E5;
+  --border-default: #D1D1D1;
+  --border-strong:  #B0B0B0;
+
+  --text-primary:   #1A1A1A;
+  --text-secondary: #6B6B6B;
+  --text-tertiary:  #9B9B9B;
+
+  --brand-50:  #EEF2FF;
+  --brand-100: #C7D2FE;
+  --brand-400: #818CF8;
+  --brand-600: #4338CA;
+  --brand-700: #2563EB;
+  --brand-800: #1D4ED8;
+  --brand-900: #1E3A8A;
+
+  --status-nova-bg:           #F3F0FF;
+  --status-nova-text:         #5B21B6;
+  --status-nova-chart:        #7C3AED;
+
+  --status-pendente-bg:       #FFF7ED;
+  --status-pendente-text:     #92400E;
+  --status-pendente-chart:    #D97706;
+
+  --status-alocada-bg:        #ECFEFF;
+  --status-alocada-text:      #155E75;
+  --status-alocada-chart:     #0891B2;
+
+  --status-andamento-bg:      #F0FDF4;
+  --status-andamento-text:    #166534;
+  --status-andamento-chart:   #16A34A;
+
+  --status-concluida-bg:      #ECFDF5;
+  --status-concluida-text:    #065F46;
+  --status-concluida-chart:   #059669;
+
+  --status-cancelada-bg:      #FFF1F2;
+  --status-cancelada-text:    #9F1239;
+  --status-cancelada-chart:   #E11D48;
+
+  --space-xs:  4px;
+  --space-sm:  8px;
+  --space-md:  12px;
+  --space-lg:  16px;
+  --space-xl:  24px;
+  --space-2xl: 32px;
+
+  --radius-badge: 4px;
+  --radius-btn:   8px;
+  --radius-input: 8px;
+  --radius-card:  12px;
+  --radius-pill:  99px;
+}
+
+.card {
+  background: var(--surface-0);
+  border: 0.5px solid var(--border-subtle) !important;
+}

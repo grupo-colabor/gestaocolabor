@@ -2,6 +2,7 @@
  * MOTOR DE STATUS DE DEMANDA (Lógica de Domínio)
  * Responsável por calcular o status REAL da demanda.
  */
+import { requiresInstructor, requiresLogistics } from './modalityRules';
 
 export type DemandStatus =
   | 'NOVA'
@@ -54,9 +55,9 @@ export function calculateDemandStatus(
   // 1️⃣ Cancelamento sempre ganha
   if (cancelled === true) return 'CANCELADA';
 
-  // 2️⃣ REGRA EXCLUSIVA — ONLINE / TUTORIA
-  // Não exige instrutor e NUNCA deve cair em PENDENTE
-  if (mode === 'ONLINE' || mode === 'TUTORIA') {
+  // 2️⃣ REGRA EXCLUSIVA — modalidades sem instrutor
+  // Não exigem instrutor e NUNCA devem cair em PENDENTE
+  if (!requiresInstructor(mode)) {
     if (now > end) return 'CONCLUIDA';
     if (now >= start && now <= end) return 'EM_ANDAMENTO';
     return 'ALOCADA'; // futura
@@ -81,7 +82,7 @@ export function calculateDemandStatus(
     const diffDays = diffMs / (1000 * 60 * 60 * 24);
 
     if (diffDays <= 4) return 'PENDENTE';
-    if (String(trainingLocal ?? '').trim().toUpperCase() === 'N/A') return 'PENDENTE';
+    if (requiresLogistics(mode) && String(trainingLocal ?? '').trim().toUpperCase() === 'N/A') return 'PENDENTE';
   }
 
   // 7️⃣ Caso inicial

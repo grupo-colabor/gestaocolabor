@@ -540,7 +540,7 @@ const Dashboard: React.FC = () => {
 
   const isOnlineDemand = (d: Demand) => {
     const m = getDemandModality(d);
-    return m === 'ONLINE' || m === 'EAD';
+    return ['ONLINE', 'EAD', 'ONLINE_AO_VIVO'].includes(m);
   };
 
   // Helper de status calculado
@@ -1320,7 +1320,7 @@ const pendingLogisticsDemands = useMemo(() => {
     const modalTotal = filteredDemands.length || 1;
     const modalities = [
       { label: 'Presencial', value: filteredDemands.filter(d => getDemandModality(d) === 'PRESENCIAL').length, color: 'bg-blue-500' },
-      { label: 'Online / EAD', value: filteredDemands.filter(d => ['ONLINE','EAD'].includes(getDemandModality(d))).length, color: 'bg-emerald-500' },
+      { label: 'Online / EAD', value: filteredDemands.filter(d => ['ONLINE','EAD','ONLINE_AO_VIVO'].includes(getDemandModality(d))).length, color: 'bg-emerald-500' },
       { label: 'Híbrido', value: filteredDemands.filter(d => getDemandModality(d) === 'HIBRIDO').length, color: 'bg-violet-500' },
     ].filter(m => m.value > 0);
 
@@ -2494,7 +2494,7 @@ const pendingLogisticsDemands = useMemo(() => {
       addSection(ws, 'Modalidade', ['Modalidade', 'Qtd', '% do Total'],
         [
           ['Presencial',    filteredDemands.filter(d => getDemandModality(d) === 'PRESENCIAL').length,                    `${Math.round(filteredDemands.filter(d => getDemandModality(d) === 'PRESENCIAL').length / modalTotal * 100)}%`],
-          ['Online / EAD',  filteredDemands.filter(d => ['ONLINE','EAD'].includes(getDemandModality(d))).length,          `${Math.round(filteredDemands.filter(d => ['ONLINE','EAD'].includes(getDemandModality(d))).length / modalTotal * 100)}%`],
+          ['Online / EAD',  filteredDemands.filter(d => ['ONLINE','EAD','ONLINE_AO_VIVO'].includes(getDemandModality(d))).length,          `${Math.round(filteredDemands.filter(d => ['ONLINE','EAD','ONLINE_AO_VIVO'].includes(getDemandModality(d))).length / modalTotal * 100)}%`],
           ['Híbrido',       filteredDemands.filter(d => getDemandModality(d) === 'HIBRIDO').length,                       `${Math.round(filteredDemands.filter(d => getDemandModality(d) === 'HIBRIDO').length / modalTotal * 100)}%`],
         ]
       );

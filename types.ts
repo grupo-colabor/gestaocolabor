@@ -1,7 +1,7 @@
 export type LogisticsType = 'COMPLETA' | 'SIMPLIFICADA';
 export type Status = 'ATIVO' | 'INATIVO';
 export type DemandStatus = 'NOVA' | 'PENDENTE' | 'ALOCADA' | 'EM_ANDAMENTO' | 'CONCLUIDA' | 'CANCELADA';
-export type Modality = 'PRESENCIAL' | 'ONLINE' | 'HIBRIDO' | 'TUTORIA';
+export type Modality = 'PRESENCIAL' | 'ONLINE' | 'HIBRIDO' | 'TUTORIA' | 'ONLINE_AO_VIVO';
 export type Segment = 'Indústria' | 'Comércio' | 'Serviços' | 'Educação' | 'Saúde' | 'Outros';
 
 export type MeasurementStatus =

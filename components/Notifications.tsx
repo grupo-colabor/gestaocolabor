@@ -5,6 +5,7 @@ import {
   ChevronDown, ChevronUp, RefreshCw, ExternalLink
 } from 'lucide-react';
 import { calculateDemandStatus } from '../domain/demandStatus';
+import { requiresInstructor, requiresLogistics } from '../domain/modalityRules';
 import {
   fetchLogisticAllocations,
   LogisticAllocationRow
@@ -143,7 +144,7 @@ const Notifications: React.FC = () => {
 
   const isOnlineDemand = (d: any) => {
     const m = getDemandModality(d);
-    return m === 'ONLINE' || m === 'EAD';
+    return !requiresInstructor(m);
   };
 
   const getCalculatedStatus = (d: any) =>
@@ -208,6 +209,7 @@ const Notifications: React.FC = () => {
   const pendingLogistics = useMemo(() => {
     if (isLoadingPendencies) return [];
     return activeDemands.filter(d => {
+      if (!requiresLogistics(getDemandModality(d))) return false;
       if (isOnlineDemand(d)) return false;
       const status = getCalculatedStatus(d);
       if (status === 'CANCELADA' || status === 'CONCLUIDA') return false;

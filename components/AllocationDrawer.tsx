@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useApp } from '../App';
 import { useAuth } from '../contexts/AuthContext';
 import { getDemandDays, isNightDemand } from '../domain/demandDays';
+import { requiresInstructor, requiresLogistics } from '../domain/modalityRules';
 import type { Demand, Instructor } from '../types';
 import {
   ChevronUp,
@@ -174,9 +175,8 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
       .filter(d =>
         d.status !== 'CANCELADA' &&
         !d.instructorId &&
-        d.modality?.toString().toUpperCase() !== 'ONLINE' &&
-        d.modality?.toString().toUpperCase() !== 'TUTORIA' &&
-        d.trainingLocal !== 'N/A'
+        requiresInstructor(d.modality) &&
+        (!requiresLogistics(d.modality) || d.trainingLocal !== 'N/A')
       )
       .filter(d => {
         if (filterCompanyId !== 'TODOS' && d.companyId !== filterCompanyId) return false;
@@ -212,8 +212,8 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
   const filterOptions = useMemo(() => {
     const pending = demands.filter(d =>
       d.status !== 'CANCELADA' && !d.instructorId &&
-      !['ONLINE','TUTORIA'].includes((d.modality||'').toUpperCase()) &&
-      d.trainingLocal !== 'N/A'
+      requiresInstructor(d.modality) &&
+      (!requiresLogistics(d.modality) || d.trainingLocal !== 'N/A')
     );
     return {
       companies: companies.filter(c => pending.some(d => d.companyId === c.id)),

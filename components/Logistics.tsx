@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../App';
 import { logAction } from '../services/auditLog';
+import { requiresScheduling, requiresLogistics } from '../domain/modalityRules';
 import { Instructor, LogisticAllocation } from '../types';
 import {
   Briefcase,
@@ -284,8 +285,8 @@ const handleSaveCompanionDays = () => {
     return demands.filter(d =>
       d.status !== 'CANCELADA' &&
       !d.instructorId &&
-      d.modality?.toString().toUpperCase() !== 'ONLINE' &&
-      d.trainingLocal !== 'N/A'
+      requiresScheduling(d.modality) &&
+      (!requiresLogistics(d.modality) || d.trainingLocal !== 'N/A')
     ).sort((a, b) => a.startDate.localeCompare(b.startDate))
     .filter(d => {
       if (filterText) {

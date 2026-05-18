@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { requiresLogistics } from '../domain/modalityRules';
 import { createPortal } from 'react-dom';
 import { usePagination } from '../hooks/usePagination';
 import Pagination from './Pagination';
@@ -499,8 +500,8 @@ const markDocAsNA = async (docType: 'LISTA_TURMA' | 'LIBERACAO_INSTRUTOR') => {
     if (!hasStartTime || !hasEndTime) return false;
   }
 
-  // ✅ Local só é obrigatório se NÃO for ONLINE
-  const needsLocal = formDemand.modality !== 'ONLINE';
+  // Local é obrigatório apenas para modalidades que requerem logística
+  const needsLocal = requiresLogistics(formDemand.modality);
   if (needsLocal && !formDemand.trainingLocal) return false;
   if (!formDemand.demandState) return false;
 
@@ -1105,7 +1106,7 @@ Instrutor: ${instructor}
 
 ${b('📘 INFORMAÇÕES GERAIS')}
 • Período: ${start} até ${end}${formDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(formDemand.specificDates) && formDemand.specificDates.length > 0 ? `\n• Dias específicos: ${[...formDemand.specificDates].sort((a, b) => a.data.localeCompare(b.data)).map(e => `${new Date(e.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${e.horarioInicio}-${e.horarioFim}`).join(', ')}` : ''}
-• Unidade/Local: ${formDemand.modality === 'ONLINE' ? 'N/A' : (formDemand.trainingLocal || 'N/A')}
+• Unidade/Local: ${!requiresLogistics(formDemand.modality) ? 'N/A' : (formDemand.trainingLocal || 'N/A')}
 • Modalidade: ${formDemand.modality}
 • Região: ${getRegionName(formDemand.regionId!)}
 • Corredor: ${formDemand.corredor || 'Não informado'}
@@ -1217,7 +1218,7 @@ ${formDemand.observations || 'N/A'}
           ...(formDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(formDemand.specificDates) && formDemand.specificDates.length > 0
             ? [new Paragraph({ children: [new TextRun({ text: "📅 Dias específicos: ", bold: true }), new TextRun([...formDemand.specificDates].sort((a, b) => a.data.localeCompare(b.data)).map(e => `${new Date(e.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${e.horarioInicio}-${e.horarioFim}`).join(', '))] })]
             : []),
-          new Paragraph({ children: [new TextRun({ text: "📍 Local / Unidade: ", bold: true }), new TextRun(formDemand.modality === 'ONLINE' ? 'N/A' : (formDemand.trainingLocal || 'N/A'))] }),
+          new Paragraph({ children: [new TextRun({ text: "📍 Local / Unidade: ", bold: true }), new TextRun(!requiresLogistics(formDemand.modality) ? 'N/A' : (formDemand.trainingLocal || 'N/A'))] }),
           new Paragraph({ children: [new TextRun({ text: "🏢 Corredor: ", bold: true }), new TextRun(formDemand.corredor || 'Não informado')] }),
           new Paragraph({ children: [new TextRun({ text: "📌 Estado: ", bold: true }), new TextRun(formDemand.demandState || 'Não informado')] }),
           new Paragraph({ children: [new TextRun({ text: "🌎 Região: ", bold: true }), new TextRun(getRegionName(formDemand.regionId!))] }),
@@ -1475,32 +1476,32 @@ const handleSave = async () => {
       practiceStartDate: ((formDemand as any).practiceStartDate || null) as any,
       practiceEndDate: ((formDemand as any).practiceEndDate || null) as any,
 
-      trainingLocal: formDemand.modality === 'ONLINE' ? '' : (formDemand.trainingLocal || ''),
+      trainingLocal: !requiresLogistics(formDemand.modality) ? '' : (formDemand.trainingLocal || ''),
       regionId: formDemand.regionId || '',
 
       logisticsTransport:
-        formDemand.modality === 'ONLINE'
+        !requiresLogistics(formDemand.modality)
           ? 'NAO_NECESSARIO'
           : (formDemand.logisticsTransport ?? ''),
 
       logisticsHotel:
-        formDemand.modality === 'ONLINE'
+        !requiresLogistics(formDemand.modality)
           ? 'NAO_NECESSARIO'
           : (formDemand.logisticsHotel ?? ''),
 
-      transportType: formDemand.modality === 'ONLINE' ? null : formDemand.transportType,
-      accommodationType: formDemand.modality === 'ONLINE' ? null : formDemand.accommodationType,
+      transportType: !requiresLogistics(formDemand.modality) ? null : formDemand.transportType,
+      accommodationType: !requiresLogistics(formDemand.modality) ? null : formDemand.accommodationType,
 
-      rentalAgencyLocation: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalAgencyLocation || ''),
-      rentalLocator: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalLocator || ''),
-      rentalCheckIn: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalCheckIn || ''),
-      rentalCheckOut: formDemand.modality === 'ONLINE' ? '' : (formDemand.rentalCheckOut || ''),
+      rentalAgencyLocation: !requiresLogistics(formDemand.modality) ? '' : (formDemand.rentalAgencyLocation || ''),
+      rentalLocator: !requiresLogistics(formDemand.modality) ? '' : (formDemand.rentalLocator || ''),
+      rentalCheckIn: !requiresLogistics(formDemand.modality) ? '' : (formDemand.rentalCheckIn || ''),
+      rentalCheckOut: !requiresLogistics(formDemand.modality) ? '' : (formDemand.rentalCheckOut || ''),
 
-      hotelName: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelName || ''),
-      hotelCity: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelCity || ''),
-      hotelCheckIn: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelCheckIn || ''),
-      hotelCheckOut: formDemand.modality === 'ONLINE' ? '' : (formDemand.hotelCheckOut || ''),
-      hotelPayment: formDemand.modality === 'ONLINE' ? null : formDemand.hotelPayment,
+      hotelName: !requiresLogistics(formDemand.modality) ? '' : (formDemand.hotelName || ''),
+      hotelCity: !requiresLogistics(formDemand.modality) ? '' : (formDemand.hotelCity || ''),
+      hotelCheckIn: !requiresLogistics(formDemand.modality) ? '' : (formDemand.hotelCheckIn || ''),
+      hotelCheckOut: !requiresLogistics(formDemand.modality) ? '' : (formDemand.hotelCheckOut || ''),
+      hotelPayment: !requiresLogistics(formDemand.modality) ? null : formDemand.hotelPayment,
     };
 
 
@@ -1604,7 +1605,7 @@ const handleSave = async () => {
     // ==============================
     // ✅ FIX PRINCIPAL: N/A é resposta
     // ==============================
-    const isOnline = sanitizedDemand.modality === 'ONLINE';
+    const isOnline = !requiresLogistics(sanitizedDemand.modality);
     const isCarRental = sanitizedDemand.transportType === 'Carro Alugado';
     const isHotel = sanitizedDemand.accommodationType === 'Hotel';
 
@@ -2752,18 +2753,18 @@ const companionInstructorIds = useMemo(() => {
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Treinamento *</label><select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" value={formDemand.trainingId} onChange={(e) => { const t = trainings.find(t => t.id === e.target.value); setFormDemand({...formDemand, trainingId: e.target.value, modality: t?.modality || formDemand.modality}); }}><option value="">Selecione...</option>{trainings.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
                               <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                                  Local do Treinamento {formDemand.modality === 'ONLINE' ? '' : '*'}
+                                  Local do Treinamento {requiresLogistics(formDemand.modality) ? '*' : ''}
                                 </label>
 
                               <input
                                 list="locais-treinamento-list"
                                 className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${
-                                  formDemand.modality === 'ONLINE' ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''
+                                  !requiresLogistics(formDemand.modality) ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''
                                 }`}
-                                value={formDemand.modality === 'ONLINE' ? '' : (formDemand.trainingLocal || '')}
+                                value={!requiresLogistics(formDemand.modality) ? '' : (formDemand.trainingLocal || '')}
                                 onChange={(e) => handleTrainingLocalChange(e.target.value)}
-                                placeholder={formDemand.modality === 'ONLINE' ? 'N/A (ONLINE)' : 'Ex: Brucutu, Vitória...'}
-                                disabled={formDemand.modality === 'ONLINE'}
+                                placeholder={!requiresLogistics(formDemand.modality) ? 'N/A' : 'Ex: Brucutu, Vitória...'}
+                                disabled={!requiresLogistics(formDemand.modality)}
                               />
 
                               </div>
@@ -2961,7 +2962,7 @@ const companionInstructorIds = useMemo(() => {
                                 <DataViewField label="Empresa" value={getCompanyName(formDemand.companyId!)} icon={Building} />
                                 {getCompanyName(formDemand.companyId!).toUpperCase().includes('VALE') && (<DataViewField label="ID SAP / Pedido Cliente" value={formDemand.clientDemandId || '---'} icon={Tag} />)}
                                 <DataViewField label="Treinamento" value={getTrainingName(formDemand.trainingId!)} icon={BookOpen} />
-                                <DataViewField label="Unidade / Local" value={formDemand.modality === 'ONLINE' ? 'N/A' : formDemand.trainingLocal} icon={MapPin} />
+                                <DataViewField label="Unidade / Local" value={!requiresLogistics(formDemand.modality) ? 'N/A' : formDemand.trainingLocal} icon={MapPin} />
                                 {formDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(formDemand.specificDates) && formDemand.specificDates.length > 0 ? (
                                   <>
                                     <div className="flex flex-col space-y-1 md:col-span-3">

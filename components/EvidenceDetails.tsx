@@ -1,4 +1,5 @@
 import React from 'react';
+import { isEAD } from '../domain/modalityRules';
 import {
   ArrowLeft,
   Building2,
@@ -328,7 +329,7 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
   const attendanceList = safeData.attendanceList || [];
 
   // Modalidade vem SEMPRE do treinamento
-  const isOnline = String(training?.modality ?? '').toUpperCase() === 'ONLINE';
+  const isOnline = isEAD(training?.modality);
 
   const hasAttendance = attendanceList.length > 0;
   const hasCertificates = (safeData.certificates || []).length > 0;

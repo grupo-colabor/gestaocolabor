@@ -1862,7 +1862,8 @@ const handleRemoveBaseItem = async (item: string) => {
                     <select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={trainingFormData.modality} onChange={(e) => setTrainingFormData({ ...trainingFormData, modality: e.target.value as Modality })}>
                       <option value="PRESENCIAL">Presencial</option>
                       <option value="HIBRIDO">Híbrido</option>
-                      <option value="ONLINE">Online</option>
+                      <option value="ONLINE">Online (EAD)</option>
+                      <option value="ONLINE_AO_VIVO">Online (Ao Vivo)</option>
                     </select>
                   </div>
 

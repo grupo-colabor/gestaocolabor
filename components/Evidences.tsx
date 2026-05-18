@@ -1,5 +1,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
+import { isEAD } from '../domain/modalityRules';
 import { useApp } from '../App';
 import { 
   FileSearch, 
@@ -101,8 +102,7 @@ const getEvidenceAutoStatus = (
   const training = trainings.find(t => t.id === demand.trainingId);
   const modality = String(training?.modality ?? '').toUpperCase();
 
-  const isOnline = modality === 'ONLINE';
-  // HÍBRIDO e PRESENCIAL exigem fotos
+  const isOnline = isEAD(modality); // fotos não obrigatórias apenas para EAD puro
 
   const hasAttendance = (data.attendanceList || []).length > 0;
   const hasCertificates = (data.certificates || []).length > 0;

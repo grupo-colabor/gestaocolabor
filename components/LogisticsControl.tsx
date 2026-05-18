@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useApp } from '../App';
 import { Demand } from '../types';
+import { requiresLogistics } from '../domain/modalityRules';
 import {
   Search,
   CalendarDays,
@@ -345,8 +346,8 @@ const LogisticsControl: React.FC = () => {
         // ❌ Demandas canceladas não entram
         if (d.status === 'CANCELADA') return false;
 
-        // ❌ Demandas ONLINE não entram no controle logístico
-        if (d.modality === 'ONLINE') return false;
+        // Apenas modalidades que requerem logística entram no controle
+        if (!requiresLogistics(d.modality)) return false;
 
         // 🔎 Filtro de texto
         const company = getCompanyName(d.companyId).toLowerCase();
@@ -515,9 +516,9 @@ const LogisticsControl: React.FC = () => {
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {filteredDemands.filter(d => String(d.modality).toUpperCase() !== 'ONLINE').length > 0 ? (
+              {filteredDemands.filter(d => requiresLogistics(d.modality)).length > 0 ? (
                 filteredDemands
-                  .filter(d => String(d.modality).toUpperCase() !== 'ONLINE')
+                  .filter(d => requiresLogistics(d.modality))
                   .map(d => {
                     const demandId = normId(d.id);
                     const alloc = logisticsByDemandId?.[demandId];

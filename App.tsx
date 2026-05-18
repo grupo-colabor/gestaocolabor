@@ -71,6 +71,7 @@ import { fetchTrainings } from './services/trainings';
 import { fetchCompanies, insertCompany, updateCompanyById, CompanyRow } from './services/companies';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { isDemandDay, getDemandDays } from './domain/demandDays';
+import { isEAD } from './domain/modalityRules';
 import { fetchInstructors, fetchInstructorTrainings } from './services/instructors';
 import { fetchMeasurements, upsertMeasurementByDemandId } from './services/measurements';
 import { fetchEvidences, upsertEvidenceByDemandId } from './services/evidences';
@@ -995,7 +996,7 @@ const syncCompanionAllocationsFromDb = useCallback(async () => {
       const demand = demands.find(d => d.id === demandId);
       const training = trainings.find(t => t.id === demand?.trainingId);
 
-      const isOnline = (training?.modality === 'ONLINE') || (demand?.modality === 'ONLINE');
+      const isOnline = isEAD(training?.modality ?? demand?.modality);
 
       const hasAttendance = (data.attendanceList || []).length > 0;
       const hasCertificates = (data.certificates || []).length > 0;

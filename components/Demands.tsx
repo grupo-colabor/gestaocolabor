@@ -3278,19 +3278,26 @@ const companionInstructorIds = useMemo(() => {
                                 </div>
                                 <div className="md:col-span-3">
                                  <div className="md:col-span-3 space-y-3">
-                                <DataViewField
-                                  label="Instrutor Principal"
-                                  value={getInstructorName(formDemand.instructorId)}
-                                  icon={UserCheck}
-                                />
-
-                                {principalInstructor2Id && (
-                                  <DataViewField
-                                    label="Instrutor Principal 2"
-                                    value={getInstructorName(principalInstructor2Id)}
-                                    icon={UserCheck}
-                                  />
-                                )}
+                                {(() => {
+                                  const ids = formDemand.id ? (allInstructorsByDemandId[formDemand.id] ?? []) : [];
+                                  if (ids.length === 0) {
+                                    return (
+                                      <DataViewField
+                                        label="Instrutor Principal"
+                                        value={getInstructorName(formDemand.instructorId)}
+                                        icon={UserCheck}
+                                      />
+                                    );
+                                  }
+                                  return ids.map((id, i) => (
+                                    <DataViewField
+                                      key={id}
+                                      label={i === 0 ? 'Instrutor Principal' : `Instrutor ${i + 1}`}
+                                      value={getInstructorName(id)}
+                                      icon={UserCheck}
+                                    />
+                                  ));
+                                })()}
 
                                 {companionInstructorIds.length > 0 && (
                                   <DataViewField

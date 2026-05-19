@@ -152,3 +152,83 @@ export async function upsertLogisticByDemandId(
 
   return { data: (data as LogisticAllocationRow | null) ?? null, error };
 }
+
+// =============================================================
+// logistic_blocks — suporte a múltiplos instrutores por demanda
+// =============================================================
+
+export type LogisticBlockRow = {
+  id: string;
+  demand_id: string;
+  block_type: string; // 'LOCOMOCAO' | 'HOSPEDAGEM'
+  block_order: number;
+  instructor_name: string | null;
+
+  // Locomoção
+  transport_mode: string | null;
+  rental_company: string | null;
+  rental_agency_location: string | null;
+  rental_locator: string | null;
+  car_category: string | null;
+  rental_check_in: string | null;
+  rental_check_out: string | null;
+
+  // Hospedagem
+  lodging_mode: string | null;
+  hotel_city: string | null;
+  hotel_name: string | null;
+  hotel_check_in: string | null;
+  hotel_check_out: string | null;
+  hotel_payment: string | null;
+
+  created_at?: string;
+  updated_at?: string;
+};
+
+export async function fetchLogisticBlocksByDemandId(demandId: string): Promise<LogisticBlockRow[]> {
+  const { data, error } = await supabase
+    .from('logistic_blocks')
+    .select('*')
+    .eq('demand_id', demandId)
+    .order('block_type', { ascending: true })
+    .order('block_order', { ascending: true });
+
+  if (error) throw error;
+  return (data || []) as LogisticBlockRow[];
+}
+
+/**
+ * Substitui todos os blocos da demanda: exclui os antigos e insere os novos.
+ * Usa delete + insert para garantir que blocos removidos pelo usuário sejam apagados.
+ */
+export async function upsertLogisticBlocks(
+  demandId: string,
+  blocks: Array<Partial<LogisticBlockRow> & { id: string; block_type: string; block_order: number }>
+): Promise<void> {
+  const { error: delError } = await supabase
+    .from('logistic_blocks')
+    .delete()
+    .eq('demand_id', demandId);
+
+  if (delError) throw delError;
+
+  if (blocks.length === 0) return;
+
+  const rows = blocks.map(b => ({
+    ...b,
+    demand_id: demandId,
+    updated_at: new Date().toISOString(),
+  }));
+
+  const { error } = await supabase.from('logistic_blocks').insert(rows);
+  if (error) throw error;
+}
+
+export async function deleteLogisticBlock(blockId: string): Promise<void> {
+  const { error } = await supabase
+    .from('logistic_blocks')
+    .delete()
+    .eq('id', blockId);
+
+  if (error) throw error;
+}

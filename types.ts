@@ -157,6 +157,30 @@ export interface LogisticAllocation {
   endDate: string;
 }
 
+export interface LogisticaLocomocao {
+  id: string;
+  instructorName?: string;
+  transportType?: TransportType;
+  rentalCompany?: RentalCompany;
+  rentalOtherCompany?: string;
+  rentalAgencyLocation?: string;
+  rentalLocator?: string;
+  carCategory?: string;
+  rentalCheckIn?: string;
+  rentalCheckOut?: string;
+}
+
+export interface LogisticaHospedagem {
+  id: string;
+  instructorName?: string;
+  accommodationType?: AccommodationType;
+  hotelCity?: string;
+  hotelName?: string;
+  hotelCheckIn?: string;
+  hotelCheckOut?: string;
+  hotelPayment?: PaymentMethod;
+}
+
 export interface SpecificDateEntry {
   data: string;          // 'YYYY-MM-DD'
   horarioInicio: string; // 'HH:mm'
@@ -192,17 +216,21 @@ export interface Demand {
   analyst?: string;
   matriculador?: string;
 
-  // Sessão 2: Locomoção
+  // Múltiplos blocos de logística (substitui os campos individuais abaixo)
+  logisticasLocomocao?: LogisticaLocomocao[];
+  logisticasHospedagem?: LogisticaHospedagem[];
+
+  // Sessão 2: Locomoção — @deprecated use logisticasLocomocao (mantido para retrocompatibilidade)
   transportType?: TransportType;
   rentalCompany?: RentalCompany;
   rentalOtherCompany?: string;
   rentalAgencyLocation?: string;
-  rentalLocator?: string; // NOVO: Localizador do Carro
+  rentalLocator?: string;
   carCategory?: string;
-  rentalCheckIn?: string; // Date + Time
-  rentalCheckOut?: string; // Date + Time
+  rentalCheckIn?: string;
+  rentalCheckOut?: string;
 
-  // Sessão 3: Hospedagem
+  // Sessão 3: Hospedagem — @deprecated use logisticasHospedagem (mantido para retrocompatibilidade)
   accommodationType?: AccommodationType;
   hotelCity?: string;
   hotelName?: string;

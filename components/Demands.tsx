@@ -16,7 +16,9 @@ import {
   AccommodationType,
   InstructorAllocation,
   LogisticAllocation,
-  SpecificDateEntry
+  SpecificDateEntry,
+  LogisticaLocomocao,
+  LogisticaHospedagem
 } from '../types';
 
 import {
@@ -93,9 +95,23 @@ import {
 
 
 
-import { upsertLogisticByDemandId, fetchLogisticByDemandId } from '../services/logistics';
+import {
+  upsertLogisticByDemandId,
+  fetchLogisticByDemandId,
+  fetchLogisticBlocksByDemandId,
+  upsertLogisticBlocks,
+  type LogisticBlockRow
+} from '../services/logistics';
 import { fetchLocationAssociations, type LocationAssociation } from '../services/locationAssociations';
 import ExportDemandsModal from './ExportDemandsModal';
+
+// UUID v4 sem crypto.randomUUID() — compatível com HTTP e browsers antigos.
+// Necessário porque a coluna id da tabela logistic_blocks é do tipo uuid no PostgreSQL.
+const generateId = (): string =>
+  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
 
 
 
@@ -358,9 +374,22 @@ useEffect(() => {
     matriculador: '',
     rentalAgencyLocation: '',
     rentalLocator: '',
-    logisticsHotel: null, 
+    logisticsHotel: null,
     logisticsTransport: null,
-    observations: ''
+    observations: '',
+    logisticasLocomocao: [{
+      id: generateId(),
+      transportType: null,
+      rentalCompany: 'Localiza',
+      carCategory: 'Grupo CE',
+      rentalAgencyLocation: '',
+      rentalLocator: '',
+    }],
+    logisticasHospedagem: [{
+      id: generateId(),
+      accommodationType: null,
+      hotelPayment: null,
+    }],
   });
 
   // Note: attachments is handled dynamically in formDemand
@@ -764,90 +793,120 @@ useEffect(() => {
       setDbDocs({});
     }
 
-    // 2) Logística
+    // 2) Logística (logistic_allocations + logistic_blocks)
     try {
       const { data, error } = await fetchLogisticByDemandId(formDemand.id);
       if (error) throw error;
-      if (!data) return;
 
-      // Converte ISO UTC (ex: "2026-02-21T03:00:00+00:00") para "YYYY-MM-DDTHH:mm" no fuso local
-      // Necessário para que o input datetime-local exiba corretamente e o formatDateTime mostre a hora certa
-      const isoToLocalDTL = (iso: string | null | undefined): string | undefined => {
-        if (!iso) return undefined;
-        const d = new Date(iso);
-        if (isNaN(d.getTime())) return undefined;
-        const p = (n: number) => String(n).padStart(2, '0');
-        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+      // Mapeia modo de transporte do banco para o tipo da UI
+      const dbTransportToUI = (mode: string | null): TransportType => {
+        if (mode === 'CARRO_ALUGADO') return 'Carro Alugado';
+        if (mode === 'CARRO_PROPRIO') return 'Carro Próprio';
+        if (mode === 'TAXI') return 'Táxi';
+        if (mode === 'CARRO_APLICATIVO') return 'Carro Aplicativo';
+        if (mode === 'NAO_NECESSARIO' || mode === 'NA') return 'N/A';
+        return null;
       };
 
-      // Extrai apenas a parte "YYYY-MM-DD" de qualquer string ISO, sem conversão de fuso
-      // Necessário para que o input date exiba e salve corretamente a data de hotel
-      const isoToDateOnly = (iso: string | null | undefined): string | undefined => {
-        if (!iso) return undefined;
-        const s = String(iso).trim();
-        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-        if (s.includes('T')) return s.split('T')[0];
-        return undefined;
+      const dbLodgingToUI = (mode: string | null): AccommodationType => {
+        if (mode === 'PRECISA_HOTEL') return 'Hotel';
+        if (mode === 'NAO_NECESSARIO' || mode === 'NA') return 'N/A';
+        return null;
       };
 
-      // joga os campos do banco no formDemand (sem quebrar o que já está)
+      // Converte uma row de logistic_blocks para LogisticaLocomocao
+      const blockToLocomocaoUI = (b: LogisticBlockRow): LogisticaLocomocao => ({
+        id: b.id,
+        instructorName: b.instructor_name ?? undefined,
+        transportType: dbTransportToUI(b.transport_mode),
+        rentalCompany: (b.rental_company as RentalCompany) ?? 'Localiza',
+        rentalAgencyLocation: b.rental_agency_location ?? '',
+        rentalLocator: b.rental_locator ?? '',
+        carCategory: b.car_category ?? 'Grupo CE',
+        rentalCheckIn: isoToLocalDTL(b.rental_check_in) ?? '',
+        rentalCheckOut: isoToLocalDTL(b.rental_check_out) ?? '',
+      });
+
+      // Converte uma row de logistic_blocks para LogisticaHospedagem
+      const blockToHospedagemUI = (b: LogisticBlockRow): LogisticaHospedagem => ({
+        id: b.id,
+        instructorName: b.instructor_name ?? undefined,
+        accommodationType: dbLodgingToUI(b.lodging_mode),
+        hotelCity: b.hotel_city ?? '',
+        hotelName: b.hotel_name ?? '',
+        hotelCheckIn: isoToDateOnly(b.hotel_check_in) ?? '',
+        hotelCheckOut: isoToDateOnly(b.hotel_check_out) ?? '',
+        hotelPayment: (b.hotel_payment as PaymentMethod) ?? null,
+      });
+
+      // Busca blocos específicos por instrutor (nova tabela)
+      let locoBlocks: LogisticaLocomocao[] = [];
+      let hospBlocks: LogisticaHospedagem[] = [];
+
+      try {
+        const rawBlocks = await fetchLogisticBlocksByDemandId(formDemand.id);
+        const locoRaw = rawBlocks.filter(b => b.block_type === 'LOCOMOCAO');
+        const hospRaw = rawBlocks.filter(b => b.block_type === 'HOSPEDAGEM');
+
+        if (locoRaw.length > 0) locoBlocks = locoRaw.map(blockToLocomocaoUI);
+        if (hospRaw.length > 0) hospBlocks = hospRaw.map(blockToHospedagemUI);
+      } catch (_) {
+        // silencioso: tabela pode não existir ainda (migration pendente)
+      }
+
+      // Se não há blocos na nova tabela, cria 1 bloco a partir dos campos legados
+      if (locoBlocks.length === 0 && data) {
+        locoBlocks = [{
+          id: generateId(),
+          transportType: dbTransportToUI(data.transport_mode),
+          rentalCompany: (data.rental_company as RentalCompany) ?? 'Localiza',
+          rentalAgencyLocation: data.rental_agency_location ?? '',
+          rentalLocator: data.rental_locator ?? '',
+          carCategory: data.car_category ?? 'Grupo CE',
+          rentalCheckIn: isoToLocalDTL(data.rental_check_in) ?? '',
+          rentalCheckOut: isoToLocalDTL(data.rental_check_out) ?? '',
+        }];
+      }
+
+      if (hospBlocks.length === 0 && data) {
+        hospBlocks = [{
+          id: generateId(),
+          accommodationType: dbLodgingToUI(data.lodging_mode),
+          hotelCity: data.hotel_city ?? '',
+          hotelName: data.hotel_name ?? '',
+          hotelCheckIn: isoToDateOnly(data.hotel_check_in) ?? '',
+          hotelCheckOut: isoToDateOnly(data.hotel_check_out) ?? '',
+          hotelPayment: (data.hotel_payment as PaymentMethod) ?? null,
+        }];
+      }
+
+      // Garante ao menos 1 bloco vazio em cada array
+      if (locoBlocks.length === 0) locoBlocks = [{ id: generateId(), transportType: null, rentalCompany: 'Localiza', carCategory: 'Grupo CE', rentalAgencyLocation: '', rentalLocator: '' }];
+      if (hospBlocks.length === 0) hospBlocks = [{ id: generateId(), accommodationType: null, hotelPayment: null }];
+
       setFormDemand(prev => ({
         ...prev,
 
-        // ✅ status interno da logística (para VIEW não ficar "Pendente")
-        logisticsTransport:
-        data.transport_mode === 'CARRO_ALUGADO' || data.transport_mode === 'CARRO_PROPRIO' || data.transport_mode === 'TAXI' || data.transport_mode === 'CARRO_APLICATIVO'
-          ? 'CONFIRMADO'
-          : data.transport_mode === 'NAO_NECESSARIO' || data.transport_mode === 'NA'
-          ? 'NAO_NECESSARIO'
-          : '',
+        // Status interno (para VIEW não mostrar "Pendente" quando dado já veio do banco)
+        logisticsTransport: data
+          ? (data.transport_mode === 'CARRO_ALUGADO' || data.transport_mode === 'CARRO_PROPRIO' || data.transport_mode === 'TAXI' || data.transport_mode === 'CARRO_APLICATIVO'
+            ? 'CONFIRMADO'
+            : data.transport_mode === 'NAO_NECESSARIO' || data.transport_mode === 'NA'
+            ? 'NAO_NECESSARIO'
+            : '')
+          : prev.logisticsTransport,
 
-        logisticsHotel:
-        data.lodging_mode === 'PRECISA_HOTEL'
-          ? 'CONFIRMADO'
-          : data.lodging_mode === 'NAO_NECESSARIO' || data.lodging_mode === 'NA'
-          ? 'NAO_NECESSARIO'
-          : '',
+        logisticsHotel: data
+          ? (data.lodging_mode === 'PRECISA_HOTEL'
+            ? 'CONFIRMADO'
+            : data.lodging_mode === 'NAO_NECESSARIO' || data.lodging_mode === 'NA'
+            ? 'NAO_NECESSARIO'
+            : '')
+          : prev.logisticsHotel,
 
-
-        // ✅ modos vindos do banco -> UI
-      transportType:
-        data.transport_mode === 'CARRO_ALUGADO'
-          ? 'Carro Alugado'
-          : data.transport_mode === 'CARRO_PROPRIO'
-          ? 'Carro Próprio'
-          : data.transport_mode === 'TAXI'
-          ? 'Táxi'
-          : data.transport_mode === 'CARRO_APLICATIVO'
-          ? 'Carro Aplicativo'
-          : data.transport_mode === 'NAO_NECESSARIO' || data.transport_mode === 'NA'
-          ? 'N/A'
-          : null,
-
-      accommodationType:
-        data.lodging_mode === 'PRECISA_HOTEL'
-          ? 'Hotel'
-          : data.lodging_mode === 'NAO_NECESSARIO' || data.lodging_mode === 'NA'
-          ? 'N/A'
-          : null,
-
-        // carro alugado
-        rentalCompany: data.rental_company ?? prev.rentalCompany,
-        rentalAgencyLocation: data.rental_agency_location ?? prev.rentalAgencyLocation,
-        rentalLocator: data.rental_locator ?? prev.rentalLocator,
-        carCategory: data.car_category ?? prev.carCategory,
-        // Bug fix: converte UTC para fuso local antes de guardar no estado
-        // Evita +3h no display e input datetime-local vazio ao editar
-        rentalCheckIn: isoToLocalDTL(data.rental_check_in) ?? prev.rentalCheckIn,
-        rentalCheckOut: isoToLocalDTL(data.rental_check_out) ?? prev.rentalCheckOut,
-
-        // hotel
-        hotelCity: data.hotel_city ?? prev.hotelCity,
-        hotelName: data.hotel_name ?? prev.hotelName,
-        // Bug fix: extrai só YYYY-MM-DD para que o input date exiba e salve corretamente
-        hotelCheckIn: isoToDateOnly(data.hotel_check_in) ?? prev.hotelCheckIn,
-        hotelCheckOut: isoToDateOnly(data.hotel_check_out) ?? prev.hotelCheckOut,
-        hotelPayment: data.hotel_payment ?? prev.hotelPayment,
+        // Novos arrays de blocos
+        logisticasLocomocao: locoBlocks,
+        logisticasHospedagem: hospBlocks,
       }));
     } catch (e) {
       // silencioso
@@ -1113,30 +1172,43 @@ ${b('📘 INFORMAÇÕES GERAIS')}
 • Estado: ${formDemand.demandState || 'Não informado'}
 • Solicitante: ${formDemand.requester || 'Não informado'}
 
-${b('🚗 LOGÍSTICA — LOCOMOÇÃO')}
-• Meio de Transporte: ${formDemand.transportType || 'N/A'}`;
+`;
 
-    if (formDemand.transportType === 'Carro Alugado') {
-      content += `
-• Locadora: ${formDemand.rentalCompany}
-• Localizador: ${formDemand.rentalLocator || 'A definir'}
-• Local da Agência: ${formDemand.rentalAgencyLocation || 'N/A'}
-• Check-in: ${formDemand.rentalCheckIn ? formatDateTime(formDemand.rentalCheckIn) : 'N/A'}
-• Check-out: ${formDemand.rentalCheckOut ? formatDateTime(formDemand.rentalCheckOut) : 'N/A'}`;
+    const locoBlocks = formDemand.logisticasLocomocao?.length
+      ? formDemand.logisticasLocomocao
+      : [{ id: '', transportType: formDemand.transportType, rentalCompany: formDemand.rentalCompany, rentalLocator: formDemand.rentalLocator, rentalAgencyLocation: formDemand.rentalAgencyLocation, rentalCheckIn: formDemand.rentalCheckIn, rentalCheckOut: formDemand.rentalCheckOut }];
+    const hospBlocks = formDemand.logisticasHospedagem?.length
+      ? formDemand.logisticasHospedagem
+      : [{ id: '', accommodationType: formDemand.accommodationType, hotelName: formDemand.hotelName, hotelCity: formDemand.hotelCity, hotelCheckIn: formDemand.hotelCheckIn, hotelCheckOut: formDemand.hotelCheckOut, hotelPayment: formDemand.hotelPayment }];
+    const multiLoco = locoBlocks.length > 1;
+    const multiHosp = hospBlocks.length > 1;
+
+    for (const block of locoBlocks) {
+      const label = multiLoco && block.instructorName ? ` (${block.instructorName})` : '';
+      content += `\n${b(`🚗 LOGÍSTICA — LOCOMOÇÃO${label}`)}`;
+      content += `\n• Meio de Transporte: ${(block as any).transportType || 'N/A'}`;
+      if ((block as any).transportType === 'Carro Alugado') {
+        content += `
+• Locadora: ${(block as any).rentalCompany || 'N/A'}
+• Localizador: ${(block as any).rentalLocator || 'A definir'}
+• Local da Agência: ${(block as any).rentalAgencyLocation || 'N/A'}
+• Check-in: ${(block as any).rentalCheckIn ? formatDateTime((block as any).rentalCheckIn) : 'N/A'}
+• Check-out: ${(block as any).rentalCheckOut ? formatDateTime((block as any).rentalCheckOut) : 'N/A'}`;
+      }
     }
 
-    content += `
-
-${b('🏨 LOGÍSTICA — HOSPEDAGEM')}
-• Hospedagem: ${formDemand.accommodationType === 'Hotel' ? 'Hotel Requerido' : 'N/A'}`;
-
-    if (formDemand.accommodationType === 'Hotel') {
-      content += `
-• Hotel: ${formDemand.hotelName || 'A definir'}
-• Cidade / Estado: ${formDemand.hotelCity || 'N/A'}
-• Check-in: ${formDemand.hotelCheckIn ? formatDateTime(formDemand.hotelCheckIn) : 'N/A'}
-• Check-out: ${formDemand.hotelCheckOut ? formatDateTime(formDemand.hotelCheckOut) : 'N/A'}
-• Pagamento: ${formDemand.hotelPayment || 'N/A'}`;
+    for (const block of hospBlocks) {
+      const label = multiHosp && block.instructorName ? ` (${block.instructorName})` : '';
+      content += `\n\n${b(`🏨 LOGÍSTICA — HOSPEDAGEM${label}`)}`;
+      content += `\n• Hospedagem: ${(block as any).accommodationType === 'Hotel' ? 'Hotel Requerido' : 'N/A'}`;
+      if ((block as any).accommodationType === 'Hotel') {
+        content += `
+• Hotel: ${(block as any).hotelName || 'A definir'}
+• Cidade / Estado: ${(block as any).hotelCity || 'N/A'}
+• Check-in: ${(block as any).hotelCheckIn ? formatDateTime((block as any).hotelCheckIn) : 'N/A'}
+• Check-out: ${(block as any).hotelCheckOut ? formatDateTime((block as any).hotelCheckOut) : 'N/A'}
+• Pagamento: ${(block as any).hotelPayment || 'N/A'}`;
+      }
     }
 
     content += `
@@ -1232,35 +1304,61 @@ ${formDemand.observations || 'N/A'}
           }),
           new Paragraph({ children: [new TextRun({ text: "👤 Instrutor alocado: ", bold: true }), new TextRun(getInstructorName(formDemand.instructorId))] }),
 
-          new Paragraph({
-            text: "🚗 LOGÍSTICA — LOCOMOÇÃO",
-            heading: HeadingLevel.HEADING_2,
-            border: { bottom: { color: "e2e8f0", space: 1, style: BorderStyle.SINGLE, size: 6 } },
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({ children: [new TextRun({ text: "Meio de Transporte: ", bold: true }), new TextRun(formDemand.transportType || 'N/A')] }),
-          ...(formDemand.transportType === 'Carro Alugado' ? [
-            new Paragraph({ children: [new TextRun({ text: "Locadora: ", bold: true }), new TextRun(formDemand.rentalCompany || 'N/A')] }),
-            new Paragraph({ children: [new TextRun({ text: "Localizador: ", bold: true }), new TextRun(formDemand.rentalLocator || 'A definir')] }),
-            new Paragraph({ children: [new TextRun({ text: "Local da Agência: ", bold: true }), new TextRun(formDemand.rentalAgencyLocation || 'N/A')] }),
-            new Paragraph({ children: [new TextRun({ text: "Check-in: ", bold: true }), new TextRun(formDemand.rentalCheckIn ? formatDateTime(formDemand.rentalCheckIn) : 'N/A')] }),
-            new Paragraph({ children: [new TextRun({ text: "Check-out: ", bold: true }), new TextRun(formDemand.rentalCheckOut ? formatDateTime(formDemand.rentalCheckOut) : 'N/A')] }),
-          ] : []),
+          // ── Locomoção: um ou mais blocos ──────────────────────────────────
+          ...(() => {
+            const blocks = formDemand.logisticasLocomocao?.length
+              ? formDemand.logisticasLocomocao
+              : [{ id: '', transportType: formDemand.transportType, rentalCompany: formDemand.rentalCompany, rentalLocator: formDemand.rentalLocator, rentalAgencyLocation: formDemand.rentalAgencyLocation, rentalCheckIn: formDemand.rentalCheckIn, rentalCheckOut: formDemand.rentalCheckOut }];
+            const multi = blocks.length > 1;
+            const rows: any[] = [];
+            for (const block of blocks) {
+              const b = block as any;
+              const label = multi && b.instructorName ? ` (${b.instructorName})` : '';
+              rows.push(new Paragraph({
+                text: `🚗 LOGÍSTICA — LOCOMOÇÃO${label}`,
+                heading: HeadingLevel.HEADING_2,
+                border: { bottom: { color: "e2e8f0", space: 1, style: BorderStyle.SINGLE, size: 6 } },
+                spacing: { before: 400, after: 200 },
+              }));
+              rows.push(new Paragraph({ children: [new TextRun({ text: "Meio de Transporte: ", bold: true }), new TextRun(b.transportType || 'N/A')] }));
+              if (b.transportType === 'Carro Alugado') {
+                rows.push(new Paragraph({ children: [new TextRun({ text: "Locadora: ", bold: true }), new TextRun(b.rentalCompany || 'N/A')] }));
+                rows.push(new Paragraph({ children: [new TextRun({ text: "Localizador: ", bold: true }), new TextRun(b.rentalLocator || 'A definir')] }));
+                rows.push(new Paragraph({ children: [new TextRun({ text: "Local da Agência: ", bold: true }), new TextRun(b.rentalAgencyLocation || 'N/A')] }));
+                rows.push(new Paragraph({ children: [new TextRun({ text: "Check-in: ", bold: true }), new TextRun(b.rentalCheckIn ? formatDateTime(b.rentalCheckIn) : 'N/A')] }));
+                rows.push(new Paragraph({ children: [new TextRun({ text: "Check-out: ", bold: true }), new TextRun(b.rentalCheckOut ? formatDateTime(b.rentalCheckOut) : 'N/A')] }));
+              }
+            }
+            return rows;
+          })(),
 
-          new Paragraph({
-            text: "🏨 LOGÍSTICA — HOSPEDAGEM",
-            heading: HeadingLevel.HEADING_2,
-            border: { bottom: { color: "e2e8f0", space: 1, style: BorderStyle.SINGLE, size: 6 } },
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({ children: [new TextRun({ text: "Hospedagem: ", bold: true }), new TextRun(formDemand.accommodationType === 'Hotel' ? 'Hotel Requerido' : 'N/A')] }),
-          ...(formDemand.accommodationType === 'Hotel' ? [
-            new Paragraph({ children: [new TextRun({ text: "Hotel: ", bold: true }), new TextRun(formDemand.hotelName || 'A definir')] }),
-            new Paragraph({ children: [new TextRun({ text: "Cidade / Estado: ", bold: true }), new TextRun(formDemand.hotelCity || 'N/A')] }),
-            new Paragraph({ children: [new TextRun({ text: "Check-in: ", bold: true }), new TextRun(formDemand.hotelCheckIn ? formatDateTime(formDemand.hotelCheckIn) : 'N/A')] }),
-            new Paragraph({ children: [new TextRun({ text: "Check-out: ", bold: true }), new TextRun(formDemand.hotelCheckOut ? formatDateTime(formDemand.hotelCheckOut) : 'N/A')] }),
-            new Paragraph({ children: [new TextRun({ text: "Pagamento: ", bold: true }), new TextRun(formDemand.hotelPayment || 'N/A')] }),
-          ] : []),
+          // ── Hospedagem: um ou mais blocos ─────────────────────────────────
+          ...(() => {
+            const blocks = formDemand.logisticasHospedagem?.length
+              ? formDemand.logisticasHospedagem
+              : [{ id: '', accommodationType: formDemand.accommodationType, hotelName: formDemand.hotelName, hotelCity: formDemand.hotelCity, hotelCheckIn: formDemand.hotelCheckIn, hotelCheckOut: formDemand.hotelCheckOut, hotelPayment: formDemand.hotelPayment }];
+            const multi = blocks.length > 1;
+            const rows: any[] = [];
+            for (const block of blocks) {
+              const b = block as any;
+              const label = multi && b.instructorName ? ` (${b.instructorName})` : '';
+              rows.push(new Paragraph({
+                text: `🏨 LOGÍSTICA — HOSPEDAGEM${label}`,
+                heading: HeadingLevel.HEADING_2,
+                border: { bottom: { color: "e2e8f0", space: 1, style: BorderStyle.SINGLE, size: 6 } },
+                spacing: { before: 400, after: 200 },
+              }));
+              rows.push(new Paragraph({ children: [new TextRun({ text: "Hospedagem: ", bold: true }), new TextRun(b.accommodationType === 'Hotel' ? 'Hotel Requerido' : 'N/A')] }));
+              if (b.accommodationType === 'Hotel') {
+                rows.push(new Paragraph({ children: [new TextRun({ text: "Hotel: ", bold: true }), new TextRun(b.hotelName || 'A definir')] }));
+                rows.push(new Paragraph({ children: [new TextRun({ text: "Cidade / Estado: ", bold: true }), new TextRun(b.hotelCity || 'N/A')] }));
+                rows.push(new Paragraph({ children: [new TextRun({ text: "Check-in: ", bold: true }), new TextRun(b.hotelCheckIn ? formatDateTime(b.hotelCheckIn) : 'N/A')] }));
+                rows.push(new Paragraph({ children: [new TextRun({ text: "Check-out: ", bold: true }), new TextRun(b.hotelCheckOut ? formatDateTime(b.hotelCheckOut) : 'N/A')] }));
+                rows.push(new Paragraph({ children: [new TextRun({ text: "Pagamento: ", bold: true }), new TextRun(b.hotelPayment || 'N/A')] }));
+              }
+            }
+            return rows;
+          })(),
           
           new Paragraph({
             text: "📌 STATUS DA DEMANDA",
@@ -1372,21 +1470,6 @@ ${formDemand.observations || 'N/A'}
 };
 
 
-const mapTransportMode = (t: TransportType | null | undefined) => {
-  if (t === 'Carro Alugado') return 'CARRO_ALUGADO';
-  if (t === 'Carro Próprio') return 'CARRO_PROPRIO';
-  if (t === 'Táxi') return 'TAXI';
-  if (t === 'Carro Aplicativo') return 'CARRO_APLICATIVO';
-  return null;
-};
-
-
-
-const mapLodgingMode = (a: AccommodationType | null | undefined) => {
-  if (a === 'Hotel') return 'PRECISA_HOTEL';
-  return null;
-};
-
 
 // ===============================
 // ✅ Helpers ÚNICOS (não duplicar)
@@ -1460,6 +1543,10 @@ const handleSave = async () => {
       }
     }
 
+    // Deriva campos do bloco primário (index 0) para alimentar logistic_allocations (checklist)
+    const primaryLoco = formDemand.logisticasLocomocao?.[0];
+    const primaryHosp = formDemand.logisticasHospedagem?.[0];
+
     // ✅ ONLINE: não pode gerar pendência de logística / local
     const sanitizedDemand: Demand = {
       ...(formDemand as Demand),
@@ -1489,19 +1576,22 @@ const handleSave = async () => {
           ? 'NAO_NECESSARIO'
           : (formDemand.logisticsHotel ?? ''),
 
-      transportType: !requiresLogistics(formDemand.modality) ? null : formDemand.transportType,
-      accommodationType: !requiresLogistics(formDemand.modality) ? null : formDemand.accommodationType,
+      // Campos planos derivados do bloco 0 (para logistic_allocations e retrocompatibilidade)
+      transportType: !requiresLogistics(formDemand.modality) ? null : (primaryLoco?.transportType ?? null),
+      accommodationType: !requiresLogistics(formDemand.modality) ? null : (primaryHosp?.accommodationType ?? null),
 
-      rentalAgencyLocation: !requiresLogistics(formDemand.modality) ? '' : (formDemand.rentalAgencyLocation || ''),
-      rentalLocator: !requiresLogistics(formDemand.modality) ? '' : (formDemand.rentalLocator || ''),
-      rentalCheckIn: !requiresLogistics(formDemand.modality) ? '' : (formDemand.rentalCheckIn || ''),
-      rentalCheckOut: !requiresLogistics(formDemand.modality) ? '' : (formDemand.rentalCheckOut || ''),
+      rentalCompany: primaryLoco?.rentalCompany ?? 'Localiza',
+      carCategory: primaryLoco?.carCategory ?? 'Grupo CE',
+      rentalAgencyLocation: !requiresLogistics(formDemand.modality) ? '' : (primaryLoco?.rentalAgencyLocation || ''),
+      rentalLocator: !requiresLogistics(formDemand.modality) ? '' : (primaryLoco?.rentalLocator || ''),
+      rentalCheckIn: !requiresLogistics(formDemand.modality) ? '' : (primaryLoco?.rentalCheckIn || ''),
+      rentalCheckOut: !requiresLogistics(formDemand.modality) ? '' : (primaryLoco?.rentalCheckOut || ''),
 
-      hotelName: !requiresLogistics(formDemand.modality) ? '' : (formDemand.hotelName || ''),
-      hotelCity: !requiresLogistics(formDemand.modality) ? '' : (formDemand.hotelCity || ''),
-      hotelCheckIn: !requiresLogistics(formDemand.modality) ? '' : (formDemand.hotelCheckIn || ''),
-      hotelCheckOut: !requiresLogistics(formDemand.modality) ? '' : (formDemand.hotelCheckOut || ''),
-      hotelPayment: !requiresLogistics(formDemand.modality) ? null : formDemand.hotelPayment,
+      hotelName: !requiresLogistics(formDemand.modality) ? '' : (primaryHosp?.hotelName || ''),
+      hotelCity: !requiresLogistics(formDemand.modality) ? '' : (primaryHosp?.hotelCity || ''),
+      hotelCheckIn: !requiresLogistics(formDemand.modality) ? '' : (primaryHosp?.hotelCheckIn || ''),
+      hotelCheckOut: !requiresLogistics(formDemand.modality) ? '' : (primaryHosp?.hotelCheckOut || ''),
+      hotelPayment: !requiresLogistics(formDemand.modality) ? null : (primaryHosp?.hotelPayment ?? null),
     };
 
 
@@ -1682,6 +1772,77 @@ const handleSave = async () => {
       console.error('Erro ao salvar logística:', e);
     }
 
+    // 3b) Salva todos os blocos de logística na tabela logistic_blocks
+    try {
+      const mapTransportModeToDb = (t?: TransportType | null) => {
+        if (t === 'Carro Alugado') return 'CARRO_ALUGADO';
+        if (t === 'Carro Próprio') return 'CARRO_PROPRIO';
+        if (t === 'Táxi') return 'TAXI';
+        if (t === 'Carro Aplicativo') return 'CARRO_APLICATIVO';
+        if (t === 'N/A') return 'NA';
+        return null;
+      };
+      const mapLodgingModeToDb = (a?: AccommodationType | null) => {
+        if (a === 'Hotel') return 'PRECISA_HOTEL';
+        if (a === 'N/A') return 'NA';
+        return null;
+      };
+
+      const isOnlineBlocks = !requiresLogistics(sanitizedDemand.modality);
+
+      const locoBlockRows = (formDemand.logisticasLocomocao || []).map((b, i) => {
+        const tm = isOnlineBlocks ? 'NAO_NECESSARIO' : mapTransportModeToDb(b.transportType);
+        const isAlugado = b.transportType === 'Carro Alugado' && !isOnlineBlocks;
+        return {
+          id: b.id,
+          block_type: 'LOCOMOCAO',
+          block_order: i,
+          instructor_name: b.instructorName ?? null,
+          transport_mode: tm,
+          rental_company: isAlugado ? (b.rentalCompany || 'Localiza') : null,
+          rental_agency_location: isAlugado ? (b.rentalAgencyLocation || null) : null,
+          rental_locator: isAlugado ? (b.rentalLocator || null) : null,
+          car_category: isAlugado ? (b.carCategory || 'Grupo CE') : null,
+          rental_check_in: isAlugado ? toIsoFromDateTimeLocalSafe(b.rentalCheckIn) : null,
+          rental_check_out: isAlugado ? toIsoFromDateTimeLocalSafe(b.rentalCheckOut) : null,
+          lodging_mode: null,
+          hotel_city: null,
+          hotel_name: null,
+          hotel_check_in: null,
+          hotel_check_out: null,
+          hotel_payment: null,
+        };
+      });
+
+      const hospBlockRows = (formDemand.logisticasHospedagem || []).map((b, i) => {
+        const lm = isOnlineBlocks ? 'NAO_NECESSARIO' : mapLodgingModeToDb(b.accommodationType);
+        const isHotel = b.accommodationType === 'Hotel' && !isOnlineBlocks;
+        return {
+          id: b.id,
+          block_type: 'HOSPEDAGEM',
+          block_order: i,
+          instructor_name: b.instructorName ?? null,
+          transport_mode: null,
+          rental_company: null,
+          rental_agency_location: null,
+          rental_locator: null,
+          car_category: null,
+          rental_check_in: null,
+          rental_check_out: null,
+          lodging_mode: lm,
+          hotel_city: isHotel ? (b.hotelCity || null) : null,
+          hotel_name: isHotel ? (b.hotelName || null) : null,
+          hotel_check_in: isHotel ? toIsoFromDateInputSafe(b.hotelCheckIn) : null,
+          hotel_check_out: isHotel ? toIsoFromDateInputSafe(b.hotelCheckOut) : null,
+          hotel_payment: isHotel ? (b.hotelPayment || 'Faturado') : null,
+        };
+      });
+
+      await upsertLogisticBlocks(demandId, [...locoBlockRows, ...hospBlockRows]);
+    } catch (e) {
+      console.error('Erro ao salvar logistic_blocks:', e);
+    }
+
     // 4) PDFs: enviar pendentes (CREATE e EDIT)
     try {
       const hasAnyPdf = !!pendingPdfs.classList || !!pendingPdfs.instructorRelease;
@@ -1763,6 +1924,24 @@ const handleSave = async () => {
   }
 };
   const pad2 = (n: number) => String(n).padStart(2, '0');
+
+  // Converte ISO UTC para "YYYY-MM-DDTHH:mm" no fuso local (para inputs datetime-local)
+  const isoToLocalDTL = (iso: string | null | undefined): string | undefined => {
+    if (!iso) return undefined;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return undefined;
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+
+  // Extrai apenas "YYYY-MM-DD" de qualquer string ISO, sem conversão de fuso
+  const isoToDateOnly = (iso: string | null | undefined): string | undefined => {
+    if (!iso) return undefined;
+    const s = String(iso).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    if (s.includes('T')) return s.split('T')[0];
+    return undefined;
+  };
 
   const toLocalDateInputFromAny = (v?: string) => {
     if (!v) return '';
@@ -2127,57 +2306,107 @@ const endLocal = usePractice
     </datalist>
   );
 
-  const handleTransportClick = (t: TransportType) => {
-  setFormDemand(prev => {
-    if (t === 'Carro Alugado') {
+  // ─── Handlers multi-bloco: Locomoção ─────────────────────────────────────
+
+  const updateLocomocaoBlock = (index: number, patch: Partial<LogisticaLocomocao>) => {
+    setFormDemand(prev => {
+      const blocks = [...(prev.logisticasLocomocao || [])];
+      blocks[index] = { ...blocks[index], ...patch };
+      // Sincroniza status logístico pelo bloco 0 (para checklist operacional)
+      const primary = blocks[0];
+      const isAlugado = primary?.transportType === 'Carro Alugado';
+      const isNA = primary?.transportType === 'N/A';
       return {
         ...prev,
-        transportType: 'Carro Alugado',
-        logisticsTransport: 'CONFIRMADO'
+        logisticasLocomocao: blocks,
+        ...(index === 0 ? {
+          logisticsTransport: isAlugado || (!isNA && primary?.transportType != null)
+            ? 'CONFIRMADO'
+            : 'NAO_NECESSARIO',
+        } : {}),
       };
+    });
+  };
+
+  const handleBlockTransportClick = (index: number, t: TransportType) => {
+    const isAlugado = t === 'Carro Alugado';
+    updateLocomocaoBlock(index, {
+      transportType: t,
+      ...(!isAlugado ? { rentalAgencyLocation: '', rentalLocator: '', rentalCheckIn: '', rentalCheckOut: '' } : {}),
+    });
+  };
+
+  const addLocomocaoBlock = () => {
+    setFormDemand(prev => ({
+      ...prev,
+      logisticasLocomocao: [
+        ...(prev.logisticasLocomocao || []),
+        { id: generateId(), transportType: null, rentalCompany: 'Localiza', carCategory: 'Grupo CE', rentalAgencyLocation: '', rentalLocator: '' },
+      ],
+    }));
+  };
+
+  const removeLocomocaoBlock = (index: number) => {
+    setFormDemand(prev => {
+      const blocks = (prev.logisticasLocomocao || []).filter((_, i) => i !== index);
+      return { ...prev, logisticasLocomocao: blocks };
+    });
+  };
+
+  // ─── Handlers multi-bloco: Hospedagem ────────────────────────────────────
+
+  const updateHospedagemBlock = (index: number, patch: Partial<LogisticaHospedagem>) => {
+    setFormDemand(prev => {
+      const blocks = [...(prev.logisticasHospedagem || [])];
+      blocks[index] = { ...blocks[index], ...patch };
+      const primary = blocks[0];
+      const isHotel = primary?.accommodationType === 'Hotel';
+      const isNA = primary?.accommodationType === 'N/A';
+      return {
+        ...prev,
+        logisticasHospedagem: blocks,
+        ...(index === 0 ? {
+          logisticsHotel: isHotel
+            ? 'CONFIRMADO'
+            : isNA
+            ? 'NAO_NECESSARIO'
+            : prev.logisticsHotel,
+        } : {}),
+      };
+    });
+  };
+
+  const handleBlockAccommodationClick = (index: number, type: AccommodationType) => {
+    if (type === 'N/A') {
+      updateHospedagemBlock(index, {
+        accommodationType: 'N/A',
+        hotelCity: '',
+        hotelName: '',
+        hotelCheckIn: '',
+        hotelCheckOut: '',
+        hotelPayment: null,
+      });
+    } else {
+      updateHospedagemBlock(index, { accommodationType: 'Hotel' });
     }
+  };
 
-    // Carro Próprio ou N/A
-    return {
-      ...prev,
-      transportType: t,                 // <- mantém 'N/A' como valor (não null)
-      logisticsTransport: 'NAO_NECESSARIO',
-
-      // se não for carro alugado, limpa campos de locação
-      rentalAgencyLocation: '',
-      rentalLocator: '',
-      rentalCheckIn: '',
-      rentalCheckOut: '',
-      // (se você quiser manter defaults, ok, mas não é obrigatório)
-    };
-  });
-};
-
-
-
- const handleAccommodationClick = (type: AccommodationType) => {
-  if (type === 'N/A') {
+  const addHospedagemBlock = () => {
     setFormDemand(prev => ({
       ...prev,
-      accommodationType: 'N/A',
-
-      // 🔥 limpa tudo de hotel
-      hotelCity: '',
-      hotelName: '',
-      hotelCheckIn: '',
-      hotelCheckOut: '',
-      hotelPayment: null,
-
-      logisticsHotel: 'NAO_NECESSARIO',
+      logisticasHospedagem: [
+        ...(prev.logisticasHospedagem || []),
+        { id: generateId(), accommodationType: null, hotelPayment: null },
+      ],
     }));
-  } else {
-    setFormDemand(prev => ({
-      ...prev,
-      accommodationType: 'Hotel',
-      logisticsHotel: 'CONFIRMADO',
-    }));
-  }
-};
+  };
+
+  const removeHospedagemBlock = (index: number) => {
+    setFormDemand(prev => {
+      const blocks = (prev.logisticasHospedagem || []).filter((_, i) => i !== index);
+      return { ...prev, logisticasHospedagem: blocks };
+    });
+  };
 
   // Filtrar alocações para a demanda atual
   const currentAllocations = useMemo(() => {
@@ -3160,54 +3389,133 @@ const companionInstructorIds = useMemo(() => {
                     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
                       <button onClick={() => toggleSection('locomocao')} className="w-full px-6 py-4 flex items-center justify-between bg-white hover:bg-slate-50 transition no-print"><div className="flex items-center gap-3"><div className="p-2 bg-amber-50 rounded-lg text-amber-600"><Truck size={20} /></div><h3 className="font-bold text-slate-800 uppercase text-sm">Logística — Locomoção</h3></div>{openSections.locomocao ? <ChevronUp size={20} /> : <ChevronDown size={20} />}</button>
                       {openSections.locomocao && (
-                        <div className="px-6 py-6 border-t border-slate-100 bg-white">
+                        <div className="px-6 py-6 border-t border-slate-100 bg-white space-y-6">
                           {modalSubMode === 'FORM' ? (
-                            <div className="space-y-6">
-                              <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Meio de Transporte</label>
-                             <div className="flex gap-2">
-                                {(['Carro Alugado', 'Carro Próprio', 'Táxi', 'Carro Aplicativo', 'N/A'] as TransportType[]).map((t) => (
-                                  <button
-                                    key={t}
-                                    type="button"
-                                    onClick={() => handleTransportClick(t)}
-                                    className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all
-                                      ${
-                                        formDemand.transportType === t
-                                          ? 'bg-amber-600 text-white border-amber-600'
-                                          : 'bg-white text-slate-500 border-slate-200 hover:border-amber-400'
-                                      }`}
-                                  >
-                                    {t}
-                                  </button>
-                                ))}
-                              </div>
-                              </div>
-                              {formDemand.transportType === 'Carro Alugado' && (
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-5 bg-amber-50/50 rounded-xl border border-amber-100">
-                                  <div><label className="block text-xs font-bold text-amber-800 uppercase mb-2">Empresa de Locação</label>
-                                    <select className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500" value={formDemand.rentalCompany || 'Localiza'} onChange={(e) => setFormDemand({...formDemand, rentalCompany: e.target.value as RentalCompany})}>{operationalBases.locadoras.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                            <>
+                              {(formDemand.logisticasLocomocao || []).map((block, idx) => {
+                                const isMulti = (formDemand.logisticasLocomocao?.length ?? 0) > 1;
+                                return (
+                                  <div key={block.id} className="space-y-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-xs font-black text-amber-700 uppercase tracking-widest">
+                                        {isMulti ? `Bloco ${idx + 1}` : 'Locomoção'}
+                                      </span>
+                                      {(formDemand.logisticasLocomocao?.length ?? 0) > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => removeLocomocaoBlock(idx)}
+                                          className="text-xs text-red-400 hover:text-red-600 font-bold flex items-center gap-1 transition"
+                                        >
+                                          <Trash2 size={13} /> Remover
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {isMulti && (
+                                      <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-1"><User size={12} /> Nome do Instrutor</label>
+                                        <input
+                                          type="text"
+                                          className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400"
+                                          placeholder="Ex.: João Silva"
+                                          value={block.instructorName || ''}
+                                          onChange={e => updateLocomocaoBlock(idx, { instructorName: e.target.value })}
+                                        />
+                                      </div>
+                                    )}
+
+                                    <div>
+                                      <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Meio de Transporte</label>
+                                      <div className="flex flex-wrap gap-2">
+                                        {(['Carro Alugado', 'Carro Próprio', 'Táxi', 'Carro Aplicativo', 'N/A'] as TransportType[]).map((t) => (
+                                          <button
+                                            key={t}
+                                            type="button"
+                                            onClick={() => handleBlockTransportClick(idx, t)}
+                                            className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all min-w-[80px]
+                                              ${block.transportType === t
+                                                ? 'bg-amber-600 text-white border-amber-600'
+                                                : 'bg-white text-slate-500 border-slate-200 hover:border-amber-400'
+                                              }`}
+                                          >
+                                            {t}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+
+                                    {block.transportType === 'Carro Alugado' && (
+                                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-amber-50/60 rounded-xl border border-amber-100">
+                                        <div>
+                                          <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Empresa de Locação</label>
+                                          <select className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500" value={block.rentalCompany || 'Localiza'} onChange={(e) => updateLocomocaoBlock(idx, { rentalCompany: e.target.value as RentalCompany })}>
+                                            {operationalBases.locadoras.map(c => <option key={c} value={c}>{c}</option>)}
+                                          </select>
+                                        </div>
+                                        <div>
+                                          <label className="block text-xs font-bold text-amber-800 uppercase mb-1">Local da Agência</label>
+                                          <input list="agencias-list" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={block.rentalAgencyLocation || ''} onChange={(e) => updateLocomocaoBlock(idx, { rentalAgencyLocation: e.target.value })} placeholder="Onde retira o carro?" />
+                                        </div>
+                                        <div>
+                                          <label className="block text-xs font-bold text-amber-800 uppercase mb-1 flex items-center gap-1"><Tag size={12} /> Localizador</label>
+                                          <input type="text" className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 outline-none" value={block.rentalLocator || ''} onChange={(e) => updateLocomocaoBlock(idx, { rentalLocator: e.target.value })} />
+                                        </div>
+                                        <div>
+                                          <label className="block text-xs font-bold text-amber-800 uppercase mb-1">Categoria</label>
+                                          <select className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={block.carCategory || 'Grupo CE'} onChange={(e) => updateLocomocaoBlock(idx, { carCategory: e.target.value })}>
+                                            {CAR_CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                                          </select>
+                                        </div>
+                                        <div>
+                                          <label className="block text-xs font-bold text-amber-800 uppercase mb-1">Check-in</label>
+                                          <input type="datetime-local" className="w-full border border-amber-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-amber-500" value={block.rentalCheckIn || ''} onChange={e => updateLocomocaoBlock(idx, { rentalCheckIn: e.target.value })} />
+                                        </div>
+                                        <div>
+                                          <label className="block text-xs font-bold text-amber-800 uppercase mb-1">Check-out</label>
+                                          <input type="datetime-local" className="w-full border border-amber-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-amber-500" value={block.rentalCheckOut || ''} onChange={e => updateLocomocaoBlock(idx, { rentalCheckOut: e.target.value })} />
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
-                                  <div><label className="block text-xs font-bold text-amber-800 uppercase mb-1">Local da Agência</label><input list="agencias-list" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={formDemand.rentalAgencyLocation || ''} onChange={(e) => setFormDemand({...formDemand, rentalAgencyLocation: e.target.value})} placeholder="Onde retira o carro?" /></div>
-                                  <div><label className="block text-xs font-bold text-amber-800 uppercase mb-1 flex items-center gap-1"><Tag size={12} /> Localizador</label><input type="text" className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 outline-none" value={formDemand.rentalLocator || ''} onChange={(e) => setFormDemand({...formDemand, rentalLocator: e.target.value})} /></div>
-                                  <div><label className="block text-xs font-bold text-amber-800 uppercase mb-1">Categoria</label><select className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={formDemand.carCategory || 'Grupo CE'} onChange={(e) => setFormDemand({...formDemand, carCategory: e.target.value})}>{CAR_CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}</select></div>
-                                  <div><label className="block text-xs font-bold text-amber-800 uppercase mb-1">Check-in</label><input type="datetime-local" className="w-full border border-amber-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-amber-500" value={formDemand.rentalCheckIn || ''} onChange={e => setFormDemand({...formDemand, rentalCheckIn: e.target.value})} /></div>
-                                  <div><label className="block text-xs font-bold text-amber-800 uppercase mb-1">Check-out</label><input type="datetime-local" className="w-full border border-amber-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-amber-500" value={formDemand.rentalCheckOut || ''} onChange={e => setFormDemand({...formDemand, rentalCheckOut: e.target.value})} /></div>
-                                </div>
-                              )}
-                            </div>
+                                );
+                              })}
+
+                              <button
+                                type="button"
+                                onClick={addLocomocaoBlock}
+                                className="flex items-center gap-2 text-xs font-bold text-amber-700 hover:text-amber-900 border border-dashed border-amber-300 hover:border-amber-500 rounded-lg px-4 py-2 transition"
+                              >
+                                <Plus size={14} /> Adicionar Locomoção
+                              </button>
+                            </>
                           ) : (
-                            <div className="space-y-4">
-                              <DataViewField label="Meio de Transporte" value={formDemand.transportType || (formDemand.logisticsTransport === 'NAO_NECESSARIO' ? 'N/A' : 'Pendente')} icon={Truck} />
-                              {formDemand.transportType === 'Carro Alugado' && (
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-4 bg-amber-50 rounded-xl border border-amber-100">
-                                  <DataViewField label="Locadora" value={formDemand.rentalCompany} icon={Building2} />
-                                  <DataViewField label="Local da Agência" value={formDemand.rentalAgencyLocation} icon={MapPin} />
-                                  <DataViewField label="Localizador" value={formDemand.rentalLocator} icon={Tag} />
-                                  <DataViewField label="Categoria" value={formDemand.carCategory} icon={Tag} />
-                                  <DataViewField label="Check-in" value={formDemand.rentalCheckIn ? formatDateTime(formDemand.rentalCheckIn) : '---'} icon={Clock} />
-                                  <DataViewField label="Check-out" value={formDemand.rentalCheckOut ? formatDateTime(formDemand.rentalCheckOut) : '---'} icon={Clock} />
-                                </div>
-                              )}
+                            <div className="space-y-6">
+                              {(formDemand.logisticasLocomocao || []).map((block, idx) => {
+                                const isMulti = (formDemand.logisticasLocomocao?.length ?? 0) > 1;
+                                return (
+                                  <div key={block.id} className="space-y-4">
+                                    {isMulti && (
+                                      <p className="text-xs font-black text-amber-700 uppercase tracking-widest">
+                                        {block.instructorName ? `Locomoção — ${block.instructorName}` : `Locomoção — Bloco ${idx + 1}`}
+                                      </p>
+                                    )}
+                                    <DataViewField label="Meio de Transporte" value={block.transportType || (formDemand.logisticsTransport === 'NAO_NECESSARIO' ? 'N/A' : 'Pendente')} icon={Truck} />
+                                    {block.transportType === 'Carro Alugado' && (
+                                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-4 bg-amber-50 rounded-xl border border-amber-100">
+                                        <DataViewField label="Locadora" value={block.rentalCompany} icon={Building2} />
+                                        <DataViewField label="Local da Agência" value={block.rentalAgencyLocation} icon={MapPin} />
+                                        <DataViewField label="Localizador" value={block.rentalLocator} icon={Tag} />
+                                        <DataViewField label="Categoria" value={block.carCategory} icon={Tag} />
+                                        <DataViewField label="Check-in" value={block.rentalCheckIn ? formatDateTime(block.rentalCheckIn) : '---'} icon={Clock} />
+                                        <DataViewField label="Check-out" value={block.rentalCheckOut ? formatDateTime(block.rentalCheckOut) : '---'} icon={Clock} />
+                                      </div>
+                                    )}
+                                    {isMulti && idx < (formDemand.logisticasLocomocao?.length ?? 1) - 1 && (
+                                      <hr className="border-slate-100" />
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
                         </div>
@@ -3229,124 +3537,162 @@ const companionInstructorIds = useMemo(() => {
           </button>
 
           {openSections.hospedagem && (
-            <div className="px-6 py-6 border-t border-slate-100 bg-white">
+            <div className="px-6 py-6 border-t border-slate-100 bg-white space-y-6">
               {modalSubMode === 'FORM' ? (
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Hospedagem</label>
+                <>
+                  {(formDemand.logisticasHospedagem || []).map((block, idx) => {
+                    const isMulti = (formDemand.logisticasHospedagem?.length ?? 0) > 1;
+                    return (
+                      <div key={block.id} className="space-y-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black text-green-700 uppercase tracking-widest">
+                            {isMulti ? `Bloco ${idx + 1}` : 'Hospedagem'}
+                          </span>
+                          {(formDemand.logisticasHospedagem?.length ?? 0) > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeHospedagemBlock(idx)}
+                              className="text-xs text-red-400 hover:text-red-600 font-bold flex items-center gap-1 transition"
+                            >
+                              <Trash2 size={13} /> Remover
+                            </button>
+                          )}
+                        </div>
 
-                    <div className="flex gap-2">
-                      {(['Hotel', 'N/A'] as AccommodationType[]).map((type) => (
-                        <button
-                          key={type}
-                          type="button"
-                          onClick={() => handleAccommodationClick(type)}
-                          className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all
-                            ${
-                              formDemand.accommodationType === type
-                                ? 'bg-green-600 text-white border-green-600'
-                                : 'bg-white text-slate-500 border-slate-200 hover:border-green-400'
-                            }`}
-                        >
-                          {type === 'N/A' ? 'N/A' : 'Precisa de Hotel'}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                        {isMulti && (
+                          <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-1"><User size={12} /> Nome do Instrutor</label>
+                            <input
+                              type="text"
+                              className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-400"
+                              placeholder="Ex.: Maria Souza"
+                              value={block.instructorName || ''}
+                              onChange={e => updateHospedagemBlock(idx, { instructorName: e.target.value })}
+                            />
+                          </div>
+                        )}
 
-                  {formDemand.accommodationType === 'Hotel' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-5 bg-green-50/50 rounded-xl border border-green-100">
-                      <div>
-                        <label className="block text-xs font-bold text-green-800 uppercase mb-1">Cidade / Estado</label>
-                        <input
-                          list="cidades-list"
-                          className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                          value={formDemand.hotelCity || ''}
-                          onChange={(e) => setFormDemand({ ...formDemand, hotelCity: e.target.value })}
-                        />
+                        <div>
+                          <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Hospedagem</label>
+                          <div className="flex gap-2">
+                            {(['Hotel', 'N/A'] as AccommodationType[]).map((type) => (
+                              <button
+                                key={type}
+                                type="button"
+                                onClick={() => handleBlockAccommodationClick(idx, type)}
+                                className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all
+                                  ${block.accommodationType === type
+                                    ? 'bg-green-600 text-white border-green-600'
+                                    : 'bg-white text-slate-500 border-slate-200 hover:border-green-400'
+                                  }`}
+                              >
+                                {type === 'N/A' ? 'N/A' : 'Precisa de Hotel'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {block.accommodationType === 'Hotel' && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-green-50/60 rounded-xl border border-green-100">
+                            <div>
+                              <label className="block text-xs font-bold text-green-800 uppercase mb-1">Cidade / Estado</label>
+                              <input
+                                list="cidades-list"
+                                className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                                value={block.hotelCity || ''}
+                                onChange={(e) => updateHospedagemBlock(idx, { hotelCity: e.target.value })}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-bold text-green-800 uppercase mb-1">Hotel</label>
+                              <input
+                                list="hoteis-list"
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                value={block.hotelName || ''}
+                                onChange={(e) => updateHospedagemBlock(idx, { hotelName: e.target.value })}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-bold text-green-800 uppercase mb-1">Check-in</label>
+                              <input
+                                type="date"
+                                className="w-full border border-green-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
+                                value={block.hotelCheckIn || ''}
+                                onChange={(e) => updateHospedagemBlock(idx, { hotelCheckIn: e.target.value })}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-bold text-green-800 uppercase mb-1">Check-out</label>
+                              <input
+                                type="date"
+                                className="w-full border border-green-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
+                                value={block.hotelCheckOut || ''}
+                                onChange={(e) => updateHospedagemBlock(idx, { hotelCheckOut: e.target.value })}
+                              />
+                            </div>
+                            <div className="md:col-span-2">
+                              <label className="block text-xs font-bold text-green-800 uppercase mb-1">Pagamento</label>
+                              <select
+                                className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                                value={block.hotelPayment || 'Faturado'}
+                                onChange={(e) => updateHospedagemBlock(idx, { hotelPayment: e.target.value as PaymentMethod })}
+                              >
+                                {PAYMENT_METHODS.map((p) => <option key={p} value={p}>{p}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                        )}
                       </div>
+                    );
+                  })}
 
-                      <div>
-                        <label className="block text-xs font-bold text-green-800 uppercase mb-1">Hotel</label>
-                        <input
-                          list="hoteis-list"
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                          value={formDemand.hotelName || ''}
-                          onChange={(e) => setFormDemand({ ...formDemand, hotelName: e.target.value })}
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-bold text-green-800 uppercase mb-1">Check-in</label>
-                        <input
-                          type="date"
-                          className="w-full border border-green-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
-                          value={formDemand.hotelCheckIn || ''}
-                          onChange={(e) => setFormDemand({ ...formDemand, hotelCheckIn: e.target.value })}
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-bold text-green-800 uppercase mb-1">Check-out</label>
-                        <input
-                          type="date"
-                          className="w-full border border-green-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
-                          value={formDemand.hotelCheckOut || ''}
-                          onChange={(e) => setFormDemand({ ...formDemand, hotelCheckOut: e.target.value })}
-                        />
-                      </div>
-
-                      <div className="md:col-span-2">
-                        <label className="block text-xs font-bold text-green-800 uppercase mb-1">Pagamento</label>
-                        <select
-                          className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                          value={formDemand.hotelPayment || 'Faturado'}
-                          onChange={(e) =>
-                            setFormDemand({ ...formDemand, hotelPayment: e.target.value as PaymentMethod })
-                          }
-                        >
-                          {PAYMENT_METHODS.map((p) => (
-                            <option key={p} value={p}>
-                              {p}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                  <button
+                    type="button"
+                    onClick={addHospedagemBlock}
+                    className="flex items-center gap-2 text-xs font-bold text-green-700 hover:text-green-900 border border-dashed border-green-300 hover:border-green-500 rounded-lg px-4 py-2 transition"
+                  >
+                    <Plus size={14} /> Adicionar Hospedagem
+                  </button>
+                </>
               ) : (
-                <div className="space-y-4">
-                  <DataViewField
-                    label="Hospedagem"
-                    value={
-                      formDemand.accommodationType === 'Hotel'
-                        ? 'Hotel Requerido'
-                        : formDemand.logisticsHotel === 'NAO_NECESSARIO'
-                        ? 'N/A'
-                        : 'Pendente'
-                    }
-                    icon={Home}
-                  />
-
-                  {formDemand.accommodationType === 'Hotel' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-green-50 rounded-xl border border-green-100">
-                      <DataViewField label="Cidade / Estado" value={formDemand.hotelCity} icon={MapPin} />
-                      <DataViewField label="Hotel" value={formDemand.hotelName} icon={Building2} />
-                      <DataViewField
-                        label="Check-in"
-                        value={formDemand.hotelCheckIn ? formatDateOnlySafe(formDemand.hotelCheckIn) : '---'}
-                        icon={Calendar}
-                      />
-                      <DataViewField
-                        label="Check-out"
-                        value={formDemand.hotelCheckOut ? formatDateOnlySafe(formDemand.hotelCheckOut) : '---'}
-                        icon={Calendar}
-                      />
-
-                      <DataViewField label="Pagamento" value={formDemand.hotelPayment} icon={Tag} />
-                    </div>
-                  )}
+                <div className="space-y-6">
+                  {(formDemand.logisticasHospedagem || []).map((block, idx) => {
+                    const isMulti = (formDemand.logisticasHospedagem?.length ?? 0) > 1;
+                    return (
+                      <div key={block.id} className="space-y-4">
+                        {isMulti && (
+                          <p className="text-xs font-black text-green-700 uppercase tracking-widest">
+                            {block.instructorName ? `Hospedagem — ${block.instructorName}` : `Hospedagem — Bloco ${idx + 1}`}
+                          </p>
+                        )}
+                        <DataViewField
+                          label="Hospedagem"
+                          value={
+                            block.accommodationType === 'Hotel'
+                              ? 'Hotel Requerido'
+                              : block.accommodationType === 'N/A'
+                              ? 'N/A'
+                              : formDemand.logisticsHotel === 'NAO_NECESSARIO'
+                              ? 'N/A'
+                              : 'Pendente'
+                          }
+                          icon={Home}
+                        />
+                        {block.accommodationType === 'Hotel' && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-green-50 rounded-xl border border-green-100">
+                            <DataViewField label="Cidade / Estado" value={block.hotelCity} icon={MapPin} />
+                            <DataViewField label="Hotel" value={block.hotelName} icon={Building2} />
+                            <DataViewField label="Check-in" value={block.hotelCheckIn ? formatDateOnlySafe(block.hotelCheckIn) : '---'} icon={Calendar} />
+                            <DataViewField label="Check-out" value={block.hotelCheckOut ? formatDateOnlySafe(block.hotelCheckOut) : '---'} icon={Calendar} />
+                            <DataViewField label="Pagamento" value={block.hotelPayment} icon={Tag} />
+                          </div>
+                        )}
+                        {isMulti && idx < (formDemand.logisticasHospedagem?.length ?? 1) - 1 && (
+                          <hr className="border-slate-100" />
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

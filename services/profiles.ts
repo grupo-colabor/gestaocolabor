@@ -27,7 +27,7 @@ export async function fetchMyProfile(): Promise<ProfileData | null> {
       return null;
     }
 
-    console.log('[profiles] fetchMyProfile for user:', user.id);
+    if (import.meta.env.DEV) console.log('[profiles] fetchMyProfile for user:', user.id);
 
     const { data, error } = await supabase
       .from('profiles')
@@ -47,7 +47,7 @@ export async function fetchMyProfile(): Promise<ProfileData | null> {
       return null;
     }
 
-    console.log('[profiles] fetchMyProfile success:', data?.email);
+    if (import.meta.env.DEV) console.log('[profiles] fetchMyProfile success:', data?.email);
     return data as ProfileData;
   } catch (e) {
     console.error('[profiles] fetchMyProfile exception:', e);
@@ -99,7 +99,7 @@ export async function updateMyProfile(updates: Partial<Pick<ProfileData, 'full_n
       throw new Error('Usuário não autenticado');
     }
 
-    console.log('[profiles] updateMyProfile for user:', user.id, updates);
+    if (import.meta.env.DEV) console.log('[profiles] updateMyProfile for user:', user.id, updates);
 
     const { data, error } = await supabase
       .from('profiles')
@@ -162,7 +162,7 @@ export async function fetchAllProfiles(): Promise<ProfileData[]> {
  */
 export async function updateUserRole(userId: string, role: Role): Promise<void> {
   try {
-    console.log('[profiles] updateUserRole:', userId, role);
+    if (import.meta.env.DEV) console.log('[profiles] updateUserRole:', userId, role);
 
     const { error } = await supabase
       .from('profiles')

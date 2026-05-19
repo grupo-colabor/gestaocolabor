@@ -31,7 +31,7 @@ export async function createUser(data: CreateUserData): Promise<CreatedUser> {
   const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-user`;
 
   try {
-    console.log('[createUser] Tentando via Edge Function:', functionUrl);
+    if (import.meta.env.DEV) console.log('[createUser] Tentando via Edge Function:', functionUrl);
 
     const response = await fetch(functionUrl, {
       method: 'POST',
@@ -46,7 +46,7 @@ export async function createUser(data: CreateUserData): Promise<CreatedUser> {
     // Se a Edge Function funcionou
     if (response.ok) {
       const result = await response.json();
-      console.log('[createUser] Sucesso via Edge Function:', result);
+      if (import.meta.env.DEV) console.log('[createUser] Sucesso via Edge Function:', result);
       return result.user as CreatedUser;
     }
 

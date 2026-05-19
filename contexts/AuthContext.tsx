@@ -43,11 +43,13 @@ export const AuthContext = createContext<AuthContextType | undefined>(undefined)
 const LOG_PREFIX = '[Auth]';
 
 function logAuth(action: string, data?: any) {
+  if (!import.meta.env.DEV) return;
   const timestamp = new Date().toISOString().slice(11, 23); // HH:mm:ss.SSS
   console.log(`${LOG_PREFIX} [${timestamp}] ${action}`, data ?? '');
 }
 
 function logAuthWarn(action: string, data?: any) {
+  if (!import.meta.env.DEV) return;
   const timestamp = new Date().toISOString().slice(11, 23);
   console.warn(`${LOG_PREFIX} [${timestamp}] ⚠️ ${action}`, data ?? '');
 }

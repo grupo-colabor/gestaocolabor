@@ -559,6 +559,36 @@ const markDocAsNA = async (docType: 'LISTA_TURMA' | 'LIBERACAO_INSTRUTOR') => {
     return map;
   }, [demands, instructorAllocations]);
 
+  // Todos os instrutores por demanda, deduplicados e ordenados por startDate
+  const allInstructorsByDemandId = useMemo(() => {
+    const map: Record<string, string[]> = {};
+
+    for (const d of demands) {
+      const allocs = instructorAllocations
+        .filter(a => a.demandId === d.id && a.instructorId)
+        .sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
+
+      const seen = new Set<string>();
+      const uniqueIds: string[] = [];
+      for (const a of allocs) {
+        if (!seen.has(a.instructorId!)) {
+          seen.add(a.instructorId!);
+          uniqueIds.push(a.instructorId!);
+        }
+      }
+
+      if (uniqueIds.length > 0) {
+        map[d.id] = uniqueIds;
+      } else if (d.instructorId) {
+        map[d.id] = [d.instructorId];
+      } else {
+        map[d.id] = [];
+      }
+    }
+
+    return map;
+  }, [demands, instructorAllocations]);
+
 
 const filteredDemands = useMemo(() => {
   return demands
@@ -2832,7 +2862,24 @@ const companionInstructorIds = useMemo(() => {
                     <td className="p-4">{demand.trainingLocal || '—'}</td>
                     <td className="p-4">{demand.corredor || '—'}</td>
                     <td className="p-4 whitespace-nowrap">{formatDateTime(demand.startDate.split('T')[0])}</td>
-                    <td className="p-4 font-medium text-gray-900">{getInstructorName(principalInstructorByDemandId[demand.id])}</td>
+                    <td className="p-4 font-medium text-gray-900">
+                      {(() => {
+                        const ids = allInstructorsByDemandId[demand.id] ?? [];
+                        if (ids.length === 0) return 'Não Alocado';
+                        const shown = ids.slice(0, 2);
+                        const extra = ids.length - 2;
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            {shown.map(id => (
+                              <span key={id}>{getInstructorName(id)}</span>
+                            ))}
+                            {extra > 0 && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-600 text-white w-fit">+{extra}</span>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td className="p-4 text-center">
                       <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${statusColor(currentStatus)}`}>
                         {currentStatus.replace('_', ' ')}

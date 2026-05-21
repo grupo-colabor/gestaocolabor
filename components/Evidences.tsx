@@ -148,7 +148,8 @@ const getEvidenceAutoStatus = (
       .filter(d => d.status !== 'CANCELADA')
       .filter(d => {
         // Filtro por ID
-        const matchesId = !filterId || d.id.toLowerCase().includes(filterId.toLowerCase());
+        const matchesId = !filterId || d.id.toLowerCase().includes(filterId.toLowerCase()) ||
+          (d.clientDemandId ?? '').toLowerCase().includes(filterId.toLowerCase());
         if (!matchesId) return false;
 
         // Filtro por Período (Interseção)
@@ -271,7 +272,7 @@ const getEvidenceAutoStatus = (
                 <Search className="absolute left-3 top-2.5 text-slate-300" size={16} />
                 <input
                   type="text"
-                  placeholder="Buscar por ID da demanda"
+                  placeholder="Buscar por ID da demanda ou ID SAP"
                   className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner"
                   value={filterId}
                   onChange={(e) => setFilterId(e.target.value)}

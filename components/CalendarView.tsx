@@ -249,6 +249,7 @@ const [filterRegionId, setFilterRegionId] = useState<string>('TODOS'); // filtra
 const [filterCoverageLocation, setFilterCoverageLocation] = useState<string>('TODOS'); // filtra LINHAS por "Atendendo"
 const [filterResidenceLocation, setFilterResidenceLocation] = useState<string>('TODOS'); // filtra LINHAS por LOCAL (residência)
 const [filterRecordType, setFilterRecordType] = useState<string>('TODOS'); // filtra CARDS por tipo/origem
+const [filterCorredor, setFilterCorredor] = useState<string>('TODOS'); // filtra CARDS por corredor da demanda
 
 const normalize = (s: string) =>
   (s || '')
@@ -1276,15 +1277,15 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
     </div>
 
     {showAdvanced && (
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3 pt-2 border-t border-slate-100">
         {/* Nome */}
         <div>
           <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-            Buscar pessoa
+            Buscar pessoa ou ID
           </label>
           <input
             className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="Nome..."
+            placeholder="Nome ou ID da demanda..."
             value={filterName}
             onChange={(e) => setFilterName(e.target.value)}
           />
@@ -1327,6 +1328,23 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
             <option value="TODOS">Todas</option>
             {(operationalBases?.localidades || []).map((loc: string) => (
               <option key={loc} value={loc}>{loc}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Corredor */}
+        <div>
+          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+            Corredor
+          </label>
+          <select
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+            value={filterCorredor}
+            onChange={(e) => setFilterCorredor(e.target.value)}
+          >
+            <option value="TODOS">Todos</option>
+            {(operationalBases?.corredores || []).map((c: string) => (
+              <option key={c} value={c}>{c}</option>
             ))}
           </select>
         </div>
@@ -1413,8 +1431,24 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                 const role = (i as any).agendaRole || 'INSTRUTOR';
                 if (filterRole !== 'TODOS' && role !== filterRole) return false;
 
-                // Buscar nome
-                if (filterName && !normalize(i.name).includes(normalize(filterName))) return false;
+                // Buscar nome, ID de demanda ou ID SAP (clientDemandId)
+                if (filterName) {
+                  const term = filterName.trim();
+                  const isDemandSearch = term.toUpperCase().includes('DEM') || /^\d+$/.test(term);
+                  if (isDemandSearch) {
+                    const normTerm = normalize(term.replace(/^DEM-?/i, ''));
+                    const hasDemand = demands.some(d =>
+                      (d.instructorId === i.id || instructorAllocations.some(a => a.demandId === d.id && a.instructorId === i.id)) &&
+                      (
+                        normalize(d.id.replace(/^DEM-?/i, '')).includes(normTerm) ||
+                        normalize(d.clientDemandId || '').includes(normTerm)
+                      )
+                    );
+                    if (!hasDemand) return false;
+                  } else {
+                    if (!normalize(i.name).includes(normalize(term))) return false;
+                  }
+                }
 
                 // LOCAL (residenceLocation)
                 if (filterResidenceLocation !== 'TODOS') {
@@ -1526,6 +1560,28 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                           }
                           }
                         }
+
+                        // 4) Corredor (filtra cards de demanda por corredor)
+                        if (!shouldHideCard && filterCorredor !== 'TODOS') {
+                          const demand = getDemandFromItem(item);
+                          if (!demand || (demand.corredor || '') !== filterCorredor) shouldHideCard = true;
+                        }
+
+                        // 5) Busca por ID: esconde cards que não correspondem ao termo (Opção B)
+                        if (!shouldHideCard && filterName) {
+                          const term = filterName.trim();
+                          const isDemandSearch = term.toUpperCase().includes('DEM') || /^\d+$/.test(term);
+                          if (isDemandSearch) {
+                            const normTerm = normalize(term.replace(/^DEM-?/i, ''));
+                            const demand = getDemandFromItem(item);
+                            if (demand) {
+                              const matches =
+                                normalize(demand.id.replace(/^DEM-?/i, '')).includes(normTerm) ||
+                                normalize(demand.clientDemandId || '').includes(normTerm);
+                              if (!matches) shouldHideCard = true;
+                            }
+                          }
+                        }
                       }
                       // ===== MULTI-ALLOC: filtra e decide modo de renderização =====
                       const rawAllocItems = allocByDayMulti[dateKey] || [];
@@ -1540,6 +1596,24 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                           if (filterTrainingId !== 'TODOS' && aiDemand.trainingId !== filterTrainingId) return false;
                           if (filterTrainingLocal) {
                             if (normalize(aiDemand.trainingLocal || '') !== normalize(filterTrainingLocal)) return false;
+                          }
+                        }
+                        if (filterCorredor !== 'TODOS') {
+                          const aiDemand = getDemandFromItem(ai);
+                          if (!aiDemand || (aiDemand.corredor || '') !== filterCorredor) return false;
+                        }
+                        if (filterName) {
+                          const term = filterName.trim();
+                          const isDemandSearch = term.toUpperCase().includes('DEM') || /^\d+$/.test(term);
+                          if (isDemandSearch) {
+                            const normTerm = normalize(term.replace(/^DEM-?/i, ''));
+                            const aiDemand = getDemandFromItem(ai);
+                            if (aiDemand) {
+                              const matches =
+                                normalize(aiDemand.id.replace(/^DEM-?/i, '')).includes(normTerm) ||
+                                normalize(aiDemand.clientDemandId || '').includes(normTerm);
+                              if (!matches) return false;
+                            }
                           }
                         }
                         return true;

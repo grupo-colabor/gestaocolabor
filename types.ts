@@ -169,6 +169,7 @@ export interface LogisticaLocomocao {
   carCategory?: string;
   rentalCheckIn?: string;
   rentalCheckOut?: string;
+  receiptUrls?: string[] | null;
 }
 
 export interface LogisticaHospedagem {
@@ -180,6 +181,7 @@ export interface LogisticaHospedagem {
   hotelCheckIn?: string;
   hotelCheckOut?: string;
   hotelPayment?: PaymentMethod;
+  hotelReceiptUrls?: string[] | null;
 }
 
 export interface SpecificDateEntry {

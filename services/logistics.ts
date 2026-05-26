@@ -172,6 +172,7 @@ export type LogisticBlockRow = {
   car_category: string | null;
   rental_check_in: string | null;
   rental_check_out: string | null;
+  receipt_url?: string[] | null;
 
   // Hospedagem
   lodging_mode: string | null;
@@ -180,6 +181,7 @@ export type LogisticBlockRow = {
   hotel_check_in: string | null;
   hotel_check_out: string | null;
   hotel_payment: string | null;
+  hotel_receipt_urls?: string[] | null;
 
   created_at?: string;
   updated_at?: string;

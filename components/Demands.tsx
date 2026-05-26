@@ -58,7 +58,9 @@ import {
   FileCheck,
   UserPlus,
   Users,
-  AlertTriangle
+  AlertTriangle,
+  Upload,
+  Paperclip
 } from 'lucide-react';
 
 import {
@@ -855,6 +857,7 @@ useEffect(() => {
         carCategory: b.car_category ?? 'Grupo CE',
         rentalCheckIn: isoToLocalDTL(b.rental_check_in) ?? '',
         rentalCheckOut: isoToLocalDTL(b.rental_check_out) ?? '',
+        receiptUrls: Array.isArray(b.receipt_url) ? b.receipt_url : b.receipt_url ? [b.receipt_url as unknown as string] : undefined,
       });
 
       // Converte uma row de logistic_blocks para LogisticaHospedagem
@@ -867,6 +870,7 @@ useEffect(() => {
         hotelCheckIn: isoToDateOnly(b.hotel_check_in) ?? '',
         hotelCheckOut: isoToDateOnly(b.hotel_check_out) ?? '',
         hotelPayment: (b.hotel_payment as PaymentMethod) ?? null,
+        hotelReceiptUrls: Array.isArray(b.hotel_receipt_urls) ? b.hotel_receipt_urls : b.hotel_receipt_urls ? [b.hotel_receipt_urls as unknown as string] : undefined,
       });
 
       // Busca blocos específicos por instrutor (nova tabela)
@@ -1835,6 +1839,7 @@ const handleSave = async () => {
           car_category: isAlugado ? (b.carCategory || 'Grupo CE') : null,
           rental_check_in: isAlugado ? toIsoFromDateTimeLocalSafe(b.rentalCheckIn) : null,
           rental_check_out: isAlugado ? toIsoFromDateTimeLocalSafe(b.rentalCheckOut) : null,
+          receipt_url: b.receiptUrls?.length ? b.receiptUrls : null,
           lodging_mode: null,
           hotel_city: null,
           hotel_name: null,
@@ -1865,6 +1870,7 @@ const handleSave = async () => {
           hotel_check_in: isHotel ? toIsoFromDateInputSafe(b.hotelCheckIn) : null,
           hotel_check_out: isHotel ? toIsoFromDateInputSafe(b.hotelCheckOut) : null,
           hotel_payment: isHotel ? (b.hotelPayment || 'Faturado') : null,
+          hotel_receipt_urls: isHotel && b.hotelReceiptUrls?.length ? b.hotelReceiptUrls : null,
         };
       });
 
@@ -2360,9 +2366,11 @@ const endLocal = usePractice
 
   const handleBlockTransportClick = (index: number, t: TransportType) => {
     const isAlugado = t === 'Carro Alugado';
+    const needsReceipt = t === 'Táxi' || t === 'Carro Aplicativo';
     updateLocomocaoBlock(index, {
       transportType: t,
       ...(!isAlugado ? { rentalAgencyLocation: '', rentalLocator: '', rentalCheckIn: '', rentalCheckOut: '' } : {}),
+      ...(!needsReceipt ? { receiptUrls: null } : {}),
     });
   };
 
@@ -2381,6 +2389,32 @@ const endLocal = usePractice
       const blocks = (prev.logisticasLocomocao || []).filter((_, i) => i !== index);
       return { ...prev, logisticasLocomocao: blocks };
     });
+  };
+
+  const handleReceiptUpload = async (e: React.ChangeEvent<HTMLInputElement>, index: number) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const block = formDemand.logisticasLocomocao?.[index];
+    if (!block) return;
+    try {
+      const safeName = file.name.replace(/[^\w.\-]+/g, '_');
+      const path = `receipts/${block.id}/${Date.now()}_${safeName}`;
+      const { error } = await supabase.storage.from('evidences').upload(path, file, { upsert: true });
+      if (error) throw error;
+      updateLocomocaoBlock(index, { receiptUrls: [...(block.receiptUrls || []), path] });
+      setNotification({ message: 'Nota fiscal anexada com sucesso.', type: 'success' });
+    } catch (err) {
+      console.error('Erro ao fazer upload da nota fiscal:', err);
+      setNotification({ message: 'Erro ao fazer upload da nota fiscal.', type: 'error' });
+    }
+    e.target.value = '';
+  };
+
+  const handleRemoveReceipt = (index: number, urlToRemove: string) => {
+    const block = formDemand.logisticasLocomocao?.[index];
+    if (!block) return;
+    const remaining = (block.receiptUrls || []).filter(u => u !== urlToRemove);
+    updateLocomocaoBlock(index, { receiptUrls: remaining.length ? remaining : null });
   };
 
   // ─── Handlers multi-bloco: Hospedagem ────────────────────────────────────
@@ -2415,6 +2449,7 @@ const endLocal = usePractice
         hotelCheckIn: '',
         hotelCheckOut: '',
         hotelPayment: null,
+        hotelReceiptUrls: null,
       });
     } else {
       updateHospedagemBlock(index, { accommodationType: 'Hotel' });
@@ -2436,6 +2471,32 @@ const endLocal = usePractice
       const blocks = (prev.logisticasHospedagem || []).filter((_, i) => i !== index);
       return { ...prev, logisticasHospedagem: blocks };
     });
+  };
+
+  const handleHotelReceiptUpload = async (e: React.ChangeEvent<HTMLInputElement>, index: number) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const block = formDemand.logisticasHospedagem?.[index];
+    if (!block) return;
+    try {
+      const safeName = file.name.replace(/[^\w.\-]+/g, '_');
+      const path = `hotel-receipts/${block.id}/${Date.now()}_${safeName}`;
+      const { error } = await supabase.storage.from('evidences').upload(path, file, { upsert: true });
+      if (error) throw error;
+      updateHospedagemBlock(index, { hotelReceiptUrls: [...(block.hotelReceiptUrls || []), path] });
+      setNotification({ message: 'Nota fiscal do hotel anexada com sucesso.', type: 'success' });
+    } catch (err) {
+      console.error('Erro ao fazer upload da nota fiscal do hotel:', err);
+      setNotification({ message: 'Erro ao fazer upload da nota fiscal do hotel.', type: 'error' });
+    }
+    e.target.value = '';
+  };
+
+  const handleRemoveHotelReceipt = (index: number, urlToRemove: string) => {
+    const block = formDemand.logisticasHospedagem?.[index];
+    if (!block) return;
+    const remaining = (block.hotelReceiptUrls || []).filter(u => u !== urlToRemove);
+    updateHospedagemBlock(index, { hotelReceiptUrls: remaining.length ? remaining : null });
   };
 
   // Filtrar alocações para a demanda atual
@@ -3498,6 +3559,43 @@ const companionInstructorIds = useMemo(() => {
                                       </div>
                                     </div>
 
+                                    {(block.transportType === 'Táxi' || block.transportType === 'Carro Aplicativo') && (
+                                      <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2 flex items-center gap-1">
+                                          <Paperclip size={12} /> Nota Fiscal
+                                        </label>
+                                        <div className="space-y-1">
+                                          {(block.receiptUrls || []).map((url, urlIdx) => (
+                                            <div key={urlIdx} className="flex items-center gap-2 p-2 bg-amber-50 border border-amber-200 rounded-lg">
+                                              <Paperclip size={14} className="text-amber-600 flex-shrink-0" />
+                                              <span className="text-sm text-slate-700 truncate flex-1">
+                                                {url.split('/').pop()?.replace(/^\d+_/, '') || `nota fiscal ${urlIdx + 1}`}
+                                              </span>
+                                              <button
+                                                type="button"
+                                                onClick={() => handleRemoveReceipt(idx, url)}
+                                                className="text-xs text-red-400 hover:text-red-600 font-bold flex items-center gap-1 transition flex-shrink-0"
+                                              >
+                                                <X size={12} /> Remover
+                                              </button>
+                                            </div>
+                                          ))}
+                                        </div>
+                                        <label className="flex items-center gap-2 cursor-pointer p-2 mt-1 border border-dashed border-amber-300 hover:border-amber-500 rounded-lg transition">
+                                          <Upload size={14} className="text-amber-600" />
+                                          <span className="text-sm text-slate-500">
+                                            {(block.receiptUrls?.length ?? 0) > 0 ? 'Adicionar outra nota fiscal' : 'Clique para anexar nota fiscal'}
+                                          </span>
+                                          <input
+                                            type="file"
+                                            accept="*/*"
+                                            onChange={(e) => handleReceiptUpload(e, idx)}
+                                            className="hidden"
+                                          />
+                                        </label>
+                                      </div>
+                                    )}
+
                                     {block.transportType === 'Carro Alugado' && (
                                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-amber-50/60 rounded-xl border border-amber-100">
                                         <div>
@@ -3554,6 +3652,28 @@ const companionInstructorIds = useMemo(() => {
                                       </p>
                                     )}
                                     <DataViewField label="Meio de Transporte" value={block.transportType || (formDemand.logisticsTransport === 'NAO_NECESSARIO' ? 'N/A' : 'Pendente')} icon={Truck} />
+                                    {(block.transportType === 'Táxi' || block.transportType === 'Carro Aplicativo') && (block.receiptUrls?.length ?? 0) > 0 && (
+                                      <div>
+                                        <p className="text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-1">
+                                          <Paperclip size={12} /> Nota Fiscal
+                                        </p>
+                                        <div className="space-y-1">
+                                          {(block.receiptUrls || []).map((url, urlIdx) => (
+                                            <button
+                                              key={urlIdx}
+                                              type="button"
+                                              onClick={async () => {
+                                                const { data } = await supabase.storage.from('evidences').createSignedUrl(url, 3600);
+                                                if (data?.signedUrl) window.open(data.signedUrl, '_blank');
+                                              }}
+                                              className="flex items-center gap-1.5 text-sm text-amber-700 hover:text-amber-900 font-medium transition"
+                                            >
+                                              <Paperclip size={14} /> {url.split('/').pop()?.replace(/^\d+_/, '') || `Nota fiscal ${urlIdx + 1}`}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
                                     {block.transportType === 'Carro Alugado' && (
                                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-4 bg-amber-50 rounded-xl border border-amber-100">
                                         <DataViewField label="Locadora" value={block.rentalCompany} icon={Building2} />
@@ -3647,54 +3767,90 @@ const companionInstructorIds = useMemo(() => {
                         </div>
 
                         {block.accommodationType === 'Hotel' && (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-green-50/60 rounded-xl border border-green-100">
-                            <div>
-                              <label className="block text-xs font-bold text-green-800 uppercase mb-1">Cidade / Estado</label>
-                              <input
-                                list="cidades-list"
-                                className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                                value={block.hotelCity || ''}
-                                onChange={(e) => updateHospedagemBlock(idx, { hotelCity: e.target.value })}
-                              />
+                          <>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-green-50/60 rounded-xl border border-green-100">
+                              <div>
+                                <label className="block text-xs font-bold text-green-800 uppercase mb-1">Cidade / Estado</label>
+                                <input
+                                  list="cidades-list"
+                                  className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                                  value={block.hotelCity || ''}
+                                  onChange={(e) => updateHospedagemBlock(idx, { hotelCity: e.target.value })}
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-green-800 uppercase mb-1">Hotel</label>
+                                <input
+                                  list="hoteis-list"
+                                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                  value={block.hotelName || ''}
+                                  onChange={(e) => updateHospedagemBlock(idx, { hotelName: e.target.value })}
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-green-800 uppercase mb-1">Check-in</label>
+                                <input
+                                  type="date"
+                                  className="w-full border border-green-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
+                                  value={block.hotelCheckIn || ''}
+                                  onChange={(e) => updateHospedagemBlock(idx, { hotelCheckIn: e.target.value })}
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-green-800 uppercase mb-1">Check-out</label>
+                                <input
+                                  type="date"
+                                  className="w-full border border-green-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
+                                  value={block.hotelCheckOut || ''}
+                                  onChange={(e) => updateHospedagemBlock(idx, { hotelCheckOut: e.target.value })}
+                                />
+                              </div>
+                              <div className="md:col-span-2">
+                                <label className="block text-xs font-bold text-green-800 uppercase mb-1">Pagamento</label>
+                                <select
+                                  className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                                  value={block.hotelPayment || 'Faturado'}
+                                  onChange={(e) => updateHospedagemBlock(idx, { hotelPayment: e.target.value as PaymentMethod })}
+                                >
+                                  {PAYMENT_METHODS.map((p) => <option key={p} value={p}>{p}</option>)}
+                                </select>
+                              </div>
                             </div>
                             <div>
-                              <label className="block text-xs font-bold text-green-800 uppercase mb-1">Hotel</label>
-                              <input
-                                list="hoteis-list"
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                value={block.hotelName || ''}
-                                onChange={(e) => updateHospedagemBlock(idx, { hotelName: e.target.value })}
-                              />
+                              <label className="block text-xs font-bold text-gray-500 uppercase mb-2 flex items-center gap-1">
+                                <Paperclip size={12} /> Nota Fiscal do Hotel
+                              </label>
+                              <div className="space-y-1">
+                                {(block.hotelReceiptUrls || []).map((url, urlIdx) => (
+                                  <div key={urlIdx} className="flex items-center gap-2 p-2 bg-green-50 border border-green-200 rounded-lg">
+                                    <Paperclip size={14} className="text-green-600 flex-shrink-0" />
+                                    <span className="text-sm text-slate-700 truncate flex-1">
+                                      {url.split('/').pop()?.replace(/^\d+_/, '') || `nota fiscal ${urlIdx + 1}`}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveHotelReceipt(idx, url)}
+                                      className="text-xs text-red-400 hover:text-red-600 font-bold flex items-center gap-1 transition flex-shrink-0"
+                                    >
+                                      <X size={12} /> Remover
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                              <label className="flex items-center gap-2 cursor-pointer p-2 mt-1 border border-dashed border-green-300 hover:border-green-500 rounded-lg transition">
+                                <Upload size={14} className="text-green-600" />
+                                <span className="text-sm text-slate-500">
+                                  {(block.hotelReceiptUrls?.length ?? 0) > 0 ? 'Adicionar outra nota fiscal' : 'Clique para anexar nota fiscal do hotel'}
+                                </span>
+                                <input
+                                  type="file"
+                                  accept="*/*"
+                                  onChange={(e) => handleHotelReceiptUpload(e, idx)}
+                                  className="hidden"
+                                />
+                              </label>
                             </div>
-                            <div>
-                              <label className="block text-xs font-bold text-green-800 uppercase mb-1">Check-in</label>
-                              <input
-                                type="date"
-                                className="w-full border border-green-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
-                                value={block.hotelCheckIn || ''}
-                                onChange={(e) => updateHospedagemBlock(idx, { hotelCheckIn: e.target.value })}
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-bold text-green-800 uppercase mb-1">Check-out</label>
-                              <input
-                                type="date"
-                                className="w-full border border-green-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
-                                value={block.hotelCheckOut || ''}
-                                onChange={(e) => updateHospedagemBlock(idx, { hotelCheckOut: e.target.value })}
-                              />
-                            </div>
-                            <div className="md:col-span-2">
-                              <label className="block text-xs font-bold text-green-800 uppercase mb-1">Pagamento</label>
-                              <select
-                                className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                                value={block.hotelPayment || 'Faturado'}
-                                onChange={(e) => updateHospedagemBlock(idx, { hotelPayment: e.target.value as PaymentMethod })}
-                              >
-                                {PAYMENT_METHODS.map((p) => <option key={p} value={p}>{p}</option>)}
-                              </select>
-                            </div>
-                          </div>
+                          </>
                         )}
                       </div>
                     );
@@ -3733,13 +3889,37 @@ const companionInstructorIds = useMemo(() => {
                           icon={Home}
                         />
                         {block.accommodationType === 'Hotel' && (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-green-50 rounded-xl border border-green-100">
-                            <DataViewField label="Cidade / Estado" value={block.hotelCity} icon={MapPin} />
-                            <DataViewField label="Hotel" value={block.hotelName} icon={Building2} />
-                            <DataViewField label="Check-in" value={block.hotelCheckIn ? formatDateOnlySafe(block.hotelCheckIn) : '---'} icon={Calendar} />
-                            <DataViewField label="Check-out" value={block.hotelCheckOut ? formatDateOnlySafe(block.hotelCheckOut) : '---'} icon={Calendar} />
-                            <DataViewField label="Pagamento" value={block.hotelPayment} icon={Tag} />
-                          </div>
+                          <>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-green-50 rounded-xl border border-green-100">
+                              <DataViewField label="Cidade / Estado" value={block.hotelCity} icon={MapPin} />
+                              <DataViewField label="Hotel" value={block.hotelName} icon={Building2} />
+                              <DataViewField label="Check-in" value={block.hotelCheckIn ? formatDateOnlySafe(block.hotelCheckIn) : '---'} icon={Calendar} />
+                              <DataViewField label="Check-out" value={block.hotelCheckOut ? formatDateOnlySafe(block.hotelCheckOut) : '---'} icon={Calendar} />
+                              <DataViewField label="Pagamento" value={block.hotelPayment} icon={Tag} />
+                            </div>
+                            {(block.hotelReceiptUrls?.length ?? 0) > 0 && (
+                              <div>
+                                <p className="text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-1">
+                                  <Paperclip size={12} /> Nota Fiscal do Hotel
+                                </p>
+                                <div className="space-y-1">
+                                  {(block.hotelReceiptUrls || []).map((url, urlIdx) => (
+                                    <button
+                                      key={urlIdx}
+                                      type="button"
+                                      onClick={async () => {
+                                        const { data } = await supabase.storage.from('evidences').createSignedUrl(url, 3600);
+                                        if (data?.signedUrl) window.open(data.signedUrl, '_blank');
+                                      }}
+                                      className="flex items-center gap-1.5 text-sm text-green-700 hover:text-green-900 font-medium transition"
+                                    >
+                                      <Paperclip size={14} /> {url.split('/').pop()?.replace(/^\d+_/, '') || `Nota fiscal ${urlIdx + 1}`}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </>
                         )}
                         {isMulti && idx < (formDemand.logisticasHospedagem?.length ?? 1) - 1 && (
                           <hr className="border-slate-100" />

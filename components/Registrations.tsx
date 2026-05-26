@@ -38,7 +38,8 @@ import {
   Shield,
   Mail,
   Key,
-  UserCheck
+  UserCheck,
+  Download
 } from 'lucide-react';
 import { SKILL_LABELS } from '../constants';
 import { supabase } from '../lib/supabase';
@@ -371,6 +372,90 @@ const Registrations: React.FC = () => {
       normalize(i.residenceLocation || '').includes(term)
     );
   });
+
+  const downloadXLSX = (buffer: ArrayBuffer, filename: string) => {
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const HEADER_ARGB = 'FF1B3A6B';
+
+  const exportTrainings = async () => {
+    const ExcelJS = (await import('exceljs')).default;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Treinamentos');
+
+    const cols = [
+      { header: 'Treinamento',   width: 42 },
+      { header: 'Código / NR',   width: 18 },
+      { header: 'Categoria',     width: 22 },
+      { header: 'Modalidade',    width: 18 },
+      { header: 'Carga Horária', width: 16 },
+      { header: 'Status',        width: 12 },
+    ];
+
+    const headerRow = ws.addRow(cols.map(c => c.header));
+    headerRow.height = 24;
+    headerRow.eachCell((cell, col) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_ARGB } };
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      ws.getColumn(col).width = cols[col - 1].width;
+    });
+
+    filteredTrainings.forEach(t => {
+      ws.addRow([
+        t.name,
+        t.nr || '-',
+        t.category,
+        t.modality,
+        t.hours ? `${t.hours}h` : '-',
+        t.status,
+      ]);
+    });
+
+    const date = new Date().toISOString().slice(0, 10);
+    downloadXLSX(await wb.xlsx.writeBuffer() as ArrayBuffer, `treinamentos_${date}.xlsx`);
+  };
+
+  const exportInstructors = async () => {
+    const ExcelJS = (await import('exceljs')).default;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Instrutores');
+
+    const cols = [
+      { header: 'Nome',    width: 36 },
+      { header: 'Regiões', width: 40 },
+      { header: 'Status',  width: 12 },
+    ];
+
+    const headerRow = ws.addRow(cols.map(c => c.header));
+    headerRow.height = 24;
+    headerRow.eachCell((cell, col) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_ARGB } };
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      ws.getColumn(col).width = cols[col - 1].width;
+    });
+
+    filteredInstructors.forEach(i => {
+      const regionNames = i.regionIds
+        .map(rid => regions.find(r => r.id === rid)?.name || '')
+        .filter(Boolean)
+        .join(', ');
+      ws.addRow([i.name, regionNames || '-', i.status]);
+    });
+
+    const date = new Date().toISOString().slice(0, 10);
+    downloadXLSX(await wb.xlsx.writeBuffer() as ArrayBuffer, `instrutores_${date}.xlsx`);
+  };
 
   // ✅ Aceita PromiseLike (inclui PostgrestBuilder do Supabase) e converte pra Promise real
   const withTimeout = async <T,>(
@@ -941,6 +1026,13 @@ const handleRemoveBaseItem = async (item: string) => {
                 </div>
                 <button
                   type="button"
+                  onClick={exportTrainings}
+                  className="bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-50 flex items-center transition shadow-sm font-bold whitespace-nowrap"
+                >
+                  <Download size={15} className="mr-2" /> Exportar Excel
+                </button>
+                <button
+                  type="button"
                   onClick={handleOpenTrainingCreateModal}
                   className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-800 flex items-center transition shadow-sm font-bold whitespace-nowrap"
                 >
@@ -1327,6 +1419,13 @@ const handleRemoveBaseItem = async (item: string) => {
                     className="w-full sm:w-64 pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
+                <button
+                  type="button"
+                  onClick={exportInstructors}
+                  className="bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-50 flex items-center transition shadow-sm font-bold whitespace-nowrap"
+                >
+                  <Download size={15} className="mr-2" /> Exportar Excel
+                </button>
                 <button
                   type="button"
                   onClick={handleOpenInstructorCreateModal}

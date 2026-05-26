@@ -39,7 +39,8 @@ export type AgendaType =
   | 'MANUTENÇÃO'
   | 'DESLOCAMENTO'
   | 'EVENTO'
-  | 'RESERVADO';
+  | 'RESERVADO'
+  | 'APOIO';
 
 
 export type TransportType = 'Carro Alugado' | 'Carro Próprio' | 'Táxi' | 'Carro Aplicativo' | 'N/A' | null;

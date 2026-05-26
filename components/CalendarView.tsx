@@ -41,7 +41,8 @@ const AGENDA_STYLING: Record<string, { bg: string; text: string; border: string 
   'MANUTENÇÃO': { bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200' },
   'DESLOCAMENTO': { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
   EVENTO: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
-  RESERVADO: { bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200' }
+  RESERVADO: { bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200' },
+  APOIO: { bg: 'bg-amber-500', text: 'text-white', border: 'border-amber-600' }
 };
 
 const AGENDA_TYPES: AgendaType[] = [
@@ -54,7 +55,8 @@ const AGENDA_TYPES: AgendaType[] = [
   'ESCRITORIO_BH',
   'ESCRITORIO_VITORIA',
   'HOME_OFFICE',
-  'EXTERNO'
+  'EXTERNO',
+  'APOIO'
 ];
 
 const AGENDA_LABELS: Record<string, string> = {
@@ -70,7 +72,8 @@ const AGENDA_LABELS: Record<string, string> = {
   ESCRITORIO_VITORIA: 'ESCRITÓRIO VITÓRIA',
 
   HOME_OFFICE: 'HOME OFFICE',
-  EXTERNO: 'EXTERNO'
+  EXTERNO: 'EXTERNO',
+  APOIO: 'APOIO'
 };
 
 const getAgendaLabel = (t: string) => AGENDA_LABELS[t] ?? t;

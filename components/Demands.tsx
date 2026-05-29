@@ -142,7 +142,7 @@ const Demands: React.FC = () => {
     measurements, agendaItems, instructorAllocations, resourceAllocations,companionAllocations,
     updateDemand, addDemand, deleteDemand, deallocateInstructor, recommendInstructors,
     updateMeasurement, removeAgendaItem, hasResourceConflict,
-    addInstructorAllocation, removeInstructorAllocation, addResourceAllocation, removeResourceAllocation, hasScheduleConflict, setNotification,
+    addInstructorAllocation, removeInstructorAllocation, updateInstructorAllocation, addResourceAllocation, removeResourceAllocation, hasScheduleConflict, setNotification,
     notificationTarget, setNotificationTarget,
   } = useApp();
   
@@ -191,6 +191,8 @@ useEffect(() => {
   const [pendingAllocationData, setPendingAllocationData] = useState<InstructorAllocation | null>(null);
   const [resourceError, setResourceError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [confirmDateChange, setConfirmDateChange] = useState(false);
+  const bypassDateWarning = useRef(false);
   const printRef = useRef<HTMLDivElement>(null);
 
   // Location associations for cascade autocomplete
@@ -244,10 +246,10 @@ useEffect(() => {
 
   // Body scroll lock when any modal is open
   useEffect(() => {
-    const anyOpen = isModalOpen || isAllocationModalOpen || !!pendingConflictAllocation || isResourceModalOpen || confirmCancel || confirmDelete || confirmReactivate || confirmAllocationCase !== null;
+    const anyOpen = isModalOpen || isAllocationModalOpen || !!pendingConflictAllocation || isResourceModalOpen || confirmCancel || confirmDelete || confirmReactivate || confirmAllocationCase !== null || confirmDateChange;
     document.body.style.overflow = anyOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
-  }, [isModalOpen, isAllocationModalOpen, pendingConflictAllocation, isResourceModalOpen, confirmCancel, confirmDelete, confirmReactivate, confirmAllocationCase]);
+  }, [isModalOpen, isAllocationModalOpen, pendingConflictAllocation, isResourceModalOpen, confirmCancel, confirmDelete, confirmReactivate, confirmAllocationCase, confirmDateChange]);
   const [resourceForm, setResourceForm] = useState({
     startDate: '',
     endDate: ''
@@ -1552,6 +1554,20 @@ const handleSave = async () => {
 
   // ⛔ trava clique duplo
   if (isSaving) return;
+
+  // Aviso de data alterada com instrutor alocado (apenas no EDIT)
+  if (!bypassDateWarning.current && modalMode === 'EDIT') {
+    const alocacoesVinculadas = instructorAllocations.filter(a => a.demandId === formDemand.id);
+    const dataAlterou =
+      formDemand.startDate?.slice(0, 10) !== activeDemand?.startDate?.slice(0, 10) ||
+      formDemand.endDate?.slice(0, 10) !== activeDemand?.endDate?.slice(0, 10);
+    if (alocacoesVinculadas.length > 0 && dataAlterou) {
+      setConfirmDateChange(true);
+      return;
+    }
+  }
+  bypassDateWarning.current = false;
+
   setIsSaving(true);
 
 
@@ -1715,6 +1731,40 @@ const handleSave = async () => {
           dadosAntes: before ?? undefined,
           dadosDepois: sanitizedDemand,
         });
+      }
+
+      // Sync datas das alocações quando o dia da demanda muda
+      const dataAlterou =
+        sanitizedDemand.startDate?.slice(0, 10) !== activeDemand?.startDate?.slice(0, 10) ||
+        sanitizedDemand.endDate?.slice(0, 10) !== activeDemand?.endDate?.slice(0, 10);
+
+      if (dataAlterou) {
+        instructorAllocations
+          .filter(a => a.demandId === sanitizedDemand.id)
+          .forEach(alloc => {
+            updateInstructorAllocation({
+              ...alloc,
+              startDate: sanitizedDemand.startDate,
+              endDate: sanitizedDemand.endDate,
+            });
+          });
+
+        const companionsVinculados = companionAllocations.filter(
+          ca => ca.demandId === sanitizedDemand.id
+        );
+        if (companionsVinculados.length > 0) {
+          try {
+            await supabase
+              .from('companion_allocations')
+              .update({
+                start_date: sanitizedDemand.startDate,
+                end_date: sanitizedDemand.endDate,
+              })
+              .in('id', companionsVinculados.map(ca => ca.id));
+          } catch (e) {
+            console.error('Erro ao sincronizar datas dos acompanhantes:', e);
+          }
+        }
       }
     }
 
@@ -4511,6 +4561,46 @@ const companionInstructorIds = useMemo(() => {
                   </div>
               </div>
           </div>
+      , document.body)}
+
+      {confirmDateChange && createPortal(
+        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white p-8 rounded-3xl max-w-md w-full shadow-2xl space-y-6 border border-slate-100">
+            <div className="flex flex-col items-center gap-3 text-center">
+              <div className="p-3 bg-amber-100 rounded-full text-amber-600">
+                <AlertTriangle size={40} />
+              </div>
+              <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Data do treinamento alterada</h3>
+              <p className="text-sm text-slate-500 leading-relaxed">
+                Esta demanda possui um instrutor alocado na agenda. Ao alterar a data, as datas da alocação na agenda serão atualizadas automaticamente. Verifique se o instrutor ainda está disponível no novo período.
+              </p>
+              <div className="w-full bg-amber-50 border border-amber-200 rounded-2xl p-4 text-left space-y-1.5">
+                <p className="text-xs font-black text-amber-800 uppercase tracking-widest mb-2">Atenção:</p>
+                <p className="text-xs text-amber-700">1. As datas do instrutor na agenda serão alteradas automaticamente</p>
+                <p className="text-xs text-amber-700">2. Verifique se o instrutor não tem conflito no novo período</p>
+                <p className="text-xs text-amber-700">3. Caso necessário, realoque para outro instrutor disponível</p>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setConfirmDateChange(false)}
+                className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmDateChange(false);
+                  bypassDateWarning.current = true;
+                  handleSave();
+                }}
+                className="flex-1 py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition shadow-lg"
+              >
+                Salvar mesmo assim
+              </button>
+            </div>
+          </div>
+        </div>
       , document.body)}
 
       {confirmReactivate && createPortal(

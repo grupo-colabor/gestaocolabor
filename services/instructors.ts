@@ -50,3 +50,12 @@ export async function fetchInstructorTrainings(): Promise<InstructorTrainingRow[
   if (error) throw error;
   return (data || []) as InstructorTrainingRow[];
 }
+
+export async function deleteInstructorById(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('instructors')
+    .delete()
+    .eq('id', id);
+
+  if (error) throw error;
+}

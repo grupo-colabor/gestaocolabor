@@ -72,7 +72,7 @@ import { fetchCompanies, insertCompany, updateCompanyById, CompanyRow } from './
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { isDemandDay, getDemandDays } from './domain/demandDays';
 import { isEAD } from './domain/modalityRules';
-import { fetchInstructors, fetchInstructorTrainings } from './services/instructors';
+import { fetchInstructors, fetchInstructorTrainings, deleteInstructorById } from './services/instructors';
 import { fetchMeasurements, upsertMeasurementByDemandId } from './services/measurements';
 import { fetchEvidences, upsertEvidenceByDemandId } from './services/evidences';
 
@@ -178,6 +178,7 @@ interface AppState {
   cancelDemand: (demandId: string) => void;
   addInstructor: (i: Instructor) => void;
   updateInstructor: (i: Instructor) => void;
+  deleteInstructor: (id: string) => Promise<void>;
   addCompany: (c: Company) => Promise<void>;
   updateCompany: (c: Company) => Promise<void>;
   addTraining: (t: Training) => void;
@@ -1817,6 +1818,21 @@ const addDemand = useCallback(
     setInstructors(prev => prev.map(item => (item.id === i.id ? i : item)));
   }, []);
 
+  const deleteInstructor = useCallback(async (id: string) => {
+    if (AUTH_MODE !== 'supabase') {
+      setInstructors(prev => prev.filter(i => i.id !== id));
+      return;
+    }
+    try {
+      await deleteInstructorById(id);
+      setInstructors(prev => prev.filter(i => i.id !== id));
+      setNotification({ message: 'Instrutor excluído com sucesso.', type: 'success' });
+    } catch (e: any) {
+      console.error('Erro ao excluir instrutor:', e);
+      setNotification({ message: `Erro ao excluir instrutor: ${e?.message ?? e}`, type: 'error' });
+    }
+  }, [AUTH_MODE, setNotification]);
+
   const updateInstructorCurrentLocation = useCallback(async (instructorId: string, location: string) => {
     // Optimistic update
     setInstructors(prev => prev.map(inst =>
@@ -2951,6 +2967,7 @@ const hasScheduleConflict = useCallback(
       cancelDemand,
       addInstructor,
       updateInstructor,
+      deleteInstructor,
       updateInstructorCurrentLocation,
       addCompany,
       updateCompany,
@@ -3005,6 +3022,7 @@ const hasScheduleConflict = useCallback(
       cancelDemand,
       addInstructor,
       updateInstructor,
+      deleteInstructor,
       updateInstructorCurrentLocation,
       addCompany,
       updateCompany,

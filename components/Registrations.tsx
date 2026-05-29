@@ -90,7 +90,7 @@ const Registrations: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('companies');
   const {
     demands, companies, trainings, instructors, regions, operationalBases, nextDemandNumber,
-    addInstructor, updateInstructor, addCompany, updateCompany, addTraining, updateTraining,
+    addInstructor, updateInstructor, deleteInstructor, addCompany, updateCompany, addTraining, updateTraining,
     deleteTraining, updateOperationalBase, setNextDemandNumber, reloadInstructors, setNotification
   } = useApp();
 
@@ -131,6 +131,7 @@ const Registrations: React.FC = () => {
 
   // --- Instructor Modal State ---
   const [isInstructorModalOpen, setIsInstructorModalOpen] = useState(false);
+  const [instructorToDelete, setInstructorToDelete] = useState<Instructor | null>(null);
 
   // Body scroll lock when any modal is open
   useEffect(() => {
@@ -594,6 +595,24 @@ const Registrations: React.FC = () => {
     setIsInstructorSubmitting(false);
 
     setIsInstructorModalOpen(true);
+  };
+
+  const handleDeleteInstructor = (instructor: Instructor) => {
+    const todasDemandas = demands.filter(d => d.instructorId === instructor.id);
+    if (todasDemandas.length > 0) {
+      setNotification({
+        message: `Não é possível excluir. Este instrutor possui ${todasDemandas.length} demanda(s) no histórico. Para removê-lo da lista ativa, use "Inativar" no modal de edição.`,
+        type: 'error'
+      });
+      return;
+    }
+    setInstructorToDelete(instructor);
+  };
+
+  const confirmDeleteInstructor = async () => {
+    if (!instructorToDelete) return;
+    await deleteInstructor(instructorToDelete.id);
+    setInstructorToDelete(null);
   };
 
   const toggleRegionSelection = (regionId: string) => {
@@ -1501,13 +1520,25 @@ const handleRemoveBaseItem = async (item: string) => {
                       </div>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleOpenInstructorEditModal(inst)}
-                    className="absolute top-4 right-4 p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100 shadow-sm border border-gray-100 bg-white"
-                  >
-                    <Edit3 size={16} />
-                  </button>
+                  <div className="absolute top-4 right-4 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenInstructorEditModal(inst)}
+                      className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors shadow-sm border border-gray-100 bg-white"
+                    >
+                      <Edit3 size={16} />
+                    </button>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteInstructor(inst)}
+                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors shadow-sm border border-gray-100 bg-white"
+                        title="Excluir instrutor"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1940,6 +1971,47 @@ const handleRemoveBaseItem = async (item: string) => {
               <button type="button" onClick={() => setIsCompanyModalOpen(false)} className="px-6 py-2.5 text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg font-bold text-sm">Cancelar</button>
               <button type="button" onClick={handleSaveCompany} className="px-8 py-2.5 bg-gray-900 hover:bg-gray-800 text-white font-bold rounded-lg shadow-md text-sm flex items-center">
                 <Check size={18} className="mr-2" />{editingCompanyId ? 'Salvar Alterações' : 'Criar Empresa'}
+              </button>
+            </div>
+          </div>
+        </div>
+      , document.body)}
+
+      {/* --- MODAL CONFIRMAÇÃO DE EXCLUSÃO DE INSTRUTOR --- */}
+      {instructorToDelete && createPortal(
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 flex flex-col gap-5">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-red-100 rounded-xl shrink-0">
+                <Trash2 size={20} className="text-red-600" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-gray-800">Excluir Instrutor</h2>
+                <p className="text-sm text-gray-500 mt-1">Você está prestes a excluir permanentemente:</p>
+                <p className="text-sm font-bold text-gray-800 mt-1">"{instructorToDelete.name}"</p>
+              </div>
+            </div>
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+              <p className="text-xs font-bold text-red-700 uppercase tracking-wide">Atenção — ação irreversível</p>
+              <p className="text-xs text-red-600 mt-1">
+                Este instrutor será removido permanentemente do banco de dados e não poderá ser recuperado.
+              </p>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setInstructorToDelete(null)}
+                className="px-4 py-2 text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteInstructor}
+                className="px-4 py-2 text-sm font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors flex items-center gap-2"
+              >
+                <Trash2 size={14} />
+                Excluir Permanentemente
               </button>
             </div>
           </div>

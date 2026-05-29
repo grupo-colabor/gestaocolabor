@@ -89,13 +89,15 @@ const BASE_LABELS: Record<OperationalBaseKey, string> = {
 const Registrations: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('companies');
   const {
-    companies, trainings, instructors, regions, operationalBases, nextDemandNumber,
-    addInstructor, updateInstructor, addCompany, updateCompany, addTraining, updateTraining, updateOperationalBase, setNextDemandNumber,reloadInstructors
+    demands, companies, trainings, instructors, regions, operationalBases, nextDemandNumber,
+    addInstructor, updateInstructor, addCompany, updateCompany, addTraining, updateTraining,
+    deleteTraining, updateOperationalBase, setNextDemandNumber, reloadInstructors, setNotification
   } = useApp();
 
   // --- Training Modal State ---
   const [isTrainingModalOpen, setIsTrainingModalOpen] = useState(false);
   const [editingTrainingId, setEditingTrainingId] = useState<string | null>(null);
+  const [trainingToDelete, setTrainingToDelete] = useState<Training | null>(null);
   const [trainingFormData, setTrainingFormData] = useState<Partial<Training>>({
     name: '',
     nr: '',
@@ -494,6 +496,24 @@ const Registrations: React.FC = () => {
     setEditingTrainingId(training.id);
     setTrainingFormData({ ...training });
     setIsTrainingModalOpen(true);
+  };
+
+  const handleDeleteTraining = (training: Training) => {
+    const ativas = demands.filter(d => d.trainingId === training.id && d.status !== 'CANCELADA');
+    if (ativas.length > 0) {
+      setNotification({
+        message: `Não é possível excluir. Existem ${ativas.length} demanda(s) ativa(s) vinculadas a este treinamento. Cancele-as antes de excluir.`,
+        type: 'error'
+      });
+      return;
+    }
+    setTrainingToDelete(training);
+  };
+
+  const confirmDeleteTraining = async () => {
+    if (!trainingToDelete) return;
+    await deleteTraining(trainingToDelete.id);
+    setTrainingToDelete(null);
   };
 
   const handleSaveTraining = () => {
@@ -1078,13 +1098,25 @@ const handleRemoveBaseItem = async (item: string) => {
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold shrink-0 ${t.status === 'ATIVO' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{t.status}</span>
                       </td>
                       <td className="p-4 text-right">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenTrainingEditModal(t)}
-                          className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-                        >
-                          <Edit3 size={16} />
-                        </button>
+                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenTrainingEditModal(t)}
+                            className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          >
+                            <Edit3 size={16} />
+                          </button>
+                          {isAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteTraining(t)}
+                              className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Excluir treinamento"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -2239,6 +2271,51 @@ const handleRemoveBaseItem = async (item: string) => {
                 {isInstructorSubmitting
                   ? 'Salvando...'
                   : (editingInstructorId ? 'Salvar Alterações' : 'Criar Instrutor')}
+              </button>
+            </div>
+          </div>
+        </div>
+      , document.body)}
+
+      {/* --- MODAL CONFIRMAÇÃO DE EXCLUSÃO DE TREINAMENTO --- */}
+      {trainingToDelete && createPortal(
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 flex flex-col gap-5">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-red-100 rounded-xl shrink-0">
+                <Trash2 size={20} className="text-red-600" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-gray-800">Excluir Treinamento</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  Você está prestes a excluir permanentemente:
+                </p>
+                <p className="text-sm font-bold text-gray-800 mt-1">"{trainingToDelete.name}"</p>
+              </div>
+            </div>
+
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+              <p className="text-xs font-bold text-red-700 uppercase tracking-wide">Atenção — ação irreversível</p>
+              <p className="text-xs text-red-600 mt-1">
+                Este treinamento será removido permanentemente do banco de dados e não poderá ser recuperado.
+              </p>
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setTrainingToDelete(null)}
+                className="px-4 py-2 text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteTraining}
+                className="px-4 py-2 text-sm font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors flex items-center gap-2"
+              >
+                <Trash2 size={14} />
+                Excluir Permanentemente
               </button>
             </div>
           </div>

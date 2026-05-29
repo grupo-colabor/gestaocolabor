@@ -67,7 +67,7 @@ import Evidences from './components/Evidences';
 import Notifications from './components/Notifications';
 import AuthGate from './components/AuthGate';
 import AuditPage from './components/Audit';
-import { fetchTrainings } from './services/trainings';
+import { fetchTrainings, deleteTrainingById } from './services/trainings';
 import { fetchCompanies, insertCompany, updateCompanyById, CompanyRow } from './services/companies';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { isDemandDay, getDemandDays } from './domain/demandDays';
@@ -182,6 +182,7 @@ interface AppState {
   updateCompany: (c: Company) => Promise<void>;
   addTraining: (t: Training) => void;
   updateTraining: (t: Training) => void;
+  deleteTraining: (id: string) => Promise<void>;
   reloadInstructors: () => Promise<void>;
 
   // Measurement Actions
@@ -1984,6 +1985,24 @@ const addDemand = useCallback(
     [AUTH_MODE, loading, user, mapTrainingToDb, syncTrainingsFromDb]
   );
 
+  const deleteTraining = useCallback(
+    async (id: string) => {
+      if (AUTH_MODE !== 'supabase') {
+        setTrainings(prev => prev.filter(t => t.id !== id));
+        return;
+      }
+      try {
+        await deleteTrainingById(id);
+        setTrainings(prev => prev.filter(t => t.id !== id));
+        setNotification({ message: 'Treinamento excluído com sucesso.', type: 'success' });
+      } catch (e: any) {
+        console.error('Erro ao excluir treinamento:', e);
+        setNotification({ message: `Erro ao excluir treinamento: ${e?.message ?? e}`, type: 'error' });
+      }
+    },
+    [AUTH_MODE, setNotification]
+  );
+
 
 /** ✅ CREATE */
 const addAgendaItem = useCallback(
@@ -2937,6 +2956,7 @@ const hasScheduleConflict = useCallback(
       updateCompany,
       addTraining,
       updateTraining,
+      deleteTraining,
       updateMeasurement,
       addAgendaItem,
       updateAgendaItem,
@@ -2990,6 +3010,7 @@ const hasScheduleConflict = useCallback(
       updateCompany,
       addTraining,
       updateTraining,
+      deleteTraining,
       updateMeasurement,
       addAgendaItem,
       updateAgendaItem,

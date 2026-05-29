@@ -24,3 +24,12 @@ export async function fetchTrainings(): Promise<TrainingRow[]> {
   if (error) throw error;
   return (data ?? []) as TrainingRow[];
 }
+
+export async function deleteTrainingById(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("trainings")
+    .delete()
+    .eq("id", id);
+
+  if (error) throw error;
+}

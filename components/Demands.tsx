@@ -1782,6 +1782,45 @@ const handleSave = async () => {
           }
         }
       }
+
+      // Sync silencioso de horário quando apenas HH:mm muda (data permanece igual)
+      const horarioAlterou =
+        (sanitizedDemand.startDate ?? '').slice(11) !== (activeDemand?.startDate ?? '').slice(11) ||
+        (sanitizedDemand.endDate ?? '').slice(11) !== (activeDemand?.endDate ?? '').slice(11);
+
+      if (!dataAlterou && horarioAlterou) {
+        const novaHoraInicio = (sanitizedDemand.startDate ?? '').slice(11);
+        const novaHoraFim = (sanitizedDemand.endDate ?? '').slice(11);
+
+        const alocacoesVinculadas = instructorAllocations.filter(
+          a => a.demandId === sanitizedDemand.id
+        );
+
+        alocacoesVinculadas.forEach(alloc => {
+          updateInstructorAllocation({
+            ...alloc,
+            startDate: `${alloc.startDate.slice(0, 10)}T${novaHoraInicio}`,
+            endDate: `${alloc.endDate.slice(0, 10)}T${novaHoraFim}`,
+          });
+        });
+
+        const companionsVinculados = companionAllocations.filter(
+          ca => ca.demandId === sanitizedDemand.id
+        );
+        for (const comp of companionsVinculados) {
+          try {
+            await supabase
+              .from('companion_allocations')
+              .update({
+                start_date: `${comp.startDate.slice(0, 10)}T${novaHoraInicio}`,
+                end_date: `${comp.endDate.slice(0, 10)}T${novaHoraFim}`,
+              })
+              .eq('id', comp.id);
+          } catch (e) {
+            console.error('Erro ao sincronizar horário do acompanhante:', e);
+          }
+        }
+      }
     }
 
     if (!demandId) {

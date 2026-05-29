@@ -76,6 +76,7 @@ const BASE_LABELS: Record<OperationalBaseKey, string> = {
   corredores: 'Corredores',
   localidades: 'Localidades',
   locaisAgencia: 'Locais da Agência',
+  categoriasCarros: 'Categorias de Carro',
   locaisTreinamento: 'Local de Treinamento',
   hoteis: 'Hotéis',
   locadoras: 'Empresas de Locação',

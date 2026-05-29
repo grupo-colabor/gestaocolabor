@@ -322,6 +322,11 @@ export const INITIAL_OPERATIONAL_BASES: OperationalBases = {
   locadoras: ["Localiza", "Movida", "Outro"],
   tiposTreinamento: ["Hibrido", "Online", "Online (Ao Vivo)", "Presencial", "Tutoria"],
   funcoesAgenda: ['Instrutor', 'Coordenador', 'Motorista'],
+  regioes: [],
+  categoriasCarros: [
+    "Grupo B", "Grupo BE", "Grupo C", "Grupo CE", "Grupo CS",
+    "Grupo F", "Grupo FS", "Grupo FH", "Grupo FX"
+  ],
 };
 
 export const HISTORICAL_MATRICULADORES = ["Bernardo", "Micaelle", "Tallita", "Yara"];

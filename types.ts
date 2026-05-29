@@ -337,7 +337,8 @@ export type OperationalBaseKey =
   | 'locaisTreinamento'
   | 'funcoesAgenda'
   | 'matriculadores'
-  | 'regioes';
+  | 'regioes'
+  | 'categoriasCarros';
 
 export interface OperationalBases {
   aprovadores: string[];
@@ -352,6 +353,7 @@ export interface OperationalBases {
   tiposTreinamento: string[];
   funcoesAgenda: string[];
   regioes: string[];
+  categoriasCarros: string[];
 }
 
 // --- ASSOCIAÇÕES DE LOCAL ---

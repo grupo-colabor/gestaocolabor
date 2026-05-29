@@ -481,11 +481,11 @@ const LogisticsControl: React.FC = () => {
 
         <div className="text-sm font-black text-slate-700 uppercase tracking-tight">{periodLabel}</div>
 
-        <div className="flex items-center gap-2 flex-wrap justify-end">
+        <div className="flex items-center gap-3">
           <select
             value={filterLocal}
             onChange={e => setFilterLocal(e.target.value)}
-            className="py-2 px-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner text-slate-600"
+            className="w-44 h-9 px-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner text-slate-600"
           >
             <option value="">Local — Todos</option>
             {localOptions.map(l => <option key={l} value={l}>{l}</option>)}
@@ -494,18 +494,18 @@ const LogisticsControl: React.FC = () => {
           <select
             value={filterCorredor}
             onChange={e => setFilterCorredor(e.target.value)}
-            className="py-2 px-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner text-slate-600"
+            className="w-44 h-9 px-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner text-slate-600"
           >
             <option value="">Corredor — Todos</option>
             {(operationalBases.corredores ?? []).map(c => <option key={c} value={c}>{c}</option>)}
           </select>
 
-          <div className="relative min-w-[260px]">
-            <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
+          <div className="relative w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
             <input
               type="text"
               placeholder="Buscar ID, Empresa ou Treinamento..."
-              className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner"
+              className="w-full h-9 pl-9 pr-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner"
               value={filterText}
               onChange={e => setFilterText(e.target.value)}
             />

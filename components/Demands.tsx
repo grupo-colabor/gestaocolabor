@@ -193,6 +193,8 @@ useEffect(() => {
   const [isSaving, setIsSaving] = useState(false);
   const [confirmDateChange, setConfirmDateChange] = useState(false);
   const bypassDateWarning = useRef(false);
+  const [confirmLocalChange, setConfirmLocalChange] = useState(false);
+  const bypassLocalWarning = useRef(false);
   const printRef = useRef<HTMLDivElement>(null);
 
   // Location associations for cascade autocomplete
@@ -246,10 +248,10 @@ useEffect(() => {
 
   // Body scroll lock when any modal is open
   useEffect(() => {
-    const anyOpen = isModalOpen || isAllocationModalOpen || !!pendingConflictAllocation || isResourceModalOpen || confirmCancel || confirmDelete || confirmReactivate || confirmAllocationCase !== null || confirmDateChange;
+    const anyOpen = isModalOpen || isAllocationModalOpen || !!pendingConflictAllocation || isResourceModalOpen || confirmCancel || confirmDelete || confirmReactivate || confirmAllocationCase !== null || confirmDateChange || confirmLocalChange;
     document.body.style.overflow = anyOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
-  }, [isModalOpen, isAllocationModalOpen, pendingConflictAllocation, isResourceModalOpen, confirmCancel, confirmDelete, confirmReactivate, confirmAllocationCase, confirmDateChange]);
+  }, [isModalOpen, isAllocationModalOpen, pendingConflictAllocation, isResourceModalOpen, confirmCancel, confirmDelete, confirmReactivate, confirmAllocationCase, confirmDateChange, confirmLocalChange]);
   const [resourceForm, setResourceForm] = useState({
     startDate: '',
     endDate: ''
@@ -1567,6 +1569,20 @@ const handleSave = async () => {
     }
   }
   bypassDateWarning.current = false;
+
+  // Aviso de local alterado com instrutor alocado (apenas no EDIT, e apenas se data não mudou)
+  if (!bypassLocalWarning.current && modalMode === 'EDIT') {
+    const alocacoesVinculadas = instructorAllocations.filter(a => a.demandId === formDemand.id);
+    const dataAlterou =
+      formDemand.startDate?.slice(0, 10) !== activeDemand?.startDate?.slice(0, 10) ||
+      formDemand.endDate?.slice(0, 10) !== activeDemand?.endDate?.slice(0, 10);
+    const localAlterou = (formDemand.trainingLocal ?? '') !== (activeDemand?.trainingLocal ?? '');
+    if (alocacoesVinculadas.length > 0 && localAlterou && !dataAlterou) {
+      setConfirmLocalChange(true);
+      return;
+    }
+  }
+  bypassLocalWarning.current = false;
 
   setIsSaving(true);
 
@@ -4592,6 +4608,48 @@ const companionInstructorIds = useMemo(() => {
                 onClick={() => {
                   setConfirmDateChange(false);
                   bypassDateWarning.current = true;
+                  handleSave();
+                }}
+                className="flex-1 py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition shadow-lg"
+              >
+                Salvar mesmo assim
+              </button>
+            </div>
+          </div>
+        </div>
+      , document.body)}
+
+      {confirmLocalChange && createPortal(
+        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white p-8 rounded-3xl max-w-md w-full shadow-2xl space-y-6 border border-slate-100">
+            <div className="flex flex-col items-center gap-3 text-center">
+              <div className="p-3 bg-amber-100 rounded-full text-amber-600">
+                <AlertTriangle size={40} />
+              </div>
+              <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Local do Treinamento Alterado</h3>
+              <p className="text-sm text-slate-500 leading-relaxed">
+                Esta demanda possui um instrutor alocado na agenda. O local foi alterado para: <span className="font-black text-slate-700">{formDemand.trainingLocal || '—'}</span>
+                <br /><br />
+                O instrutor atual pode não ser o mais indicado para esta localidade. Verifique se a alocação ainda é adequada.
+              </p>
+              <div className="w-full bg-amber-50 border border-amber-200 rounded-2xl p-4 text-left space-y-1.5">
+                <p className="text-xs font-black text-amber-800 uppercase tracking-widest mb-2">Atenção:</p>
+                <p className="text-xs text-amber-700">1. Verifique se o instrutor atende a nova localidade</p>
+                <p className="text-xs text-amber-700">2. Caso seja de outra região, a alocação vira uma exceção</p>
+                <p className="text-xs text-amber-700">3. Se necessário, realoque para um instrutor da região correta</p>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setConfirmLocalChange(false)}
+                className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmLocalChange(false);
+                  bypassLocalWarning.current = true;
                   handleSave();
                 }}
                 className="flex-1 py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition shadow-lg"

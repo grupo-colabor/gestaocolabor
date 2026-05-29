@@ -52,11 +52,13 @@ type DemandDocument = {
 };
 
 const LogisticsControl: React.FC = () => {
-  const { demands, companies, trainings, instructors, updateDemand, notificationTarget, setNotificationTarget } = useApp();
+  const { demands, companies, trainings, instructors, operationalBases, updateDemand, notificationTarget, setNotificationTarget } = useApp();
 
   const getInstructorName = (id?: string) => instructors.find(i => i.id === id)?.name;
 
   const [filterText, setFilterText] = useState('');
+  const [filterLocal, setFilterLocal] = useState('');
+  const [filterCorredor, setFilterCorredor] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('WEEK');
   const [referenceDate, setReferenceDate] = useState<Date>(new Date());
 
@@ -339,6 +341,15 @@ const LogisticsControl: React.FC = () => {
     syncLogisticsControlFromDb();
   }, [syncLogisticsControlFromDb]);
 
+  // Opções únicas de local extraídas de todas as demandas
+  const localOptions = useMemo(() => {
+    const seen = new Set<string>();
+    for (const d of demands) {
+      if (d.trainingLocal) seen.add(d.trainingLocal);
+    }
+    return Array.from(seen).sort();
+  }, [demands]);
+
   // Filtragem das demandas ativas com base no período calculado
   const filteredDemands = useMemo(() => {
     return demands
@@ -361,6 +372,12 @@ const LogisticsControl: React.FC = () => {
 
         if (!matchesSearch) return false;
 
+        // 📍 Filtro de local
+        if (filterLocal && d.trainingLocal !== filterLocal) return false;
+
+        // 🛣️ Filtro de corredor
+        if (filterCorredor && d.corredor !== filterCorredor) return false;
+
         // 📅 Filtro de período — ignorado quando há busca de texto ativa
         if (filterText) return true;
         const fromStr = periodBounds.start.toISOString().slice(0, 10);
@@ -368,7 +385,7 @@ const LogisticsControl: React.FC = () => {
         return demandIntersectsRange(d, fromStr, toStr);
       })
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
-  }, [demands, filterText, periodBounds, companies, trainings]);
+  }, [demands, filterText, filterLocal, filterCorredor, periodBounds, companies, trainings]);
 
   // ✅ Handler para marcação manual de material (Supabase)
   const toggleMaterial = async (demand: Demand) => {
@@ -464,15 +481,35 @@ const LogisticsControl: React.FC = () => {
 
         <div className="text-sm font-black text-slate-700 uppercase tracking-tight">{periodLabel}</div>
 
-        <div className="relative min-w-[300px]">
-          <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
-          <input
-            type="text"
-            placeholder="Buscar ID, Empresa ou Treinamento..."
-            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner"
-            value={filterText}
-            onChange={e => setFilterText(e.target.value)}
-          />
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <select
+            value={filterLocal}
+            onChange={e => setFilterLocal(e.target.value)}
+            className="py-2 px-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner text-slate-600"
+          >
+            <option value="">Local — Todos</option>
+            {localOptions.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+
+          <select
+            value={filterCorredor}
+            onChange={e => setFilterCorredor(e.target.value)}
+            className="py-2 px-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner text-slate-600"
+          >
+            <option value="">Corredor — Todos</option>
+            {(operationalBases.corredores ?? []).map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+
+          <div className="relative min-w-[260px]">
+            <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
+            <input
+              type="text"
+              placeholder="Buscar ID, Empresa ou Treinamento..."
+              className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner"
+              value={filterText}
+              onChange={e => setFilterText(e.target.value)}
+            />
+          </div>
         </div>
       </div>
 

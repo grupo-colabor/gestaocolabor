@@ -124,17 +124,12 @@ const getHHMM = (v?: string | Date | null) => {
 const isNightShift = (start?: string | Date | null, end?: string | Date | null) => {
   const s = getHHMM(start);
   const e = getHHMM(end);
-  if (!s || !e) return false;
+  if (!e) return false;
 
-  const nightStart = 18 * 60; // 18:00
-  const nightEnd = 6 * 60;    // 06:00
-
-  // Regra pedida: "18h–6h"
-  // Marca noturno se:
-  // - começa >= 18:00, OU
-  // - termina <= 06:00, OU
-  // - cruza meia-noite (end menor que start)
-  return s.total >= nightStart || e.total <= nightEnd || e.total < s.total;
+  // Noturno = fim >= 19:00, ou vira o dia (fim < início)
+  if (e.total >= 19 * 60) return true;
+  if (s && e.total < s.total) return true;
+  return false;
 };
 
 /** Retorna apenas o label base sem o tag noturno "(N)". */

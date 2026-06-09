@@ -156,11 +156,26 @@ export function getDayHorarioInicio(demand: DemandLike, dayKey: string): string 
 }
 
 /**
+ * Retorna o horarioFim para um dia específico da demanda.
+ * - DIAS_ESPECIFICOS: usa o horarioFim do specificDate correspondente
+ * - CONTINUO: todos os dias herdam a hora do endDate (turno único)
+ */
+export function getDayHorarioFim(demand: DemandLike, dayKey: string): string {
+  if (demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates)) {
+    const entry = demand.specificDates.find(e => e.data === dayKey);
+    if (entry?.horarioFim) return entry.horarioFim;
+  }
+  const e = String(demand.endDate ?? '');
+  const timePart = e.length >= 16 ? e.slice(11, 16) : '';
+  return timePart || '17:00';
+}
+
+/**
  * Monta o label do card da agenda para um dia específico.
  * Fonte única de verdade — usar em todos os caminhos de renderização.
  *
  * Formato: "DEM-XXX • EMPRESA • TREINAMENTO (N)"
- * O sufixo (N) é adicionado quando hora_inicio >= 18:00 ou < 06:00.
+ * O sufixo (N) é adicionado quando horario_fim >= 19:00 ou vira o dia (fim < início).
  */
 export function buildCardLabel(
   demand: DemandLike & { id: string },
@@ -170,36 +185,37 @@ export function buildCardLabel(
   const base = [demand.id, opts.companyName, opts.trainingNr]
     .filter(Boolean)
     .join(' • ');
-  const h = getDayHorarioInicio(demand, dayKey);
-  const nightTag = (h >= '18:00' || h < '06:00') ? ' (N)' : '';
+  const inicio = getDayHorarioInicio(demand, dayKey);
+  const fim = getDayHorarioFim(demand, dayKey);
+  const nightTag = (fim >= '19:00' || fim < inicio) ? ' (N)' : '';
   return `${base}${nightTag}`;
 }
 
 /**
  * Verifica se um dia específico da demanda tem turno noturno:
- * início >= 18:00 ou término > 22:00.
+ * fim >= 19:00 ou vira o dia (fim < início).
  */
 export function isDayNight(demand: DemandLike, dayKey: string): boolean {
   if (demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates)) {
     const entry = demand.specificDates.find(e => e.data === dayKey);
-    if (entry) return entry.horarioInicio >= '18:00' || entry.horarioFim > '22:00';
+    if (entry) return entry.horarioFim >= '19:00' || entry.horarioFim < entry.horarioInicio;
   }
-  // CONTINUO: todos os dias herdam o turno do start/end da demanda
+  // CONTINUO: usa horário do endDate e startDate
   const s = String(demand.startDate ?? '');
   const e = String(demand.endDate ?? '');
   const st = s.length >= 16 ? s.slice(11, 16) : '';
   const et = e.length >= 16 ? e.slice(11, 16) : '';
-  return (!!st && st >= '18:00') || (!!et && et > '22:00');
+  return (!!et && et >= '19:00') || (!!st && !!et && et < st);
 }
 
 /**
  * Retorna true se a demanda tem qualquer dia/turno noturno:
- * início >= 18:00 ou término > 22:00.
+ * fim >= 19:00 ou vira o dia (fim < início).
  * Para cards de lista e cabeçalho de detalhe.
  */
 export function isNightDemand(demand: DemandLike): boolean {
   if (demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates) && demand.specificDates.length > 0) {
-    return demand.specificDates.some(e => e.horarioInicio >= '18:00' || e.horarioFim > '22:00');
+    return demand.specificDates.some(e => e.horarioFim >= '19:00' || e.horarioFim < e.horarioInicio);
   }
   return isDayNight(demand, '');
 }

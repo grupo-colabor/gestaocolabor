@@ -104,7 +104,8 @@ import {
 import {
   fetchInstructorAllocations,
   upsertInstructorAllocation,
-  replaceInstructorAllocationsForDemand
+  replaceInstructorAllocationsForDemand,
+  deleteInstructorAllocationsByDemandId
 } from './services/instructorAllocations';
 
 import {
@@ -1740,6 +1741,7 @@ const addDemand = useCallback(
       // ✅ MOCK MODE
       if (AUTH_MODE !== 'supabase') {
         setDemands(prev => prev.map(d => (d.id === demandId ? { ...d, status: 'CANCELADA' } : d)));
+        setInstructorAllocations(prev => prev.filter(a => a.demandId !== demandId));
         return;
       }
 
@@ -1763,6 +1765,14 @@ const addDemand = useCallback(
               type: 'error'
             });
             return;
+          }
+
+          // Libera agenda: remove alocações vinculadas a esta demanda cancelada
+          try {
+            await deleteInstructorAllocationsByDemandId(demandId);
+            setInstructorAllocations(prev => prev.filter(a => a.demandId !== demandId));
+          } catch (e) {
+            console.error('[cancelDemand] erro ao remover alocações:', e);
           }
 
           await syncDemandsFromDb();
@@ -2657,6 +2667,9 @@ const hasScheduleConflict = useCallback(
 
       // ✅ DIAS ESPECÍFICOS: verificar conflito apenas nos dias reais da demanda
       const allocDemand = demands.find(dm => dm.id === a.demandId);
+      // Espelha o filtro da grade (CalendarView:430): demanda cancelada ou órfã libera agenda
+      if (!allocDemand || allocDemand.status === 'CANCELADA') return false;
+
       if (allocDemand && allocDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(allocDemand.specificDates) && allocDemand.specificDates.length > 0) {
         const reqDays = new Set<string>();
         const c = toDayStart(reqStart);

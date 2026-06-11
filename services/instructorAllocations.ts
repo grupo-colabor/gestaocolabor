@@ -63,3 +63,11 @@ export async function replaceInstructorAllocationsForDemand(
   if (insError) throw insError;
   return (data ?? []) as InstructorAllocationRow[];
 }
+
+export async function deleteInstructorAllocationsByDemandId(demandId: string) {
+  const { error } = await supabase
+    .from('instructor_allocations')
+    .delete()
+    .eq('demand_id', demandId);
+  if (error) throw error;
+}

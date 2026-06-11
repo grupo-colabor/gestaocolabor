@@ -419,6 +419,10 @@ useEffect(() => {
   // Helper names
   const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
   const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
+  const getTrainingHours = (id: string) => {
+    const h = trainings.find(t => t.id === id)?.hours;
+    return h != null ? `${h}h` : '—';
+  };
   const getRegionName = (id: string) => regions.find(r => r.id === id)?.name || 'N/A';
   const getInstructorName = (id?: string) => instructors.find(i => i.id === id)?.name || 'Não Alocado';
 
@@ -3403,6 +3407,7 @@ const companionInstructorIds = useMemo(() => {
                                 <DataViewField label="Empresa" value={getCompanyName(formDemand.companyId!)} icon={Building} />
                                 {getCompanyName(formDemand.companyId!).toUpperCase().includes('VALE') && (<DataViewField label="ID SAP / Pedido Cliente" value={formDemand.clientDemandId || '---'} icon={Tag} />)}
                                 <DataViewField label="Treinamento" value={getTrainingName(formDemand.trainingId!)} icon={BookOpen} />
+                                <DataViewField label="Carga Horária" value={getTrainingHours(formDemand.trainingId!)} icon={Clock} />
                                 <DataViewField label="Unidade / Local" value={!requiresLogistics(formDemand.modality) ? 'N/A' : formDemand.trainingLocal} icon={MapPin} />
                                 {formDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(formDemand.specificDates) && formDemand.specificDates.length > 0 ? (
                                   <>

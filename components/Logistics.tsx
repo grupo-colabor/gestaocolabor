@@ -122,6 +122,13 @@ const Logistics: React.FC = () => {
     return time || '';
   };
 
+  const formatDateTimeBR = (value?: string) => {
+    const { date, time } = splitDateTime(value);
+    if (!date) return '';
+    const datePart = new Date(`${date}T12:00:00`).toLocaleDateString('pt-BR');
+    return time ? `${datePart} ${time}` : datePart;
+  };
+
   const companionsForSelectedDemand = useMemo(() => {
   if (!selectedDemandId) return [];
   return companionAllocations.filter((a: any) => a.demandId === selectedDemandId);
@@ -687,9 +694,9 @@ const handleSaveCompanionDays = () => {
                     {/* Linha 1: Datas — sempre limpa, sem badge */}
                     <div className="flex items-center gap-1 text-sm font-bold text-slate-700">
                       <CalendarIcon size={16} className="shrink-0 text-blue-500" />
-                      <span>{new Date(selectedDemand.startDate).toLocaleDateString('pt-BR')}</span>
+                      <span>{formatDateTimeBR(selectedDemand.startDate)}</span>
                       <ArrowRight size={12} className="mx-1 shrink-0 text-slate-400" />
-                      <span>{new Date(selectedDemand.endDate).toLocaleDateString('pt-BR')}</span>
+                      <span>{formatDateTimeBR(selectedDemand.endDate)}</span>
                     </div>
                     {/* Linha 2: Localização + badge NOTURNO */}
                     <div className="flex flex-wrap items-center gap-1 text-sm font-bold text-slate-700">

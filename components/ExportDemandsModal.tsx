@@ -51,6 +51,10 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
   /* ---------- helpers ---------- */
   const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || companies.find(c => c.id === id)?.razaoSocial || 'N/A';
   const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
+  const getTrainingHours = (id: string) => {
+    const h = trainings.find(t => t.id === id)?.hours;
+    return h != null ? `${h}h` : '—';
+  };
   const getRegionName = (id: string) => regions.find(r => r.id === id)?.name || 'N/A';
 
   const getInstructorName = (demand: Demand) => {
@@ -196,6 +200,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
       { header: 'ID Cliente',            key: 'clientDemandId',   width: 16 },
       { header: 'Empresa',               key: 'empresa',          width: 30 },
       { header: 'Treinamento',           key: 'treinamento',      width: 35 },
+      { header: 'Carga Horária',         key: 'cargaHoraria',     width: 14 },
       { header: 'Local do Treinamento',  key: 'trainingLocal',    width: 28 },
       { header: 'Região',                key: 'regiao',           width: 18 },
       { header: 'Data Início',           key: 'dataInicio',       width: 14 },
@@ -227,6 +232,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
         clientDemandId:  d.clientDemandId || '',
         empresa:         getCompanyName(d.companyId),
         treinamento:     getTrainingName(d.trainingId),
+        cargaHoraria:    getTrainingHours(d.trainingId),
         trainingLocal:   d.trainingLocal || '',
         regiao:          getRegionName(d.regionId),
         dataInicio:      formatDate(d.startDate),
@@ -259,7 +265,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
     // AutoFilter cobrindo todas as colunas (20) e todas as linhas com dados
     worksheet.autoFilter = {
       from: { row: 1, column: 1 },
-      to:   { row: toExport.length + 1, column: 20 },
+      to:   { row: toExport.length + 1, column: 21 },
     };
 
     // Gera o arquivo e faz o download

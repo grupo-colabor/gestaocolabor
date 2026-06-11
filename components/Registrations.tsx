@@ -432,29 +432,84 @@ const Registrations: React.FC = () => {
   const exportInstructors = async () => {
     const ExcelJS = (await import('exceljs')).default;
     const wb = new ExcelJS.Workbook();
+
+    const applyHeaderStyle = (
+      row: import('exceljs').Row,
+      sheet: import('exceljs').Worksheet,
+      colDefs: { width: number }[],
+    ) => {
+      row.height = 24;
+      row.eachCell((cell, col) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_ARGB } };
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        sheet.getColumn(col).width = colDefs[col - 1].width;
+      });
+    };
+
+    // ── Aba 1: Instrutores ──────────────────────────────────────────────────
     const ws = wb.addWorksheet('Instrutores');
 
-    const cols = [
-      { header: 'Nome',    width: 36 },
-      { header: 'Regiões', width: 40 },
-      { header: 'Status',  width: 12 },
+    const mainCols = [
+      { header: 'Nome',                   width: 36 },
+      { header: 'Email',                  width: 34 },
+      { header: 'Função',                 width: 20 },
+      { header: 'Status',                 width: 14 },
+      { header: 'Regiões de Atuação',     width: 36 },
+      { header: 'Local de Residência',    width: 20 },
+      { header: 'Treinamentos (resumo)',  width: 60 },
+      { header: 'Notas Operacionais',     width: 40 },
     ];
 
-    const headerRow = ws.addRow(cols.map(c => c.header));
-    headerRow.height = 24;
-    headerRow.eachCell((cell, col) => {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_ARGB } };
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
-      cell.alignment = { horizontal: 'center', vertical: 'middle' };
-      ws.getColumn(col).width = cols[col - 1].width;
-    });
+    const mainHeader = ws.addRow(mainCols.map(c => c.header));
+    applyHeaderStyle(mainHeader, ws, mainCols);
+    ws.autoFilter = { from: 'A1', to: `${String.fromCharCode(64 + mainCols.length)}1` };
 
     filteredInstructors.forEach(i => {
       const regionNames = i.regionIds
         .map(rid => regions.find(r => r.id === rid)?.name || '')
         .filter(Boolean)
         .join(', ');
-      ws.addRow([i.name, regionNames || '-', i.status]);
+
+      const trainingsSummary = i.skills
+        .map(s => {
+          const tName = trainings.find(t => t.id === s.trainingId)?.name || s.trainingId;
+          return `${tName} (${SKILL_LABELS[s.level] ?? `Nv ${s.level}`})`;
+        })
+        .join('; ');
+
+      const row = ws.addRow([
+        i.name,
+        i.email || '-',
+        i.agendaRole || '-',
+        i.status,
+        regionNames || '-',
+        i.residenceLocation || '-',
+        trainingsSummary || '-',
+        i.operationalNotes || '-',
+      ]);
+      row.getCell(7).alignment = { wrapText: true, vertical: 'top' };
+      row.getCell(8).alignment = { wrapText: true, vertical: 'top' };
+    });
+
+    // ── Aba 2: Treinamentos por Instrutor ───────────────────────────────────
+    const ws2 = wb.addWorksheet('Treinamentos por Instrutor');
+
+    const detailCols = [
+      { header: 'Instrutor',        width: 36 },
+      { header: 'Treinamento',      width: 50 },
+      { header: 'Nível de Domínio', width: 20 },
+    ];
+
+    const detailHeader = ws2.addRow(detailCols.map(c => c.header));
+    applyHeaderStyle(detailHeader, ws2, detailCols);
+    ws2.autoFilter = { from: 'A1', to: 'C1' };
+
+    filteredInstructors.forEach(i => {
+      i.skills.forEach(s => {
+        const tName = trainings.find(t => t.id === s.trainingId)?.name || s.trainingId;
+        ws2.addRow([i.name, tName, SKILL_LABELS[s.level] ?? `Nv ${s.level}`]);
+      });
     });
 
     const date = new Date().toISOString().slice(0, 10);

@@ -843,6 +843,7 @@ useEffect(() => {
         if (mode === 'CARRO_PROPRIO') return 'Carro Próprio';
         if (mode === 'TAXI') return 'Táxi';
         if (mode === 'CARRO_APLICATIVO') return 'Carro Aplicativo';
+        if (mode === 'OUTROS') return 'Outros';
         if (mode === 'NAO_NECESSARIO' || mode === 'NA') return 'N/A';
         return null;
       };
@@ -865,6 +866,7 @@ useEffect(() => {
         rentalCheckIn: isoToLocalDTL(b.rental_check_in) ?? '',
         rentalCheckOut: isoToLocalDTL(b.rental_check_out) ?? '',
         receiptUrls: Array.isArray(b.receipt_url) ? b.receipt_url : b.receipt_url ? [b.receipt_url as unknown as string] : undefined,
+        otherTransportDescription: b.transport_other_description ?? '',
       });
 
       // Converte uma row de logistic_blocks para LogisticaHospedagem
@@ -1852,6 +1854,8 @@ const handleSave = async () => {
       ? 'TAXI'
       : sanitizedDemand.transportType === 'Carro Aplicativo'
       ? 'CARRO_APLICATIVO'
+      : sanitizedDemand.transportType === 'Outros'
+      ? 'OUTROS'
       : sanitizedDemand.transportType === 'N/A'
       ? 'NA'
       : null;
@@ -1921,6 +1925,7 @@ const handleSave = async () => {
         if (t === 'Carro Próprio') return 'CARRO_PROPRIO';
         if (t === 'Táxi') return 'TAXI';
         if (t === 'Carro Aplicativo') return 'CARRO_APLICATIVO';
+        if (t === 'Outros') return 'OUTROS';
         if (t === 'N/A') return 'NA';
         return null;
       };
@@ -1935,6 +1940,9 @@ const handleSave = async () => {
       const locoBlockRows = (formDemand.logisticasLocomocao || []).map((b, i) => {
         const tm = isOnlineBlocks ? 'NAO_NECESSARIO' : mapTransportModeToDb(b.transportType);
         const isAlugado = b.transportType === 'Carro Alugado' && !isOnlineBlocks;
+        const isOutros = b.transportType === 'Outros' && !isOnlineBlocks;
+        const needsReceipt = (b.transportType === 'Táxi' || b.transportType === 'Carro Aplicativo' || isOutros) && !isOnlineBlocks;
+        const needsCheckInOut = isAlugado || isOutros;
         return {
           id: b.id,
           block_type: 'LOCOMOCAO',
@@ -1945,9 +1953,10 @@ const handleSave = async () => {
           rental_agency_location: isAlugado ? (b.rentalAgencyLocation || null) : null,
           rental_locator: isAlugado ? (b.rentalLocator || null) : null,
           car_category: isAlugado ? (b.carCategory || 'Grupo CE') : null,
-          rental_check_in: isAlugado ? toIsoFromDateTimeLocalSafe(b.rentalCheckIn) : null,
-          rental_check_out: isAlugado ? toIsoFromDateTimeLocalSafe(b.rentalCheckOut) : null,
-          receipt_url: b.receiptUrls?.length ? b.receiptUrls : null,
+          rental_check_in: needsCheckInOut ? toIsoFromDateTimeLocalSafe(b.rentalCheckIn) : null,
+          rental_check_out: needsCheckInOut ? toIsoFromDateTimeLocalSafe(b.rentalCheckOut) : null,
+          receipt_url: needsReceipt && b.receiptUrls?.length ? b.receiptUrls : null,
+          transport_other_description: isOutros ? (b.otherTransportDescription || null) : null,
           lodging_mode: null,
           hotel_city: null,
           hotel_name: null,
@@ -2474,11 +2483,15 @@ const endLocal = usePractice
 
   const handleBlockTransportClick = (index: number, t: TransportType) => {
     const isAlugado = t === 'Carro Alugado';
-    const needsReceipt = t === 'Táxi' || t === 'Carro Aplicativo';
+    const isOutros = t === 'Outros';
+    const needsReceipt = t === 'Táxi' || t === 'Carro Aplicativo' || isOutros;
+    const needsCheckInOut = isAlugado || isOutros;
     updateLocomocaoBlock(index, {
       transportType: t,
-      ...(!isAlugado ? { rentalAgencyLocation: '', rentalLocator: '', rentalCheckIn: '', rentalCheckOut: '' } : {}),
+      ...(!isAlugado ? { rentalAgencyLocation: '', rentalLocator: '' } : {}),
+      ...(!needsCheckInOut ? { rentalCheckIn: '', rentalCheckOut: '' } : {}),
       ...(!needsReceipt ? { receiptUrls: null } : {}),
+      ...(!isOutros ? { otherTransportDescription: '' } : {}),
     });
   };
 
@@ -3651,7 +3664,7 @@ const companionInstructorIds = useMemo(() => {
                                     <div>
                                       <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Meio de Transporte</label>
                                       <div className="flex flex-wrap gap-2">
-                                        {(['Carro Alugado', 'Carro Próprio', 'Táxi', 'Carro Aplicativo', 'N/A'] as TransportType[]).map((t) => (
+                                        {(['Carro Alugado', 'Carro Próprio', 'Táxi', 'Carro Aplicativo', 'Outros', 'N/A'] as TransportType[]).map((t) => (
                                           <button
                                             key={t}
                                             type="button"
@@ -3668,7 +3681,7 @@ const companionInstructorIds = useMemo(() => {
                                       </div>
                                     </div>
 
-                                    {(block.transportType === 'Táxi' || block.transportType === 'Carro Aplicativo') && (
+                                    {(block.transportType === 'Táxi' || block.transportType === 'Carro Aplicativo' || block.transportType === 'Outros') && (
                                       <div>
                                         <label className="block text-xs font-bold text-gray-500 uppercase mb-2 flex items-center gap-1">
                                           <Paperclip size={12} /> Nota Fiscal
@@ -3702,6 +3715,23 @@ const companionInstructorIds = useMemo(() => {
                                             className="hidden"
                                           />
                                         </label>
+                                      </div>
+                                    )}
+
+                                    {block.transportType === 'Outros' && (
+                                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-amber-50/60 rounded-xl border border-amber-100">
+                                        <div className="md:col-span-1">
+                                          <label className="block text-xs font-bold text-amber-800 uppercase mb-1">Meio de Transporte</label>
+                                          <input type="text" className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 outline-none" value={block.otherTransportDescription || ''} onChange={(e) => updateLocomocaoBlock(idx, { otherTransportDescription: e.target.value })} placeholder="Ex: Van fretada, Barco, Ônibus intermunicipal" />
+                                        </div>
+                                        <div>
+                                          <label className="block text-xs font-bold text-amber-800 uppercase mb-1">Check-in</label>
+                                          <input type="datetime-local" className="w-full border border-amber-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-amber-500" value={block.rentalCheckIn || ''} onChange={e => updateLocomocaoBlock(idx, { rentalCheckIn: e.target.value })} />
+                                        </div>
+                                        <div>
+                                          <label className="block text-xs font-bold text-amber-800 uppercase mb-1">Check-out</label>
+                                          <input type="datetime-local" className="w-full border border-amber-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-amber-500" value={block.rentalCheckOut || ''} onChange={e => updateLocomocaoBlock(idx, { rentalCheckOut: e.target.value })} />
+                                        </div>
                                       </div>
                                     )}
 
@@ -3760,8 +3790,8 @@ const companionInstructorIds = useMemo(() => {
                                         {block.instructorName ? `Locomoção — ${block.instructorName}` : `Locomoção — Bloco ${idx + 1}`}
                                       </p>
                                     )}
-                                    <DataViewField label="Meio de Transporte" value={block.transportType || (formDemand.logisticsTransport === 'NAO_NECESSARIO' ? 'N/A' : 'Pendente')} icon={Truck} />
-                                    {(block.transportType === 'Táxi' || block.transportType === 'Carro Aplicativo') && (block.receiptUrls?.length ?? 0) > 0 && (
+                                    <DataViewField label="Meio de Transporte" value={block.transportType === 'Outros' ? `Outros${block.otherTransportDescription ? ` — ${block.otherTransportDescription}` : ''}` : (block.transportType || (formDemand.logisticsTransport === 'NAO_NECESSARIO' ? 'N/A' : 'Pendente'))} icon={Truck} />
+                                    {(block.transportType === 'Táxi' || block.transportType === 'Carro Aplicativo' || block.transportType === 'Outros') && (block.receiptUrls?.length ?? 0) > 0 && (
                                       <div>
                                         <p className="text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-1">
                                           <Paperclip size={12} /> Nota Fiscal
@@ -3789,6 +3819,12 @@ const companionInstructorIds = useMemo(() => {
                                         <DataViewField label="Local da Agência" value={block.rentalAgencyLocation} icon={MapPin} />
                                         <DataViewField label="Localizador" value={block.rentalLocator} icon={Tag} />
                                         <DataViewField label="Categoria" value={block.carCategory} icon={Tag} />
+                                        <DataViewField label="Check-in" value={block.rentalCheckIn ? formatDateTime(block.rentalCheckIn) : '---'} icon={Clock} />
+                                        <DataViewField label="Check-out" value={block.rentalCheckOut ? formatDateTime(block.rentalCheckOut) : '---'} icon={Clock} />
+                                      </div>
+                                    )}
+                                    {block.transportType === 'Outros' && (
+                                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-4 bg-amber-50 rounded-xl border border-amber-100">
                                         <DataViewField label="Check-in" value={block.rentalCheckIn ? formatDateTime(block.rentalCheckIn) : '---'} icon={Clock} />
                                         <DataViewField label="Check-out" value={block.rentalCheckOut ? formatDateTime(block.rentalCheckOut) : '---'} icon={Clock} />
                                       </div>

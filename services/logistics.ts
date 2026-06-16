@@ -173,6 +173,7 @@ export type LogisticBlockRow = {
   rental_check_in: string | null;
   rental_check_out: string | null;
   receipt_url?: string[] | null;
+  transport_other_description?: string | null;
 
   // Hospedagem
   lodging_mode: string | null;

@@ -43,7 +43,7 @@ export type AgendaType =
   | 'APOIO';
 
 
-export type TransportType = 'Carro Alugado' | 'Carro Próprio' | 'Táxi' | 'Carro Aplicativo' | 'N/A' | null;
+export type TransportType = 'Carro Alugado' | 'Carro Próprio' | 'Táxi' | 'Carro Aplicativo' | 'Outros' | 'N/A' | null;
 export type RentalCompany = 'Localiza' | 'Movida' | 'Outro';
 export type PaymentMethod = 'Faturado' | 'N/A' | 'PIX' | 'Balcão' | null;
 export type AccommodationType = 'Hotel' | 'N/A' | null;
@@ -170,6 +170,8 @@ export interface LogisticaLocomocao {
   rentalCheckIn?: string;
   rentalCheckOut?: string;
   receiptUrls?: string[] | null;
+  // Usado quando transportType === 'Outros'; check-in/check-out reaproveitam rentalCheckIn/rentalCheckOut
+  otherTransportDescription?: string;
 }
 
 export interface LogisticaHospedagem {

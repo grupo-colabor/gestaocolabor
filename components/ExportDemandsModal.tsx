@@ -14,6 +14,7 @@ import {
 import { Demand, Company, Training, Region, Instructor, InstructorAllocation } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { demandIntersectsRange } from '../domain/demandDays';
+import { fetchLogisticBlocksByDemandIds, LogisticBlockRow } from '../services/logistics';
 
 /* ========== STATUS STYLING (idêntico ao Measurement.tsx) ========== */
 const STATUS_STYLING: Record<string, string> = {
@@ -193,6 +194,52 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
       return !isNaN(hour) && hour >= 18;
     };
 
+    // Bloco primário (block_order 0) de LOCOMOÇÃO de cada demanda exportada (1 query em lote)
+    let locomocaoPorDemanda = new Map<string, LogisticBlockRow>();
+    try {
+      const blocks = await fetchLogisticBlocksByDemandIds(toExport.map(d => d.id));
+      blocks
+        .filter(b => b.block_type === 'LOCOMOCAO' && b.block_order === 0)
+        .forEach(b => locomocaoPorDemanda.set(b.demand_id, b));
+    } catch (err) {
+      console.error('Erro ao buscar locomoção para export:', err);
+    }
+
+    const dbTransportToLabel = (mode?: string | null): string => {
+      if (mode === 'CARRO_ALUGADO') return 'Carro Alugado';
+      if (mode === 'CARRO_PROPRIO') return 'Carro Próprio';
+      if (mode === 'TAXI') return 'Táxi';
+      if (mode === 'CARRO_APLICATIVO') return 'Carro Aplicativo';
+      if (mode === 'OUTROS') return 'Outros';
+      if (mode === 'NAO_NECESSARIO' || mode === 'NA') return 'N/A';
+      return '—';
+    };
+
+    const getLocomocaoMeio = (block?: LogisticBlockRow): string => {
+      if (!block) return '—';
+      const label = dbTransportToLabel(block.transport_mode);
+      if (block.transport_mode === 'OUTROS' && block.transport_other_description) {
+        return `Outros — ${block.transport_other_description}`;
+      }
+      return label;
+    };
+
+    // Converte timestamptz (UTC) para "DD/MM/AAAA HH:mm" no fuso local do navegador
+    // (mesma conversão usada em isoToLocalDTL/toIsoFromDateTimeLocalSafe no Demands.tsx)
+    const formatCheckInOut = (iso?: string | null): string => {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '—';
+      const p = (n: number) => String(n).padStart(2, '0');
+      return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    };
+
+    const getNotaFiscalIndicacao = (block?: LogisticBlockRow): string => {
+      const urls = block?.receipt_url;
+      if (!urls?.length) return '—';
+      return urls.map(u => u.split('/').pop()?.replace(/^\d+_/, '') || 'nota fiscal').join(', ');
+    };
+
     // Definição das colunas
     // Nova ordem: ID | ID Cliente | Empresa | Treinamento | Local do Treinamento | Região | Data Início | Horário | Data Fim | ...
     worksheet.columns = [
@@ -213,6 +260,10 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
       { header: 'Status',                key: 'status',           width: 16 },
       { header: 'Modalidade',            key: 'modalidade',       width: 16 },
       { header: 'Corredor',              key: 'corredor',         width: 18 },
+      { header: 'Meio de Transporte (Locomoção)', key: 'locomocaoMeio',     width: 28 },
+      { header: 'Check-in Locomoção',    key: 'locomocaoCheckIn',  width: 18 },
+      { header: 'Check-out Locomoção',   key: 'locomocaoCheckOut', width: 18 },
+      { header: 'Nota Fiscal Locomoção', key: 'locomocaoNotaFiscal', width: 30 },
       { header: 'Aprovador',             key: 'aprovador',              width: 20 },
       { header: 'Analista',              key: 'analista',               width: 18 },
       { header: 'Motivo do Cancelamento', key: 'motivoCancelamento',    width: 26 },
@@ -227,6 +278,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
 
     // Adiciona as linhas de dados
     toExport.forEach(d => {
+      const locomocaoBlock = locomocaoPorDemanda.get(d.id);
       const row = worksheet.addRow({
         id:              d.id || '',
         clientDemandId:  d.clientDemandId || '',
@@ -247,6 +299,10 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
         status:          getCalculatedStatus(d).replace('_', ' '),
         modalidade:      d.modality || '',
         corredor:        d.corredor || '',
+        locomocaoMeio:        getLocomocaoMeio(locomocaoBlock),
+        locomocaoCheckIn:     formatCheckInOut(locomocaoBlock?.rental_check_in),
+        locomocaoCheckOut:    formatCheckInOut(locomocaoBlock?.rental_check_out),
+        locomocaoNotaFiscal:  getNotaFiscalIndicacao(locomocaoBlock),
         aprovador:            d.approver || '',
         analista:             d.analyst || '',
         motivoCancelamento:   d.status === 'CANCELADA' ? (d.cancelReason || '—') : '',
@@ -265,7 +321,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
     // AutoFilter cobrindo todas as colunas (20) e todas as linhas com dados
     worksheet.autoFilter = {
       from: { row: 1, column: 1 },
-      to:   { row: toExport.length + 1, column: 21 },
+      to:   { row: toExport.length + 1, column: 25 },
     };
 
     // Gera o arquivo e faz o download

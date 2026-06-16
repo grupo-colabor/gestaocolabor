@@ -201,6 +201,23 @@ export async function fetchLogisticBlocksByDemandId(demandId: string): Promise<L
 }
 
 /**
+ * Busca os blocos de logística de várias demandas de uma vez (1 query).
+ * Usado pelo export Excel para evitar N+1 fetches.
+ */
+export async function fetchLogisticBlocksByDemandIds(demandIds: string[]): Promise<LogisticBlockRow[]> {
+  if (demandIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from('logistic_blocks')
+    .select('*')
+    .in('demand_id', demandIds)
+    .order('block_type', { ascending: true })
+    .order('block_order', { ascending: true });
+
+  if (error) throw error;
+  return (data || []) as LogisticBlockRow[];
+}
+
+/**
  * Substitui todos os blocos da demanda: exclui os antigos e insere os novos.
  * Usa delete + insert para garantir que blocos removidos pelo usuário sejam apagados.
  */

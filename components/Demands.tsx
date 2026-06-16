@@ -1910,8 +1910,6 @@ const handleSave = async () => {
         has_hotel: hasHotelFlag,
 
         // material continua manual no controle
-        has_material: false,
-
         overall_status: 'PENDENTE',
       });
     } catch (e) {

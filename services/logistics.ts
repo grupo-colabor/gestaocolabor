@@ -131,11 +131,10 @@ export async function upsertLogisticByDemandId(
     hotel_payment: emptyToNull((patch as any)?.hotel_payment),
 
     // ===== defaults seguros =====
+    // has_car/has_hotel são derivados da própria demanda, então é correto
+    // recalculá-los a cada save.
     has_hotel: (patch as any)?.has_hotel ?? false,
     has_car: (patch as any)?.has_car ?? false,
-    has_material: (patch as any)?.has_material ?? false,
-    has_release_pdf: (patch as any)?.has_release_pdf ?? false,
-    has_class_list_pdf: (patch as any)?.has_class_list_pdf ?? false,
 
     overall_status: (patch as any)?.overall_status || 'PENDENTE',
 
@@ -143,6 +142,14 @@ export async function upsertLogisticByDemandId(
     // se NÃO tiver, ajuda a manter atualizado
     updated_at: new Date().toISOString()
   };
+
+  // has_material / has_release_pdf / has_class_list_pdf têm seus próprios
+  // caminhos de escrita (toggle manual e syncLogisticsControlFromDb). Só entram
+  // no payload se explicitamente passados, para que o UPSERT (ON CONFLICT) não
+  // sobrescreva o valor já existente no banco a cada save da demanda.
+  if ((patch as any)?.has_material !== undefined) payload.has_material = (patch as any).has_material;
+  if ((patch as any)?.has_release_pdf !== undefined) payload.has_release_pdf = (patch as any).has_release_pdf;
+  if ((patch as any)?.has_class_list_pdf !== undefined) payload.has_class_list_pdf = (patch as any).has_class_list_pdf;
 
   const { data, error } = await supabase
     .from('logistic_allocations')

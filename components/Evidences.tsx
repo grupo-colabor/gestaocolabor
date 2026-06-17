@@ -171,8 +171,14 @@ const getEvidenceAutoStatus = (
 
         return true;
       })
-      .sort((a, b) => a.startDate.localeCompare(b.startDate));
-  }, [demands, filterId, startDateFilter, endDateFilter, filterCompanyId, filterTrainingId, filterInstructorId, filterLocal, instructorAllocations]);
+      .sort((a, b) => {
+        const statusOrder: Record<string, number> = { PENDENTE: 0, AGUARDANDO: 1, COMPLETA: 2 };
+        const sa = getEvidenceAutoStatus(a.id);
+        const sb = getEvidenceAutoStatus(b.id);
+        if (sa !== sb) return statusOrder[sa] - statusOrder[sb];
+        return b.endDate.localeCompare(a.endDate);
+      });
+  }, [demands, filterId, startDateFilter, endDateFilter, filterCompanyId, filterTrainingId, filterInstructorId, filterLocal, instructorAllocations, evidenceStore, trainings]);
 
   const {
     currentPage: evidPage,

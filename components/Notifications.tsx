@@ -269,6 +269,9 @@ const Notifications: React.FC = () => {
             {getTrainingName(d.trainingId)}
           </p>
           <p className="text-[9px] font-bold text-slate-400 uppercase truncate">{getCompanyName(d.companyId)}</p>
+          {d.corredor && d.corredor !== 'N/A' && (
+            <p className="text-[9px] font-bold text-slate-400 uppercase truncate">{d.corredor}</p>
+          )}
           <p className="text-[9px] font-bold text-slate-400 tabular-nums">{formatPeriod(d.startDate, d.endDate)}</p>
         </div>
       </div>

@@ -250,6 +250,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
       { header: 'Carga Horária',         key: 'cargaHoraria',     width: 14 },
       { header: 'Local do Treinamento',  key: 'trainingLocal',    width: 28 },
       { header: 'Região',                key: 'regiao',           width: 18 },
+      { header: 'Estado',                key: 'estado',           width: 12 },
       { header: 'Data Início',           key: 'dataInicio',       width: 14 },
       { header: 'Horário Início',          key: 'horarioInicio',    width: 10 },
       { header: 'Horário Fim',            key: 'horarioFim',       width: 10 },
@@ -287,6 +288,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
         cargaHoraria:    getTrainingHours(d.trainingId),
         trainingLocal:   d.trainingLocal || '',
         regiao:          getRegionName(d.regionId),
+        estado:          d.demandState || '',
         dataInicio:      formatDate(d.startDate),
         horarioInicio:   getHorario(d.startDate),
         horarioFim:      getHorario(d.endDate),
@@ -318,10 +320,10 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
       }
     });
 
-    // AutoFilter cobrindo todas as colunas (20) e todas as linhas com dados
+    // AutoFilter cobrindo todas as colunas (26) e todas as linhas com dados
     worksheet.autoFilter = {
       from: { row: 1, column: 1 },
-      to:   { row: toExport.length + 1, column: 25 },
+      to:   { row: toExport.length + 1, column: 26 },
     };
 
     // Gera o arquivo e faz o download

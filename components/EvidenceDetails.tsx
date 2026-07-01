@@ -47,7 +47,7 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
   onSaveNotes
 }) => {
 
-  const { setNotification, instructors } = useApp();
+  const { setNotification, instructors, instructorAllocations } = useApp();
 
   // ✅ safeData DENTRO do componente
   const safeData: EvidenceData = data ?? {
@@ -340,8 +340,25 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
     ? hasAttendance && hasCertificates
     : hasAttendance && hasCertificates && hasPhotos;
 
-  const instructorName =
-    instructors.find(i => i.id === demand.instructorId)?.name || 'Instrutor não definido';
+  // Todos os instrutores da demanda, deduplicados e ordenados por startDate (mesma lógica de Evidences.tsx / Demands.tsx)
+  const instructorNames = React.useMemo(() => {
+    const allocs = instructorAllocations
+      .filter(a => a.demandId === demand.id && a.instructorId)
+      .sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
+
+    const seen = new Set<string>();
+    const uniqueIds: string[] = [];
+    for (const a of allocs) {
+      if (!seen.has(a.instructorId!)) {
+        seen.add(a.instructorId!);
+        uniqueIds.push(a.instructorId!);
+      }
+    }
+
+    const ids = uniqueIds.length > 0 ? uniqueIds : (demand.instructorId ? [demand.instructorId] : []);
+    if (ids.length === 0) return ['Instrutor não definido'];
+    return ids.map(id => instructors.find(i => i.id === id)?.name || 'Instrutor não definido');
+  }, [demand.id, demand.instructorId, instructorAllocations, instructors]);
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
@@ -403,9 +420,13 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
 
           <div className="space-y-1">
             <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Instrutor</span>
-            <div className="flex items-center gap-2">
-              <User size={14} className="text-slate-300" />
-              <p className="text-sm font-bold text-slate-700">{instructorName}</p>
+            <div className="flex flex-col gap-1">
+              {instructorNames.map((name, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <User size={14} className="text-slate-300" />
+                  <p className="text-sm font-bold text-slate-700">{name}</p>
+                </div>
+              ))}
             </div>
           </div>
 

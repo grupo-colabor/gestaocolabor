@@ -51,12 +51,42 @@ const Evidences: React.FC = () => {
 
   const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
   const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
+  const getInstructorNameById = (id?: string) => instructors.find(i => i.id === id)?.name || '—';
 
-  const getInstructorName = (demand: Demand): string => {
-    const instructorId = demand.instructorId
-      || instructorAllocations.find(a => a.demandId === demand.id)?.instructorId;
-    if (!instructorId) return '—';
-    return instructors.find(i => i.id === instructorId)?.name || '—';
+  // Todos os instrutores por demanda, deduplicados e ordenados por startDate (mesma lógica de Demandas)
+  const allInstructorsByDemandId = useMemo(() => {
+    const map: Record<string, string[]> = {};
+
+    for (const d of demands) {
+      const allocs = instructorAllocations
+        .filter(a => a.demandId === d.id && a.instructorId)
+        .sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
+
+      const seen = new Set<string>();
+      const uniqueIds: string[] = [];
+      for (const a of allocs) {
+        if (!seen.has(a.instructorId!)) {
+          seen.add(a.instructorId!);
+          uniqueIds.push(a.instructorId!);
+        }
+      }
+
+      if (uniqueIds.length > 0) {
+        map[d.id] = uniqueIds;
+      } else if (d.instructorId) {
+        map[d.id] = [d.instructorId];
+      } else {
+        map[d.id] = [];
+      }
+    }
+
+    return map;
+  }, [demands, instructorAllocations]);
+
+  const getInstructorNames = (demand: Demand): string[] => {
+    const ids = allInstructorsByDemandId[demand.id] ?? [];
+    if (ids.length === 0) return ['—'];
+    return ids.map(getInstructorNameById);
   };
 
   const formatDateTime = (dateStr?: string) => {
@@ -388,36 +418,40 @@ const getEvidenceAutoStatus = (
                 : 'AGUARDANDO';
 
                 return (
-                  <tr key={demand.id} className="hover:bg-slate-50/30 transition-colors text-xs text-slate-600">
-                    <td className="p-6">
+                  <tr key={demand.id} className="hover:bg-slate-50/30 transition-colors text-xs text-slate-600 align-middle">
+                    <td className="p-6 align-middle">
                       <span className="font-mono text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded-lg">#{demand.id}</span>
                     </td>
-                    <td className="p-6">
+                    <td className="p-6 align-middle">
                       <div className="flex items-center gap-2">
                         <Building2 size={14} className="text-slate-300" />
                         <span className="font-bold text-slate-700">{getCompanyName(demand.companyId)}</span>
                       </div>
                     </td>
-                    <td className="p-6 max-w-xs">
+                    <td className="p-6 max-w-xs align-middle">
                       <div className="flex items-start gap-2">
                         <GraduationCap size={14} className="text-slate-300 mt-0.5 shrink-0" />
                         <span className="font-medium text-slate-600 leading-relaxed">{getTrainingName(demand.trainingId)}</span>
                       </div>
                     </td>
-                    <td className="p-6">
-                      <span className="font-medium text-slate-600">{getInstructorName(demand)}</span>
+                    <td className="p-6 align-middle">
+                      <div className="flex flex-col gap-0.5">
+                        {getInstructorNames(demand).map((name, idx) => (
+                          <span key={idx} className="font-medium text-slate-600">{name}</span>
+                        ))}
+                      </div>
                     </td>
-                    <td className="p-6 text-center whitespace-nowrap">
+                    <td className="p-6 text-center whitespace-nowrap align-middle">
                       <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-1 rounded-lg border border-slate-200">
                         {formatDateTime(demand.startDate)} <span className="text-slate-400 mx-1">→</span> {formatDateTime(demand.endDate)}
                       </span>
                     </td>
-                    <td className="p-6 text-center">
+                    <td className="p-6 text-center align-middle">
                       <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${statusColor(currentStatus)} whitespace-nowrap`}>
                         {currentStatus.replace('_', ' ')}
                       </span>
                     </td>
-                    <td className="p-6 text-center">
+                    <td className="p-6 text-center align-middle">
                       <div className="flex justify-center">
                         {evidStatus === 'AGUARDANDO' ? (
                           <div className="flex items-center gap-1.5 px-3 py-1 bg-slate-50 text-slate-500 rounded-full border border-slate-200">
@@ -439,8 +473,8 @@ const getEvidenceAutoStatus = (
                         )}
                       </div>
                     </td>
-                    <td className="p-6 text-right">
-                      <button 
+                    <td className="p-6 text-right align-middle">
+                      <button
                         className="px-4 py-2 bg-slate-900 hover:bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 ml-auto shadow-sm"
                         onClick={() => handleOpenDetails(demand.id)}
                       >

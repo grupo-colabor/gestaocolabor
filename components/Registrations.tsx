@@ -54,6 +54,7 @@ import {
 import { useAuth, type Role } from '../contexts/AuthContext';
 import { fetchMyProfile, updateMyProfile, fetchAllProfiles, type ProfileData } from '../services/profiles';
 import { createUser } from '../services/users';
+import { formatCPF, unformatCPF, isValidCPF } from '../utils/cpf';
 
 type Tab = 'companies' | 'trainings' | 'instructors' | 'bases' | 'settings' | 'profile' | 'users';
 
@@ -147,6 +148,7 @@ const Registrations: React.FC = () => {
   const [instructorFormData, setInstructorFormData] = useState<{
     name: string;
     email: string;
+    cpf: string;
     status: Status;
     regionIds: string[];
     skills: InstructorSkill[];
@@ -157,6 +159,7 @@ const Registrations: React.FC = () => {
   }>({
     name: '',
     email: '',
+    cpf: '',
     status: 'ATIVO',
     regionIds: [],
     skills: [],
@@ -452,6 +455,7 @@ const Registrations: React.FC = () => {
 
     const mainCols = [
       { header: 'Nome',                   width: 36 },
+      { header: 'CPF',                     width: 18 },
       { header: 'Email',                  width: 34 },
       { header: 'Função',                 width: 20 },
       { header: 'Status',                 width: 14 },
@@ -480,6 +484,7 @@ const Registrations: React.FC = () => {
 
       const row = ws.addRow([
         i.name,
+        i.cpf ? formatCPF(i.cpf) : '-',
         i.email || '-',
         i.agendaRole || '-',
         i.status,
@@ -488,8 +493,8 @@ const Registrations: React.FC = () => {
         trainingsSummary || '-',
         i.operationalNotes || '-',
       ]);
-      row.getCell(7).alignment = { wrapText: true, vertical: 'top' };
       row.getCell(8).alignment = { wrapText: true, vertical: 'top' };
+      row.getCell(9).alignment = { wrapText: true, vertical: 'top' };
     });
 
     // ── Aba 2: Treinamentos por Instrutor ───────────────────────────────────
@@ -621,7 +626,7 @@ const Registrations: React.FC = () => {
   // --- Instructor Handlers ---
   const handleOpenInstructorCreateModal = () => {
     setEditingInstructorId(null);
-    setInstructorFormData({ name: '', email: '', status: 'ATIVO', regionIds: [], skills: [], observations: '', residenceLocation: '', agendaRole: 'Instrutor', operationalNotes: '' });
+    setInstructorFormData({ name: '', email: '', cpf: '', status: 'ATIVO', regionIds: [], skills: [], observations: '', residenceLocation: '', agendaRole: 'Instrutor', operationalNotes: '' });
     setTempSkill({ trainingId: '', level: 3 });
 
     // ✅ garante que sempre abre “destravado”
@@ -635,6 +640,7 @@ const Registrations: React.FC = () => {
     setInstructorFormData({
       name: instructor.name,
       email: (instructor as any).email || '',
+      cpf: instructor.cpf ? formatCPF(instructor.cpf) : '',
       status: instructor.status,
       regionIds: [...instructor.regionIds],
       skills: [...instructor.skills.map(s => ({ ...s }))],
@@ -734,7 +740,13 @@ const Registrations: React.FC = () => {
       return;
     }
 
+    if (instructorFormData.cpf.trim() && !isValidCPF(instructorFormData.cpf)) {
+      alert('CPF inválido. Verifique os números digitados.');
+      return;
+    }
+
     setIsInstructorSubmitting(true);
+    const cpfDigits = unformatCPF(instructorFormData.cpf) || null;
 
     // 1) MOCK (sem supabase)
     if (AUTH_MODE !== 'supabase') {
@@ -747,6 +759,7 @@ const Registrations: React.FC = () => {
           skills: instructorFormData.skills,
           observations: instructorFormData.observations,
           agendaRole: instructorFormData.agendaRole,
+          cpf: cpfDigits || undefined,
         };
         (fallback as any).email = instructorFormData.email;
 
@@ -775,6 +788,7 @@ const Registrations: React.FC = () => {
             .update({
               full_name: instructorFormData.name,
               email: instructorFormData.email || null,
+              cpf: cpfDigits,
               region: dbRegion,
               is_active: isActive,
               residence_location: instructorFormData.residenceLocation || null,
@@ -799,6 +813,7 @@ const Registrations: React.FC = () => {
             .insert({
               full_name: instructorFormData.name,
               email: instructorFormData.email || null,
+              cpf: cpfDigits,
               region: dbRegion,
               is_active: isActive,
               residence_location: instructorFormData.residenceLocation || null,
@@ -857,7 +872,11 @@ const Registrations: React.FC = () => {
       setIsInstructorModalOpen(false);
     } catch (e: any) {
       console.error('[handleSaveInstructor] ERROR', e);
-      alert(`Erro ao salvar instrutor: ${e?.message || 'erro desconhecido'}`);
+      if (e?.code === '23505' && e?.message?.includes('cpf')) {
+        alert('Já existe um instrutor cadastrado com este CPF.');
+      } else {
+        alert(`Erro ao salvar instrutor: ${e?.message || 'erro desconhecido'}`);
+      }
     } finally {
       setIsInstructorSubmitting(false);
     }
@@ -2166,7 +2185,7 @@ const handleRemoveBaseItem = async (item: string) => {
               <section>
                 <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><User size={14} /> Identificação Básica</h3>
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-                  <div className="md:col-span-6">
+                  <div className="md:col-span-4">
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nome Completo *</label>
                     <input
                       type="text"
@@ -2174,6 +2193,19 @@ const handleRemoveBaseItem = async (item: string) => {
                       value={instructorFormData.name}
                       onChange={(e) => setInstructorFormData({ ...instructorFormData, name: e.target.value })}
                       placeholder="Ex: Carlos Augusto Silva"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">CPF</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      value={instructorFormData.cpf}
+                      onChange={(e) => setInstructorFormData({ ...instructorFormData, cpf: formatCPF(e.target.value) })}
+                      placeholder="000.000.000-00"
+                      maxLength={14}
                     />
                   </div>
 

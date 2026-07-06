@@ -10,6 +10,7 @@ export type InstructorRow = {
   id: string;
   full_name: string;
   email: string | null;
+  cpf: string | null;
   region: string | null;
   is_active: boolean | null;
   residence_location: string | null;
@@ -30,6 +31,7 @@ export async function fetchInstructors(): Promise<InstructorRow[]> {
     id,
     full_name,
     email,
+    cpf,
     region,
     is_active,
     residence_location,

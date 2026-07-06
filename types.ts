@@ -120,7 +120,8 @@ export interface Instructor {
   skills: InstructorSkill[];
   observations?: string;
   email?: string;
-  residenceLocation?: string;     
+  cpf?: string;
+  residenceLocation?: string;
   currentLocation?: string;
   agendaRole?: string;
   operationalNotes?: string;

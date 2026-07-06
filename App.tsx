@@ -679,6 +679,7 @@ const syncEvidencesFromDb = useCallback(async () => {
         id: row.id,
         name: row.full_name,
         email: row.email ?? undefined,
+        cpf: row.cpf ?? undefined,
         status: row.is_active === true ? 'ATIVO' : 'INATIVO',
         regionIds,
         skills: (skillsRows || []).map(s => ({

@@ -58,20 +58,33 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
   };
   const getRegionName = (id: string) => regions.find(r => r.id === id)?.name || 'N/A';
 
-  const getInstructorName = (demand: Demand) => {
-    // Primeiro tenta via instructorAllocations
-    const allocs = instructorAllocations.filter(a => a.demandId === demand.id);
-    if (allocs.length > 0) {
-      const sorted = [...allocs].sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
-      const principal = instructors.find(i => i.id === sorted[0].instructorId);
-      if (principal) return principal.name;
-    }
-    // Fallback para instructorId direto
-    if (demand.instructorId) {
+  // Retorna os nomes de TODOS os instrutores alocados à demanda (principal + adicionais),
+  // na ordem de início de cada alocação, sem repetição.
+  const getAllInstructorNames = (demand: Demand): string[] => {
+    const allocs = instructorAllocations.filter(a => a.demandId === demand.id && a.instructorId);
+    const sorted = [...allocs].sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
+
+    const seen = new Set<string>();
+    const names: string[] = [];
+    sorted.forEach(a => {
+      if (seen.has(a.instructorId)) return;
+      seen.add(a.instructorId);
+      const inst = instructors.find(i => i.id === a.instructorId);
+      if (inst) names.push(inst.name);
+    });
+
+    // Fallback para instructorId direto quando não há alocações
+    if (names.length === 0 && demand.instructorId) {
       const inst = instructors.find(i => i.id === demand.instructorId);
-      if (inst) return inst.name;
+      if (inst) names.push(inst.name);
     }
-    return 'Não Alocado';
+
+    return names;
+  };
+
+  const getInstructorName = (demand: Demand) => {
+    const names = getAllInstructorNames(demand);
+    return names.length > 0 ? names[0] : 'Não Alocado';
   };
 
   const getCalculatedStatus = (d: Demand) => calculateDemandStatus({
@@ -297,7 +310,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
         diasEspecificos: d.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(d.specificDates)
                            ? d.specificDates.sort((a, b) => a.data.localeCompare(b.data)).map(e => `${e.data} ${e.horarioInicio}-${e.horarioFim}`).join(', ')
                            : '',
-        instrutor:       getInstructorName(d),
+        instrutor:       getAllInstructorNames(d).join('\n') || 'Não Alocado',
         status:          getCalculatedStatus(d).replace('_', ' '),
         modalidade:      d.modality || '',
         corredor:        d.corredor || '',
@@ -310,6 +323,13 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
         motivoCancelamento:   d.status === 'CANCELADA' ? (d.cancelReason || '—') : '',
         observacoes:          d.observations || '',
       });
+
+      // Quebra de linha visível quando há mais de um instrutor na célula
+      const instrutorNames = getAllInstructorNames(d);
+      if (instrutorNames.length > 1) {
+        row.getCell('instrutor').alignment = { wrapText: true, vertical: 'top' };
+        row.height = Math.max(row.height || 15, instrutorNames.length * 15);
+      }
 
       // Demandas noturnas (≥ 18:00): negrito + fundo laranja-claro em toda a linha
       if (isNocturnal(d.startDate)) {

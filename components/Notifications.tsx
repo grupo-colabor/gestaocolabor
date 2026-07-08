@@ -390,7 +390,7 @@ const Notifications: React.FC = () => {
         renderItem={(d) => (
           <DemandRow
             d={d}
-            badge={new Date(d.startDate).toLocaleDateString('pt-BR')}
+            badge="PENDENTE"
             badgeCls="bg-orange-100 text-orange-600"
             targetView="demands"
           />
@@ -413,7 +413,7 @@ const Notifications: React.FC = () => {
         renderItem={(d) => (
           <DemandRow
             d={d}
-            badge={`Fim: ${new Date(d.endDate).toLocaleDateString('pt-BR')}`}
+            badge="PENDENTE"
             badgeCls="bg-blue-100 text-blue-600"
             targetView="measurement"
           />

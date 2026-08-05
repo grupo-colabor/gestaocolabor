@@ -71,17 +71,6 @@ function emptyToNull(v: any) {
   return v;
 }
 
-
-export async function fetchLogisticAllocations(): Promise<LogisticAllocationRow[]> {
-  const { data, error } = await supabase
-    .from('logistic_allocations')
-    .select(SELECT_FIELDS)
-    .order('created_at', { ascending: false });
-
-  if (error) throw error;
-  return (data || []) as LogisticAllocationRow[];
-}
-
 export async function fetchLogisticByDemandId(demandId: string) {
   const { data, error } = await supabase
     .from('logistic_allocations')

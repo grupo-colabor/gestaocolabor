@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { deleteDemandDocumentsByDemandId } from './demandDocuments';
+import { fetchAllPaginated } from './pagination';
 
 export type DemandRow = {
   id: string; // "DEM-6301"
@@ -44,30 +45,35 @@ export type DemandRow = {
 
 /**
  * Lista demandas (ordenadas por number desc)
+ *
+ * Pagina via fetchAllPaginated: select() sem .range() é cortado
+ * silenciosamente em ~1000 linhas pelo PostgREST/Supabase — com 1008
+ * linhas em `demands`, 8 demandas já estavam ficando de fora do app.
  */
 export async function fetchDemands(): Promise<DemandRow[]> {
-  const { data, error } = await supabase
-    .from('demands')
-    .select(`
-      id, number, company_id, training_id, status, modality,
-      date_mode, specific_dates,
-      start_date, end_date,
-      practice_start_date, practice_end_date,
-      region_id, training_local,
-      client_demand_id,
-      instructor_id,
-      requester, observations, approver, analyst, matriculador,
-      created_at, updated_at, corredor, demand_state,
-      confirmation_status, cancel_reason
-    `)
-    .order('number', { ascending: false });
-
-  if (error) {
+  try {
+    return await fetchAllPaginated<DemandRow>((from, to) =>
+      supabase
+        .from('demands')
+        .select(`
+          id, number, company_id, training_id, status, modality,
+          date_mode, specific_dates,
+          start_date, end_date,
+          practice_start_date, practice_end_date,
+          region_id, training_local,
+          client_demand_id,
+          instructor_id,
+          requester, observations, approver, analyst, matriculador,
+          created_at, updated_at, corredor, demand_state,
+          confirmation_status, cancel_reason
+        `)
+        .order('number', { ascending: false })
+        .range(from, to)
+    );
+  } catch (error) {
     console.error('fetchDemands error:', error);
     throw error;
   }
-
-  return (data || []) as DemandRow[];
 }
 
 /**

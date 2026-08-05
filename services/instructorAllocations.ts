@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { fetchAllPaginated } from './pagination';
 
 // Row do banco
 export type InstructorAllocationRow = {
@@ -11,14 +12,17 @@ export type InstructorAllocationRow = {
   updated_at?: string;
 };
 
+// Pagina via fetchAllPaginated: select() sem .range() é cortado
+// silenciosamente em ~1000 linhas pelo PostgREST/Supabase — com 932
+// linhas hoje, instructor_allocations está prestes a estourar o corte.
 export async function fetchInstructorAllocations() {
-  const { data, error } = await supabase
-    .from('instructor_allocations')
-    .select('*')
-    .order('start_date', { ascending: true });
-
-  if (error) throw error;
-  return (data ?? []) as InstructorAllocationRow[];
+  return fetchAllPaginated<InstructorAllocationRow>((from, to) =>
+    supabase
+      .from('instructor_allocations')
+      .select('*')
+      .order('start_date', { ascending: true })
+      .range(from, to)
+  );
 }
 
 // Upsert de 1 alocação

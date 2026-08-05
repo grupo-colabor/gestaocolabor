@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { fetchAllPaginated } from './pagination';
 
 export interface CompanionAllocationDb {
   id: string;
@@ -11,14 +12,19 @@ export interface CompanionAllocationDb {
 
 /**
  * Buscar todos os acompanhantes
+ *
+ * Pagina via fetchAllPaginated: select() sem .range() é cortado
+ * silenciosamente em ~1000 linhas pelo PostgREST/Supabase. Não havia
+ * .order() aqui — adicionado por 'id' (PK) para a paginação ser estável.
  */
 export async function fetchCompanionAllocations() {
-  const { data, error } = await supabase
-    .from('companion_allocations')
-    .select('*');
-
-  if (error) throw error;
-  return data as CompanionAllocationDb[];
+  return fetchAllPaginated<CompanionAllocationDb>((from, to) =>
+    supabase
+      .from('companion_allocations')
+      .select('*')
+      .order('id', { ascending: true })
+      .range(from, to)
+  );
 }
 
 /**

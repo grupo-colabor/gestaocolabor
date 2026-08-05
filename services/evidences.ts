@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { fetchAllPaginated } from './pagination';
 
 export type EvidenceRow = {
   id: string;                // "EVI-DEM-6301"
@@ -28,15 +29,18 @@ const SELECT_FIELDS = `
 
 /**
  * 🔹 Buscar TODAS as evidências
+ *
+ * Pagina via fetchAllPaginated: select() sem .range() é cortado
+ * silenciosamente em ~1000 linhas pelo PostgREST/Supabase.
  */
 export async function fetchEvidences(): Promise<EvidenceRow[]> {
-  const { data, error } = await supabase
-    .from('evidences')
-    .select(SELECT_FIELDS)
-    .order('created_at', { ascending: false });
-
-  if (error) throw error;
-  return (data || []) as EvidenceRow[];
+  return fetchAllPaginated<EvidenceRow>((from, to) =>
+    supabase
+      .from('evidences')
+      .select(SELECT_FIELDS)
+      .order('created_at', { ascending: false })
+      .range(from, to)
+  );
 }
 
 /**

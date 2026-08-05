@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { fetchAllPaginated } from './pagination';
 
 export type MeasurementRow = {
   id: string; // "MEA-DEM-6301"
@@ -17,14 +18,16 @@ const SELECT_FIELDS = `
   updated_at, created_at
 `;
 
+// Pagina via fetchAllPaginated: select() sem .range() é cortado
+// silenciosamente em ~1000 linhas pelo PostgREST/Supabase.
 export async function fetchMeasurements(): Promise<MeasurementRow[]> {
-  const { data, error } = await supabase
-    .from('measurements')
-    .select(SELECT_FIELDS)
-    .order('created_at', { ascending: false });
-
-  if (error) throw error;
-  return (data || []) as MeasurementRow[];
+  return fetchAllPaginated<MeasurementRow>((from, to) =>
+    supabase
+      .from('measurements')
+      .select(SELECT_FIELDS)
+      .order('created_at', { ascending: false })
+      .range(from, to)
+  );
 }
 
 export async function fetchMeasurementByDemandId(demandId: string) {

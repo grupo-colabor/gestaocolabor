@@ -1,6 +1,7 @@
 // services/agendaItems.ts
 import { supabase } from '../lib/supabase';
 import type { AgendaItem, AgendaType } from '../types';
+import { fetchAllPaginated } from './pagination';
 
 export type AgendaItemRow = {
   id: string; // texto (AG-...)
@@ -67,19 +68,23 @@ export function mapAgendaItemToDb(
 
 /**
  * Lista registros da agenda (ordenado por início)
+ *
+ * Pagina via fetchAllPaginated: select() sem .range() é cortado
+ * silenciosamente em ~1000 linhas pelo PostgREST/Supabase.
  */
 export async function fetchAgendaItems(): Promise<AgendaItemRow[]> {
-  const { data, error } = await supabase
-    .from('agenda_items')
-    .select(SELECT_FIELDS)
-    .order('start_date', { ascending: true });
-
-  if (error) {
+  try {
+    return await fetchAllPaginated<AgendaItemRow>((from, to) =>
+      supabase
+        .from('agenda_items')
+        .select(SELECT_FIELDS)
+        .order('start_date', { ascending: true })
+        .range(from, to)
+    );
+  } catch (error) {
     console.error('fetchAgendaItems error:', error);
     throw error;
   }
-
-  return (data || []) as AgendaItemRow[];
 }
 
 /**

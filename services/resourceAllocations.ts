@@ -45,9 +45,13 @@ export async function upsertResourceAllocation(
   return data ?? null;
 }
 
-/** 
+/**
  * Remover CTM (Centro de Treinamento Móvel) por demand_id
  * ⚠️ Remove APENAS o CTM, sem afetar outros recursos logísticos
+ *
+ * NÃO endurecido com "throw se 0 linhas": chamado também em fluxos de
+ * desalocação genéricos onde a demanda pode legitimamente não ter CTM
+ * cadastrado — 0 linhas é um resultado válido aqui, não necessariamente RLS.
  */
 export async function deleteResourceAllocationByDemandId(demandId: string) {
   const { error } = await supabase

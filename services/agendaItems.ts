@@ -143,7 +143,10 @@ export async function updateAgendaItemById(
 
 /**
  * DELETE por id
- * ✅ Faz select('id') para confirmar exclusão
+ * ✅ Faz select('id') para confirmar exclusão — e agora RECUSA sucesso
+ * silencioso: RLS sem policy de DELETE casa 0 linhas sem `error` (mesma
+ * classe de bug encontrada em trainings). O caller (App.tsx) já espera
+ * `{ error }` e mostra notificação, então lançar aqui basta.
  */
 export async function deleteAgendaItemById(id: string) {
   const { data, error } = await supabase
@@ -151,6 +154,10 @@ export async function deleteAgendaItemById(id: string) {
     .delete()
     .eq('id', id)
     .select('id');
+
+  if (!error && (!data || data.length === 0)) {
+    return { data, error: new Error('Nenhuma linha excluída (agenda_items) — verifique permissões (RLS).') };
+  }
 
   return { data, error };
 }

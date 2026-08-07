@@ -63,19 +63,27 @@ export async function updateCompanyById(
   id: string,
   payload: Partial<Omit<CompanyRow, "id" | "created_at">>
 ): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("companies")
     .update(payload)
-    .eq("id", id);
+    .eq("id", id)
+    .select("id");
 
   if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error("Nenhuma linha atualizada (companies) — verifique permissões (RLS).");
+  }
 }
 
 export async function deleteCompanyById(id: string): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("companies")
     .delete()
-    .eq("id", id);
+    .eq("id", id)
+    .select("id");
 
   if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error("Nenhuma linha excluída (companies) — verifique permissões (RLS).");
+  }
 }

@@ -31,9 +31,13 @@ export async function upsertLocationAssociation(
 }
 
 export async function deleteLocationAssociation(id: string): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('location_associations')
     .delete()
-    .eq('id', id);
+    .eq('id', id)
+    .select('id');
   if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error('Nenhuma linha excluída (location_associations) — verifique permissões (RLS).');
+  }
 }

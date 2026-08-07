@@ -118,7 +118,20 @@ export async function updateDemandById(
   id: string,
   payload: Partial<DemandRow> | Record<string, any>
 ) {
-  const { error } = await supabase.from('demands').update(payload).eq('id', id);
+  const { data, error } = await supabase
+    .from('demands')
+    .update(payload)
+    .eq('id', id)
+    .select('id');
+
+  // ⚠️ Mesma classe do bug de delete em trainings, aqui em UPDATE: RLS sem
+  // policy (ou policy que não cobre este caso) casa 0 linhas sem `error` —
+  // os dois callers (updateDemand e cancelDemand em App.tsx) só checam
+  // `error`, então o falso-positivo de sucesso ficava só aqui pra pegar.
+  if (!error && (!data || data.length === 0)) {
+    return { error: new Error('Nenhuma linha atualizada (demands) — verifique permissões (RLS).') };
+  }
+
   return { error };
 }
 
@@ -163,6 +176,13 @@ export async function updateDemandDb(id: string, payload: Partial<DemandRow>) {
 }
 
 export async function deleteDemandDb(id: string) {
-  const { error } = await deleteDemandById(id);
+  // Nota: deleteDemandById já faz .select('id') e devolve {data, error}; o
+  // guard de "0 linhas" fica no caller real (App.tsx > deleteDemand), que já
+  // checa data.length === 0 antes de confirmar sucesso. deleteDemandDb é um
+  // alias não usado no app hoje — replicando o mesmo guard aqui por segurança.
+  const { data, error } = await deleteDemandById(id);
   if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error('Nenhuma linha excluída (demands) — verifique permissões (RLS).');
+  }
 }

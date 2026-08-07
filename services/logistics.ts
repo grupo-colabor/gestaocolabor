@@ -216,6 +216,12 @@ export async function fetchLogisticBlocksByDemandIds(demandIds: string[]): Promi
 /**
  * Substitui todos os blocos da demanda: exclui os antigos e insere os novos.
  * Usa delete + insert para garantir que blocos removidos pelo usuário sejam apagados.
+ *
+ * ⚠️ NÃO endurecido com "throw se 0 linhas" no delete: por demand_id, 0 é
+ * legítimo (demanda sem blocos ainda). Mesmo risco do replace de
+ * instructor_allocations — se havia N blocos antigos e RLS bloquear o delete
+ * silenciosamente, o insert duplica em vez de substituir. Acompanhamento
+ * separado, mesmo escopo do bug de trainings.
  */
 export async function upsertLogisticBlocks(
   demandId: string,
@@ -241,10 +247,14 @@ export async function upsertLogisticBlocks(
 }
 
 export async function deleteLogisticBlock(blockId: string): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('logistic_blocks')
     .delete()
-    .eq('id', blockId);
+    .eq('id', blockId)
+    .select('id');
 
   if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error('Nenhuma linha excluída (logistic_blocks) — verifique permissões (RLS).');
+  }
 }

@@ -27,10 +27,17 @@ export async function fetchTrainings(): Promise<TrainingRow[]> {
 }
 
 export async function deleteTrainingById(id: string): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("trainings")
     .delete()
-    .eq("id", id);
+    .eq("id", id)
+    .select("id");
 
   if (error) throw error;
+  // ⚠️ RLS sem policy de DELETE não gera `error` — só casa 0 linhas e responde
+  // "sucesso" vazio. Sem este check o app mostrava "excluído com sucesso" e o
+  // registro voltava no próximo reload (bug real: catálogo de treinamentos).
+  if (!data || data.length === 0) {
+    throw new Error("Nenhuma linha excluída (trainings) — verifique permissões (RLS).");
+  }
 }

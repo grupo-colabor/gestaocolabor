@@ -22,7 +22,9 @@ export async function markDemandDocumentAsNA(
 
   // 2) upsert (se existir, update; se não, insert)
   if (existing?.id) {
-    const { error: e2 } = await supabase
+    // `existing` já confirma que a linha existe (fetch acima) — 0 linhas
+    // atualizadas aqui só pode ser RLS bloqueando, não estado legítimo.
+    const { data: updated, error: e2 } = await supabase
       .from('demand_documents')
       .update({
         is_na: true,
@@ -30,9 +32,13 @@ export async function markDemandDocumentAsNA(
         file_name: null,
         mime_type: null
       })
-      .eq('id', existing.id);
+      .eq('id', existing.id)
+      .select('id');
 
     if (e2) return { error: e2 };
+    if (!updated || updated.length === 0) {
+      return { error: new Error('Nenhuma linha atualizada (demand_documents) — verifique permissões (RLS).') };
+    }
     return { error: null };
   }
 
@@ -229,8 +235,19 @@ export async function deleteDemandDocumentsByDemandId(demandId: string) {
   }
 
   // 3) remove linhas da tabela
-  const { error: dbError } = await supabase.from('demand_documents').delete().eq('demand_id', safeId);
+  // Já sabemos quantos docs existiam (passo 1) — diferente de um delete-por-fk
+  // "cego", aqui dá pra distinguir "0 porque não tinha nada" de "0 porque RLS
+  // bloqueou" sem round-trip extra: se docs.length > 0 e nada voltou no
+  // .select(), é RLS, não estado legítimo.
+  const { data: deleted, error: dbError } = await supabase
+    .from('demand_documents')
+    .delete()
+    .eq('demand_id', safeId)
+    .select('id');
   if (dbError) return { ok: false, error: dbError };
+  if (docs.length > 0 && (!deleted || deleted.length === 0)) {
+    return { ok: false, error: new Error('Nenhuma linha excluída (demand_documents) — verifique permissões (RLS).') };
+  }
 
   return { ok: true };
 }

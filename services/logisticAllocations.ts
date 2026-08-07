@@ -54,6 +54,12 @@ export async function fetchLogisticAllocations(): Promise<LogisticAllocationRow[
 /**
  * Atualiza (patch) uma row por demand_id.
  * ✅ Não cria (upsert) — apenas update.
+ *
+ * ⚠️ Todo caller (LogisticsControl.tsx) só chama isto para demand_id que já
+ * apareceu num fetch anterior de logistic_allocations — a row sempre existe
+ * antes desta chamada. `.maybeSingle()` não lança erro em 0 linhas (ao
+ * contrário de `.single()`), então sem este guard um RLS sem policy de
+ * UPDATE devolvia `null` silencioso — mesma classe do bug de trainings.
  */
 export async function updateLogisticAllocationByDemandId(
   demandId: string,
@@ -71,5 +77,11 @@ export async function updateLogisticAllocationByDemandId(
     throw error;
   }
 
-  return (data || null) as LogisticAllocationRow | null;
+  if (!data) {
+    const err = new Error('Nenhuma linha atualizada (logistic_allocations) — verifique permissões (RLS).');
+    console.error('[logisticAllocations] update error:', err);
+    throw err;
+  }
+
+  return data as LogisticAllocationRow;
 }

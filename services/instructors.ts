@@ -54,10 +54,14 @@ export async function fetchInstructorTrainings(): Promise<InstructorTrainingRow[
 }
 
 export async function deleteInstructorById(id: string): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('instructors')
     .delete()
-    .eq('id', id);
+    .eq('id', id)
+    .select('id');
 
   if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error('Nenhuma linha excluída (instructors) — verifique permissões (RLS).');
+  }
 }

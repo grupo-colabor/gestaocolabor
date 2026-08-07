@@ -164,17 +164,25 @@ export async function updateUserRole(userId: string, role: Role): Promise<void> 
   try {
     if (import.meta.env.DEV) console.log('[profiles] updateUserRole:', userId, role);
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('profiles')
       .update({
         role,
         updated_at: new Date().toISOString()
       })
-      .eq('id', userId);
+      .eq('id', userId)
+      .select('id');
 
     if (error) {
       console.error('[profiles] updateUserRole error:', error);
       throw error;
+    }
+
+    // ⚠️ Troca de role de OUTRO usuário (admin only) — RLS silenciosamente
+    // bloqueando aqui seria pior que os outros casos: mostra sucesso, mas
+    // o usuário continua com o role antigo (risco de permissão desatualizada).
+    if (!data || data.length === 0) {
+      throw new Error('Nenhuma linha atualizada (profiles) — verifique permissões (RLS).');
     }
 
     console.log('[profiles] updateUserRole success');

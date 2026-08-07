@@ -45,10 +45,14 @@ export async function insertCompanionAllocation(payload: Omit<CompanionAllocatio
  * Remover acompanhante
  */
 export async function deleteCompanionAllocationById(id: string) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('companion_allocations')
     .delete()
-    .eq('id', id);
+    .eq('id', id)
+    .select('id');
 
   if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error('Nenhuma linha excluída (companion_allocations) — verifique permissões (RLS).');
+  }
 }

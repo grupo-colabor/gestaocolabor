@@ -7,6 +7,7 @@ export type TrainingRow = {
   category: string | null;
   area_id: string | null;
   hours: number | null;
+  practical_hours: number | null;
   modality: string | null;
   status: string | null;
   description_short: string | null;
@@ -18,7 +19,7 @@ export async function fetchTrainings(): Promise<TrainingRow[]> {
 
   const { data, error } = await supabase
     .from("trainings")
-    .select("id, name, nr, category, area_id, hours, modality, status, description_short, created_at")
+    .select("id, name, nr, category, area_id, hours, practical_hours, modality, status, description_short, created_at")
     .order("name", { ascending: true });
 
   if (error) throw error;

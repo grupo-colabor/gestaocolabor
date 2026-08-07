@@ -96,6 +96,8 @@ export interface Training {
   nr?: string; // Código interno
   category: TrainingCategory;
   hours: number;
+  /** Só relevante para modality HIBRIDO: horas da parte presencial (a única ministrada por instrutor — o restante é EAD). */
+  practicalHours?: number | null;
   modality: Modality;
   status: Status;
   descriptionShort?: string;

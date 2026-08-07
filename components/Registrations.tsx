@@ -2145,6 +2145,23 @@ const handleRemoveBaseItem = async (item: string) => {
                     </select>
                   </div>
 
+                  {trainingFormData.modality === 'HIBRIDO' && (
+                    <div className="md:col-span-6">
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Horas práticas (híbrido)</label>
+                      <input
+                        type="number"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                        value={trainingFormData.practicalHours ?? ''}
+                        onChange={(e) => setTrainingFormData({ ...trainingFormData, practicalHours: e.target.value === '' ? null : Number(e.target.value) })}
+                      />
+                      <p className="text-[11px] text-gray-400 mt-1 leading-snug">
+                        Só a parte presencial é ministrada por instrutor — o restante é EAD, sem instrutor.
+                        Usado no cálculo de "Horas Concluídas" do Dashboard em vez da carga horária total.
+                        Deixe em branco para usar a carga horária total ({trainingFormData.hours || 0}h).
+                      </p>
+                    </div>
+                  )}
+
                   <div className="md:col-span-12">
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Observações / Informações Importantes</label>
                     <textarea className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 h-24 resize-none" value={trainingFormData.descriptionShort || ''} onChange={(e) => setTrainingFormData({ ...trainingFormData, descriptionShort: e.target.value })} placeholder="Ex: Necessita EPI, treinamento prático, avaliação obrigatória..." />

@@ -3207,6 +3207,21 @@ const companionInstructorIds = useMemo(() => {
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Empresa / Cliente *</label><select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={formDemand.companyId} onChange={(e) => setFormDemand({...formDemand, companyId: e.target.value})}><option value="">Selecione...</option>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
                               {isValeSelected && (<div className="bg-blue-50 p-3 rounded-lg border border-blue-100"><label className="block text-xs font-bold text-blue-700 mb-1">ID SAP / Pedido Cliente *</label><input type="text" className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={formDemand.clientDemandId || ''} onChange={(e) => setFormDemand({...formDemand, clientDemandId: e.target.value})} /></div>)}
                               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Treinamento *</label><select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" value={formDemand.trainingId} onChange={(e) => { const t = trainings.find(t => t.id === e.target.value); setFormDemand({...formDemand, trainingId: e.target.value, modality: t?.modality || formDemand.modality}); }}><option value="">Selecione...</option>{trainings.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
+                              {(() => {
+                                const isHibrido = formDemand.modality === 'HIBRIDO' || formDemand.modality === 'HÍBRIDA' || formDemand.modality === 'HÍBRIDO';
+                                if (!isHibrido || !formDemand.trainingId) return null;
+                                const t = trainings.find(t => t.id === formDemand.trainingId);
+                                if (!t || (t.practicalHours != null && t.practicalHours > 0)) return null;
+                                return (
+                                  <div className="md:col-span-2 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2 text-amber-800">
+                                    <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-500" />
+                                    <p className="text-xs leading-relaxed">
+                                      Este treinamento é híbrido sem horas práticas cadastradas — as horas ministradas serão calculadas pela carga total ({t.hours}h).
+                                      Cadastre em <strong>Cadastros → Treinamentos</strong>.
+                                    </p>
+                                  </div>
+                                );
+                              })()}
                               <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
                                   Local do Treinamento {requiresLogistics(formDemand.modality) ? '*' : ''}

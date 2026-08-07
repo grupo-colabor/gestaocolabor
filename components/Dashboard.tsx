@@ -15,6 +15,7 @@ import {
 import { Demand } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { demandIntersectsRange } from '../domain/demandDays';
+import { computeInstructorHours, InstructorHoursEntry } from '../domain/instructorHours';
 import Pagination from './Pagination';
 import ReportModal from './ReportModal';
 import type { ReportInput } from '../utils/reportTypes';
@@ -219,7 +220,7 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
     {
       section: 'Gráficos e Blocos',
       items: [
-        { term: 'Top Performance', desc: 'Ranking dos 10 instrutores com mais horas ministradas em demandas concluídas no período.' },
+        { term: 'Horas Ministradas por Instrutor', desc: 'Todos os instrutores com horas > 0 em demandas concluídas no período, ordenados por horas (rolagem vertical). Horas calculadas por instructor_allocations — proporcionais aos dias que cada um efetivamente ministrou, não à carga cheia do treinamento. "N div." indica demandas divididas com outro instrutor.' },
         { term: 'Risco de Dependência (lista)', desc: 'NRs e treinamentos onde apenas 1 ou nenhum instrutor tem nível ≥ 3. Risco: se esse instrutor ficar indisponível, a execução pode ser comprometida.' },
         { term: 'Disponíveis nos Próximos 30 Dias', desc: 'Lista nominal de instrutores sem alocação ativa prevista — candidatos para absorver novas demandas.' },
         { term: 'Sem Demanda no Período', desc: 'Instrutores sem nenhuma participação no filtro ativo. Pode indicar ociosidade ou escopo fora da região selecionada.' },
@@ -344,7 +345,7 @@ const HelpDrawer: React.FC<{ tab: string; onClose: () => void }> = ({ tab, onClo
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
 const Dashboard: React.FC = () => {
-  const { demands, companies, regions, instructors, trainings, measurements, getEvidenceAutoStatus } = useApp();
+  const { demands, companies, regions, instructors, trainings, measurements, instructorAllocations, getEvidenceAutoStatus } = useApp();
 
   // ✅ NORMALIZADOR (1 vez só)
   const normId = (v: any) => String(v ?? '').trim().replace(/^#/, '');
@@ -691,14 +692,31 @@ const pendingLogisticsDemands = useMemo(() => {
   const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
   const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
 
-  const totalHours = useMemo(() => {
-    return filteredDemands
-      .filter(d => getCalculatedStatus(d) === 'CONCLUIDA')
-      .reduce((acc: number, d) => acc + getTrainingHours(d.trainingId), 0);
-  }, [filteredDemands, trainings]);
+  /** Formata horas com fração só quando necessário (ex.: 75.5, mas 88 em vez de 88.0). */
+  const formatHoursValue = (v: number) => {
+    const r = Math.round((v + Number.EPSILON) * 10) / 10;
+    return Number.isInteger(r) ? String(r) : r.toFixed(1);
+  };
 
   const totalAllHours = useMemo(() => {
     return filteredDemands.reduce((acc: number, d) => acc + getTrainingHours(d.trainingId), 0);
+  }, [filteredDemands, trainings]);
+
+  /**
+   * ⚠️ Guarda de dados — demandas híbridas (não canceladas) cujo treinamento
+   * não tem `practicalHours` cadastrado. Nessas, "Horas Concluídas" cai no
+   * fallback (carga total do treinamento) em vez das horas práticas —
+   * ver domain/instructorHours.ts. Hoje nasce vazio (os 4 híbridos
+   * conhecidos já têm o campo seedado); serve de alerta para treinamentos
+   * híbridos novos cadastrados sem essa informação.
+   */
+  const hibridSemPracticalHours = useMemo(() => {
+    return filteredDemands.filter(d => {
+      if (d.status === 'CANCELADA') return false;
+      if (getDemandModality(d) !== 'HIBRIDO') return false;
+      const training = trainings.find(t => t.id === d.trainingId);
+      return !(training?.practicalHours != null && training.practicalHours > 0);
+    });
   }, [filteredDemands, trainings]);
 
   const totalCosts = useMemo(() => {
@@ -709,13 +727,6 @@ const pendingLogisticsDemands = useMemo(() => {
       }, 0);
     }, 0);
   }, [filteredMeasurements]);
-
-  const totalHours2 = useMemo(() => {
-    if (extraPeriods.length === 0) return 0;
-    return filteredDemands2
-      .filter(d => getCalculatedStatus(d) === 'CONCLUIDA')
-      .reduce((acc: number, d) => acc + getTrainingHours(d.trainingId), 0);
-  }, [filteredDemands2, trainings, extraPeriods.length]);
 
   const totalAllHours2 = useMemo(() => {
     if (extraPeriods.length === 0) return 0;
@@ -758,6 +769,59 @@ const pendingLogisticsDemands = useMemo(() => {
       return measurements.filter((m: any) => ids.has(m.demandId));
     });
   }, [allFilteredDemandsList, measurements]);
+
+  // --- Bordas de cada período (P1 = filtro principal, P2..PN = extraPeriods) ---
+  const getPeriodBounds = (i: number): { start?: string; end?: string } => {
+    if (i === 0) return { start: filters.startDate || undefined, end: filters.endDate || undefined };
+    const p = extraPeriods[i - 1];
+    return { start: p?.startDate || undefined, end: p?.endDate || undefined };
+  };
+
+  /**
+   * ✅ FONTE ÚNICA — Horas por Instrutor
+   * Substitui o cálculo antigo (demands.instructor_id × carga nominal do treinamento).
+   * Fonte do vínculo é SEMPRE instructor_allocations; horas são proporcionais aos
+   * dias reais de cada instrutor dentro da demanda. Um Map por período filtrado
+   * (P1..PN), para alimentar KPIs, ranking, gráfico e export XLSX sem duplicar lógica.
+   */
+  const instructorHoursMapsByPeriod = useMemo(() => {
+    return allFilteredDemandsList.map((dList, i) => {
+      const { start, end } = getPeriodBounds(i);
+      return computeInstructorHours({
+        demands: dList,
+        instructorAllocations,
+        trainings,
+        measurements,
+        periodStart: start,
+        periodEnd: end,
+      });
+    });
+  }, [allFilteredDemandsList, instructorAllocations, trainings, measurements, filters.startDate, filters.endDate, extraPeriods]);
+
+  const sumInstructorHours = (map: Map<string, InstructorHoursEntry>) => {
+    let sum = 0;
+    for (const entry of map.values()) sum += entry.horas;
+    return sum;
+  };
+
+  const totalHours = useMemo(() => {
+    return sumInstructorHours(instructorHoursMapsByPeriod[0] ?? new Map());
+  }, [instructorHoursMapsByPeriod]);
+
+  const totalHours2 = useMemo(() => {
+    if (extraPeriods.length === 0) return 0;
+    return sumInstructorHours(instructorHoursMapsByPeriod[1] ?? new Map());
+  }, [instructorHoursMapsByPeriod, extraPeriods.length]);
+
+  /** periods[] pronto para o KPICard "Horas Concluídas" / "Produtividade Global" (P1..PN). */
+  const hoursConcluidasPeriods = useMemo(() => {
+    if (!compareMode) return undefined;
+    return allFilteredDemandsList.map((_, i) => ({
+      value: `${formatHoursValue(sumInstructorHours(instructorHoursMapsByPeriod[i] ?? new Map()))}h`,
+      color: PERIOD_COLORS[i % PERIOD_COLORS.length],
+      label: `P${i + 1}`,
+    }));
+  }, [compareMode, allFilteredDemandsList, instructorHoursMapsByPeriod]);
 
   /** Cria o array `periods` para KPICard; retorna undefined quando não há comparação */
   const mkPeriods = (getValue: (dList: any[], mList: any[]) => any) =>
@@ -812,7 +876,7 @@ const pendingLogisticsDemands = useMemo(() => {
           id: 'GERAL', label: 'Geral',
           kpis: [
             { title: 'Total de Demandas',      values: pv(d => d.length) },
-            { title: 'Horas Ministradas',      values: pv(d => d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)) },
+            { title: 'Horas Ministradas',      values: instructorHoursMapsByPeriod.map(map => sumInstructorHours(map)) },
             { title: 'Pendência de Alocação',  values: pv(noInstructor), positiveIsGood: false },
             { title: 'Treinamentos Concluídos',values: pv(d => d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').length) },
             { title: 'Demandas Canceladas',    values: pv(d => d.filter((x: any) => x.status === 'CANCELADA').length), positiveIsGood: false },
@@ -837,14 +901,14 @@ const pendingLogisticsDemands = useMemo(() => {
         {
           id: 'INSTRUTORES', label: 'Instrutores',
           kpis: [
-            { title: 'Horas Concluídas',     values: pv(d => d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)) },
+            { title: 'Horas Concluídas',     values: instructorHoursMapsByPeriod.map(map => sumInstructorHours(map)) },
             { title: 'Sem Demanda no Período', values: pv(d => { const w = new Set(d.filter((x: any) => x.instructorId).map((x: any) => x.instructorId)); return instructors.filter((i: any) => i.status === 'ATIVO' && !w.has(i.id)).length; }), positiveIsGood: false },
           ],
           rankings: [{
             title: 'Carga Horária por Instrutor',
             rows: instructors.filter((i: any) => i.status === 'ATIVO').map((inst: any) => ({
               name:   inst.name,
-              values: allFilteredDemandsList.map(d => d.filter((x: any) => x.instructorId === inst.id && getCalculatedStatus(x) === 'CONCLUIDA').reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)),
+              values: instructorHoursMapsByPeriod.map(map => map.get(inst.id)?.horas ?? 0),
             })).filter(r => r.values.some((v: number) => v > 0)).sort((a, b) => b.values[0] - a.values[0]).slice(0, 10),
           }],
         },
@@ -872,7 +936,7 @@ const pendingLogisticsDemands = useMemo(() => {
         },
       ],
     };
-  }, [allFilteredDemandsList, allFilteredMeasurementsList, filters, companies, regions, instructors, trainings, extraPeriods]);
+  }, [allFilteredDemandsList, allFilteredMeasurementsList, filters, companies, regions, instructors, trainings, extraPeriods, instructorHoursMapsByPeriod]);
 
   // --- Componentes de UI ---
   const KPICard = ({ title, value, subtext, icon: Icon, colorClass, isCurrency = false, isTrend = false, compareValue, positiveIsGood = true, periods }: any) => {
@@ -1119,11 +1183,26 @@ const pendingLogisticsDemands = useMemo(() => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           <KPICard title="Total de Demandas" value={filteredDemands.length} compareValue={compareMode ? filteredDemands2.length : undefined} periods={mkPeriods(d => d.length)} icon={Briefcase} colorClass="bg-blue-50 text-blue-600" />
           <KPICard title="Total de Horas" value={`${totalAllHours}h`} compareValue={compareMode ? `${totalAllHours2}h` : undefined} periods={mkPeriods(d => `${d.reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)}h`)} icon={Clock} colorClass="bg-violet-50 text-violet-600" subtext="Todas as Demandas" />
-          <KPICard title="Horas Concluídas" value={`${totalHours}h`} compareValue={compareMode ? `${totalHours2}h` : undefined} periods={mkPeriods(d => `${d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)}h`)} icon={Clock} colorClass="bg-emerald-50 text-emerald-600" subtext="Execuções Finalizadas" />
+          <KPICard title="Horas Concluídas" value={`${formatHoursValue(totalHours)}h`} compareValue={compareMode ? `${formatHoursValue(totalHours2)}h` : undefined} periods={hoursConcluidasPeriods} icon={Clock} colorClass="bg-emerald-50 text-emerald-600" subtext="Execuções Finalizadas" />
           <KPICard title="Pendência de Alocação" value={noInstructorDemands.length} compareValue={compareMode ? noInstructorDemands2.length : undefined} positiveIsGood={false} periods={mkPeriods(d => d.filter((x: any) => { const s = getCalculatedStatus(x); if (s === 'CANCELADA' || s === 'CONCLUIDA') return false; if (isOnlineDemand(x)) return false; return !x.instructorId; }).length)} icon={AlertCircle} colorClass="bg-amber-50 text-amber-600" />
           <KPICard title="Treinamentos Concluídos" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'CONCLUIDA').length} compareValue={compareMode ? filteredDemands2.filter(d => getCalculatedStatus(d) === 'CONCLUIDA').length : undefined} periods={mkPeriods(d => d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').length)} icon={CheckCircle} colorClass="bg-indigo-50 text-indigo-600" />
           <KPICard title="Demandas Canceladas" value={cancelledDemands.length} compareValue={compareMode ? cancelledDemands2.length : undefined} positiveIsGood={false} periods={mkPeriods(d => d.filter((x: any) => x.status === 'CANCELADA').length)} icon={Ban} colorClass="bg-slate-100 text-slate-500" subtext="Histórico Inativo" />
         </div>
+
+        {hibridSemPracticalHours.length > 0 && (
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3">
+            <AlertTriangle size={18} className="text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-black text-amber-800 uppercase tracking-wide">
+                {hibridSemPracticalHours.length} demanda{hibridSemPracticalHours.length !== 1 ? 's' : ''} híbrida{hibridSemPracticalHours.length !== 1 ? 's' : ''} sem horas práticas cadastradas
+              </p>
+              <p className="text-[11px] text-amber-700 mt-1 leading-relaxed">
+                "Horas Concluídas" está usando a carga horária total do treinamento pra essas demandas, em vez das horas práticas.
+                Cadastre em Cadastros → Treinamentos: {[...new Set(hibridSemPracticalHours.map(d => getTrainingName(d.trainingId)))].join(', ')}.
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-80 flex flex-col">
@@ -1596,28 +1675,25 @@ const pendingLogisticsDemands = useMemo(() => {
     const next30 = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
     const activeInstructors = instructors.filter(i => i.status === 'ATIVO');
 
-    // --- Workload (horas concluídas no período filtrado) ---
-    const buildWorkload = (src: Demand[]) => activeInstructors.map(inst => {
-      const hours = src
-        .filter(d => d.instructorId === inst.id && getCalculatedStatus(d) === 'CONCLUIDA')
-        .reduce((sum: number, d) => sum + getTrainingHours(d.trainingId), 0);
-      return { name: inst.name.split(' ')[0], hours };
-    }).sort((a, b) => b.hours - a.hours).slice(0, 10).filter(i => i.hours > 0);
-
-    const instructorWorkload = buildWorkload(filteredDemands);
-    const instructorWorkload2 = compareMode ? buildWorkload(filteredDemands2) : [];
-    // Merge into single dataset for N-period grouped bar chart
-    const workloadData = compareMode ? (() => {
-      const allWorkloads = allFilteredDemandsList.map(dList => buildWorkload(dList));
-      const names = [...new Set(allWorkloads.flatMap(wl => wl.map(i => i.name)))];
-      return names.slice(0, 10).map(name => {
-        const row: any = { name };
-        allWorkloads.forEach((wl, i) => {
-          row[i === 0 ? 'hours' : `hours${i + 1}`] = wl.find(x => x.name === name)?.hours ?? 0;
-        });
-        return row;
-      });
-    })() : instructorWorkload;
+    // --- Horas Ministradas por Instrutor (fonte: instructor_allocations, período filtrado) ---
+    // ✅ Mesma fonte usada pelo KPI "Horas Concluídas"/"Produtividade Global" e pelo export
+    // XLSX — nenhuma lógica duplicada. Mostra TODOS os instrutores com horas > 0 (não só
+    // top 10): com dezenas de instrutores, o card rola verticalmente.
+    const instructorHoursMap = instructorHoursMapsByPeriod[0] ?? new Map<string, InstructorHoursEntry>();
+    const instructorHoursList = activeInstructors
+      .map(inst => {
+        const entry = instructorHoursMap.get(inst.id);
+        return {
+          id: inst.id,
+          name: inst.name,
+          horas: entry?.horas ?? 0,
+          nDemandas: entry?.nDemandas ?? 0,
+          nDivididas: entry?.nDivididas ?? 0,
+        };
+      })
+      .filter(r => r.horas > 0)
+      .sort((a, b) => b.horas - a.horas);
+    const maxInstructorHours = Math.max(...instructorHoursList.map(r => r.horas), 1);
 
     // --- Risco de dependência ---
     const dependencyRisk = trainings.filter(t => t.status === 'ATIVO').map(t => ({
@@ -1725,32 +1801,44 @@ const pendingLogisticsDemands = useMemo(() => {
           <KPICard title="Sem Demanda" value={noDemandsInPeriod.length} compareValue={noDemandsInPeriod2} positiveIsGood={false} periods={mkPeriods(d => { const withDemand = new Set(d.filter((x: any) => x.instructorId).map((x: any) => x.instructorId!)); return activeInstructors.filter((i: any) => !withDemand.has(i.id)).length; })} icon={AlertCircle} colorClass="bg-amber-50 text-amber-600" subtext="No período filtrado" />
           <KPICard title="Reaproveitamento" value={`${reuseRate}%`} compareValue={compareMode && reuseRate2 !== undefined ? `${reuseRate2}%` : undefined} periods={mkPeriods(d => { const rate = activeInstructors.length > 0 ? Math.round((activeInstructors.filter((i: any) => new Set(d.filter((x: any) => x.instructorId === i.id && getCalculatedStatus(x) === 'CONCLUIDA').map((x: any) => x.trainingId)).size >= 2).length / activeInstructors.length) * 100) : 0; return `${rate}%`; })} icon={TrendingUp} colorClass="bg-violet-50 text-violet-600" subtext="Com ≥ 2 tipos concluídos" />
           <KPICard title="Risco Dependência" value={dependencyRisk.length} icon={ShieldAlert} colorClass="bg-red-50 text-red-600" subtext="Treinamentos c/ ≤ 1 instr." />
-          <KPICard title="Produtividade Global" value={`${totalHours}h`} compareValue={compareMode ? `${totalHours2}h` : undefined} periods={mkPeriods(d => `${d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)}h`)} icon={Award} colorClass="bg-indigo-50 text-indigo-600" subtext="Horas concluídas" />
+          <KPICard title="Produtividade Global" value={`${formatHoursValue(totalHours)}h`} compareValue={compareMode ? `${formatHoursValue(totalHours2)}h` : undefined} periods={hoursConcluidasPeriods} icon={Award} colorClass="bg-indigo-50 text-indigo-600" subtext="Horas concluídas" />
         </div>
 
-        {/* Top Performance + Risco Dependência */}
+        {/* Horas Ministradas por Instrutor + Risco de Dependência */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-8 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '22rem' }}>
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center justify-between shrink-0">
-              <span>Top Performance — Horas Ministradas</span>
-              <Award size={13} className="text-slate-300" />
+              <span>Horas Ministradas por Instrutor</span>
+              <span className="flex items-center gap-2">
+                <span className="text-[9px] font-black text-slate-300 normal-case tracking-normal">{instructorHoursList.length} instrutor{instructorHoursList.length !== 1 ? 'es' : ''}</span>
+                <Award size={13} className="text-slate-300" />
+              </span>
             </h3>
-            <div className="flex-1 min-h-0">
-              {workloadData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={workloadData} margin={{ top: 10 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold' }} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
-                    <Tooltip cursor={{ fill: '#F8FAFC' }} formatter={(v: number) => [`${v}h`, 'Horas']} />
-                    {compareMode && <Legend wrapperStyle={{ fontSize: '10px', fontWeight: 'bold', cursor: 'pointer' }} onClick={(e: any) => toggleSeries(`workload-${e.dataKey}`)} />}
-                    <Bar dataKey="hours" name="P1" fill={PERIOD_COLORS[0]} radius={[4, 4, 0, 0]} barSize={compareMode ? Math.max(8, Math.floor(32 / allFilteredDemandsList.length)) : 36} hide={hiddenSeries['workload-hours']} />
-                    {compareMode && allFilteredDemandsList.slice(1).map((_, i) => (
-                      <Bar key={i + 1} dataKey={i === 0 ? 'hours2' : `hours${i + 1}`} name={`P${i + 2}`} fill={PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length]} radius={[4, 4, 0, 0]} barSize={Math.max(8, Math.floor(32 / allFilteredDemandsList.length))} hide={hiddenSeries[`workload-${i === 0 ? 'hours2' : `hours${i + 1}`}`]} />
-                    ))}
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
+            <div className="flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar space-y-1">
+              {instructorHoursList.length > 0 ? instructorHoursList.map((row, idx) => {
+                const pct = Math.max(2, Math.round((row.horas / maxInstructorHours) * 100));
+                const tooltip = `${row.name} — ${formatHoursValue(row.horas)}h · ${row.nDemandas} demanda${row.nDemandas !== 1 ? 's' : ''} concluída${row.nDemandas !== 1 ? 's' : ''}` +
+                  (row.nDivididas > 0 ? ` · ${row.nDivididas} dividida${row.nDivididas !== 1 ? 's' : ''} com outro instrutor` : '');
+                return (
+                  <div key={row.id} className="flex items-center gap-2 py-1 px-1.5 rounded-lg hover:bg-slate-50 transition-colors" title={tooltip}>
+                    <span className="text-[9px] font-black text-slate-300 w-5 text-right shrink-0">{idx + 1}</span>
+                    <span className="text-[10px] font-bold text-slate-600 truncate shrink-0 w-32" title={row.name}>{row.name}</span>
+                    <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full rounded-full bg-indigo-500 transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                    <div className="shrink-0 w-14 text-right text-[10px] font-black text-slate-700">{formatHoursValue(row.horas)}h</div>
+                    <div className="shrink-0 w-8 text-right text-[9px] font-bold text-slate-400">{row.nDemandas}d</div>
+                    {/* Coluna reservada sempre com a mesma largura, com ou sem badge, pra horas/dias não deslocarem entre linhas */}
+                    <div className="shrink-0 w-12 flex items-center justify-end">
+                      {row.nDivididas > 0 && (
+                        <span className="text-[8px] font-black text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-0.5 uppercase whitespace-nowrap">
+                          {row.nDivididas} div.
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              }) : (
                 <div className="h-full flex items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem horas concluídas no período</div>
               )}
             </div>
@@ -2590,14 +2678,16 @@ const pendingLogisticsDemands = useMemo(() => {
           ['Sem demanda no período', activeInstructors.filter(i => !instrWithDemandIds.has(i.id)).length],
           ['Taxa de Reaproveitamento', `${reuseRate}%`],
           ['Risco de Dependência (trein.)', depRisk],
-          ['Horas Concluídas (período)', `${totalHours}h`],
+          ['Horas Concluídas (período)', `${formatHoursValue(totalHours)}h`],
         ]
       );
-      // Workload
-      addSection(ws, 'Performance — Horas Concluídas no Período', ['Instrutor', 'Horas'],
+      // Workload — mesma fonte (instructor_allocations) do card "Horas Ministradas por Instrutor"
+      const exportHoursMap = instructorHoursMapsByPeriod[0] ?? new Map<string, InstructorHoursEntry>();
+      addSection(ws, 'Performance — Horas Concluídas no Período', ['Instrutor', 'Horas', 'Demandas', 'Divididas c/ outro instrutor'],
         activeInstructors.map(inst => {
-          const hrs = filteredDemands.filter(d => d.instructorId === inst.id && getCalculatedStatus(d) === 'CONCLUIDA').reduce((s, d) => s + getTrainingHours(d.trainingId), 0);
-          return [inst.name, hrs];
+          const entry = exportHoursMap.get(inst.id);
+          const hrs = Math.round(((entry?.horas ?? 0) + Number.EPSILON) * 100) / 100;
+          return [inst.name, hrs, entry?.nDemandas ?? 0, entry?.nDivididas ?? 0];
         }).filter(r => (r[1] as number) > 0).sort((a, b) => (b[1] as number) - (a[1] as number))
       );
       // Disponíveis 30d

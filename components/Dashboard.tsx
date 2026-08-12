@@ -10,12 +10,13 @@ import {
   Truck, DollarSign, Award, Target, Zap, ShieldAlert,
   Download, MousePointer2,
   Info, Ban, Bell, Package, FileText, UserCheck, Hotel, Car,
-  HelpCircle, X, ArrowLeftRight
+  HelpCircle, X, ArrowLeftRight, Monitor
 } from 'lucide-react';
 import { Demand } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { demandIntersectsRange } from '../domain/demandDays';
 import { computeInstructorHours, InstructorHoursEntry } from '../domain/instructorHours';
+import { buildModalityOptions, buildTrainingsById, matchesModality } from '../domain/modalityOptions';
 import Pagination from './Pagination';
 import ReportModal from './ReportModal';
 import type { ReportInput } from '../utils/reportTypes';
@@ -414,7 +415,8 @@ const Dashboard: React.FC = () => {
     status: '',
     trainingLocal: '',
     corredor: '',
-    demandState: ''
+    demandState: '',
+    modality: ''
   });
 
   // --- Lógica de Mês/Ano ---
@@ -443,6 +445,10 @@ const Dashboard: React.FC = () => {
   const availableStates = useMemo(() =>
     [...new Set(demands.map(d => d.demandState).filter((v): v is string => !!v))].sort(),
   [demands]);
+
+  // Modalidade: índice + opções derivadas dos dados (fonte única em domain/modalityOptions)
+  const trainingsById = useMemo(() => buildTrainingsById(trainings), [trainings]);
+  const availableModalities = useMemo(() => buildModalityOptions(demands, trainings), [demands, trainings]);
 
   const handleMonthFilterChange = (val: string) => {
     if (!val) {
@@ -532,6 +538,16 @@ const Dashboard: React.FC = () => {
   };
 
   // --- Modalidade ---
+  // ⚠️ TODO: este normalizador NÃO remove acentos ("HÍBRIDO"/"HÍBRIDA") e os
+  // buckets que dependem dele (gráfico "Modalidade" e a seção equivalente do
+  // export XLSX) só contemplam Presencial, Online/EAD e Híbrido — TUTORIA fica
+  // de fora. Auditoria da base em 12/08/2026 (SQL, modalidade efetiva com a
+  // regra treinamento > demanda): PRESENCIAL 1010, ONLINE 26, ONLINE_AO_VIVO 15,
+  // HIBRIDO 10, zero acentuados e zero TUTORIA — ou seja, hoje as contagens
+  // fecham com o total. Se algum desses valores passar a existir na base, essas
+  // demandas somem de todos os buckets: alinhar com canonicalModality /
+  // resolveDemandModality de domain/modalityOptions.ts, que é a fonte única já
+  // usada pelos filtros de Modalidade (Demandas, Exportação e Dashboard).
   const normalizeModality = (raw: any) =>
     String(raw ?? '')
       .trim()
@@ -577,10 +593,11 @@ const Dashboard: React.FC = () => {
       if (filters.trainingLocal && (d.trainingLocal ?? '') !== filters.trainingLocal) return false;
       if (filters.corredor && (d.corredor ?? '') !== filters.corredor) return false;
       if (filters.demandState && (d.demandState ?? '') !== filters.demandState) return false;
+      if (!matchesModality(d, trainingsById, filters.modality)) return false;
 
       return true;
     });
-  }, [demands, filters, trainings]);
+  }, [demands, filters, trainings, trainingsById]);
 
   const filteredMeasurements = useMemo(() => {
     const demandIds = new Set(filteredDemands.map(d => d.id));
@@ -602,9 +619,10 @@ const Dashboard: React.FC = () => {
       if (filters.trainingLocal && (d.trainingLocal ?? '') !== filters.trainingLocal) return false;
       if (filters.corredor && (d.corredor ?? '') !== filters.corredor) return false;
       if (filters.demandState && (d.demandState ?? '') !== filters.demandState) return false;
+      if (!matchesModality(d, trainingsById, filters.modality)) return false;
       return true;
     });
-  }, [demands, extraPeriods, filters.companyId, filters.status, filters.regionId, filters.trainingLocal, filters.corredor, filters.demandState, trainings]);
+  }, [demands, extraPeriods, filters.companyId, filters.status, filters.regionId, filters.trainingLocal, filters.corredor, filters.demandState, filters.modality, trainings, trainingsById]);
 
   const filteredMeasurements2 = useMemo(() => {
     if (extraPeriods.length === 0) return [];
@@ -758,10 +776,11 @@ const pendingLogisticsDemands = useMemo(() => {
         if (filters.trainingLocal && (d.trainingLocal ?? '') !== filters.trainingLocal) return false;
         if (filters.corredor && (d.corredor ?? '') !== filters.corredor) return false;
         if (filters.demandState && (d.demandState ?? '') !== filters.demandState) return false;
+        if (!matchesModality(d, trainingsById, filters.modality)) return false;
         return true;
       })
     )];
-  }, [filteredDemands, filteredDemands2, demands, extraPeriods, filters.companyId, filters.status, filters.regionId, filters.trainingLocal, filters.corredor, filters.demandState, trainings]);
+  }, [filteredDemands, filteredDemands2, demands, extraPeriods, filters.companyId, filters.status, filters.regionId, filters.trainingLocal, filters.corredor, filters.demandState, filters.modality, trainings, trainingsById]);
 
   const allFilteredMeasurementsList = useMemo(() => {
     return allFilteredDemandsList.map(dList => {
@@ -2937,6 +2956,14 @@ const pendingLogisticsDemands = useMemo(() => {
             </select>
           </div>
 
+          <div className="min-w-[130px] flex-1">
+            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Monitor size={10} /> Modalidade</label>
+            <select className="w-full border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.modality} onChange={e => setFilters(prev => ({ ...prev, modality: e.target.value }))}>
+              <option value="">Todas</option>
+              {availableModalities.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+          </div>
+
           <div className="min-w-[100px] flex-1">
             <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Target size={10} /> Estado (UF)</label>
             <select className="w-full border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.demandState} onChange={e => setFilters(prev => ({ ...prev, demandState: e.target.value }))}>
@@ -2946,7 +2973,7 @@ const pendingLogisticsDemands = useMemo(() => {
           </div>
 
           <button
-            onClick={() => setFilters({ startDate: '', endDate: '', companyId: '', regionId: '', status: '', trainingLocal: '', corredor: '', demandState: '' })}
+            onClick={() => setFilters({ startDate: '', endDate: '', companyId: '', regionId: '', status: '', trainingLocal: '', corredor: '', demandState: '', modality: '' })}
             className="px-4 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-red-500 transition-colors shrink-0"
           >
             Limpar

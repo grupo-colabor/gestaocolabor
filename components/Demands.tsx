@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { requiresLogistics } from '../domain/modalityRules';
+import { buildModalityOptions, buildTrainingsById, matchesModality } from '../domain/modalityOptions';
 import { createPortal } from 'react-dom';
 import { usePagination } from '../hooks/usePagination';
 import Pagination from './Pagination';
@@ -216,9 +217,14 @@ useEffect(() => {
     endDate: '',
     trainingLocal: '',
     corredor: '',
-    demandState: ''
+    demandState: '',
+    modality: ''
   });
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+
+  // Modalidade: índice + opções derivadas dos dados (fonte única em domain/modalityOptions)
+  const trainingsById = useMemo(() => buildTrainingsById(trainings), [trainings]);
+  const modalityOptions = useMemo(() => buildModalityOptions(demands, trainings), [demands, trainings]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'CREATE' | 'EDIT' | null>(null);
@@ -656,6 +662,7 @@ const filteredDemands = useMemo(() => {
       if (advancedFilters.trainingLocal && (d.trainingLocal || '') !== advancedFilters.trainingLocal) return false;
       if (advancedFilters.corredor && (d.corredor || '') !== advancedFilters.corredor) return false;
       if (advancedFilters.demandState && (d.demandState || '') !== advancedFilters.demandState) return false;
+      if (!matchesModality(d, trainingsById, advancedFilters.modality)) return false;
 
       return true;
     })
@@ -750,6 +757,7 @@ const filteredDemands = useMemo(() => {
   advancedFilters,
   companies,
   trainings,
+  trainingsById,
   regions,
   instructors,
   isCoordinator,
@@ -979,7 +987,8 @@ useEffect(() => {
       endDate: '',
       trainingLocal: '',
       corredor: '',
-      demandState: ''
+      demandState: '',
+      modality: ''
     });
   };
 
@@ -2940,6 +2949,21 @@ const companionInstructorIds = useMemo(() => {
                   <option value="">Todos os Corredores</option>
                   {(operationalBases.corredores ?? []).sort().map(c => (
                     <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Modalidade */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-tight">Modalidade</label>
+                <select
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={advancedFilters.modality}
+                  onChange={(e) => setAdvancedFilters({...advancedFilters, modality: e.target.value})}
+                >
+                  <option value="">Todas as Modalidades</option>
+                  {modalityOptions.map(m => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
                   ))}
                 </select>
               </div>

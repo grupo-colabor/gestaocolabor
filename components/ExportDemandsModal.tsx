@@ -14,6 +14,7 @@ import {
 import { Demand, Company, Training, Region, Instructor, InstructorAllocation } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { demandIntersectsRange } from '../domain/demandDays';
+import { buildModalityOptions, buildTrainingsById, matchesModality } from '../domain/modalityOptions';
 import { fetchLogisticBlocksByDemandIds, LogisticBlockRow } from '../services/logistics';
 
 /* ========== STATUS STYLING (idêntico ao Measurement.tsx) ========== */
@@ -114,8 +115,13 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
     search: '',
     trainingLocal: '',
     corredor: '',
+    modality: '',
   });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Modalidade: índice + opções derivadas dos dados (fonte única em domain/modalityOptions)
+  const trainingsById = useMemo(() => buildTrainingsById(trainings), [trainings]);
+  const modalityOptions = useMemo(() => buildModalityOptions(demands, trainings), [demands, trainings]);
 
   /* ---------- filtered list ---------- */
   const filteredDemands = useMemo(() => {
@@ -127,6 +133,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
       if (filters.regionId && d.regionId !== filters.regionId) return false;
       if (filters.trainingLocal && (d.trainingLocal || '') !== filters.trainingLocal) return false;
       if (filters.corredor && (d.corredor || '') !== filters.corredor) return false;
+      if (!matchesModality(d, trainingsById, filters.modality)) return false;
 
       if (filters.instructorId) {
         const allocs = instructorAllocations.filter(a => a.demandId === d.id);
@@ -157,7 +164,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
 
       return true;
     }).sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''));
-  }, [demands, filters, instructorAllocations]);
+  }, [demands, filters, instructorAllocations, trainingsById]);
 
   /* ---------- selection helpers ---------- */
   const toggleSelection = (id: string) => {
@@ -175,7 +182,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
   };
 
   const resetFilters = () => {
-    setFilters({ startDate: '', endDate: '', companyId: '', trainingId: '', instructorId: '', regionId: '', status: '', search: '', trainingLocal: '', corredor: '' });
+    setFilters({ startDate: '', endDate: '', companyId: '', trainingId: '', instructorId: '', regionId: '', status: '', search: '', trainingLocal: '', corredor: '', modality: '' });
     setSelectedIds(new Set());
   };
 
@@ -490,6 +497,15 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
                 <select className="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.corredor} onChange={e => setFilters({ ...filters, corredor: e.target.value })}>
                   <option value="">Todos</option>
                   {corredorOptions.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+
+              {/* Modalidade */}
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Modalidade</label>
+                <select className="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.modality} onChange={e => setFilters({ ...filters, modality: e.target.value })}>
+                  <option value="">Todas</option>
+                  {modalityOptions.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                 </select>
               </div>
 

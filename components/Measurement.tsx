@@ -10,8 +10,10 @@ import {
   ChevronDown, ChevronUp, MapPin, Truck, Home, 
   Calendar, Check, AlertCircle, Building, 
   Tag, Info, BookOpen, Clock, Mail, MessageCircle, 
-  FileDown, Upload, Trash2, ExternalLink, User, Plus, Paperclip, DollarSign, Wallet, CheckSquare, Square, RotateCcw
+  FileDown, Upload, Trash2, ExternalLink, User, Plus, Paperclip, DollarSign, Wallet, CheckSquare, Square, RotateCcw,
+  FileSpreadsheet
 } from 'lucide-react';
+import MedicaoExportModal from './MedicaoExportModal';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ImageRun, ExternalHyperlink } from 'docx';
 import * as pdfjsLib from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
@@ -190,12 +192,13 @@ const MeasurementView: React.FC = () => {
   const [selectedMeasurement, setSelectedMeasurement] = useState<Measurement | null>(null);
 
   const [isExportSelectionOpen, setIsExportSelectionOpen] = useState(false);
+  const [isMedicaoExportOpen, setIsMedicaoExportOpen] = useState(false);
 
   // Body scroll lock when any modal is open
   useEffect(() => {
-    document.body.style.overflow = (isModalOpen || isExportSelectionOpen) ? 'hidden' : '';
+    document.body.style.overflow = (isModalOpen || isExportSelectionOpen || isMedicaoExportOpen) ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
-  }, [isModalOpen, isExportSelectionOpen]);
+  }, [isModalOpen, isExportSelectionOpen, isMedicaoExportOpen]);
   const [exportFilters, setExportFilters] = useState({
     startDate: '',
     endDate: '',
@@ -1128,13 +1131,26 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
           <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Medição e Faturamento</h1>
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Gestão de Comprovantes e Valores de Treinamentos Realizados</p>
         </div>
-        <button 
-          onClick={() => setIsExportSelectionOpen(true)}
-          className="bg-gray-900 hover:bg-gray-800 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center space-x-2 shadow-md"
-        >
-          <FileDown size={18} /> <span>Exportar DOCX (Selecionar Demandas)</span>
-        </button>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <button
+            onClick={() => setIsMedicaoExportOpen(true)}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center justify-center space-x-2 shadow-md"
+          >
+            <FileSpreadsheet size={18} /> <span>Exportar Medição</span>
+          </button>
+          <button
+            onClick={() => setIsExportSelectionOpen(true)}
+            className="bg-gray-900 hover:bg-gray-800 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center justify-center space-x-2 shadow-md"
+          >
+            <FileDown size={18} /> <span>Exportar DOCX (Selecionar Demandas)</span>
+          </button>
+        </div>
       </div>
+
+      <MedicaoExportModal
+        isOpen={isMedicaoExportOpen}
+        onClose={() => setIsMedicaoExportOpen(false)}
+      />
 
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 grid grid-cols-1 md:grid-cols-12 gap-3">
         <div className="relative col-span-1 md:col-span-4">

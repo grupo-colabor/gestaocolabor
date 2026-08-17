@@ -53,6 +53,22 @@ export interface InstructorHoursEntry {
   nDivididas: number;
 }
 
+/**
+ * Uma linha por par (instrutor, demanda) — a granularidade que o agregado
+ * `InstructorHoursEntry` colapsa. Consumida pelo export de medição mensal,
+ * que precisa detalhar demanda a demanda o que compõe o total do instrutor.
+ */
+export interface InstructorDemandHoursRow {
+  instructorId: string;
+  demandId: string;
+  /** Horas do instrutor NESTA demanda, já recortadas pelo período. */
+  horas: number;
+  /** Dias ('YYYY-MM-DD') do instrutor nesta demanda dentro do período, ordenados. */
+  dias: string[];
+  /** A demanda foi dividida com 1+ outro instrutor dentro do período. */
+  dividida: boolean;
+}
+
 const normalizeModality = (raw: any) =>
   String(raw ?? '').trim().toUpperCase().replaceAll('-', '').replaceAll(' ', '');
 
@@ -113,9 +129,14 @@ function effectiveDemandHours(
   return training?.hours || 0;
 }
 
-export function computeInstructorHours(
+/**
+ * FONTE ÚNICA do cálculo — devolve as linhas (instrutor × demanda) que
+ * compõem as horas do período. `computeInstructorHours` é só a agregação
+ * destas linhas por instrutor; nenhuma das duas duplica a regra de rateio.
+ */
+export function computeInstructorHoursByDemand(
   input: ComputeInstructorHoursInput
-): Map<string, InstructorHoursEntry> {
+): InstructorDemandHoursRow[] {
   const { demands, instructorAllocations, trainings, measurements, periodStart, periodEnd } = input;
 
   const trainingsById = new Map(trainings.map(t => [String(t.id), t]));
@@ -128,15 +149,7 @@ export function computeInstructorHours(
     allocationsByDemandId.set(alloc.demandId, list);
   }
 
-  const result = new Map<string, InstructorHoursEntry>();
-  const getEntry = (instructorId: string): InstructorHoursEntry => {
-    let entry = result.get(instructorId);
-    if (!entry) {
-      entry = { horas: 0, nDemandas: 0, nDivididas: 0 };
-      result.set(instructorId, entry);
-    }
-    return entry;
-  };
+  const rows: InstructorDemandHoursRow[] = [];
 
   for (const demand of demands) {
     if (!isDemandConcluida(demand, trainingsById)) continue;
@@ -184,21 +197,45 @@ export function computeInstructorHours(
     const diasAlocadosNoPeriodo = new Set(clipToPeriod([...unionAllocatedDays], periodStart, periodEnd));
     if (diasAlocadosNoPeriodo.size === 0) continue; // demanda inteira fora do período após recorte
 
-    const participantes: Array<[string, number]> = [];
+    const participantes: Array<[string, string[]]> = [];
     for (const [instructorId, diasTotal] of diasPorInstrutorTotal) {
-      const nDiasNoPeriodo = [...diasTotal].filter(d => diasAlocadosNoPeriodo.has(d)).length;
-      if (nDiasNoPeriodo > 0) participantes.push([instructorId, nDiasNoPeriodo]);
+      const diasNoPeriodo = [...diasTotal].filter(d => diasAlocadosNoPeriodo.has(d)).sort();
+      if (diasNoPeriodo.length > 0) participantes.push([instructorId, diasNoPeriodo]);
     }
     if (participantes.length === 0) continue;
 
     const dividida = participantes.length > 1;
 
-    for (const [instructorId, nDias] of participantes) {
-      const entry = getEntry(instructorId);
-      entry.horas += (nDias / totalDiasDemanda) * horasTotais;
-      entry.nDemandas += 1;
-      if (dividida) entry.nDivididas += 1;
+    for (const [instructorId, dias] of participantes) {
+      rows.push({
+        instructorId,
+        demandId: demand.id,
+        horas: (dias.length / totalDiasDemanda) * horasTotais,
+        dias,
+        dividida,
+      });
     }
+  }
+
+  return rows;
+}
+
+export function computeInstructorHours(
+  input: ComputeInstructorHoursInput
+): Map<string, InstructorHoursEntry> {
+  const result = new Map<string, InstructorHoursEntry>();
+
+  // Cada par (instrutor, demanda) aparece no máximo uma vez nas linhas, então
+  // somar 1 em nDemandas por linha reproduz exatamente a contagem anterior.
+  for (const row of computeInstructorHoursByDemand(input)) {
+    let entry = result.get(row.instructorId);
+    if (!entry) {
+      entry = { horas: 0, nDemandas: 0, nDivididas: 0 };
+      result.set(row.instructorId, entry);
+    }
+    entry.horas += row.horas;
+    entry.nDemandas += 1;
+    if (row.dividida) entry.nDivididas += 1;
   }
 
   return result;

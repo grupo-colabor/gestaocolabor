@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabase";
+import { fetchAllPaginated } from "./pagination";
 
 export type TrainingRow = {
   id: string;
@@ -14,16 +15,22 @@ export type TrainingRow = {
   created_at: string;
 };
 
+// Pagina via fetchAllPaginated: select() sem .range() é cortado
+// silenciosamente em ~1000 linhas pelo PostgREST/Supabase — sem erro e sem
+// aviso. `trainings` ainda está abaixo do corte, mas um treinamento faltando
+// aqui se propaga em silêncio para todo o app (carga horária, modalidade e,
+// no export de medição, o nome do treinamento vira "—").
 export async function fetchTrainings(): Promise<TrainingRow[]> {
   if (!supabase) return [];
 
-  const { data, error } = await supabase
-    .from("trainings")
-    .select("id, name, nr, category, area_id, hours, practical_hours, modality, status, description_short, created_at")
-    .order("name", { ascending: true });
-
-  if (error) throw error;
-  return (data ?? []) as TrainingRow[];
+  return fetchAllPaginated<TrainingRow>((from, to) =>
+    supabase
+      .from("trainings")
+      .select("id, name, nr, category, area_id, hours, practical_hours, modality, status, description_short, created_at")
+      .order("name", { ascending: true })
+      .order("id", { ascending: true }) // desempate: sem chave única a ordem entre páginas não é estável
+      .range(from, to)
+  );
 }
 
 export async function deleteTrainingById(id: string): Promise<void> {

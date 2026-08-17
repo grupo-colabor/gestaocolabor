@@ -10,9 +10,14 @@
  *
  * REGRA CENTRAL: o app entrega demandas e HORAS; o valor da hora/aula é
  * digitado à mão na planilha depois do export. Por isso TODA célula de valor
- * sai como FÓRMULA — nunca um número calculado aqui. O valor da hora existe
- * num único lugar (coluna B do Resumo) e as abas de detalhe o referenciam com
- * referência absoluta (`Resumo!$B$n`): preencher a célula recalcula tudo.
+ * sai como FÓRMULA — nunca um número calculado aqui.
+ *
+ * A tarifa varia por EMPRESA, não por instrutor: o mesmo instrutor recebe um
+ * valor/hora na Vale e outro em outro cliente. Por isso as tarifas moram numa
+ * aba própria ("Tarifas"), uma linha por par (instrutor, empresa), e a coluna
+ * Valor de cada aba de detalhe busca a tarifa por SUMIFS cruzando o nome do
+ * instrutor com a empresa da PRÓPRIA LINHA. Preencher uma célula da aba
+ * Tarifas recalcula todas as linhas daquele par.
  */
 
 /* ========================================================================== */
@@ -22,6 +27,12 @@
 export interface MedicaoDetailRow {
   /** Código da demanda (DEM-xxxx). */
   demandId: string;
+  /**
+   * Nome da empresa/cliente da demanda — é a CHAVE de busca da tarifa na aba
+   * Tarifas, então tem que ser exatamente a mesma string dos dois lados.
+   * Vem do cadastro (`companies.name` via `demands.company_id`), nunca digitada.
+   */
+  empresa: string;
   trainingName: string;
   /** Dias efetivamente alocados ao instrutor dentro do período, 'YYYY-MM-DD'. */
   dias: string[];
@@ -140,14 +151,22 @@ const FMT_HORAS = '0.0';
 const FMT_MOEDA = '"R$" #,##0.00';
 
 const RESUMO_SHEET = 'Resumo';
+const TARIFAS_SHEET = 'Tarifas';
 
 // Resumo: linha 1 = título com o período por extenso (para o arquivo ser
 // autoexplicativo depois de baixado), linha 2 = cabeçalho, dados da 3 em
-// diante. Abas de detalhe não têm título: cabeçalho na 1, dados da 2.
+// diante. Tarifas e abas de detalhe não têm título: cabeçalho na 1, dados na 2.
 const RESUMO_TITLE_ROW = 1;
 const RESUMO_HEADER_ROW = 2;
 const RESUMO_FIRST_DATA_ROW = 3;
+const TARIFAS_FIRST_DATA_ROW = 2;
 const DETAIL_FIRST_DATA_ROW = 2;
+
+/** Coluna da Empresa na aba de detalhe — chave do SUMIFS de tarifa. */
+const DETAIL_COL_EMPRESA = 'B';
+/** Colunas calculadas da aba de detalhe. */
+const DETAIL_COL_HORAS = 'G';
+const DETAIL_COL_VALOR = 'H';
 
 /**
  * Proteção das abas — sem senha, de propósito: é uma trava contra digitar por
@@ -155,9 +174,10 @@ const DETAIL_FIRST_DATA_ROW = 2;
  * Revisão › Desproteger Planilha, num clique.
  *
  * Motivo: na primeira rodada real o valor da hora foi digitado na coluna
- * Valor da aba do instrutor, sobrescrevendo `=F2*Resumo!$B$2` — a planilha
- * parou de recalcular sem dar nenhum sinal. Só as células de input manual
- * ficam destravadas (`locked: false`).
+ * Valor da aba do instrutor, por cima da fórmula — a planilha parou de
+ * recalcular sem dar nenhum sinal. Só as células de input manual ficam
+ * destravadas (`locked: false`): a coluna de tarifa na aba Tarifas e a de
+ * dados bancários no Resumo.
  */
 const SHEET_PROTECTION = {
   selectLockedCells: true,
@@ -216,6 +236,23 @@ export function sanitizeSheetName(raw: string, used: Set<string>): string {
 /** Referência a uma aba dentro de fórmula: sempre entre aspas, com '' escapado. */
 const sheetRef = (name: string) => `'${name.replace(/'/g, "''")}'`;
 
+/**
+ * Texto usado como CRITÉRIO de SUMIFS/COUNTIFS.
+ *
+ * Dois escapes diferentes, pelo mesmo preço: aspas dobradas (para fechar a
+ * string dentro da fórmula) e `~` antes de `*` e `?` — nesses critérios os
+ * dois são CURINGAS, então um nome com asterisco casaria linhas demais e
+ * somaria tarifa de outro instrutor.
+ */
+function criteriaText(raw: string): string {
+  const escapado = String(raw ?? '')
+    .replace(/~/g, '~~')
+    .replace(/\*/g, '~*')
+    .replace(/\?/g, '~?')
+    .replace(/"/g, '""');
+  return `"${escapado}"`;
+}
+
 function styleHeaderRow(row: any, lastCol: number) {
   for (let c = 1; c <= lastCol; c++) {
     const cell = row.getCell(c);
@@ -226,14 +263,38 @@ function styleHeaderRow(row: any, lastCol: number) {
   row.height = 20;
 }
 
+/** Par (instrutor, empresa) que precisa de uma tarifa preenchida. */
+interface TarifaRow {
+  instrutor: string;
+  empresa: string;
+}
+
+/** Pares presentes no período, sem repetição, ordenados por instrutor e empresa. */
+function buildTarifaRows(blocks: MedicaoInstructorBlock[]): TarifaRow[] {
+  const rows: TarifaRow[] = [];
+  for (const block of blocks) {
+    const empresas = [...new Set(block.linhas.map(l => l.empresa))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    for (const empresa of empresas) rows.push({ instrutor: block.nome, empresa });
+  }
+  return rows;
+}
+
 /**
- * Monta o workbook. Todas as colunas de valor são fórmulas; a única entrada
- * numérica humana é a coluna B do Resumo (Hora/Aula), em amarelo.
+ * Monta o workbook: Resumo, Tarifas e uma aba por instrutor.
  *
- * Todas as abas saem protegidas (sem senha) com apenas as células de input
- * destravadas — ver SHEET_PROTECTION. Os cabeçalhos das colunas derivadas
- * levam o sufixo "— automático", e as duas células decisivas (Hora/Aula no
- * Resumo, Valor na aba de detalhe) levam nota explicando onde preencher.
+ * Toda coluna de valor é FÓRMULA. As únicas entradas manuais são a coluna
+ * Hora/Aula da aba Tarifas (uma por par instrutor+empresa) e os Dados
+ * Bancários no Resumo — só elas saem destravadas.
+ *
+ * Todas as abas saem protegidas (sem senha) — ver SHEET_PROTECTION. Os
+ * cabeçalhos das colunas derivadas levam o sufixo "— automático", e as duas
+ * células decisivas (tarifa em Tarifas, Valor na aba de detalhe) levam nota
+ * dizendo onde preencher e onde não preencher.
+ *
+ * NOTA SOBRE O SEPARADOR DE ARGUMENTOS: no XML do .xlsx a fórmula é sempre
+ * gravada com VÍRGULA, independentemente do idioma. É o Excel que exibe
+ * ponto-e-vírgula em PT-BR na hora de abrir. Escrever ';' aqui geraria
+ * fórmula inválida.
  */
 export async function buildMedicaoWorkbook(
   blocks: MedicaoInstructorBlock[],
@@ -247,14 +308,18 @@ export async function buildMedicaoWorkbook(
   workbook.created = new Date();
   workbook.title = `Medição de Instrutores — ${periodo.label}`;
 
+  /* ======================================================================== */
+  /* Aba 1 — Resumo                                                           */
+  /* ======================================================================== */
+
   const resumo = workbook.addWorksheet(RESUMO_SHEET, {
     views: [{ state: 'frozen', ySplit: RESUMO_HEADER_ROW }],
   });
   resumo.columns = [
     { width: 34 }, // A Instrutor
-    { width: 18 }, // B Hora/Aula  <- único input
-    { width: 26 }, // C Total de Horas — automático
-    { width: 26 }, // D Total (R$) — automático
+    { width: 26 }, // B Total de Horas — automático
+    { width: 26 }, // C Total (R$) — automático
+    { width: 22 }, // D Tarifas pendentes — automático
     { width: 20 }, // E CPF/CNPJ
     { width: 50 }, // F Dados Bancários
   ];
@@ -269,52 +334,99 @@ export async function buildMedicaoWorkbook(
 
   const resumoHeader = resumo.addRow([
     'Instrutor',
-    'Hora/Aula (R$)',
     'Total de Horas — automático',
     'Total (R$) — automático',
+    'Tarifas pendentes — automático',
     'CPF/CNPJ',
     'Dados Bancários',
   ]);
   styleHeaderRow(resumoHeader, 6);
 
-  resumoHeader.getCell(2).note =
+  resumoHeader.getCell(4).note =
+    'Quantas tarifas deste instrutor ainda estão em branco na aba Tarifas.\n\n' +
+    'Enquanto este número for maior que zero, o Total (R$) está incompleto: ' +
+    'as demandas da empresa sem tarifa entram valendo R$ 0,00.\n\n' +
+    'Confira que a coluna inteira esteja zerada antes de fechar a medição.';
+
+  /* ======================================================================== */
+  /* Aba 2 — Tarifas (a única entrada manual de valor)                        */
+  /* ======================================================================== */
+
+  const tarifaRows = buildTarifaRows(blocks);
+
+  const tarifas = workbook.addWorksheet(TARIFAS_SHEET, {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+  tarifas.columns = [
+    { width: 34 }, // A Instrutor
+    { width: 38 }, // B Empresa
+    { width: 20 }, // C Hora/Aula  <- input
+  ];
+  const tarifasHeader = tarifas.addRow(['Instrutor', 'Empresa', 'Hora/Aula (R$)']);
+  styleHeaderRow(tarifasHeader, 3);
+
+  tarifasHeader.getCell(3).note =
     'PREENCHA AQUI.\n\n' +
     'Esta é a única coluna a preencher em toda a planilha: o valor da hora/aula ' +
-    'de cada instrutor, nas células amarelas abaixo.\n\n' +
-    'Ao preencher, o Excel calcula sozinho o Total de Horas, o Total (R$), o ' +
-    'TOTAL GERAL e a coluna Valor da aba de cada instrutor.\n\n' +
-    'As demais colunas contêm fórmulas e estão protegidas — digitar por cima ' +
-    'delas quebraria o cálculo.';
+    'de cada instrutor EM CADA EMPRESA, nas células amarelas abaixo.\n\n' +
+    'A tarifa varia por cliente — o mesmo instrutor pode ter valores diferentes ' +
+    'em empresas diferentes, e cada linha aqui é um par instrutor + empresa.\n\n' +
+    'Ao preencher, o Excel recalcula sozinho a coluna Valor da aba do instrutor, ' +
+    'o Total (R$) e o TOTAL GERAL do Resumo.';
+
+  for (const { instrutor, empresa } of tarifaRows) {
+    const row = tarifas.addRow([instrutor, empresa, null]);
+    const tarifaCell = row.getCell(3);
+    markAsInput(tarifaCell);
+    tarifaCell.numFmt = FMT_MOEDA;
+  }
+
+  await tarifas.protect(undefined, SHEET_PROTECTION);
+
+  /* ======================================================================== */
+  /* Resumo — linhas por instrutor                                            */
+  /* ======================================================================== */
 
   // Nome da aba de cada instrutor tem que existir ANTES das fórmulas do
-  // Resumo, e a linha do Resumo antes das fórmulas da aba de detalhe — daí
-  // resolver os nomes primeiro e escrever as duas pontas depois.
-  const usedSheetNames = new Set<string>([RESUMO_SHEET.toLowerCase()]);
+  // Resumo — daí resolver os nomes primeiro e escrever as fórmulas depois.
+  const usedSheetNames = new Set<string>([RESUMO_SHEET.toLowerCase(), TARIFAS_SHEET.toLowerCase()]);
   const planned = blocks.map((block, i) => ({
     block,
     sheetName: sanitizeSheetName(block.nome, usedSheetNames),
     resumoRow: RESUMO_FIRST_DATA_ROW + i,
   }));
 
-  for (const { block, sheetName, resumoRow } of planned) {
+  for (const { block, sheetName } of planned) {
     const lastDetailRow = DETAIL_FIRST_DATA_ROW + block.linhas.length - 1;
+    const detalhe = sheetRef(sheetName);
+    const nomeCriterio = criteriaText(block.nome);
 
     const row = resumo.addRow([block.nome, null, null, null, block.cpf || '', '']);
 
-    // B: única entrada numérica manual da planilha inteira.
-    const rateCell = row.getCell(2);
-    markAsInput(rateCell);
-    rateCell.numFmt = FMT_MOEDA;
-
-    // C: soma das horas da aba do instrutor (range fechado, não coluna inteira).
-    const horasCell = row.getCell(3);
-    horasCell.value = { formula: `SUM(${sheetRef(sheetName)}!F${DETAIL_FIRST_DATA_ROW}:F${lastDetailRow})` };
+    // B: horas somadas da aba do instrutor (range fechado, não coluna inteira).
+    const horasCell = row.getCell(2);
+    horasCell.value = {
+      formula: `SUM(${detalhe}!${DETAIL_COL_HORAS}${DETAIL_FIRST_DATA_ROW}:${DETAIL_COL_HORAS}${lastDetailRow})`,
+    };
     horasCell.numFmt = FMT_HORAS;
 
-    const totalCell = row.getCell(4);
-    totalCell.value = { formula: `B${resumoRow}*C${resumoRow}` };
+    // C: o total NÃO é horas × tarifa única — cada linha da aba de detalhe já
+    // aplicou a tarifa da sua empresa, então aqui é só a soma daquela coluna.
+    const totalCell = row.getCell(3);
+    totalCell.value = {
+      formula: `SUM(${detalhe}!${DETAIL_COL_VALOR}${DETAIL_FIRST_DATA_ROW}:${DETAIL_COL_VALOR}${lastDetailRow})`,
+    };
     totalCell.numFmt = FMT_MOEDA;
     totalCell.font = { bold: true };
+
+    // D: tarifas ainda em branco deste instrutor na aba Tarifas. Sem isso, uma
+    // tarifa esquecida vira R$ 0,00 no total e passa despercebida.
+    const pendentesCell = row.getCell(4);
+    pendentesCell.value = {
+      formula: `COUNTIFS(${TARIFAS_SHEET}!$A:$A,${nomeCriterio},${TARIFAS_SHEET}!$C:$C,"")`,
+    };
+    pendentesCell.numFmt = '0';
+    pendentesCell.alignment = { horizontal: 'center' };
 
     // F: sem dados bancários no cadastro de instrutor — preenchimento manual.
     markAsInput(row.getCell(6));
@@ -323,42 +435,56 @@ export async function buildMedicaoWorkbook(
   const lastResumoRow = RESUMO_FIRST_DATA_ROW + planned.length - 1;
   const totalGeralRow = resumo.addRow(['TOTAL GERAL', null, null, null, '', '']);
   totalGeralRow.getCell(1).font = { bold: true };
-  totalGeralRow.getCell(3).value = { formula: `SUM(C${RESUMO_FIRST_DATA_ROW}:C${lastResumoRow})` };
-  totalGeralRow.getCell(3).numFmt = FMT_HORAS;
-  totalGeralRow.getCell(3).font = { bold: true };
-  totalGeralRow.getCell(4).value = { formula: `SUM(D${RESUMO_FIRST_DATA_ROW}:D${lastResumoRow})` };
-  totalGeralRow.getCell(4).numFmt = FMT_MOEDA;
-  totalGeralRow.getCell(4).font = { bold: true };
+  for (const col of [2, 3, 4]) {
+    const letra = String.fromCharCode(64 + col);
+    const cell = totalGeralRow.getCell(col);
+    cell.value = { formula: `SUM(${letra}${RESUMO_FIRST_DATA_ROW}:${letra}${lastResumoRow})` };
+    cell.font = { bold: true };
+  }
+  totalGeralRow.getCell(2).numFmt = FMT_HORAS;
+  totalGeralRow.getCell(3).numFmt = FMT_MOEDA;
+  totalGeralRow.getCell(4).numFmt = '0';
+  totalGeralRow.getCell(4).alignment = { horizontal: 'center' };
 
-  /* ---- abas de detalhe ---- */
-  for (const { block, sheetName, resumoRow } of planned) {
+  await resumo.protect(undefined, SHEET_PROTECTION);
+
+  /* ======================================================================== */
+  /* Abas de detalhe — uma por instrutor                                      */
+  /* ======================================================================== */
+
+  for (const { block, sheetName } of planned) {
     const ws = workbook.addWorksheet(sheetName, { views: [{ state: 'frozen', ySplit: 1 }] });
     ws.columns = [
       { width: 14 }, // A Código
-      { width: 40 }, // B Treinamento
-      { width: 26 }, // C Data
-      { width: 28 }, // D Local
-      { width: 18 }, // E Modalidade
-      { width: 10 }, // F Horas
-      { width: 26 }, // G Valor (R$) — automático
+      { width: 32 }, // B Empresa
+      { width: 40 }, // C Treinamento
+      { width: 26 }, // D Data
+      { width: 28 }, // E Local
+      { width: 18 }, // F Modalidade
+      { width: 10 }, // G Horas
+      { width: 26 }, // H Valor (R$) — automático
     ];
     const detailHeader = ws.addRow([
-      'Código', 'Treinamento', 'Data', 'Local', 'Modalidade', 'Horas', 'Valor (R$) — automático',
+      'Código', 'Empresa', 'Treinamento', 'Data', 'Local', 'Modalidade', 'Horas',
+      'Valor (R$) — automático',
     ]);
-    styleHeaderRow(detailHeader, 7);
+    styleHeaderRow(detailHeader, 8);
 
     // Foi exatamente aqui que o valor da hora foi digitado por cima da fórmula
     // na primeira rodada real — daí a nota, além da proteção da aba.
-    detailHeader.getCell(7).note =
+    detailHeader.getCell(8).note =
       'NÃO PREENCHA AQUI.\n\n' +
-      'Esta coluna é calculada: horas × valor da hora/aula.\n\n' +
-      'O valor da hora/aula se preenche uma única vez, na coluna amarela ' +
-      '"Hora/Aula (R$)" da aba Resumo, na linha deste instrutor.';
+      'Esta coluna é calculada: horas × a tarifa da empresa desta linha.\n\n' +
+      'A tarifa se preenche na aba Tarifas, na linha que cruza este instrutor ' +
+      'com a empresa da coluna B.';
+
+    const nomeCriterio = criteriaText(block.nome);
 
     block.linhas.forEach((linha, i) => {
       const rowIdx = DETAIL_FIRST_DATA_ROW + i;
       const row = ws.addRow([
         linha.demandId,
+        linha.empresa,
         linha.trainingName,
         formatDias(linha.dias),
         linha.local,
@@ -366,33 +492,40 @@ export async function buildMedicaoWorkbook(
         linha.horas,
         null,
       ]);
-      row.getCell(6).numFmt = FMT_HORAS;
+      row.getCell(7).numFmt = FMT_HORAS;
 
-      // Referência absoluta à Hora/Aula do Resumo: existe um único lugar onde
-      // o valor é digitado, e preenchê-lo recalcula esta coluna inteira.
-      const valorCell = row.getCell(7);
-      valorCell.value = { formula: `F${rowIdx}*Resumo!$B$${resumoRow}` };
+      // A tarifa vem do par (instrutor, empresa DESTA LINHA): o instrutor é
+      // literal (a aba é dele), a empresa é referência à coluna B, para uma
+      // demanda de outro cliente na linha de baixo puxar outra tarifa.
+      const valorCell = row.getCell(8);
+      valorCell.value = {
+        formula:
+          `${DETAIL_COL_HORAS}${rowIdx}*SUMIFS(` +
+          `${TARIFAS_SHEET}!$C:$C,` +
+          `${TARIFAS_SHEET}!$A:$A,${nomeCriterio},` +
+          `${TARIFAS_SHEET}!$B:$B,${DETAIL_COL_EMPRESA}${rowIdx})`,
+      };
       valorCell.numFmt = FMT_MOEDA;
     });
 
     const lastDetailRow = DETAIL_FIRST_DATA_ROW + block.linhas.length - 1;
-    const totalRow = ws.addRow(['', '', '', '', 'Total:', null, null]);
-    totalRow.getCell(5).font = { bold: true };
-    totalRow.getCell(5).alignment = { horizontal: 'right' };
-    totalRow.getCell(6).value = { formula: `SUM(F${DETAIL_FIRST_DATA_ROW}:F${lastDetailRow})` };
-    totalRow.getCell(6).numFmt = FMT_HORAS;
+    const totalRow = ws.addRow(['', '', '', '', '', 'Total:', null, null]);
     totalRow.getCell(6).font = { bold: true };
-    totalRow.getCell(7).value = { formula: `SUM(G${DETAIL_FIRST_DATA_ROW}:G${lastDetailRow})` };
-    totalRow.getCell(7).numFmt = FMT_MOEDA;
+    totalRow.getCell(6).alignment = { horizontal: 'right' };
+    totalRow.getCell(7).value = {
+      formula: `SUM(${DETAIL_COL_HORAS}${DETAIL_FIRST_DATA_ROW}:${DETAIL_COL_HORAS}${lastDetailRow})`,
+    };
+    totalRow.getCell(7).numFmt = FMT_HORAS;
     totalRow.getCell(7).font = { bold: true };
+    totalRow.getCell(8).value = {
+      formula: `SUM(${DETAIL_COL_VALOR}${DETAIL_FIRST_DATA_ROW}:${DETAIL_COL_VALOR}${lastDetailRow})`,
+    };
+    totalRow.getCell(8).numFmt = FMT_MOEDA;
+    totalRow.getCell(8).font = { bold: true };
 
     // Aba de detalhe é 100% derivada: nada aqui é de preenchimento manual.
     await ws.protect(undefined, SHEET_PROTECTION);
   }
-
-  // Sem senha: só as células amarelas (B e F) ficam editáveis; o resto exige
-  // Revisão › Desproteger Planilha, o que torna a sobrescrita deliberada.
-  await resumo.protect(undefined, SHEET_PROTECTION);
 
   return workbook;
 }

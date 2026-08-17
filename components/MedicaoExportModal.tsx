@@ -225,8 +225,9 @@ const MedicaoExportModal: React.FC<MedicaoExportModalProps> = ({ isOpen, onClose
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-[11px] text-amber-900 leading-relaxed">
             <p className="font-black uppercase tracking-widest text-[10px] mb-1">Como preencher</p>
             O valor da <strong>Hora/Aula</strong> não sai do sistema: preencha a coluna amarela da aba
-            <strong> Resumo</strong>, e o total do instrutor, o TOTAL GERAL e a coluna Valor da aba dele
-            são calculados pelo próprio Excel.
+            <strong> Tarifas</strong>, que traz uma linha por instrutor <em>em cada empresa</em> — a tarifa
+            varia por cliente. Os valores, os totais e o TOTAL GERAL são calculados pelo próprio Excel.
+            A coluna <strong>Tarifas pendentes</strong> do Resumo mostra o que ainda falta preencher.
           </div>
 
           <p className="text-[11px] text-slate-400 leading-relaxed">

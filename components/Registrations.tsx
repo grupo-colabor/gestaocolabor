@@ -615,11 +615,16 @@ const Registrations: React.FC = () => {
 
   const handleSaveCompany = async () => {
     if (!companyFormData.razaoSocial || !companyFormData.name) return alert('Razão Social e Nome Fantasia são obrigatórios.');
-    if (editingCompanyId) {
-      await updateCompany(companyFormData as Company);
-    } else {
-      await addCompany(companyFormData as Company);
-    }
+
+    const ok = editingCompanyId
+      ? await updateCompany(companyFormData as Company)
+      : await addCompany(companyFormData as Company);
+
+    // Fechar o modal em cima de falha (ex.: nome/CNPJ já cadastrado, migration
+    // 009) descartaria o formulário preenchido e passaria a impressão de que
+    // salvou. A notificação de erro já saiu de dentro de add/updateCompany.
+    if (!ok) return;
+
     setIsCompanyModalOpen(false);
   };
 

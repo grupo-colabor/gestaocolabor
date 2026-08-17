@@ -16,6 +16,7 @@
  * cálculo: o modo mês só resolve (ano, mês) para (primeiro dia, último dia)
  * antes de chamar.
  */
+import { fetchCompanies } from './companies';
 import { fetchDemands } from './demands';
 import { fetchInstructorAllocations } from './instructorAllocations';
 import { fetchMeasurements } from './measurements';
@@ -198,12 +199,13 @@ function mapAllocation(row: any): InstructorAllocation {
  * perto de estourar o corte silencioso de 1000 linhas do PostgREST.
  */
 export async function fetchMedicaoData(dataInicio: string, dataFim: string): Promise<MedicaoInstructorBlock[]> {
-  const [demandRows, allocationRows, measurementRows, trainingRows, instructorRows] = await Promise.all([
+  const [demandRows, allocationRows, measurementRows, trainingRows, instructorRows, companyRows] = await Promise.all([
     fetchDemands(),
     fetchInstructorAllocations(),
     fetchMeasurements(),
     fetchTrainings(),
     fetchInstructors(),
+    fetchCompanies(),
   ]);
 
   const demands = (demandRows ?? []).map(mapDemand);
@@ -231,6 +233,26 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
   const trainingNameById = new Map(trainings.map(t => [String(t.id), t.name]));
   const instructorsById = new Map(instructors.map(i => [i.id, i]));
 
+  // Empresa vem do cadastro (companies.name, via demands.company_id) — nunca
+  // de texto digitado. Isso é o que garante grafia idêntica entre a coluna
+  // Empresa da aba de detalhe e a aba Tarifas, de onde o SUMIFS puxa o valor.
+  const companyNameById = new Map(
+    (companyRows ?? []).map(c => [c.id, (c.name || c.razao_social || '').trim()])
+  );
+
+  /**
+   * Os dois casos ruins ficam VISÍVEIS na planilha em vez de virarem uma
+   * empresa em branco: demanda sem cliente vinculado é uma coisa, cadastro de
+   * empresa que não veio na busca é outra (e essa segunda é sintoma de bug,
+   * não de dado faltando).
+   */
+  const nomeEmpresa = (companyId?: string | null): string => {
+    if (!companyId) return '(sem empresa)';
+    const nome = companyNameById.get(companyId);
+    if (!nome) return '(empresa não encontrada)';
+    return nome;
+  };
+
   const blocks = new Map<string, MedicaoInstructorBlock>();
 
   for (const row of hoursRows) {
@@ -253,6 +275,7 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
 
     block.linhas.push({
       demandId: demand.id,
+      empresa: nomeEmpresa(demand.companyId),
       trainingName: trainingNameById.get(String(demand.trainingId)) ?? '—',
       dias: row.dias,
       local: local || '—',

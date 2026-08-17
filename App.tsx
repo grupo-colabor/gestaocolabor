@@ -180,8 +180,9 @@ interface AppState {
   addInstructor: (i: Instructor) => void;
   updateInstructor: (i: Instructor) => void;
   deleteInstructor: (id: string) => Promise<void>;
-  addCompany: (c: Company) => Promise<void>;
-  updateCompany: (c: Company) => Promise<void>;
+  /** `false` = falhou (a notificação de erro já foi disparada); o modal deve continuar aberto. */
+  addCompany: (c: Company) => Promise<boolean>;
+  updateCompany: (c: Company) => Promise<boolean>;
   addTraining: (t: Training) => void;
   updateTraining: (t: Training) => void;
   deleteTraining: (id: string) => Promise<void>;
@@ -1869,10 +1870,29 @@ const addDemand = useCallback(
     }
   }, [syncInstructorsFromDb, setNotification]);
 
-  const addCompany = useCallback(async (c: Company) => {
+  /**
+   * Traduz violação de unicidade (23505, migration 009) para linguagem de
+   * gente. O texto cru do Postgres cita o nome do índice, que não diz nada
+   * para quem está cadastrando.
+   */
+  const describeCompanyError = useCallback((e: any): string => {
+    const detalhe = String(e?.message ?? '') + String(e?.details ?? '');
+    if (e?.code === '23505') {
+      if (detalhe.includes('companies_cnpj_digits_unique_idx')) {
+        return 'Já existe uma empresa cadastrada com este CNPJ.';
+      }
+      if (detalhe.includes('companies_name_lower_unique_idx')) {
+        return 'Já existe uma empresa cadastrada com este nome (a comparação ignora maiúsculas e espaços).';
+      }
+      return 'Empresa já cadastrada com esse nome ou CNPJ.';
+    }
+    return e?.message || 'ver console';
+  }, []);
+
+  const addCompany = useCallback(async (c: Company): Promise<boolean> => {
     if (AUTH_MODE !== 'supabase') {
       setCompanies(prev => [...prev, { ...c, id: `COMP-${Date.now()}` }]);
-      return;
+      return true;
     }
 
     try {
@@ -1891,17 +1911,19 @@ const addDemand = useCallback(
       const saved = await insertCompany(payload);
       setCompanies(prev => [...prev, mapCompanyFromDb(saved)]);
       setNotification({ message: 'Empresa criada com sucesso!', type: 'success' });
+      return true;
     } catch (e: any) {
       console.error('[Company] insert error', e);
-      setNotification({ message: `Erro ao criar empresa: ${e?.message || 'ver console'}`, type: 'error' });
+      setNotification({ message: `Erro ao criar empresa: ${describeCompanyError(e)}`, type: 'error' });
+      return false;
     }
-  }, [AUTH_MODE, mapCompanyFromDb, setNotification]);
+  }, [AUTH_MODE, mapCompanyFromDb, setNotification, describeCompanyError]);
 
-  const updateCompany = useCallback(async (c: Company) => {
+  const updateCompany = useCallback(async (c: Company): Promise<boolean> => {
     // Optimistic update
     setCompanies(prev => prev.map(item => (item.id === c.id ? c : item)));
 
-    if (AUTH_MODE !== 'supabase') return;
+    if (AUTH_MODE !== 'supabase') return true;
 
     try {
       const payload = {
@@ -1918,6 +1940,7 @@ const addDemand = useCallback(
 
       await updateCompanyById(c.id, payload);
       setNotification({ message: 'Empresa atualizada com sucesso!', type: 'success' });
+      return true;
     } catch (e: any) {
       console.error('[Company] update error', e);
       // Rollback optimistic update re-syncing from DB
@@ -1925,9 +1948,10 @@ const addDemand = useCallback(
         const fresh = await fetchCompanies();
         setCompanies(fresh.map(mapCompanyFromDb));
       } catch {}
-      setNotification({ message: `Erro ao atualizar empresa: ${e?.message || 'ver console'}`, type: 'error' });
+      setNotification({ message: `Erro ao atualizar empresa: ${describeCompanyError(e)}`, type: 'error' });
+      return false;
     }
-  }, [AUTH_MODE, mapCompanyFromDb, setNotification]);
+  }, [AUTH_MODE, mapCompanyFromDb, setNotification, describeCompanyError]);
 
   // ✅ Treinamentos (mock vs supabase)
   const addTraining = useCallback(

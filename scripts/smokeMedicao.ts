@@ -139,25 +139,31 @@ console.log('\n[3] Resolução de período');
   checkEq('countDaysInclusive mesmo dia', countDaysInclusive('2026-06-26', '2026-06-26'), 1);
 }
 
+
 /* ========================================================================== */
-/* 4. Workbook: fórmulas, proteção e título do período                        */
+/* 4. Workbook: layout de colunas, fórmulas de tarifa por empresa, proteção   */
 /* ========================================================================== */
 
 console.log('\n[4] Workbook gerado');
 
 (async () => {
   const periodo = resolvePeriodo({ modo: 'PERSONALIZADO', dataInicio: '2026-06-26', dataFim: '2026-07-25' });
+
+  // Ana atende DUAS empresas no mesmo período, com tarifas diferentes.
+  // Bruno atende uma empresa que ficará SEM tarifa preenchida.
   const blocks = [
     {
       instructorId: 'i1', nome: 'Ana Maria', cpf: '123.456.789-09',
       linhas: [
-        { demandId: 'DEM-100', trainingName: 'NR 33', dias: ['2026-06-26', '2026-06-27', '2026-06-28'], local: 'Vitória - ES', modalidade: 'Presencial', horas: 6 },
+        { demandId: 'DEM-100', empresa: 'Vale', trainingName: 'NR 33', dias: ['2026-06-26', '2026-06-27', '2026-06-28'], local: 'Vitória - ES', modalidade: 'Presencial', horas: 6 },
+        { demandId: 'DEM-101', empresa: 'ArcelorMittal', trainingName: 'NR 35', dias: ['2026-07-02'], local: 'Serra - ES', modalidade: 'Presencial', horas: 8 },
+        { demandId: 'DEM-102', empresa: 'Vale', trainingName: 'NR 20', dias: ['2026-07-10'], local: 'Vitória - ES', modalidade: 'Híbrido', horas: 4 },
       ],
     },
     {
       instructorId: 'i2', nome: 'Bruno Souza', cpf: '',
       linhas: [
-        { demandId: 'DEM-101', trainingName: 'NR 35', dias: ['2026-07-02'], local: 'Serra - ES', modalidade: 'Presencial', horas: 8 },
+        { demandId: 'DEM-103', empresa: 'Samarco', trainingName: 'NR 35', dias: ['2026-07-06'], local: 'Anchieta - ES', modalidade: 'Presencial', horas: 8 },
       ],
     },
   ];
@@ -171,24 +177,74 @@ console.log('\n[4] Workbook gerado');
   const lido = new ExcelJS.Workbook();
   await lido.xlsx.load(buffer);
 
-  const resumo = lido.getWorksheet('Resumo');
   const formula = (ws: any, addr: string) => {
     const v = ws.getCell(addr).value;
     return v && typeof v === 'object' && 'formula' in v ? (v as any).formula : null;
   };
+  const texto = (ws: any, addr: string) => String(ws.getCell(addr).value ?? '');
 
-  checkEq('Resumo: título traz o período', String(resumo.getCell('A1').value), 'MEDIÇÃO DE INSTRUTORES — 26/06/2026 a 25/07/2026');
-  checkEq('Resumo: cabeçalho na linha 2', String(resumo.getCell('A2').value), 'Instrutor');
-  checkEq('Resumo: 1º instrutor na linha 3', String(resumo.getCell('A3').value), 'Ana Maria');
-  checkEq('Resumo: soma de horas aponta para a aba do instrutor', formula(resumo, 'C3'), "SUM('Ana Maria'!F2:F2)");
-  checkEq('Resumo: total = hora/aula × horas', formula(resumo, 'D3'), 'B3*C3');
-  checkEq('Resumo: TOTAL GERAL soma a partir da linha 3', formula(resumo, 'D5'), 'SUM(D3:D4)');
+  /* ---- ordem das abas ---- */
+  checkEq('abas na ordem Resumo, Tarifas, instrutores...', lido.worksheets.map((w: any) => w.name).join(' | '), 'Resumo | Tarifas | Ana Maria | Bruno Souza');
 
-  const detalhe = lido.getWorksheet('Ana Maria');
-  checkEq('Detalhe: valor referencia a hora/aula do Resumo', formula(detalhe, 'G2'), 'F2*Resumo!$B$3');
-  checkEq('Detalhe: 2º instrutor referencia a própria linha', formula(lido.getWorksheet('Bruno Souza'), 'G2'), 'F2*Resumo!$B$4');
+  /* ---- aba Tarifas ---- */
+  const tarifas = lido.getWorksheet('Tarifas');
+  checkEq('Tarifas: cabeçalho', [texto(tarifas, 'A1'), texto(tarifas, 'B1'), texto(tarifas, 'C1')].join(' | '), 'Instrutor | Empresa | Hora/Aula (R$)');
+  checkEq('Tarifas: uma linha por par (instrutor, empresa)', tarifas.actualRowCount, 4); // 1 cabeçalho + 3 pares
+  checkEq('Tarifas: par 1', `${texto(tarifas, 'A2')}/${texto(tarifas, 'B2')}`, 'Ana Maria/ArcelorMittal');
+  checkEq('Tarifas: par 2 (mesma instrutora, outra empresa)', `${texto(tarifas, 'A3')}/${texto(tarifas, 'B3')}`, 'Ana Maria/Vale');
+  checkEq('Tarifas: par 3', `${texto(tarifas, 'A4')}/${texto(tarifas, 'B4')}`, 'Bruno Souza/Samarco');
+  checkEq('Tarifas: duas demandas da mesma empresa não duplicam a linha', tarifas.actualRowCount - 1, 3);
+  check('Tarifas: coluna C destravada', tarifas.getCell('C2').protection?.locked === false);
+  check('Tarifas: coluna A travada', tarifas.getCell('A2').protection?.locked !== false);
+  {
+    const nota = tarifas.getCell('C1').note;
+    const txt = typeof nota === 'string' ? nota : (nota?.texts || []).map((t: any) => t.text).join('');
+    check('Tarifas: nota "PREENCHA AQUI" no cabeçalho da tarifa', txt.startsWith('PREENCHA AQUI'));
+    check('Resumo: nota "PREENCHA AQUI" saiu do Resumo', !lido.getWorksheet('Resumo').getCell('B2').note);
+  }
 
-  // Proteção: nenhuma célula com fórmula pode estar destravada.
+  /* ---- aba de detalhe: layout novo ---- */
+  const ana = lido.getWorksheet('Ana Maria');
+  checkEq(
+    'Detalhe: cabeçalho com Empresa em B',
+    ['A1', 'B1', 'C1', 'D1', 'E1', 'F1', 'G1', 'H1'].map(a => texto(ana, a)).join(' | '),
+    'Código | Empresa | Treinamento | Data | Local | Modalidade | Horas | Valor (R$) — automático'
+  );
+  checkEq('Detalhe: empresa da linha 2', texto(ana, 'B2'), 'Vale');
+  checkEq('Detalhe: treinamento empurrado para C', texto(ana, 'C2'), 'NR 33');
+  checkEq('Detalhe: horas agora em G', ana.getCell('G2').value, 6);
+  checkEq('Detalhe: horas com formato de horas', ana.getCell('G2').numFmt, '0.0');
+
+  /* ---- fórmula de valor: tarifa cruzada por empresa da própria linha ---- */
+  checkEq(
+    'Detalhe: valor busca tarifa por (instrutor, empresa da linha)',
+    formula(ana, 'H2'),
+    'G2*SUMIFS(Tarifas!$C:$C,Tarifas!$A:$A,"Ana Maria",Tarifas!$B:$B,B2)'
+  );
+  checkEq(
+    'Detalhe: linha de outra empresa referencia a própria coluna B',
+    formula(ana, 'H3'),
+    'G3*SUMIFS(Tarifas!$C:$C,Tarifas!$A:$A,"Ana Maria",Tarifas!$B:$B,B3)'
+  );
+  check('Detalhe: fórmula usa vírgula (separador do XML, não do Excel PT-BR)', !String(formula(ana, 'H2')).includes(';'));
+  checkEq('Detalhe: total de horas em G', formula(ana, 'G5'), 'SUM(G2:G4)');
+  checkEq('Detalhe: total de valor em H', formula(ana, 'H5'), 'SUM(H2:H4)');
+
+  /* ---- Resumo: sem Hora/Aula, com pendências ---- */
+  const resumo = lido.getWorksheet('Resumo');
+  checkEq('Resumo: título traz o período', texto(resumo, 'A1'), 'MEDIÇÃO DE INSTRUTORES — 26/06/2026 a 25/07/2026');
+  checkEq(
+    'Resumo: cabeçalho sem Hora/Aula e com Tarifas pendentes',
+    ['A2', 'B2', 'C2', 'D2', 'E2', 'F2'].map(a => texto(resumo, a)).join(' | '),
+    'Instrutor | Total de Horas — automático | Total (R$) — automático | Tarifas pendentes — automático | CPF/CNPJ | Dados Bancários'
+  );
+  checkEq('Resumo: horas somam a coluna G da aba do instrutor', formula(resumo, 'B3'), "SUM('Ana Maria'!G2:G4)");
+  checkEq('Resumo: total soma a coluna Valor da aba (não horas × tarifa)', formula(resumo, 'C3'), "SUM('Ana Maria'!H2:H4)");
+  checkEq('Resumo: pendências contam tarifas em branco do instrutor', formula(resumo, 'D3'), 'COUNTIFS(Tarifas!$A:$A,"Ana Maria",Tarifas!$C:$C,"")');
+  checkEq('Resumo: TOTAL GERAL de valores', formula(resumo, 'C5'), 'SUM(C3:C4)');
+  checkEq('Resumo: TOTAL GERAL de pendências', formula(resumo, 'D5'), 'SUM(D3:D4)');
+
+  /* ---- proteção ---- */
   let formulaDestravada = 0;
   let destravadas = 0;
   for (const ws of lido.worksheets) {
@@ -203,7 +259,44 @@ console.log('\n[4] Workbook gerado');
     });
   }
   checkEq('nenhuma célula de fórmula destravada', formulaDestravada, 0);
-  checkEq('destravadas = 2 por instrutor (Hora/Aula + Dados Bancários)', destravadas, 4);
+  // 3 tarifas + 2 dados bancários
+  checkEq('destravadas = tarifas + dados bancários', destravadas, 5);
+
+  /* ======================================================================== */
+  /* 5. Cálculo real das fórmulas (tarifa por empresa)                        */
+  /* ======================================================================== */
+
+  console.log('\n[5] Recálculo das fórmulas com tarifas preenchidas');
+
+  // O ExcelJS não avalia fórmula. Para provar que o desenho fecha, reproduzimos
+  // aqui a semântica de SUMIFS/COUNTIFS sobre a aba Tarifas lida do arquivo.
+  const tarifaDe = (instrutor: string, empresa: string, preenchidas: Record<string, number>) =>
+    preenchidas[`${instrutor}|${empresa}`] ?? 0;
+
+  const preenchidas = { 'Ana Maria|Vale': 90, 'Ana Maria|ArcelorMittal': 120 }; // Samarco fica em branco
+
+  const valorLinha = (instrutor: string, linhas: any[], i: number) =>
+    linhas[i].horas * tarifaDe(instrutor, linhas[i].empresa, preenchidas);
+
+  const anaLinhas = blocks[0].linhas;
+  checkEq('Vale a R$ 90: 6h -> 540', valorLinha('Ana Maria', anaLinhas, 0), 540);
+  checkEq('ArcelorMittal a R$ 120: 8h -> 960', valorLinha('Ana Maria', anaLinhas, 1), 960);
+  checkEq('Vale a R$ 90 na 2ª demanda: 4h -> 360', valorLinha('Ana Maria', anaLinhas, 2), 360);
+  checkEq('total da Ana = 540 + 960 + 360', anaLinhas.reduce((acc, _l, i) => acc + valorLinha('Ana Maria', anaLinhas, i), 0), 1860);
+
+  const brunoLinhas = blocks[1].linhas;
+  checkEq('tarifa não preenchida -> valor 0', valorLinha('Bruno Souza', brunoLinhas, 0), 0);
+
+  // Contador de pendências: pares do instrutor com tarifa em branco.
+  const pendentesDe = (instrutor: string) =>
+    tarifas.getRows(2, tarifas.actualRowCount - 1)
+      .filter((r: any) => String(r.getCell(1).value) === instrutor)
+      .filter((r: any) => r.getCell(3).value === null || r.getCell(3).value === undefined || r.getCell(3).value === '')
+      .length;
+
+  checkEq('Bruno tem 1 tarifa pendente na planilha recém-gerada', pendentesDe('Bruno Souza'), 1);
+  checkEq('Ana tem 2 tarifas pendentes na planilha recém-gerada', pendentesDe('Ana Maria'), 2);
+  check('tarifa pendente > 0 sinaliza total incompleto', pendentesDe('Bruno Souza') > 0);
 
   console.log(falhas === 0 ? '\n✅ Todos os checks passaram.' : `\n❌ ${falhas} check(s) falharam.`);
   process.exit(falhas === 0 ? 0 : 1);

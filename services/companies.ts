@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabase";
+import { fetchAllPaginated } from "./pagination";
 
 export type CompanyRow = {
   id: string;
@@ -14,12 +15,19 @@ export type CompanyRow = {
   created_at: string;
 };
 
+// Pagina via fetchAllPaginated: select() sem .range() é cortado
+// silenciosamente em ~1000 linhas pelo PostgREST/Supabase — sem erro e sem
+// aviso. Aqui não é só rótulo: o nome da empresa é a CHAVE de casamento da
+// tarifa no export de medição (services/medicaoWorkbook.ts). Empresa cortada
+// da busca vira "(empresa não encontrada)" e ganha linha própria na aba
+// Tarifas, quebrando a conferência de pagamento.
 export async function fetchCompanies(): Promise<CompanyRow[]> {
   if (!supabase) return [];
 
-  const { data, error } = await supabase
-    .from("companies")
-    .select(`
+  return fetchAllPaginated<CompanyRow>((from, to) =>
+    supabase
+      .from("companies")
+      .select(`
       id,
       name,
       razao_social,
@@ -32,10 +40,10 @@ export async function fetchCompanies(): Promise<CompanyRow[]> {
       observations,
       created_at
     `)
-    .order("name", { ascending: true });
-
-  if (error) throw error;
-  return (data ?? []) as CompanyRow[];
+      .order("name", { ascending: true })
+      .order("id", { ascending: true }) // desempate: sem chave única a ordem entre páginas não é estável
+      .range(from, to)
+  );
 }
 
 export async function insertCompany(payload: {

@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { fetchAllPaginated } from './pagination';
 
 export type AuditModulo =
   | 'Demandas'
@@ -37,6 +38,19 @@ export interface LogActionParams {
   descricao: string;
   dadosAntes?: unknown;
   dadosDepois?: unknown;
+}
+
+/**
+ * Resultado de logAction.
+ *
+ * Falha de auditoria NUNCA aborta a operação de negócio que a originou —
+ * mas também não pode ser silenciosa. Callers que queiram avisar o usuário
+ * devem dar `await` e checar `ok`; os que não derem seguem funcionando como
+ * fire-and-forget (o erro ainda vai pro console e o registro pro localStorage).
+ */
+export interface LogActionResult {
+  ok: boolean;
+  error?: unknown;
 }
 
 /* --------------------------------------------------
@@ -110,7 +124,7 @@ const generateId = () =>
    logAction — principal ponto de entrada
    Registros são somente leitura: sem update/delete.
 -------------------------------------------------- */
-export async function logAction(params: LogActionParams): Promise<void> {
+export async function logAction(params: LogActionParams): Promise<LogActionResult> {
   const { modulo, acao, descricao, dadosAntes, dadosDepois } = params;
 
   const currentUser = await resolveCurrentUser();
@@ -129,7 +143,7 @@ export async function logAction(params: LogActionParams): Promise<void> {
 
   // Tenta persistir no Supabase; em caso de falha, usa localStorage
   try {
-    const { data, error } = await supabase.from('audit_logs').insert({
+    const { error } = await supabase.from('audit_logs').insert({
       id: entry.id,
       created_at: entry.created_at,
       user_id: entry.user_id ?? null,
@@ -139,41 +153,47 @@ export async function logAction(params: LogActionParams): Promise<void> {
       descricao: entry.descricao,
       dados_antes: entry.dados_antes ?? null,
       dados_depois: entry.dados_depois ?? null,
-    }).select();
+    });
 
     if (error) {
-      // [DIAGNÓSTICO] — remover após confirmar
       console.error('[auditLog] INSERT falhou:', error.code, error.message, error.details);
       saveToLocalStorage(entry);
-    } else {
-      // [DIAGNÓSTICO] — remover após confirmar
-      console.log('[auditLog] INSERT ok:', data);
+      return { ok: false, error };
     }
+
+    return { ok: true };
   } catch (e) {
-    // [DIAGNÓSTICO] — remover após confirmar
-    console.error('[auditLog] CATCH inesperado:', e);
+    console.error('[auditLog] exceção ao gravar:', e);
     saveToLocalStorage(entry);
+    return { ok: false, error: e };
   }
 }
 
 /* --------------------------------------------------
    fetchAuditLogs — leitura dos registros
    Somente leitura: sem update/delete expostos.
+
+   Pagina via fetchAllPaginated. O `.limit(500)` anterior escondia toda a
+   cauda da trilha: o PostgREST ainda corta em ~1000 linhas por padrão, e
+   com o backfill de criação retroativa (migration 010) os eventos antigos
+   ficariam todos fora da janela mais recente — invisíveis na tela.
+
+   O desempate por `id` é necessário porque `created_at` vem do cliente e
+   repete entre registros do backfill; sem ele a paginação pode duplicar
+   ou pular linhas na fronteira das páginas.
 -------------------------------------------------- */
 export async function fetchAuditLogs(): Promise<AuditLog[]> {
   try {
-    const { data, error } = await supabase
-      .from('audit_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(500);
-
-    if (!error && data) {
-      return data as AuditLog[];
-    }
-  } catch {
-    // fall through para localStorage
+    return await fetchAllPaginated<AuditLog>((from, to) =>
+      supabase
+        .from('audit_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to)
+    );
+  } catch (error) {
+    console.error('fetchAuditLogs error:', error);
+    return getLogsFromLocalStorage();
   }
-
-  return getLogsFromLocalStorage();
 }

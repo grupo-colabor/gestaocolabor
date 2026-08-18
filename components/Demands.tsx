@@ -1103,13 +1103,46 @@ const formatDateOnlySafe = (dateStr?: string) => {
         dadosAntes: formDemand,
         dadosDepois: null,
       });
-      // Marca todos os logs históricos dessa demanda como pertencentes a uma demanda excluída
-      supabase
-        .from('audit_logs')
-        .update({ demanda_excluida: true })
-        .like('descricao', `%${formDemand.id}%`)
-        .lt('created_at', new Date().toISOString())
-        .then(() => {/* fire-and-forget */});
+      // Marca todos os logs históricos dessa demanda como pertencentes a uma demanda excluída.
+      //
+      // ⚠️ O filtro anterior era `.like('descricao', '%DEM-63%')` — casamento por
+      // substring: excluir DEM-63 marcava DEM-631, DEM-6301 e qualquer outra
+      // demanda cujo ID começasse igual, sumindo com elas da trilha. Agora o LIKE
+      // só pré-seleciona candidatos no banco e o ID é confirmado por limite de
+      // palavra no cliente — mesma regra (\bDEM-\d+\b) que Audit.tsx usa pra
+      // agrupar os logs por demanda.
+      void (async (demandaId: string) => {
+        try {
+          const { data, error } = await supabase
+            .from('audit_logs')
+            .select('id, descricao')
+            .like('descricao', `%${demandaId}%`)
+            .lt('created_at', new Date().toISOString());
+
+          if (error) {
+            console.error('[audit] falha ao buscar logs da demanda excluída:', error);
+            return;
+          }
+
+          const idExato = new RegExp(`\\b${demandaId}\\b`);
+          const alvos = (data ?? [])
+            .filter(l => idExato.test(l.descricao ?? ''))
+            .map(l => l.id);
+
+          if (alvos.length === 0) return;
+
+          const { error: updateError } = await supabase
+            .from('audit_logs')
+            .update({ demanda_excluida: true })
+            .in('id', alvos);
+
+          if (updateError) {
+            console.error('[audit] falha ao marcar logs como demanda excluída:', updateError);
+          }
+        } catch (e) {
+          console.error('[audit] exceção ao marcar logs como demanda excluída:', e);
+        }
+      })(formDemand.id);
       setShowDeleteMessage(true);
       setConfirmDelete(false);
       setTimeout(() => setShowDeleteMessage(false), 3000);
@@ -1689,7 +1722,11 @@ const handleSave = async () => {
       }
       demandId = created.id;
       sanitizedDemand.id = created.id;
-      logAction({
+      // ⚠️ `await` proposital: sem ele o insert de auditoria corria em paralelo
+      // com o resto do pipeline (alocações, documentos, logística) e podia ser
+      // abortado pelo fechamento do modal / reload antes de completar — o
+      // evento de criação sumia enquanto os demais apareciam.
+      const auditoria = await logAction({
         modulo: 'Demandas',
         acao: 'Criar',
         descricao: [
@@ -1701,6 +1738,15 @@ const handleSave = async () => {
         ].filter(Boolean).join(' | '),
         dadosDepois: sanitizedDemand,
       });
+      // Falha de auditoria não desfaz nem bloqueia a criação: a demanda já está
+      // no banco. Mas também não pode passar em branco — o usuário precisa
+      // saber que a trilha ficou incompleta pra essa demanda.
+      if (!auditoria.ok) {
+        setNotification({
+          message: `Demanda ${sanitizedDemand.id} criada, mas o registro de auditoria falhou. Avise o suporte.`,
+          type: 'error',
+        });
+      }
     } else {
       await Promise.resolve(updateDemand(sanitizedDemand));
       demandId = demandId ?? sanitizedDemand.id;

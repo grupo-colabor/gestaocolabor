@@ -3144,9 +3144,9 @@ type Action =
   | 'manage_logistics'
   | 'manage_measurement';
 
-// ⚠️ 'internal-demands' está nos TRÊS perfis de propósito: demanda interna é
-// trabalho da Colabor com o próprio instrutor, e qualquer perfil precisa poder
-// registrar e consultar (decisão fechada com o negócio).
+// 'internal-demands' fica com admin e analista. Coordenador continua só com
+// 'calendar' (apenas visualização) — demanda interna é registro operacional,
+// não entra no perfil de consulta de agenda.
 const ROLE_PERMISSIONS: Record<string, View[]> = {
   admin: [
     'dashboard',
@@ -3172,7 +3172,7 @@ const ROLE_PERMISSIONS: Record<string, View[]> = {
     'logistics-control',
     'evidences',
   ],
-  coordenador: ['calendar', 'internal-demands']
+  coordenador: ['calendar'] // apenas visualização
 };
 
 const ROLE_ACTIONS: Record<string, Action[]> = {

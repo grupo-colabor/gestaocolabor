@@ -199,6 +199,14 @@ export interface SpecificDateEntry {
 export interface Demand {
   id: string;
   clientDemandId?: string;
+
+  // 'interna' = demanda da própria Colabor para um instrutor (visita, SIPAT,
+  // apoio logístico, evento). Nesse caso companyId/trainingId chegam vazios e a
+  // carga horária vem de horasPrevistas, não do treinamento.
+  tipo: 'cliente' | 'interna';
+  categoriaInterna?: string | null;
+  horasPrevistas?: number | null;
+
   companyId: string;
   regionId: string;
   trainingId: string;

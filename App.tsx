@@ -876,6 +876,11 @@ const syncCompanionAllocationsFromDb = useCallback(async () => {
   const mapDemandFromDb = useCallback((row: any): Demand => {
     return {
       id: row.id,
+      // Linha sem `tipo` = banco anterior à migration 012 (ou select antigo em
+      // cache): trata como demanda de cliente, que é o default da coluna.
+      tipo: (row.tipo ?? 'cliente') as 'cliente' | 'interna',
+      categoriaInterna: row.categoria_interna ?? null,
+      horasPrevistas: row.horas_previstas ?? null,
       companyId: row.company_id ?? '',
       trainingId: row.training_id ?? '',
       regionId: row.region_id ?? '',
@@ -940,7 +945,21 @@ const syncCompanionAllocationsFromDb = useCallback(async () => {
     return s.length ? s : null;
   };
 
+  // Mesma ideia do cleanOrNull, mas para coluna numeric: string vazia/valor
+  // inválido vira null em vez de virar NaN ou o texto '' no insert.
+  const cleanNumberOrNull = (v?: number | string | null) => {
+    const s = (v ?? '').toString().trim().replace(',', '.');
+    if (!s.length) return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  };
+
   const payload: any = {
+    // `tipo` nunca vai nulo: o CHECK demands_tipo_check só aceita cliente/interna
+    // e a coluna é NOT NULL. Demanda sem tipo declarado é de cliente.
+    tipo: cleanOrNull((d as any).tipo) === 'interna' ? 'interna' : 'cliente',
+    categoria_interna: cleanOrNull((d as any).categoriaInterna),
+    horas_previstas: cleanNumberOrNull((d as any).horasPrevistas),
     company_id: cleanOrNull(d.companyId),
     training_id: cleanOrNull(d.trainingId),
     region_id: cleanOrNull(d.regionId),

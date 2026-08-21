@@ -29,8 +29,11 @@ const EVIDENCES_BUCKET = 'evidences';
 
 interface EvidenceDetailsProps {
   demand: Demand;
-  company: Company;
-  training: Training;
+  // Podem chegar undefined: a FK de company_id/training_id é ON DELETE SET NULL,
+  // então demanda antiga pode ter perdido a referência. O caller não tem como
+  // garantir o find() — o componente é quem trata a ausência (exibe '—').
+  company?: Company;
+  training?: Training;
   data: EvidenceData;
   onBack: () => void;
   onUpdate: (updatedData: EvidenceData) => void;
@@ -406,7 +409,7 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
             <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Empresa</span>
             <div className="flex items-center gap-2">
               <Building2 size={14} className="text-slate-300" />
-              <p className="text-sm font-bold text-slate-700">{company.name}</p>
+              <p className="text-sm font-bold text-slate-700">{company?.name ?? '—'}</p>
             </div>
           </div>
 
@@ -414,7 +417,7 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({
             <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Treinamento</span>
             <div className="flex items-center gap-2">
               <GraduationCap size={14} className="text-slate-300" />
-              <p className="text-sm font-bold text-slate-700">{training.name}</p>
+              <p className="text-sm font-bold text-slate-700">{training?.name ?? '—'}</p>
             </div>
           </div>
 

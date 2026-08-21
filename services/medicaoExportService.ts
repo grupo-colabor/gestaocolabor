@@ -122,6 +122,12 @@ function safeParseObject(raw: string): any | null {
 function mapDemand(row: any): Demand {
   return {
     id: row.id,
+    // Demanda interna: sem empresa/treinamento, carga horária em horasPrevistas.
+    // Os 3 campos entram aqui já nesta fase só para ficarem disponíveis ao
+    // cálculo de horas e ao workbook (fases 4-5); nada abaixo os consome ainda.
+    tipo: (row.tipo ?? 'cliente') as 'cliente' | 'interna',
+    categoriaInterna: row.categoria_interna ?? null,
+    horasPrevistas: row.horas_previstas ?? null,
     companyId: row.company_id ?? '',
     trainingId: row.training_id ?? '',
     regionId: row.region_id ?? '',

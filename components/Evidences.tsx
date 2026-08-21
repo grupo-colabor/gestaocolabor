@@ -147,18 +147,18 @@ const getEvidenceAutoStatus = (
 
   // Opções derivadas dos dados para os dropdowns
   const companyOptions = useMemo(() => {
-    const ids = Array.from(new Set<string>(demands.filter((d: Demand) => d.status !== 'CANCELADA').map((d: Demand) => d.companyId)));
+    const ids = Array.from(new Set<string>(demands.filter((d: Demand) => d.status !== 'CANCELADA' && d.tipo !== 'interna').map((d: Demand) => d.companyId)));
     return ids.map((id: string) => ({ id, name: getCompanyName(id) })).sort((a, b) => a.name.localeCompare(b.name));
   }, [demands, companies]);
 
   const trainingOptions = useMemo(() => {
-    const ids = Array.from(new Set<string>(demands.filter((d: Demand) => d.status !== 'CANCELADA').map((d: Demand) => d.trainingId)));
+    const ids = Array.from(new Set<string>(demands.filter((d: Demand) => d.status !== 'CANCELADA' && d.tipo !== 'interna').map((d: Demand) => d.trainingId)));
     return ids.map((id: string) => ({ id, name: getTrainingName(id) })).sort((a, b) => a.name.localeCompare(b.name));
   }, [demands, trainings]);
 
   const instructorOptions = useMemo(() => {
     const ids = new Set<string>();
-    demands.filter((d: Demand) => d.status !== 'CANCELADA').forEach((d: Demand) => {
+    demands.filter((d: Demand) => d.status !== 'CANCELADA' && d.tipo !== 'interna').forEach((d: Demand) => {
       if (d.instructorId) ids.add(d.instructorId);
       instructorAllocations.filter((a: { demandId: string; instructorId: string }) => a.demandId === d.id).forEach((a: { instructorId: string }) => ids.add(a.instructorId));
     });
@@ -169,13 +169,16 @@ const getEvidenceAutoStatus = (
   }, [demands, instructors, instructorAllocations]);
 
   const localOptions = useMemo(() =>
-    [...new Set<string>(demands.filter((d: Demand) => d.status !== 'CANCELADA').map((d: Demand) => d.trainingLocal as string).filter((v: string) => !!v && v !== 'N/A'))].sort(),
+    [...new Set<string>(demands.filter((d: Demand) => d.status !== 'CANCELADA' && d.tipo !== 'interna').map((d: Demand) => d.trainingLocal as string).filter((v: string) => !!v && v !== 'N/A'))].sort(),
   [demands]);
 
   // Filtrar demandas com base nos inputs e status (não canceladas)
   const activeDemands = useMemo(() => {
     return demands
       .filter(d => d.status !== 'CANCELADA')
+      // Evidência é documentação de treinamento de cliente (lista de presença,
+      // certificados). Demanda interna não gera nada disso — fica fora daqui.
+      .filter(d => d.tipo !== 'interna')
       .filter(d => {
         // Filtro por ID
         const matchesId = !filterId || d.id.toLowerCase().includes(filterId.toLowerCase()) ||
@@ -267,13 +270,31 @@ const getEvidenceAutoStatus = (
 
   // Se uma demanda estiver selecionada, renderiza o componente de detalhes
   if (selectedDemandId) {
-    const demand = demands.find(d => d.id === selectedDemandId)!;
-    const company = companies.find(c => c.id === demand.companyId)!;
-    const training = trainings.find(t => t.id === demand.trainingId)!;
+    const demand = demands.find(d => d.id === selectedDemandId);
+
+    // Sem os `!`: a demanda pode ter sumido do state (exclusão em outra aba via
+    // realtime) e empresa/treinamento podem estar órfãos, porque as FKs são
+    // ON DELETE SET NULL. Antes, o `!` mentia e a tela quebrava em company.name.
+    if (!demand) {
+      return (
+        <div className="p-8 text-center">
+          <p className="text-sm font-bold text-slate-500">Demanda não encontrada.</p>
+          <button
+            onClick={() => setSelectedDemandId(null)}
+            className="mt-4 text-xs font-black uppercase tracking-widest text-blue-600"
+          >
+            Voltar
+          </button>
+        </div>
+      );
+    }
+
+    const company = companies.find(c => c.id === demand.companyId);
+    const training = trainings.find(t => t.id === demand.trainingId);
     const evidenceData = evidenceStore[selectedDemandId];
 
     return (
-      <EvidenceDetails 
+      <EvidenceDetails
         demand={demand}
         company={company}
         training={training}

@@ -9,6 +9,14 @@ export type DemandRow = {
   company_id: string | null;
   training_id: string | null;
 
+  // Demanda interna (Colabor -> instrutor): sem cliente nem treinamento.
+  // `tipo` tem DEFAULT 'cliente' no banco, então linha antiga já vem backfillada.
+  // categoria_interna/horas_previstas só valem quando tipo='interna' — o CHECK
+  // demands_interna_requires_fields exige os dois juntos nesse caso.
+  tipo: 'cliente' | 'interna';
+  categoria_interna: string | null;
+  horas_previstas: number | null;
+
   status: string;
   modality: string;
 
@@ -57,6 +65,7 @@ export async function fetchDemands(): Promise<DemandRow[]> {
         .from('demands')
         .select(`
           id, number, company_id, training_id, status, modality,
+          tipo, categoria_interna, horas_previstas,
           date_mode, specific_dates,
           start_date, end_date,
           practice_start_date, practice_end_date,

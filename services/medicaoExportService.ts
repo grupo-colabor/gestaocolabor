@@ -23,6 +23,7 @@ import { fetchMeasurements } from './measurements';
 import { fetchTrainings } from './trainings';
 import { fetchInstructors } from './instructors';
 import { computeInstructorHoursByDemand } from '../domain/instructorHours';
+import { isNightDemand } from '../domain/demandDays';
 import { getDemandCategoria, isInternalDemand } from '../domain/demandLabel';
 import {
   buildTrainingsById,
@@ -292,6 +293,12 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
         ? ((demand.descricaoInterna || '').trim() || '—')
         : (trainingNameById.get(String(demand.trainingId)) ?? '—'),
       categoria: getDemandCategoria(demand),
+      // CHAVES DE TARIFA. Interna vale menos que treinamento e hora noturna
+      // vale mais, então a tarifa é por (instrutor, empresa, tipo, noturno).
+      // A regra do noturno é a do domínio (fim >= 19:00 ou vira o dia) — a
+      // mesma que marca (N) na agenda; nunca reimplementar aqui.
+      tipo: isInternalDemand(demand) ? 'Interna' : 'Treinamento',
+      noturno: isNightDemand(demand),
       dias: row.dias,
       local: local || '—',
       modalidade: getModalityLabel(resolveDemandModality(demand, trainingsById)),

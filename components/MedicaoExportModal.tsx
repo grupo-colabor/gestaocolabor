@@ -225,8 +225,11 @@ const MedicaoExportModal: React.FC<MedicaoExportModalProps> = ({ isOpen, onClose
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-[11px] text-amber-900 leading-relaxed">
             <p className="font-black uppercase tracking-widest text-[10px] mb-1">Como preencher</p>
             O valor da <strong>Hora/Aula</strong> não sai do sistema: preencha a coluna amarela da aba
-            <strong> Tarifas</strong>, que traz uma linha por instrutor <em>em cada empresa</em> — a tarifa
-            varia por cliente. Os valores, os totais e o TOTAL GERAL são calculados pelo próprio Excel.
+            <strong> Tarifas</strong>. Cada linha lá é uma combinação de <em>instrutor + empresa + tipo +
+            noturno</em>, porque a tarifa muda nos três eixos: por cliente, entre <strong>Treinamento</strong> e
+            <strong> Interna</strong>, e entre hora diurna e <strong>noturna</strong> (turno que termina 19:00 ou
+            mais tarde). O mesmo instrutor na mesma empresa pode aparecer em mais de uma linha — preencha todas.
+            Os valores, os totais e o TOTAL GERAL são calculados pelo próprio Excel.
             A coluna <strong>Tarifas pendentes</strong> do Resumo mostra o que ainda falta preencher.
           </div>
 

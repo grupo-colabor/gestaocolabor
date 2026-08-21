@@ -16,14 +16,14 @@ import {
   Calendar, Check, AlertCircle, Building, 
   Tag, Info, BookOpen, Clock, Mail, MessageCircle, 
   FileDown, Upload, Trash2, ExternalLink, User, Plus, Paperclip, DollarSign, Wallet, CheckSquare, Square, RotateCcw,
-  FileSpreadsheet
+  FileSpreadsheet, Moon
 } from 'lucide-react';
 import MedicaoExportModal from './MedicaoExportModal';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ImageRun, ExternalHyperlink } from 'docx';
 import * as pdfjsLib from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
 import { calculateDemandStatus } from '../domain/demandStatus';
-import { demandIntersectsRange } from '../domain/demandDays';
+import { demandIntersectsRange, isNightDemand } from '../domain/demandDays';
 import { supabase } from '../lib/supabase';
 import { logAction } from '../services/auditLog';
 
@@ -1271,6 +1271,17 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                     <td className="p-4 font-bold text-blue-600">
                       <div className="flex items-center gap-2">
                         {d?.id}
+                        {/* Hora noturna vale mais e agora tem tarifa própria no
+                            Excel — o indicador deixa isso visível já na listagem.
+                            Regra em domain/demandDays: fim >= 19:00 ou vira o dia. */}
+                        {!!d && isNightDemand(d) && (
+                          <span
+                            className="flex items-center gap-0.5 bg-indigo-950 text-indigo-100 border border-indigo-800 text-[9px] font-black uppercase px-1.5 py-0.5 rounded tracking-widest shrink-0"
+                            title="Turno noturno — tarifa própria na aba Tarifas"
+                          >
+                            <Moon size={9} strokeWidth={2.5} /> N
+                          </span>
+                        )}
                         {isNoShow && (
                           <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-red-600 text-white tracking-widest">No-Show</span>
                         )}

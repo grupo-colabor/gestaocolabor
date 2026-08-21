@@ -42,8 +42,19 @@ export interface MedicaoDetailRow {
   /**
    * Categoria da demanda INTERNA (SIPAT, Visita, Apoio Logístico...). Vazia em
    * demanda de cliente, que já é identificada por empresa + treinamento.
+   * Informativa: não entra em fórmula.
    */
   categoria: string;
+  /**
+   * CHAVE DE TARIFA. Demanda interna vale menos que treinamento, então o par
+   * (instrutor, empresa) não basta para achar a hora/aula.
+   */
+  tipo: TarifaTipo;
+  /**
+   * CHAVE DE TARIFA. Hora noturna vale mais. Regra em domain/demandDays
+   * (isNightDemand): fim >= 19:00 ou o turno vira o dia.
+   */
+  noturno: boolean;
 }
 
 export interface MedicaoInstructorBlock {
@@ -167,11 +178,37 @@ const RESUMO_FIRST_DATA_ROW = 3;
 const TARIFAS_FIRST_DATA_ROW = 2;
 const DETAIL_FIRST_DATA_ROW = 2;
 
-/** Coluna da Empresa na aba de detalhe — chave do SUMIFS de tarifa. */
+/** Colunas da aba de detalhe que são CHAVE do SUMIFS de tarifa. */
 const DETAIL_COL_EMPRESA = 'B';
+const DETAIL_COL_TIPO = 'I';
+const DETAIL_COL_NOTURNO = 'K';
 /** Colunas calculadas da aba de detalhe. */
 const DETAIL_COL_HORAS = 'G';
 const DETAIL_COL_VALOR = 'H';
+
+/**
+ * Colunas da aba Tarifas. A tarifa deixou de ser uma por (instrutor, empresa):
+ * hora noturna vale mais e demanda interna vale menos, então o mesmo par pode
+ * precisar de três valores diferentes (diurno, noturno, interna). As quatro
+ * primeiras colunas são a CHAVE; só a última é digitada.
+ */
+const TARIFA_COL_INSTRUTOR = 'A';
+const TARIFA_COL_EMPRESA = 'B';
+const TARIFA_COL_TIPO = 'C';
+const TARIFA_COL_NOTURNO = 'D';
+const TARIFA_COL_VALOR = 'E';
+/** Índice 1-based da coluna digitável, para markAsInput. */
+const TARIFA_VALOR_IDX = 5;
+
+/**
+ * Rótulos que aparecem NA PLANILHA e são comparados literalmente pelo SUMIFS —
+ * mudar qualquer um destes quebra o casamento entre detalhe e Tarifas.
+ */
+export type TarifaTipo = 'Treinamento' | 'Interna';
+const NOTURNO_SIM = 'Sim';
+/** Diurno fica VAZIO na planilha; o critério do SUMIFS é "" (célula vazia). */
+const NOTURNO_NAO = '';
+const noturnoLabel = (noturno: boolean) => (noturno ? NOTURNO_SIM : NOTURNO_NAO);
 
 /**
  * Proteção das abas — sem senha, de propósito: é uma trava contra digitar por
@@ -268,18 +305,46 @@ function styleHeaderRow(row: any, lastCol: number) {
   row.height = 20;
 }
 
-/** Par (instrutor, empresa) que precisa de uma tarifa preenchida. */
+/** Combinação que precisa de uma tarifa preenchida. */
 interface TarifaRow {
   instrutor: string;
   empresa: string;
+  tipo: TarifaTipo;
+  noturno: boolean;
 }
 
-/** Pares presentes no período, sem repetição, ordenados por instrutor e empresa. */
+/**
+ * Uma linha por combinação (instrutor, empresa, tipo, noturno) que EXISTE nas
+ * demandas do período.
+ *
+ * Deliberadamente NÃO é produto cartesiano: gerar todas as combinações
+ * possíveis encheria a aba de linhas que ninguém precisa preencher e inflaria
+ * o contador de "Tarifas pendentes" do Resumo com pendência fantasma. Instrutor
+ * que só teve treinamento diurno numa empresa continua vendo uma linha só.
+ */
 function buildTarifaRows(blocks: MedicaoInstructorBlock[]): TarifaRow[] {
   const rows: TarifaRow[] = [];
   for (const block of blocks) {
-    const empresas = [...new Set(block.linhas.map(l => l.empresa))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
-    for (const empresa of empresas) rows.push({ instrutor: block.nome, empresa });
+    const vistas = new Map<string, TarifaRow>();
+    for (const linha of block.linhas) {
+      const chave = [linha.empresa, linha.tipo, linha.noturno ? '1' : '0'].join('\u0000');
+      if (!vistas.has(chave)) {
+        vistas.set(chave, {
+          instrutor: block.nome,
+          empresa: linha.empresa,
+          tipo: linha.tipo,
+          noturno: linha.noturno,
+        });
+      }
+    }
+    rows.push(
+      ...[...vistas.values()].sort(
+        (a, b) =>
+          a.empresa.localeCompare(b.empresa, 'pt-BR') ||
+          a.tipo.localeCompare(b.tipo, 'pt-BR') ||
+          Number(a.noturno) - Number(b.noturno)
+      )
+    );
   }
   return rows;
 }
@@ -365,23 +430,29 @@ export async function buildMedicaoWorkbook(
   tarifas.columns = [
     { width: 34 }, // A Instrutor
     { width: 38 }, // B Empresa
-    { width: 20 }, // C Hora/Aula  <- input
+    { width: 16 }, // C Tipo      <- chave
+    { width: 12 }, // D Noturno   <- chave
+    { width: 20 }, // E Hora/Aula <- input
   ];
-  const tarifasHeader = tarifas.addRow(['Instrutor', 'Empresa', 'Hora/Aula (R$)']);
-  styleHeaderRow(tarifasHeader, 3);
+  const tarifasHeader = tarifas.addRow(['Instrutor', 'Empresa', 'Tipo', 'Noturno', 'Hora/Aula (R$)']);
+  styleHeaderRow(tarifasHeader, TARIFA_VALOR_IDX);
 
-  tarifasHeader.getCell(3).note =
+  tarifasHeader.getCell(TARIFA_VALOR_IDX).note =
     'PREENCHA AQUI.\n\n' +
     'Esta é a única coluna a preencher em toda a planilha: o valor da hora/aula ' +
-    'de cada instrutor EM CADA EMPRESA, nas células amarelas abaixo.\n\n' +
-    'A tarifa varia por cliente — o mesmo instrutor pode ter valores diferentes ' +
-    'em empresas diferentes, e cada linha aqui é um par instrutor + empresa.\n\n' +
+    'de cada linha, nas células amarelas abaixo.\n\n' +
+    'Cada linha é uma combinação de instrutor + empresa + tipo + noturno, porque ' +
+    'a tarifa muda nos três eixos: por cliente, entre treinamento e demanda ' +
+    'interna, e entre hora diurna e noturna. O mesmo instrutor na mesma empresa ' +
+    'pode aparecer em mais de uma linha — preencha todas.\n\n' +
+    'Tipo: "Treinamento" ou "Interna". Noturno: "Sim" quando o turno termina ' +
+    '19:00 ou mais tarde (ou vira o dia); em branco quando é diurno.\n\n' +
     'Ao preencher, o Excel recalcula sozinho a coluna Valor da aba do instrutor, ' +
     'o Total (R$) e o TOTAL GERAL do Resumo.';
 
-  for (const { instrutor, empresa } of tarifaRows) {
-    const row = tarifas.addRow([instrutor, empresa, null]);
-    const tarifaCell = row.getCell(3);
+  for (const { instrutor, empresa, tipo, noturno } of tarifaRows) {
+    const row = tarifas.addRow([instrutor, empresa, tipo, noturnoLabel(noturno), null]);
+    const tarifaCell = row.getCell(TARIFA_VALOR_IDX);
     markAsInput(tarifaCell);
     tarifaCell.numFmt = FMT_MOEDA;
   }
@@ -425,10 +496,14 @@ export async function buildMedicaoWorkbook(
     totalCell.font = { bold: true };
 
     // D: tarifas ainda em branco deste instrutor na aba Tarifas. Sem isso, uma
-    // tarifa esquecida vira R$ 0,00 no total e passa despercebida.
+    // tarifa esquecida vira R$ 0,00 no total e passa despercebida. Conta a
+    // coluna do VALOR, que mudou de letra ao entrarem Tipo e Noturno.
     const pendentesCell = row.getCell(4);
     pendentesCell.value = {
-      formula: `COUNTIFS(${TARIFAS_SHEET}!$A:$A,${nomeCriterio},${TARIFAS_SHEET}!$C:$C,"")`,
+      formula:
+        `COUNTIFS(` +
+        `${TARIFAS_SHEET}!$${TARIFA_COL_INSTRUTOR}:$${TARIFA_COL_INSTRUTOR},${nomeCriterio},` +
+        `${TARIFAS_SHEET}!$${TARIFA_COL_VALOR}:$${TARIFA_COL_VALOR},"")`,
     };
     pendentesCell.numFmt = '0';
     pendentesCell.alignment = { horizontal: 'center' };
@@ -461,32 +536,36 @@ export async function buildMedicaoWorkbook(
     const ws = workbook.addWorksheet(sheetName, { views: [{ state: 'frozen', ySplit: 1 }] });
     ws.columns = [
       { width: 14 }, // A Código
-      { width: 32 }, // B Empresa
+      { width: 32 }, // B Empresa     <- chave de tarifa
       { width: 40 }, // C Treinamento
       { width: 26 }, // D Data
       { width: 28 }, // E Local
       { width: 18 }, // F Modalidade
-      { width: 10 }, // G Horas
+      { width: 10 }, // G Horas       <- multiplicador
       { width: 26 }, // H Valor (R$) — automático
-      { width: 22 }, // I Categoria (só demanda interna)
+      { width: 16 }, // I Tipo        <- chave de tarifa
+      { width: 22 }, // J Categoria   (informativa)
+      { width: 12 }, // K Noturno     <- chave de tarifa
     ];
-    // ⚠️ Categoria entra no FIM, depois de Valor. Empresa (B), Horas (G) e
-    // Valor (H) NÃO podem mudar de letra: a fórmula de valor referencia
-    // DETAIL_COL_EMPRESA/HORAS por letra, e o SUMIFS da tarifa cruza a coluna B
-    // com a aba Tarifas.
+    // ⚠️ As colunas novas entram no FIM, depois de Valor. Empresa (B), Horas (G)
+    // e Valor (H) NÃO podem mudar de letra: a fórmula de valor referencia
+    // DETAIL_COL_EMPRESA/HORAS por letra.
+    //
+    // I (Tipo) e K (Noturno) são CHAVE de fórmula — o SUMIFS da tarifa cruza as
+    // duas com a aba Tarifas. J (Categoria) é só informativa.
     const detailHeader = ws.addRow([
       'Código', 'Empresa', 'Treinamento', 'Data', 'Local', 'Modalidade', 'Horas',
-      'Valor (R$) — automático', 'Categoria',
+      'Valor (R$) — automático', 'Tipo', 'Categoria', 'Noturno',
     ]);
-    styleHeaderRow(detailHeader, 9);
+    styleHeaderRow(detailHeader, 11);
 
     // Foi exatamente aqui que o valor da hora foi digitado por cima da fórmula
     // na primeira rodada real — daí a nota, além da proteção da aba.
     detailHeader.getCell(8).note =
       'NÃO PREENCHA AQUI.\n\n' +
-      'Esta coluna é calculada: horas × a tarifa da empresa desta linha.\n\n' +
+      'Esta coluna é calculada: horas × a tarifa desta linha.\n\n' +
       'A tarifa se preenche na aba Tarifas, na linha que cruza este instrutor ' +
-      'com a empresa da coluna B.';
+      'com a empresa da coluna B, o tipo da coluna I e o noturno da coluna K.';
 
     const nomeCriterio = criteriaText(block.nome);
 
@@ -501,26 +580,31 @@ export async function buildMedicaoWorkbook(
         linha.modalidade,
         linha.horas,
         null,
+        linha.tipo,
         linha.categoria || null,
+        noturnoLabel(linha.noturno) || null,
       ]);
       row.getCell(7).numFmt = FMT_HORAS;
 
-      // A tarifa vem do par (instrutor, empresa DESTA LINHA): o instrutor é
-      // literal (a aba é dele), a empresa é referência à coluna B, para uma
-      // demanda de outro cliente na linha de baixo puxar outra tarifa.
+      // A tarifa vem da combinação DESTA LINHA: o instrutor é literal (a aba é
+      // dele) e empresa/tipo/noturno são referências às próprias colunas, para
+      // a linha de baixo — outro cliente, ou a mesma empresa em turno noturno —
+      // puxar outra tarifa.
       const valorCell = row.getCell(8);
       valorCell.value = {
         formula:
           `${DETAIL_COL_HORAS}${rowIdx}*SUMIFS(` +
-          `${TARIFAS_SHEET}!$C:$C,` +
-          `${TARIFAS_SHEET}!$A:$A,${nomeCriterio},` +
-          `${TARIFAS_SHEET}!$B:$B,${DETAIL_COL_EMPRESA}${rowIdx})`,
+          `${TARIFAS_SHEET}!$${TARIFA_COL_VALOR}:$${TARIFA_COL_VALOR},` +
+          `${TARIFAS_SHEET}!$${TARIFA_COL_INSTRUTOR}:$${TARIFA_COL_INSTRUTOR},${nomeCriterio},` +
+          `${TARIFAS_SHEET}!$${TARIFA_COL_EMPRESA}:$${TARIFA_COL_EMPRESA},${DETAIL_COL_EMPRESA}${rowIdx},` +
+          `${TARIFAS_SHEET}!$${TARIFA_COL_TIPO}:$${TARIFA_COL_TIPO},${DETAIL_COL_TIPO}${rowIdx},` +
+          `${TARIFAS_SHEET}!$${TARIFA_COL_NOTURNO}:$${TARIFA_COL_NOTURNO},${DETAIL_COL_NOTURNO}${rowIdx})`,
       };
       valorCell.numFmt = FMT_MOEDA;
     });
 
     const lastDetailRow = DETAIL_FIRST_DATA_ROW + block.linhas.length - 1;
-    const totalRow = ws.addRow(['', '', '', '', '', 'Total:', null, null, '']);
+    const totalRow = ws.addRow(['', '', '', '', '', 'Total:', null, null, '', '', '']);
     totalRow.getCell(6).font = { bold: true };
     totalRow.getCell(6).alignment = { horizontal: 'right' };
     totalRow.getCell(7).value = {

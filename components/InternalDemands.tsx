@@ -39,6 +39,7 @@ import {
   FileText as FileWordIcon,
   Edit3,
   Check,
+  FileDown,
 } from 'lucide-react';
 
 import { calculateDemandStatus } from '../domain/demandStatus';
@@ -70,6 +71,15 @@ import LogisticaLocomocaoSection, { emptyLocomocaoBlock } from './demand-form/Lo
 import LogisticaHospedagemSection, { emptyHospedagemBlock } from './demand-form/LogisticaHospedagemSection';
 import DocumentosDemandaSection, { type DbDocs, type PendingPdfs } from './demand-form/DocumentosDemandaSection';
 import { formatDateTime } from './demand-form/formatters';
+import {
+  FilterPanelShell,
+  FilterGrid,
+  FilterField,
+  FilterSearchField,
+  FilterDateRangeField,
+  FILTER_INPUT_CLASS,
+} from './demand-form/FilterPanel';
+import ExportDemandsModal from './ExportDemandsModal';
 import type { DemandFormState } from './demand-form/types';
 
 /**
@@ -270,9 +280,24 @@ const InternalDemands: React.FC = () => {
   );
 
   const [filter, setFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [categoriaFilter, setCategoriaFilter] = useState('');
+  // Mesmo formato do advancedFilters da tela de cliente: um objeto só, para
+  // limpar e comparar sem espalhar useState.
+  const initialFilters = {
+    categoria: '',
+    companyId: '',
+    startDate: '',
+    endDate: '',
+    instructorId: '',
+    status: '',
+    regionId: '',
+    demandState: '',
+    trainingLocal: '',
+    corredor: '',
+  };
+  const [advancedFilters, setAdvancedFilters] = useState(initialFilters);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
+  const [isExportOpen, setIsExportOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<ModalMode>(null);
   const [modalSubMode, setModalSubMode] = useState<ModalSubMode>('FORM');
@@ -314,10 +339,10 @@ const InternalDemands: React.FC = () => {
   }, [isModalOpen]);
 
   useEffect(() => {
-    const anyOpen = isModalOpen || confirmCancel || confirmDelete || confirmReactivate;
+    const anyOpen = isModalOpen || isExportOpen || confirmCancel || confirmDelete || confirmReactivate;
     document.body.style.overflow = anyOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
-  }, [isModalOpen, confirmCancel, confirmDelete, confirmReactivate]);
+  }, [isModalOpen, isExportOpen, confirmCancel, confirmDelete, confirmReactivate]);
 
   /* ───────────────────────── Helpers de exibição ───────────────────────── */
 
@@ -353,27 +378,78 @@ const InternalDemands: React.FC = () => {
 
   /* ───────────────────────────── Listagem ──────────────────────────────── */
 
+  /**
+   * Ordenação da tabela — mesmo mecanismo da tela de demandas de cliente.
+   * `null` = ordem padrão (mais recente primeiro por data de início).
+   */
+  type SortKey = 'id';
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' } | null>(null);
+  const toggleSort = (key: SortKey) =>
+    setSort(prev => (prev?.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
+
   const filteredDemands = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    return internalDemands
-      .filter(d => {
-        if (q) {
-          const haystack = [
-            d.id,
-            d.categoriaInterna ?? '',
-            d.descricaoInterna ?? '',
-            d.trainingLocal ?? '',
-            d.requester ?? '',
-            getDemandCompanyLabel(d, companies),
-          ].join(' ').toLowerCase();
-          if (!haystack.includes(q)) return false;
+    const result = internalDemands.filter(d => {
+      if (q) {
+        const haystack = [
+          d.id,
+          d.categoriaInterna ?? '',
+          d.descricaoInterna ?? '',
+          d.trainingLocal ?? '',
+          d.requester ?? '',
+          getDemandCompanyLabel(d, companies),
+        ].join(' ').toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+
+      if (advancedFilters.categoria && (d.categoriaInterna || '') !== advancedFilters.categoria) return false;
+
+      // 'SEM_EMPRESA' é opção real do select, não ausência de filtro.
+      if (advancedFilters.companyId === 'SEM_EMPRESA') {
+        if ((d.companyId || '').trim()) return false;
+      } else if (advancedFilters.companyId && d.companyId !== advancedFilters.companyId) {
+        return false;
+      }
+
+      // Período pela data de início, mesma semântica do filtro de cliente.
+      const inicio = (d.startDate || '').slice(0, 10);
+      if (advancedFilters.startDate && inicio < advancedFilters.startDate) return false;
+      if (advancedFilters.endDate && inicio > advancedFilters.endDate) return false;
+
+      if (advancedFilters.instructorId) {
+        const ids = allInstructorsByDemandId[d.id] ?? [];
+        if (advancedFilters.instructorId === 'unallocated') {
+          if (ids.length > 0) return false;
+        } else if (!ids.includes(advancedFilters.instructorId)) {
+          return false;
         }
-        if (categoriaFilter && (d.categoriaInterna || '') !== categoriaFilter) return false;
-        if (statusFilter && getStatusOf(d) !== statusFilter) return false;
-        return true;
-      })
-      .sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''));
-  }, [internalDemands, filter, categoriaFilter, statusFilter, companies]);
+      }
+
+      if (advancedFilters.status && getStatusOf(d) !== advancedFilters.status) return false;
+      if (advancedFilters.regionId && d.regionId !== advancedFilters.regionId) return false;
+      if (advancedFilters.demandState && (d.demandState || '') !== advancedFilters.demandState) return false;
+      if (advancedFilters.trainingLocal && (d.trainingLocal || '') !== advancedFilters.trainingLocal) return false;
+      if (advancedFilters.corredor && (d.corredor || '') !== advancedFilters.corredor) return false;
+
+      return true;
+    });
+
+    if (sort?.key === 'id') {
+      const dir = sort.dir === 'asc' ? 1 : -1;
+      return [...result].sort((a, b) => a.id.localeCompare(b.id, 'pt-BR', { numeric: true }) * dir);
+    }
+    return [...result].sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''));
+  }, [internalDemands, filter, advancedFilters, allInstructorsByDemandId, companies, sort]);
+
+  /** Opções derivadas dos próprios dados, como no painel de cliente. */
+  const estadoOptions = useMemo(
+    () => [...new Set(internalDemands.map(d => (d.demandState || '').trim()).filter(Boolean))].sort(),
+    [internalDemands]
+  );
+  const localOptions = useMemo(
+    () => [...new Set(internalDemands.map(d => (d.trainingLocal || '').trim()).filter(Boolean))].sort(),
+    [internalDemands]
+  );
 
   const {
     currentPage,
@@ -387,8 +463,8 @@ const InternalDemands: React.FC = () => {
 
   const clearFilters = () => {
     setFilter('');
-    setStatusFilter('');
-    setCategoriaFilter('');
+    setAdvancedFilters(initialFilters);
+    setSort(null);
   };
 
   /* ─────────────────────── Cascata de localidade ───────────────────────── */
@@ -1126,60 +1202,169 @@ const InternalDemands: React.FC = () => {
               Visitas, SIPAT, Apoio Logístico e Eventos da Colabor
             </p>
           </div>
-          <button
-            onClick={handleOpenCreate}
-            className="bg-gray-900 hover:bg-gray-800 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center space-x-2 whitespace-nowrap shadow-md"
-          >
-            <Plus size={18} /> <span className="hidden sm:inline">Nova Demanda Interna</span>
-          </button>
-        </div>
-
-        {/* Filtros */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm no-print">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="md:col-span-2 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
-              <input
-                type="text"
-                placeholder="Buscar por referência, categoria, descrição, local..."
-                className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-              />
-            </div>
-            <select
-              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-              value={categoriaFilter}
-              onChange={(e) => setCategoriaFilter(e.target.value)}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsExportOpen(true)}
+              className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center space-x-2 whitespace-nowrap shadow-md"
             >
-              <option value="">Todas as Categorias</option>
-              {categoriaOptions.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <select
-              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              <FileDown size={18} /> <span className="hidden sm:inline">Exportar Demandas (Excel)</span>
+            </button>
+            <button
+              onClick={handleOpenCreate}
+              className="bg-gray-900 hover:bg-gray-800 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center space-x-2 whitespace-nowrap shadow-md"
             >
-              <option value="">Todos os Status</option>
-              {['NOVA', 'PENDENTE', 'ALOCADA', 'EM_ANDAMENTO', 'CONCLUIDA', 'CANCELADA'].map(s => (
-                <option key={s} value={s}>{s.replace('_', ' ')}</option>
-              ))}
-            </select>
+              <Plus size={18} /> <span className="hidden sm:inline">Nova Demanda Interna</span>
+            </button>
           </div>
         </div>
 
-        {/* Listagem */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        {/* Painel de filtros — mesma casca e mesmas classes do painel da tela de
+            demandas de cliente (components/demand-form/FilterPanel.tsx).
+            Campos adaptados: Categoria no lugar de Treinamento, e sem
+            Modalidade (interna é sempre PRESENCIAL). */}
+        <div className="no-print">
+          <FilterPanelShell
+            onClear={clearFilters}
+            showAdvanced={showAdvancedFilters}
+            onToggleAdvanced={() => setShowAdvancedFilters(prev => !prev)}
+            advanced={
+              <>
+                <FilterField label="Instrutor">
+                  <select
+                    className={FILTER_INPUT_CLASS}
+                    value={advancedFilters.instructorId}
+                    onChange={e => setAdvancedFilters({ ...advancedFilters, instructorId: e.target.value })}
+                  >
+                    <option value="">Qualquer Instrutor</option>
+                    <option value="unallocated">Sem Instrutor Alocado</option>
+                    {instructors.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                  </select>
+                </FilterField>
+
+                <FilterField label="Status da Demanda">
+                  <select
+                    className={FILTER_INPUT_CLASS}
+                    value={advancedFilters.status}
+                    onChange={e => setAdvancedFilters({ ...advancedFilters, status: e.target.value })}
+                  >
+                    <option value="">Todos os Status</option>
+                    <option value="NOVA">Nova</option>
+                    <option value="PENDENTE">Pendente</option>
+                    <option value="ALOCADA">Alocada</option>
+                    <option value="EM_ANDAMENTO">Em Andamento</option>
+                    <option value="CONCLUIDA">Concluída</option>
+                    <option value="CANCELADA">Cancelada</option>
+                  </select>
+                </FilterField>
+
+                <FilterField label="Região">
+                  <select
+                    className={FILTER_INPUT_CLASS}
+                    value={advancedFilters.regionId}
+                    onChange={e => setAdvancedFilters({ ...advancedFilters, regionId: e.target.value })}
+                  >
+                    <option value="">Todas as Regiões</option>
+                    {regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  </select>
+                </FilterField>
+
+                <FilterField label="Estado">
+                  <select
+                    className={FILTER_INPUT_CLASS}
+                    value={advancedFilters.demandState}
+                    onChange={e => setAdvancedFilters({ ...advancedFilters, demandState: e.target.value })}
+                  >
+                    <option value="">Todos os Estados</option>
+                    {estadoOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </FilterField>
+
+                <FilterField label="Unidade / Local">
+                  <select
+                    className={FILTER_INPUT_CLASS}
+                    value={advancedFilters.trainingLocal}
+                    onChange={e => setAdvancedFilters({ ...advancedFilters, trainingLocal: e.target.value })}
+                  >
+                    <option value="">Todos os Locais</option>
+                    {localOptions.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                  </select>
+                </FilterField>
+
+                <FilterField label="Corredor">
+                  <select
+                    className={FILTER_INPUT_CLASS}
+                    value={advancedFilters.corredor}
+                    onChange={e => setAdvancedFilters({ ...advancedFilters, corredor: e.target.value })}
+                  >
+                    <option value="">Todos os Corredores</option>
+                    {(operationalBases.corredores ?? []).sort().map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </FilterField>
+              </>
+            }
+          >
+            <FilterGrid>
+              <FilterSearchField
+                label="Buscar ID ou Palavra-Chave"
+                placeholder="ID, Categoria, Descrição..."
+                value={filter}
+                onChange={setFilter}
+              />
+
+              <FilterField label="Categoria">
+                <select
+                  className={FILTER_INPUT_CLASS}
+                  value={advancedFilters.categoria}
+                  onChange={e => setAdvancedFilters({ ...advancedFilters, categoria: e.target.value })}
+                >
+                  <option value="">Todas as Categorias</option>
+                  {categoriaOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </FilterField>
+
+              <FilterField label="Empresa">
+                <select
+                  className={FILTER_INPUT_CLASS}
+                  value={advancedFilters.companyId}
+                  onChange={e => setAdvancedFilters({ ...advancedFilters, companyId: e.target.value })}
+                >
+                  <option value="">Todas as Empresas</option>
+                  <option value="SEM_EMPRESA">Sem empresa / Colabor</option>
+                  {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </FilterField>
+
+              <FilterDateRangeField
+                label="Período (De / Até)"
+                from={advancedFilters.startDate}
+                to={advancedFilters.endDate}
+                onFromChange={v => setAdvancedFilters({ ...advancedFilters, startDate: v })}
+                onToChange={v => setAdvancedFilters({ ...advancedFilters, endDate: v })}
+              />
+            </FilterGrid>
+          </FilterPanelShell>
+        </div>
+
+        {/* Listagem — mesma casca, contador e cabeçalho da tela de cliente */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden no-print">
+          <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+              {filteredDemands.length} Demandas internas encontradas
+            </span>
+          </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                <tr>
-                  <th className="p-4">Ref</th>
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 text-[11px] uppercase tracking-wider font-black text-slate-500">
+                  <th className="p-4 cursor-pointer select-none" onClick={() => toggleSort('id')}>
+                    ID {sort?.key === 'id' && (sort.dir === 'asc' ? '↑' : '↓')}
+                  </th>
                   <th className="p-4">Categoria</th>
                   <th className="p-4">Descrição</th>
                   <th className="p-4">Empresa</th>
+                  <th className="p-4">Estado</th>
                   <th className="p-4">Local</th>
-                  <th className="p-4">Datas</th>
+                  <th className="p-4">Data Início</th>
                   <th className="p-4">Instrutor</th>
                   <th className="p-4 text-center">Status</th>
                   <th className="p-4 text-center">Ações</th>
@@ -1203,13 +1388,9 @@ const InternalDemands: React.FC = () => {
                       <td className="p-4 max-w-[14rem] truncate" title={getDemandCompanyLabel(demand, companies)}>
                         {getDemandCompanyLabel(demand, companies)}
                       </td>
+                      <td className="p-4">{demand.demandState || '—'}</td>
                       <td className="p-4">{demand.trainingLocal || '—'}</td>
-                      <td className="p-4 whitespace-nowrap font-mono text-xs">
-                        {formatDateTime((demand.startDate || '').split('T')[0])}
-                        {(demand.endDate || '').split('T')[0] !== (demand.startDate || '').split('T')[0] && (
-                          <> — {formatDateTime((demand.endDate || '').split('T')[0])}</>
-                        )}
-                      </td>
+                      <td className="p-4 whitespace-nowrap">{formatDateTime((demand.startDate || '').split('T')[0])}</td>
                       <td className="p-4 font-medium text-gray-900">
                         {ids.length === 0 ? 'Não Alocado' : (
                           <div className="flex flex-col gap-0.5">
@@ -1240,11 +1421,11 @@ const InternalDemands: React.FC = () => {
                   );
                 }) : (
                   <tr>
-                    <td colSpan={9} className="p-20 text-center text-slate-400">
+                    <td colSpan={10} className="p-20 text-center text-slate-400">
                       <div className="flex flex-col items-center gap-3">
                         <Eraser size={40} className="opacity-20" />
                         <p className="font-medium">Nenhuma demanda interna encontrada.</p>
-                        {(filter || statusFilter || categoriaFilter) && (
+                        {(filter || Object.values(advancedFilters).some(Boolean)) && (
                           <button onClick={clearFilters} className="text-blue-600 font-bold text-xs uppercase underline">
                             Limpar filtros
                           </button>
@@ -1268,6 +1449,21 @@ const InternalDemands: React.FC = () => {
           />
         </div>
       </div>
+
+      {/* Export — mesmo modal da tela de cliente, na variante de internas.
+          Recebe as demandas JÁ filtradas por tipo; o modal tem os filtros dele. */}
+      <ExportDemandsModal
+        isOpen={isExportOpen}
+        onClose={() => setIsExportOpen(false)}
+        demands={internalDemands}
+        companies={companies}
+        trainings={[]}
+        regions={regions}
+        instructors={instructors}
+        instructorAllocations={instructorAllocations}
+        variant="interna"
+        categoriaOptions={categoriaOptions}
+      />
 
       {/* ─────────────────────────── MODAL ─────────────────────────── */}
       {isModalOpen && createPortal(

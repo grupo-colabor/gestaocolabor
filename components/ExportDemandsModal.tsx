@@ -13,6 +13,7 @@ import {
 
 import { Demand, Company, Training, Region, Instructor, InstructorAllocation } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
+import { getDemandCompanyLabel } from '../domain/demandLabel';
 import { demandIntersectsRange } from '../domain/demandDays';
 import { buildModalityOptions, buildTrainingsById, matchesModality } from '../domain/modalityOptions';
 import { fetchLogisticBlocksByDemandIds, LogisticBlockRow } from '../services/logistics';
@@ -37,6 +38,14 @@ interface ExportDemandsModalProps {
   regions: Region[];
   instructors: Instructor[];
   instructorAllocations: InstructorAllocation[];
+  /**
+   * Qual conjunto está sendo exportado. O default mantém o caminho da tela de
+   * demandas de cliente exatamente como era — todo comportamento novo está
+   * atrás de `variant === 'interna'`.
+   */
+  variant?: 'cliente' | 'interna';
+  /** Só em variant='interna': opções do filtro de categoria. */
+  categoriaOptions?: string[];
 }
 
 /* ========== COMPONENT ========== */
@@ -49,7 +58,10 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
   regions,
   instructors,
   instructorAllocations,
+  variant = 'cliente',
+  categoriaOptions = [],
 }) => {
+  const isInterna = variant === 'interna';
   /* ---------- helpers ---------- */
   const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || companies.find(c => c.id === id)?.razaoSocial || 'N/A';
   const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
@@ -109,6 +121,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
     endDate: '',
     companyId: '',
     trainingId: '',
+    categoria: '',
     instructorId: '',
     regionId: '',
     status: '',
@@ -130,6 +143,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
     return demands.filter(d => {
       if (filters.companyId && d.companyId !== filters.companyId) return false;
       if (filters.trainingId && d.trainingId !== filters.trainingId) return false;
+      if (filters.categoria && (d.categoriaInterna || '') !== filters.categoria) return false;
       if (filters.regionId && d.regionId !== filters.regionId) return false;
       if (filters.trainingLocal && (d.trainingLocal || '') !== filters.trainingLocal) return false;
       if (filters.corredor && (d.corredor || '') !== filters.corredor) return false;
@@ -157,7 +171,8 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
           d.id,
           d.clientDemandId || '',
           getCompanyName(d.companyId),
-          getTrainingName(d.trainingId),
+          isInterna ? (d.categoriaInterna || '') : getTrainingName(d.trainingId),
+          isInterna ? (d.descricaoInterna || '') : '',
         ].map(normalize).join(' ');
         if (!haystack.includes(term)) return false;
       }
@@ -182,7 +197,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
   };
 
   const resetFilters = () => {
-    setFilters({ startDate: '', endDate: '', companyId: '', trainingId: '', instructorId: '', regionId: '', status: '', search: '', trainingLocal: '', corredor: '', modality: '' });
+    setFilters({ startDate: '', endDate: '', companyId: '', trainingId: '', categoria: '', instructorId: '', regionId: '', status: '', search: '', trainingLocal: '', corredor: '', modality: '' });
     setSelectedIds(new Set());
   };
 
@@ -266,8 +281,21 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
       { header: 'ID',                   key: 'id',               width: 14 },
       { header: 'ID Cliente',            key: 'clientDemandId',   width: 16 },
       { header: 'Empresa',               key: 'empresa',          width: 30 },
-      { header: 'Treinamento',           key: 'treinamento',      width: 35 },
-      { header: 'Carga Horária',         key: 'cargaHoraria',     width: 14 },
+      // Interna não tem treinamento nem carga horária de treinamento: as duas
+      // colunas dão lugar a Categoria + Descrição, que é o que identifica a
+      // demanda. Empresa fica nas duas variantes — desde que a empresa virou
+      // opcional na interna, a coluna carrega dado real (e "Colabor (Interna)"
+      // quando não há vínculo).
+      ...(isInterna
+        ? [
+            { header: 'Categoria',       key: 'categoria',        width: 22 },
+            { header: 'Descrição',       key: 'descricao',        width: 45 },
+            { header: 'Horas Previstas', key: 'horasPrevistas',   width: 16 },
+          ]
+        : [
+            { header: 'Treinamento',     key: 'treinamento',      width: 35 },
+            { header: 'Carga Horária',   key: 'cargaHoraria',     width: 14 },
+          ]),
       { header: 'Local do Treinamento',  key: 'trainingLocal',    width: 28 },
       { header: 'Região',                key: 'regiao',           width: 18 },
       { header: 'Estado',                key: 'estado',           width: 12 },
@@ -303,9 +331,17 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
       const row = worksheet.addRow({
         id:              d.id || '',
         clientDemandId:  d.clientDemandId || '',
-        empresa:         getCompanyName(d.companyId),
-        treinamento:     getTrainingName(d.trainingId),
-        cargaHoraria:    getTrainingHours(d.trainingId),
+        empresa:         isInterna ? getDemandCompanyLabel(d, companies) : getCompanyName(d.companyId),
+        ...(isInterna
+          ? {
+              categoria:      d.categoriaInterna || '',
+              descricao:      d.descricaoInterna || '',
+              horasPrevistas: d.horasPrevistas != null ? `${d.horasPrevistas}h` : '',
+            }
+          : {
+              treinamento:  getTrainingName(d.trainingId),
+              cargaHoraria: getTrainingHours(d.trainingId),
+            }),
         trainingLocal:   d.trainingLocal || '',
         regiao:          getRegionName(d.regionId),
         estado:          d.demandState || '',
@@ -361,7 +397,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `demandas_${new Date().toISOString().split('T')[0]}.xlsx`;
+    link.download = `${isInterna ? 'demandas_internas' : 'demandas'}_${new Date().toISOString().split('T')[0]}.xlsx`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -421,7 +457,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
         {/* ===== HEADER ===== */}
         <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
           <div>
-            <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Exportação de Demandas</h2>
+            <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">{isInterna ? 'Exportação de Demandas Internas' : 'Exportação de Demandas'}</h2>
             <p className="text-sm text-slate-400 font-bold uppercase tracking-widest mt-1">Selecione as demandas para exportar em Excel (.xlsx)</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-2 hover:bg-white rounded-2xl transition shadow-sm"><X size={28} /></button>
@@ -455,14 +491,24 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
                 </select>
               </div>
 
-              {/* Treinamento */}
-              <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Treinamento</label>
-                <select className="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.trainingId} onChange={e => setFilters({ ...filters, trainingId: e.target.value })}>
-                  <option value="">Todos</option>
-                  {trainingOptions.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-              </div>
+              {/* Treinamento (cliente) / Categoria (interna) */}
+              {isInterna ? (
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Categoria</label>
+                  <select className="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.categoria} onChange={e => setFilters({ ...filters, categoria: e.target.value })}>
+                    <option value="">Todas</option>
+                    {categoriaOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Treinamento</label>
+                  <select className="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" value={filters.trainingId} onChange={e => setFilters({ ...filters, trainingId: e.target.value })}>
+                    <option value="">Todos</option>
+                    {trainingOptions.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
+              )}
 
               {/* Instrutor */}
               <div>

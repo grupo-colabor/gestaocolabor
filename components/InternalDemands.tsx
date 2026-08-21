@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 
 import { calculateDemandStatus } from '../domain/demandStatus';
+import { getDemandCompanyLabel } from '../domain/demandLabel';
 import { logAction } from '../services/auditLog';
 import { upsertMeasurementByDemandId } from '../services/measurements';
 import {
@@ -201,8 +202,9 @@ const initialInternalDemandState = (): DemandFormState => ({
   categoriaInterna: '',
   descricaoInterna: '',
   horasPrevistas: null,
-  // Sem cliente nem treinamento: o mapDemandToDb transforma '' em null, o que é
-  // exatamente o que o CHECK demands_cliente_requires_refs espera de uma interna.
+  // Empresa é opcional (o form deixa escolher); treinamento nunca existe numa
+  // interna. O mapDemandToDb transforma '' em null, que é o que o CHECK
+  // demands_cliente_requires_refs espera — ele só cobra as refs de tipo='cliente'.
   companyId: '',
   trainingId: '',
   // `demands.modality` é NOT NULL sem default no banco; interna é sempre
@@ -227,6 +229,7 @@ const initialInternalDemandState = (): DemandFormState => ({
 const InternalDemands: React.FC = () => {
   const {
     demands: allDemands,
+    companies,
     regions,
     instructors,
     operationalBases,
@@ -347,6 +350,7 @@ const InternalDemands: React.FC = () => {
             d.descricaoInterna ?? '',
             d.trainingLocal ?? '',
             d.requester ?? '',
+            getDemandCompanyLabel(d, companies),
           ].join(' ').toLowerCase();
           if (!haystack.includes(q)) return false;
         }
@@ -355,7 +359,7 @@ const InternalDemands: React.FC = () => {
         return true;
       })
       .sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''));
-  }, [internalDemands, filter, categoriaFilter, statusFilter]);
+  }, [internalDemands, filter, categoriaFilter, statusFilter, companies]);
 
   const {
     currentPage,
@@ -645,7 +649,11 @@ const InternalDemands: React.FC = () => {
         // demands_interna_requires_fields recusa a linha se algum escapar.
         tipo: 'interna',
         modality: 'PRESENCIAL',
-        companyId: '',
+        // Empresa é OPCIONAL na interna: o CHECK demands_cliente_requires_refs
+        // só exige as refs quando tipo='cliente'. '' vira null no mapDemandToDb.
+        companyId: (formDemand.companyId || '').trim(),
+        // Treinamento continua SEMPRE nulo — interna não tem treinamento, e é
+        // disso que a medição depende para usar horasPrevistas.
         trainingId: '',
         categoriaInterna: (formDemand.categoriaInterna || '').trim(),
         descricaoInterna: (formDemand.descricaoInterna || '').trim(),
@@ -1042,6 +1050,7 @@ const InternalDemands: React.FC = () => {
                   <th className="p-4">Ref</th>
                   <th className="p-4">Categoria</th>
                   <th className="p-4">Descrição</th>
+                  <th className="p-4">Empresa</th>
                   <th className="p-4">Local</th>
                   <th className="p-4">Datas</th>
                   <th className="p-4">Instrutor</th>
@@ -1063,6 +1072,9 @@ const InternalDemands: React.FC = () => {
                       </td>
                       <td className="p-4 max-w-xs truncate" title={demand.descricaoInterna || ''}>
                         {demand.descricaoInterna || '—'}
+                      </td>
+                      <td className="p-4 max-w-[14rem] truncate" title={getDemandCompanyLabel(demand, companies)}>
+                        {getDemandCompanyLabel(demand, companies)}
                       </td>
                       <td className="p-4">{demand.trainingLocal || '—'}</td>
                       <td className="p-4 whitespace-nowrap font-mono text-xs">
@@ -1101,7 +1113,7 @@ const InternalDemands: React.FC = () => {
                   );
                 }) : (
                   <tr>
-                    <td colSpan={8} className="p-20 text-center text-slate-400">
+                    <td colSpan={9} className="p-20 text-center text-slate-400">
                       <div className="flex flex-col items-center gap-3">
                         <Eraser size={40} className="opacity-20" />
                         <p className="font-medium">Nenhuma demanda interna encontrada.</p>
@@ -1254,6 +1266,21 @@ const InternalDemands: React.FC = () => {
                           />
                           <p className="text-[10px] text-slate-400 mt-1">
                             É a carga que a medição vai usar no lugar das horas do treinamento.
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Empresa (opcional)</label>
+                          <select
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                            value={formDemand.companyId || ''}
+                            onChange={(e) => setFormDemand({ ...formDemand, companyId: e.target.value })}
+                          >
+                            <option value="">Nenhuma / Colabor</option>
+                            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
+                          <p className="text-[10px] text-slate-400 mt-1">
+                            Use quando a demanda interna acontece no cliente. Não gera treinamento nem medição de cliente.
                           </p>
                         </div>
 
@@ -1467,6 +1494,11 @@ const InternalDemands: React.FC = () => {
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <DataViewField label="Categoria" value={formDemand.categoriaInterna || '---'} icon={Tag} />
                         <DataViewField label="Horas Previstas" value={formDemand.horasPrevistas != null ? `${formDemand.horasPrevistas}h` : '---'} icon={Clock} />
+                        <DataViewField
+                          label="Empresa"
+                          value={getDemandCompanyLabel(formDemand as Demand, companies)}
+                          icon={Building}
+                        />
                         <DataViewField label="Solicitante" value={formDemand.requester} icon={User} />
                         <div className="md:col-span-3">
                           <DataViewField label="Descrição" value={formDemand.descricaoInterna || '---'} icon={Building} />

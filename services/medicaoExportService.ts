@@ -23,6 +23,7 @@ import { fetchMeasurements } from './measurements';
 import { fetchTrainings } from './trainings';
 import { fetchInstructors } from './instructors';
 import { computeInstructorHoursByDemand } from '../domain/instructorHours';
+import { getDemandCategoria, isInternalDemand } from '../domain/demandLabel';
 import {
   buildTrainingsById,
   getModalityLabel,
@@ -122,9 +123,9 @@ function safeParseObject(raw: string): any | null {
 function mapDemand(row: any): Demand {
   return {
     id: row.id,
-    // Demanda interna: sem empresa/treinamento, carga horária em horasPrevistas.
-    // Os 3 campos entram aqui já nesta fase só para ficarem disponíveis ao
-    // cálculo de horas e ao workbook (fases 4-5); nada abaixo os consome ainda.
+    // Demanda interna: carga horária em horasPrevistas (consumida por
+    // computeInstructorHoursByDemand) e identificação por categoria +
+    // descrição, que alimentam as colunas Treinamento e Categoria da planilha.
     tipo: (row.tipo ?? 'cliente') as 'cliente' | 'interna',
     categoriaInterna: row.categoria_interna ?? null,
     horasPrevistas: row.horas_previstas ?? null,
@@ -282,8 +283,15 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
 
     block.linhas.push({
       demandId: demand.id,
+      // Interna sem empresa cai em '(sem empresa)' pelo nomeEmpresa; com
+      // empresa vinculada usa o nome dela, igual a uma demanda de cliente.
       empresa: nomeEmpresa(demand.companyId),
-      trainingName: trainingNameById.get(String(demand.trainingId)) ?? '—',
+      // Interna não tem treinamento: a coluna passa a mostrar a descrição, que
+      // é o que identifica a demanda para quem confere o pagamento.
+      trainingName: isInternalDemand(demand)
+        ? ((demand.descricaoInterna || '').trim() || '—')
+        : (trainingNameById.get(String(demand.trainingId)) ?? '—'),
+      categoria: getDemandCategoria(demand),
       dias: row.dias,
       local: local || '—',
       modalidade: getModalityLabel(resolveDemandModality(demand, trainingsById)),

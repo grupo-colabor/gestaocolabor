@@ -3,6 +3,11 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../App';
 import { Measurement, Demand, MeasurementStatus, ExpenseCategory, Attachment, OtherExpenseItem } from '../types';
+import {
+  getDemandTitle,
+  getDemandCompanyLabel as getDemandCompanyLabelDomain,
+  isInternalDemand,
+} from '../domain/demandLabel';
 import { usePagination } from '../hooks/usePagination';
 import Pagination from './Pagination';
 import { 
@@ -214,21 +219,17 @@ const MeasurementView: React.FC = () => {
   const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
 
   // ⚠️ Demanda interna aparece SIM na medição (é trabalho pago ao instrutor
-  // igual a qualquer outro) — o que ela não tem é empresa e treinamento. As
-  // duas colunas passam a ser resolvidas a partir da demanda inteira, não do
-  // id solto, senão as duas mostrariam 'N/A'.
-  const isInterna = (d?: Demand) => d?.tipo === 'interna';
+  // igual a qualquer outro) — o que ela não tem é treinamento, e a empresa é
+  // opcional. As duas colunas são resolvidas a partir da demanda inteira, não
+  // do id solto, senão as duas mostrariam 'N/A'.
+  //
+  // A regra vive em domain/demandLabel (as mesmas strings aparecem em
+  // Logística, Controle Logístico e Agenda). Aqui ficam só os wrappers que
+  // fecham sobre companies/trainings.
+  const isInterna = (d?: Demand) => isInternalDemand(d);
 
-  const getDemandCompanyLabel = (d?: Demand) =>
-    isInterna(d) ? 'Colabor (Interna)' : getCompanyName(d?.companyId || '');
-
-  const getDemandTrainingLabel = (d?: Demand) => {
-    if (!isInterna(d)) return getTrainingName(d?.trainingId || '');
-    const categoria = (d?.categoriaInterna || '').trim();
-    const descricao = (d?.descricaoInterna || '').trim();
-    if (categoria && descricao) return `${categoria} — ${descricao}`;
-    return categoria || descricao || 'Demanda interna';
-  };
+  const getDemandCompanyLabel = (d?: Demand) => getDemandCompanyLabelDomain(d, companies, 'N/A');
+  const getDemandTrainingLabel = (d?: Demand) => getDemandTitle(d, trainings, 'N/A');
 
   /**
    * Carga horária padrão da demanda para o campo Hora/Aula.
@@ -517,8 +518,8 @@ const totals = useMemo(() => {
           acao: 'Registrar',
           descricao: [
             `Medição registrada`,
-            _dem ? `Empresa: ${getCompanyName(_dem.companyId)}` : null,
-            _dem ? `Treinamento: ${getTrainingName(_dem.trainingId)}` : `Demanda ID ${selectedMeasurement.demandId}`,
+            _dem ? `Empresa: ${getDemandCompanyLabel(_dem)}` : null,
+            _dem ? `Treinamento: ${getDemandTrainingLabel(_dem)}` : `Demanda ID ${selectedMeasurement.demandId}`,
             _expA.classHours != null ? `Horas: ${_expA.classHours}h` : null,
             _expA.hourRate != null ? `Valor hora/aula: ${_expA.hourRate}` : null,
             _hourClassTotal ? `Total hora/aula: ${fmt(_hourClassTotal)}` : null,
@@ -789,8 +790,14 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
   // ✅ total geral considerando Hora/Aula
   const totalWithHourClass = demandTotals.total + hourClassTotal;
 
-  const companyName = getCompanyName(d.companyId);
-  const trainingName = getTrainingName(d.trainingId);
+  // Interna: no título entra o nome da empresa quando houver, senão 'Colabor'.
+  // (O rótulo da listagem usa 'Colabor (Interna)'; no cabeçalho do Word o
+  // sufixo é redundante, já que a linha de baixo diz Categoria.)
+  const isInternaDoc = isInterna(d);
+  const companyName = isInternaDoc
+    ? (companies.find(c => c.id === d.companyId)?.name || 'Colabor')
+    : getCompanyName(d.companyId);
+  const trainingName = getDemandTrainingLabel(d);
   const instructorName = getInstructorName(d.instructorId);
 
   const children: any[] = [
@@ -800,7 +807,12 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
       border: { bottom: { color: "e2e8f0", space: 1, style: BorderStyle.SINGLE, size: 6 } },
       spacing: { before: 400, after: 200 },
     }),
-    new Paragraph({ children: [new TextRun({ text: "🎓 Treinamento: ", bold: true }), new TextRun(trainingName)] }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: isInternaDoc ? '🏷️ Categoria: ' : '🎓 Treinamento: ', bold: true }),
+        new TextRun(trainingName),
+      ],
+    }),
     new Paragraph({ children: [new TextRun({ text: "📅 Período: ", bold: true }), new TextRun(`${formatDateTime(d.startDate)} até ${formatDateTime(d.endDate)}`)] }),
     new Paragraph({ children: [new TextRun({ text: "📍 Localidade: ", bold: true }), new TextRun(d.trainingLocal || 'N/A')] }),
     new Paragraph({ children: [new TextRun({ text: "👨‍🏫 Instrutor: ", bold: true }), new TextRun(instructorName)] }),
@@ -925,7 +937,12 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
   // ✅ Bloco Hora/Aula no Word (aparece no relatório)
   children.push(
     new Paragraph({ text: "💰 HORA/AULA", heading: HeadingLevel.HEADING_3, spacing: { before: 200 } }),
-    new Paragraph({ children: [new TextRun({ text: "Horas do Treinamento: ", bold: true }), new TextRun(String(classHours))] }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: isInternaDoc ? 'Horas da Demanda: ' : 'Horas do Treinamento: ', bold: true }),
+        new TextRun(String(classHours)),
+      ],
+    }),
     new Paragraph({ children: [new TextRun({ text: "Valor Hora/Aula: ", bold: true }), new TextRun(formatCurrency(hourRate))] }),
     new Paragraph({ children: [new TextRun({ text: "TOTAL HORA/AULA: ", bold: true }), new TextRun(formatCurrency(hourClassTotal))] }),
     new Paragraph({ spacing: { after: 200 } })
@@ -1533,10 +1550,10 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
               </h3>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Horas do Treinamento */}
+                {/* Horas do Treinamento (da Demanda, quando interna) */}
                 <div>
                   <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">
-                    Horas do Treinamento
+                    {_selIsInterna ? 'Horas da Demanda' : 'Horas do Treinamento'}
                   </label>
                   <div className="flex items-center gap-2">
                     <input

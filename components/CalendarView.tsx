@@ -23,6 +23,27 @@ import { AgendaItem, AgendaType, Demand, Instructor } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { useAuth } from '../contexts/AuthContext';
 import { isDemandDay, buildCardLabel } from '../domain/demandDays';
+import { isInternalDemand, getDemandTitle, getDemandCompanyLabel } from '../domain/demandLabel';
+
+/**
+ * Slots do label do card da agenda.
+ *
+ * O formato do card é 'DEM-XXX • <slot1> • <slot2> (N)'. Para cliente os slots
+ * são empresa e NR do treinamento. Interna não tem treinamento, então usa
+ * categoria e local — mesmo formato visual, mesmo indicador noturno (o (N) sai
+ * dos horários do dia em demandDays, não depende de treinamento).
+ */
+const cardLabelSlots = (
+  demand: any,
+  company?: { name?: string },
+  training?: { nr?: string; name?: string }
+) =>
+  isInternalDemand(demand)
+    ? {
+        companyName: (demand?.categoriaInterna || '').trim() || undefined,
+        trainingNr: (demand?.trainingLocal || '').trim() || undefined,
+      }
+    : { companyName: company?.name, trainingNr: training?.nr };
 import AllocationDrawer, { type DrawerState, type AllocationPreview } from './AllocationDrawer';
 
 // Configuração visual para cada tipo de compromisso
@@ -383,7 +404,7 @@ const getDemandFromItem = (item: any): Demand | null => {
           const dayKey = formatDateKey(cursor);
           map[dayKey] = {
             id: a.id,
-            title: buildCardLabel(d, dayKey, { companyName: company?.name, trainingNr: training?.nr }),
+            title: buildCardLabel(d, dayKey, cardLabelSlots(d, company, training)),
             source: 'MIRROR',
             start: a.startDate,
             end: a.endDate,
@@ -475,7 +496,7 @@ const getDemandFromItem = (item: any): Demand | null => {
             startDate: displayStart,
             endDate: displayEnd,
             type: 'TREINAMENTO',
-            title: buildCardLabel(d, dayKey, { companyName: company?.name, trainingNr: training?.nr }),
+            title: buildCardLabel(d, dayKey, cardLabelSlots(d, company, training)),
             source: 'ALLOCATION',
             description: d.trainingLocal,
             calculatedStatus: cStatus,
@@ -533,7 +554,7 @@ companionAllocations.forEach(ca => {
         startDate: displayStart,
         endDate: displayEnd,
         type: 'TREINAMENTO',
-        title: buildCardLabel(d, dayKey, { companyName: company?.name, trainingNr: training?.nr }),
+        title: buildCardLabel(d, dayKey, cardLabelSlots(d, company, training)),
         source: 'COMPANION',
         description: d.trainingLocal,
         calculatedStatus: cStatus,
@@ -577,7 +598,7 @@ companionAllocations.forEach(ca => {
               startDate: effectiveStart,
               endDate: effectiveEnd,
               type: 'TREINAMENTO',
-              title: buildCardLabel(d, dayKey, { companyName: company?.name, trainingNr: training?.nr }),
+              title: buildCardLabel(d, dayKey, cardLabelSlots(d, company, training)),
               source: 'DEMANDA',
               description: d.trainingLocal,
               calculatedStatus: cStatus,
@@ -1784,7 +1805,9 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                           a => a.resourceType === 'CENTRO_TREINAMENTO_MOVEL' && a.demandId === demandId
                         );
                         const trainingLabel = demand
-                          ? buildCardLabel(demand, formatDateKey(day), { companyName: company?.name, trainingNr: training?.nr ?? training?.name })
+                          ? buildCardLabel(demand, formatDateKey(day), isInternalDemand(demand)
+                              ? cardLabelSlots(demand)
+                              : { companyName: company?.name, trainingNr: training?.nr ?? training?.name })
                           : [cellItem.data.id, company?.name, training?.nr ?? training?.name].filter(Boolean).join(' • ');
                         return (
                           <>
@@ -2068,6 +2091,11 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                         <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest">
                           DEMANDA: #{linkedDemand.id}
                         </span>
+                        {isInternalDemand(linkedDemand) && (
+                          <span className="bg-violet-100 text-violet-700 border border-violet-200 text-[9px] font-black uppercase px-1.5 py-0.5 rounded tracking-widest">
+                            Interna
+                          </span>
+                        )}
                       </div>
 
                       {linkedDemand.clientDemandId && (
@@ -2081,12 +2109,12 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
 
                       <div className="flex items-center gap-2">
                         <Building size={14} className="text-blue-400" />
-                        <span className="text-xs font-bold text-slate-700">{company?.name || '---'}</span>
+                        <span className="text-xs font-bold text-slate-700">{getDemandCompanyLabel(linkedDemand, companies, '---')}</span>
                       </div>
 
                       <div className="flex items-center gap-2">
                         <GraduationCap size={14} className="text-blue-400" />
-                        <span className="text-xs font-medium text-slate-600">{training?.name || '---'}</span>
+                        <span className="text-xs font-medium text-slate-600">{getDemandTitle(linkedDemand, trainings, '---')}</span>
                       </div>
                     </div>
 

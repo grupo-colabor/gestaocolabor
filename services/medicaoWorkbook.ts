@@ -39,6 +39,11 @@ export interface MedicaoDetailRow {
   local: string;
   modalidade: string;
   horas: number;
+  /**
+   * Categoria da demanda INTERNA (SIPAT, Visita, Apoio Logístico...). Vazia em
+   * demanda de cliente, que já é identificada por empresa + treinamento.
+   */
+  categoria: string;
 }
 
 export interface MedicaoInstructorBlock {
@@ -463,12 +468,17 @@ export async function buildMedicaoWorkbook(
       { width: 18 }, // F Modalidade
       { width: 10 }, // G Horas
       { width: 26 }, // H Valor (R$) — automático
+      { width: 22 }, // I Categoria (só demanda interna)
     ];
+    // ⚠️ Categoria entra no FIM, depois de Valor. Empresa (B), Horas (G) e
+    // Valor (H) NÃO podem mudar de letra: a fórmula de valor referencia
+    // DETAIL_COL_EMPRESA/HORAS por letra, e o SUMIFS da tarifa cruza a coluna B
+    // com a aba Tarifas.
     const detailHeader = ws.addRow([
       'Código', 'Empresa', 'Treinamento', 'Data', 'Local', 'Modalidade', 'Horas',
-      'Valor (R$) — automático',
+      'Valor (R$) — automático', 'Categoria',
     ]);
-    styleHeaderRow(detailHeader, 8);
+    styleHeaderRow(detailHeader, 9);
 
     // Foi exatamente aqui que o valor da hora foi digitado por cima da fórmula
     // na primeira rodada real — daí a nota, além da proteção da aba.
@@ -491,6 +501,7 @@ export async function buildMedicaoWorkbook(
         linha.modalidade,
         linha.horas,
         null,
+        linha.categoria || null,
       ]);
       row.getCell(7).numFmt = FMT_HORAS;
 
@@ -509,7 +520,7 @@ export async function buildMedicaoWorkbook(
     });
 
     const lastDetailRow = DETAIL_FIRST_DATA_ROW + block.linhas.length - 1;
-    const totalRow = ws.addRow(['', '', '', '', '', 'Total:', null, null]);
+    const totalRow = ws.addRow(['', '', '', '', '', 'Total:', null, null, '']);
     totalRow.getCell(6).font = { bold: true };
     totalRow.getCell(6).alignment = { horizontal: 'right' };
     totalRow.getCell(7).value = {

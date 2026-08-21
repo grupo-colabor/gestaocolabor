@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import { useApp } from '../App';
 import { logAction } from '../services/auditLog';
 import { requiresScheduling, requiresLogistics } from '../domain/modalityRules';
-import { Instructor, LogisticAllocation } from '../types';
+import { getDemandTitle, getDemandCompanyLabel, isInternalDemand } from '../domain/demandLabel';
+import { Demand, Instructor, LogisticAllocation } from '../types';
 import {
   Briefcase,
   ChevronRight,
@@ -169,8 +170,8 @@ const handleRemoveCompanion = (allocationId: string) => {
     acao: 'Cancelar',
     descricao: [
       `Acompanhante removido`,
-      selectedDemand ? `Empresa: ${getCompanyName(selectedDemand.companyId)}` : null,
-      selectedDemand ? `Treinamento: ${getTrainingName(selectedDemand.trainingId)}` : null,
+      selectedDemand ? `Empresa: ${demandCompanyOf(selectedDemand)}` : null,
+      selectedDemand ? `Treinamento: ${demandTitleOf(selectedDemand)}` : null,
       `Alocação ID: ${allocationId}`,
     ].filter(Boolean).join(' | '),
     dadosAntes: { allocationId },
@@ -259,8 +260,8 @@ const handleSaveCompanionDays = () => {
     acao: 'Confirmar',
     descricao: [
       `Acompanhante adicionado`,
-      selectedDemand ? `Empresa: ${getCompanyName(selectedDemand.companyId)}` : null,
-      selectedDemand ? `Treinamento: ${getTrainingName(selectedDemand.trainingId)}` : null,
+      selectedDemand ? `Empresa: ${demandCompanyOf(selectedDemand)}` : null,
+      selectedDemand ? `Treinamento: ${demandTitleOf(selectedDemand)}` : null,
       `Instrutor: ${instructors.find((i: any) => i.id === pendingCompanionInstructorId)?.name || pendingCompanionInstructorId}`,
       `Dias: ${companionSelectedDays.join(', ')}`,
     ].filter(Boolean).join(' | '),
@@ -297,8 +298,8 @@ const handleSaveCompanionDays = () => {
     ).sort((a, b) => a.startDate.localeCompare(b.startDate))
     .filter(d => {
       if (filterText) {
-        const company = companies.find(c => c.id === d.companyId)?.name || '';
-        const training = trainings.find(t => t.id === d.trainingId)?.name || '';
+        const company = getDemandCompanyLabel(d, companies, '');
+        const training = getDemandTitle(d, trainings, '');
         if (!company.toLowerCase().includes(filterText.toLowerCase()) &&
             !training.toLowerCase().includes(filterText.toLowerCase()) &&
             !d.id.toLowerCase().includes(filterText.toLowerCase())) return false;
@@ -321,8 +322,12 @@ const handleSaveCompanionDays = () => {
   }, [selectedDemand, recommendInstructors]);
 
   // Helpers
-  const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'Empresa N/A';
-  const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'Treinamento N/A';
+  // Rótulos por DEMANDA (não por id solto): interna vira 'categoria — descrição'
+  // e 'Colabor (Interna)' quando não tem empresa vinculada. Fonte única em
+  // domain/demandLabel — antes destes dois helpers a interna aparecia aqui como
+  // 'Empresa N/A / Treinamento N/A'.
+  const demandTitleOf = (d?: Demand) => getDemandTitle(d, trainings, 'Treinamento N/A');
+  const demandCompanyOf = (d?: Demand) => getDemandCompanyLabel(d, companies, 'Empresa N/A');
   const getRegionName = (id: string) => regions.find(r => r.id === id)?.name || 'Região N/A';
 
   const isUrgent = (dateStr: string) => {
@@ -358,8 +363,8 @@ const handleSaveCompanionDays = () => {
         acao: 'Criar',
         descricao: [
           `Instrutor alocado`,
-          `Empresa: ${getCompanyName(selectedDemand.companyId)}`,
-          `Treinamento: ${getTrainingName(selectedDemand.trainingId)}`,
+          `Empresa: ${demandCompanyOf(selectedDemand)}`,
+          `Treinamento: ${demandTitleOf(selectedDemand)}`,
           `Instrutor: ${instructor.name}`,
         ].join(' | '),
         dadosDepois: { demandId: selectedDemandId, instructorId: instructor.id, instructorName: instructor.name },
@@ -381,8 +386,8 @@ const handleSaveCompanionDays = () => {
       acao: 'Confirmar',
       descricao: [
         `Alocação forçada confirmada`,
-        selectedDemand ? `Empresa: ${getCompanyName(selectedDemand.companyId)}` : null,
-        selectedDemand ? `Treinamento: ${getTrainingName(selectedDemand.trainingId)}` : null,
+        selectedDemand ? `Empresa: ${demandCompanyOf(selectedDemand)}` : null,
+        selectedDemand ? `Treinamento: ${demandTitleOf(selectedDemand)}` : null,
         `Instrutor: ${(allocatedInstructor as any).name || (allocatedInstructor as any).id || ''}`,
       ].filter(Boolean).join(' | '),
       dadosDepois: { demandId: selectedDemand?.id, instructorId: (allocatedInstructor as any).id },
@@ -448,8 +453,8 @@ const handleSaveCompanionDays = () => {
       acao: 'Criar',
       descricao: [
         `CTM alocado`,
-        `Empresa: ${getCompanyName(selectedDemand.companyId)}`,
-        `Treinamento: ${getTrainingName(selectedDemand.trainingId)}`,
+        `Empresa: ${demandCompanyOf(selectedDemand)}`,
+        `Treinamento: ${demandTitleOf(selectedDemand)}`,
         `Período: ${startDateTime.slice(0, 10)} a ${endDateTime.slice(0, 10)}`,
       ].join(' | '),
       dadosDepois: newAllocation,
@@ -497,8 +502,8 @@ const handleSaveCompanionDays = () => {
         acao: 'Editar',
         descricao: [
           `Período prática híbrida definido`,
-          `Empresa: ${getCompanyName(selectedDemand.companyId)}`,
-          `Treinamento: ${getTrainingName(selectedDemand.trainingId)}`,
+          `Empresa: ${demandCompanyOf(selectedDemand)}`,
+          `Treinamento: ${demandTitleOf(selectedDemand)}`,
           `Prática: ${practiceStartDateTime.slice(0, 10)} a ${practiceEndDateTime.slice(0, 10)}`,
         ].join(' | '),
         dadosAntes: { practiceStartDate: selectedDemand.practiceStartDate, practiceEndDate: selectedDemand.practiceEndDate },
@@ -536,8 +541,8 @@ const handleSaveCompanionDays = () => {
     acao: 'Cancelar',
     descricao: [
       `Prática híbrida removida`,
-      `Empresa: ${getCompanyName(selectedDemand.companyId)}`,
-      `Treinamento: ${getTrainingName(selectedDemand.trainingId)}`,
+      `Empresa: ${demandCompanyOf(selectedDemand)}`,
+      `Treinamento: ${demandTitleOf(selectedDemand)}`,
     ].join(' | '),
     dadosAntes: { practiceStartDate: selectedDemand.practiceStartDate, practiceEndDate: selectedDemand.practiceEndDate },
     dadosDepois: { demandId: selectedDemand.id },
@@ -552,8 +557,8 @@ const handleSaveCompanionDays = () => {
         acao: 'Cancelar',
         descricao: [
           `CTM removido`,
-          selectedDemand ? `Empresa: ${getCompanyName(selectedDemand.companyId)}` : null,
-          selectedDemand ? `Treinamento: ${getTrainingName(selectedDemand.trainingId)}` : null,
+          selectedDemand ? `Empresa: ${demandCompanyOf(selectedDemand)}` : null,
+          selectedDemand ? `Treinamento: ${demandTitleOf(selectedDemand)}` : null,
           `Período: ${currentResourceAllocation.startDate?.slice(0, 10)} a ${currentResourceAllocation.endDate?.slice(0, 10)}`,
         ].filter(Boolean).join(' | '),
         dadosAntes: currentResourceAllocation,
@@ -638,10 +643,10 @@ const handleSaveCompanionDays = () => {
                   <div className={`mt-1 flex-shrink-0 w-2 h-2 rounded-full ${isUrgent(demand.startDate) ? 'bg-red-500 animate-pulse' : 'bg-slate-300'}`}></div>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-start mb-1">
-                      <h3 className="font-bold text-slate-800 truncate text-sm" title={getCompanyName(demand.companyId)}>{getCompanyName(demand.companyId)}</h3>
+                      <h3 className="font-bold text-slate-800 truncate text-sm" title={demandCompanyOf(demand)}>{demandCompanyOf(demand)}</h3>
                       <span className="text-[10px] font-bold text-slate-400 font-mono tracking-tighter">#{demand.id}</span>
                     </div>
-                    <p className="text-xs font-semibold text-blue-600 mb-2 truncate" title={getTrainingName(demand.trainingId)}>{getTrainingName(demand.trainingId)}</p>
+                    <p className="text-xs font-semibold text-blue-600 mb-2 truncate" title={demandTitleOf(demand)}>{demandTitleOf(demand)}</p>
                     
                     <div className="flex flex-wrap gap-y-2 gap-x-4 items-center text-[11px] text-slate-500">
                       <div className="flex items-center"><CalendarIcon size={12} className="mr-1" /> {new Date(demand.startDate).toLocaleDateString('pt-BR')}</div>
@@ -652,6 +657,11 @@ const handleSaveCompanionDays = () => {
                         {demand.corredor && <><span className="text-slate-300">|</span><span>{demand.corredor}</span></>}
                         {demand.demandState && <><span className="text-slate-300">|</span><span>{demand.demandState}</span></>}
                       </div>
+                      {isInternalDemand(demand) && (
+                        <span className="bg-violet-100 text-violet-700 border border-violet-200 text-[9px] font-black uppercase px-1.5 py-0.5 rounded tracking-widest">
+                          Interna
+                        </span>
+                      )}
                       {isNightDemand(demand) && (
                         <span className="flex items-center gap-0.5 bg-indigo-950 text-indigo-100 border border-indigo-800 text-[9px] font-black uppercase px-1.5 py-0.5 rounded">
                           <Moon size={9} strokeWidth={2.5} /> NOTURNO
@@ -680,13 +690,15 @@ const handleSaveCompanionDays = () => {
                 <div className="flex flex-col md:flex-row justify-between gap-4">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 mb-2">
-                      <span className="bg-slate-900 text-white text-[10px] font-bold px-2 py-0.5 rounded">DEMANDA</span>
+                      <span className="bg-slate-900 text-white text-[10px] font-bold px-2 py-0.5 rounded">
+                        {isInternalDemand(selectedDemand) ? 'DEMANDA INTERNA' : 'DEMANDA'}
+                      </span>
                       <span className="text-xs font-mono text-slate-400 font-bold">{selectedDemand.id}</span>
                     </div>
-                    <h2 className="text-xl font-bold text-slate-900 leading-tight">{getTrainingName(selectedDemand.trainingId)}</h2>
+                    <h2 className="text-xl font-bold text-slate-900 leading-tight">{demandTitleOf(selectedDemand)}</h2>
                     <div className="flex items-center text-slate-600 text-sm font-medium">
                       <Building size={16} className="mr-2 text-slate-400" />
-                      {getCompanyName(selectedDemand.companyId)}
+                      {demandCompanyOf(selectedDemand)}
                     </div>
                   </div>
                   
@@ -1012,9 +1024,16 @@ const handleSaveCompanionDays = () => {
                             <div>
                               <h4 className="font-bold text-slate-800">{instructor.name}</h4>
                               <div className="flex items-center gap-2 mt-1">
-                                <span className="text-[10px] font-black uppercase bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-100">
-                                  Score: {instructor.score}
-                                </span>
+                                {/* Score = nível da skill no treinamento. Interna não tem
+                                    treinamento, então não há nível a exibir. */}
+                                {!isInternalDemand(selectedDemand) && (
+                                  <span className="text-[10px] font-black uppercase bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-100">
+                                    Score: {instructor.score}
+                                  </span>
+                                )}
+                                {instructor.residenceLocation && (
+                                  <span className="text-[10px] font-bold uppercase text-slate-400">{instructor.residenceLocation}</span>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -1026,7 +1045,11 @@ const handleSaveCompanionDays = () => {
                           </button>
                         </div>
                       )) : (
-                        <p className="text-xs text-slate-400 italic py-4 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-center">Nenhum instrutor disponível nesta região para este treinamento.</p>
+                        <p className="text-xs text-slate-400 italic py-4 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-center">
+                          {isInternalDemand(selectedDemand)
+                            ? 'Nenhum instrutor ativo disponível nesta região para este período.'
+                            : 'Nenhum instrutor disponível nesta região para este treinamento.'}
+                        </p>
                       )}
                     </div>
                   </div>

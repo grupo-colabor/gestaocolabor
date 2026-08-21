@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useApp } from '../App';
 import { Demand } from '../types';
 import { requiresLogistics } from '../domain/modalityRules';
+import { getDemandTitle, getDemandCompanyLabel, isInternalDemand } from '../domain/demandLabel';
 import {
   Search,
   CalendarDays,
@@ -83,9 +84,10 @@ const LogisticsControl: React.FC = () => {
 
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // Helpers de Nomes
-  const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
-  const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
+  // Helpers de Nomes — resolvidos pela DEMANDA, não pelo id solto: interna não
+  // tem treinamento e pode não ter empresa (domain/demandLabel).
+  const demandTitleOf = (d?: Demand) => getDemandTitle(d, trainings, 'N/A');
+  const demandCompanyOf = (d?: Demand) => getDemandCompanyLabel(d, companies, 'N/A');
 
   // Lógica de Período (Segunda a Domingo)
   const periodBounds = useMemo(() => {
@@ -361,8 +363,8 @@ const LogisticsControl: React.FC = () => {
         if (!requiresLogistics(d.modality)) return false;
 
         // 🔎 Filtro de texto
-        const company = getCompanyName(d.companyId).toLowerCase();
-        const training = getTrainingName(d.trainingId).toLowerCase();
+        const company = demandCompanyOf(d).toLowerCase();
+        const training = demandTitleOf(d).toLowerCase();
 
         const matchesSearch =
           !filterText ||
@@ -609,9 +611,16 @@ const LogisticsControl: React.FC = () => {
                         {/* ID / EMPRESA */}
                         <td className="p-5">
                           <div className="flex flex-col">
-                            <span className="font-mono text-blue-600 font-bold">#{d.id}</span>
-                            <span className="text-[10px] font-black uppercase text-slate-400 mt-1 truncate max-w-[150px]" title={getCompanyName(d.companyId)}>
-                              {getCompanyName(d.companyId)}
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-blue-600 font-bold">#{d.id}</span>
+                              {isInternalDemand(d) && (
+                                <span className="bg-violet-100 text-violet-700 border border-violet-200 text-[9px] font-black uppercase px-1.5 py-0.5 rounded tracking-widest">
+                                  Interna
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] font-black uppercase text-slate-400 mt-1 truncate max-w-[150px]" title={demandCompanyOf(d)}>
+                              {demandCompanyOf(d)}
                             </span>
                           </div>
                         </td>
@@ -620,7 +629,7 @@ const LogisticsControl: React.FC = () => {
                         <td className="p-5 max-w-[200px]">
                           <div className="flex items-center gap-2">
                             <GraduationCap size={14} className="text-slate-300 shrink-0" />
-                            <span className="truncate font-bold text-slate-700" title={getTrainingName(d.trainingId)}>{getTrainingName(d.trainingId)}</span>
+                            <span className="truncate font-bold text-slate-700" title={demandTitleOf(d)}>{demandTitleOf(d)}</span>
                           </div>
                         </td>
 

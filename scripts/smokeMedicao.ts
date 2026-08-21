@@ -155,15 +155,15 @@ console.log('\n[4] Workbook gerado');
     {
       instructorId: 'i1', nome: 'Ana Maria', cpf: '123.456.789-09',
       linhas: [
-        { demandId: 'DEM-100', empresa: 'Vale', trainingName: 'NR 33', dias: ['2026-06-26', '2026-06-27', '2026-06-28'], local: 'Vitória - ES', modalidade: 'Presencial', horas: 6 },
-        { demandId: 'DEM-101', empresa: 'ArcelorMittal', trainingName: 'NR 35', dias: ['2026-07-02'], local: 'Serra - ES', modalidade: 'Presencial', horas: 8 },
-        { demandId: 'DEM-102', empresa: 'Vale', trainingName: 'NR 20', dias: ['2026-07-10'], local: 'Vitória - ES', modalidade: 'Híbrido', horas: 4 },
+        { demandId: 'DEM-100', empresa: 'Vale', trainingName: 'NR 33', dias: ['2026-06-26', '2026-06-27', '2026-06-28'], local: 'Vitória - ES', modalidade: 'Presencial', horas: 6, categoria: '' },
+        { demandId: 'DEM-101', empresa: 'ArcelorMittal', trainingName: 'NR 35', dias: ['2026-07-02'], local: 'Serra - ES', modalidade: 'Presencial', horas: 8, categoria: '' },
+        { demandId: 'DEM-102', empresa: 'Vale', trainingName: 'NR 20', dias: ['2026-07-10'], local: 'Vitória - ES', modalidade: 'Híbrido', horas: 4, categoria: '' },
       ],
     },
     {
       instructorId: 'i2', nome: 'Bruno Souza', cpf: '',
       linhas: [
-        { demandId: 'DEM-103', empresa: 'Samarco', trainingName: 'NR 35', dias: ['2026-07-06'], local: 'Anchieta - ES', modalidade: 'Presencial', horas: 8 },
+        { demandId: 'DEM-103', empresa: 'Samarco', trainingName: 'NR 35', dias: ['2026-07-06'], local: 'Anchieta - ES', modalidade: 'Presencial', horas: 8, categoria: '' },
       ],
     },
   ];
@@ -214,6 +214,10 @@ console.log('\n[4] Workbook gerado');
   checkEq('Detalhe: treinamento empurrado para C', texto(ana, 'C2'), 'NR 33');
   checkEq('Detalhe: horas agora em G', ana.getCell('G2').value, 6);
   checkEq('Detalhe: horas com formato de horas', ana.getCell('G2').numFmt, '0.0');
+
+  /* ---- coluna Categoria: acrescentada no FIM, sem mover B/G/H ---- */
+  checkEq('Detalhe: Categoria é a coluna I', texto(ana, 'I1'), 'Categoria');
+  checkEq('Detalhe: demanda de cliente não tem categoria', texto(ana, 'I2'), '');
 
   /* ---- fórmula de valor: tarifa cruzada por empresa da própria linha ---- */
   checkEq(
@@ -297,6 +301,51 @@ console.log('\n[4] Workbook gerado');
   checkEq('Bruno tem 1 tarifa pendente na planilha recém-gerada', pendentesDe('Bruno Souza'), 1);
   checkEq('Ana tem 2 tarifas pendentes na planilha recém-gerada', pendentesDe('Ana Maria'), 2);
   check('tarifa pendente > 0 sinaliza total incompleto', pendentesDe('Bruno Souza') > 0);
+
+
+  /* ======================================================================== */
+  /* [6] Demanda INTERNA — workbook próprio                                   */
+  /* ======================================================================== */
+  // Cenário isolado de propósito: a interna acrescenta um par na aba Tarifas
+  // ('(sem empresa)' também precisa de tarifa — é trabalho pago ao instrutor),
+  // e enfiá-la na fixture compartilhada mudaria as contagens de todos os checks
+  // acima, escondendo regressão futura atrás de números remexidos.
+  console.log('\n[6] Demanda interna na planilha de pagamento');
+
+  const wbInterna = await buildMedicaoWorkbook(
+    [{
+      instructorId: 'i3', nome: 'Carla Dias', cpf: '',
+      linhas: [
+        { demandId: 'DEM-104', empresa: 'Vale', trainingName: 'NR 35', dias: ['2026-07-09'], local: 'Vitória - ES', modalidade: 'Presencial', horas: 8, categoria: '' },
+        { demandId: 'DEM-900', empresa: '(sem empresa)', trainingName: 'Organizar van para Brucutu', dias: ['2026-07-08'], local: 'Brucutu - MG', modalidade: 'Presencial', horas: 6, categoria: 'SIPAT' },
+      ],
+    }] as any,
+    periodo
+  );
+
+  const bufInterna = await wbInterna.xlsx.writeBuffer();
+  const wbLidoInterna = new ExcelJSModule.default.Workbook();
+  await wbLidoInterna.xlsx.load(bufInterna as any);
+  const carla = wbLidoInterna.getWorksheet('Carla Dias');
+
+  // As linhas são ordenadas por dia (08/07 antes de 09/07), então a interna cai
+  // na 2 — mas o teste não depende disso: descobre qual é qual pelo código.
+  const li = texto(carla, 'A2') === 'DEM-900' ? '2' : '3';
+  const lc = li === '2' ? '3' : '2';
+
+  checkEq('Interna: Treinamento traz a descrição', texto(carla, 'C' + li), 'Organizar van para Brucutu');
+  checkEq('Interna: Empresa vira (sem empresa)', texto(carla, 'B' + li), '(sem empresa)');
+  checkEq('Interna: Categoria na coluna I', texto(carla, 'I' + li), 'SIPAT');
+  checkEq('Interna: horas continuam em G', carla.getCell('G' + li).value, 6);
+  checkEq('Cliente: coluna Categoria fica vazia', texto(carla, 'I' + lc), '');
+  check(
+    'Interna: fórmula de valor idêntica à de cliente (G x tarifa por B)',
+    String(formula(carla, 'H' + li)).includes('G' + li + '*SUMIFS(') &&
+    String(formula(carla, 'H' + li)).includes('B' + li)
+  );
+  checkEq('Interna: cabeçalho da coluna I', texto(carla, 'I1'), 'Categoria');
+  checkEq('Interna: total de horas soma as duas linhas', formula(carla, 'G4'), 'SUM(G2:G3)');
+
 
   console.log(falhas === 0 ? '\n✅ Todos os checks passaram.' : `\n❌ ${falhas} check(s) falharam.`);
   process.exit(falhas === 0 ? 0 : 1);

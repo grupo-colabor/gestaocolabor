@@ -2879,33 +2879,49 @@ const hasScheduleConflict = useCallback(
         return hasScheduleConflict(instructorId, effective.start, effective.end, demand.id);
       };
 
+      // ⚠️ Elegibilidade depende do tipo da demanda.
+      //
+      // Cliente: instrutor precisa ter a skill do treinamento, e o nível da
+      // skill é o score que ordena a lista.
+      //
+      // Interna: não existe treinamento (training_id é null), então a mesma
+      // regra reprovava TODO mundo — `skills.some(s => s.trainingId === '')` é
+      // sempre falso — e a tela dizia "nenhum instrutor disponível" para
+      // qualquer interna. Interna não exige qualificação: todo instrutor ATIVO
+      // é elegível. Sem skill não há score, então a ordenação passa a ser por
+      // nome (alfabética) em vez de aleatória.
+      const isInterna = demand.tipo === 'interna';
+
+      const isEligible = (i: Instructor) =>
+        i.status === 'ATIVO' &&
+        (isInterna || !!i.skills?.some(s => s.trainingId === demand.trainingId));
+
+      const withScore = (i: Instructor) => {
+        if (isInterna) return { ...i, score: 0 };
+        const skill = i.skills?.find(s => s.trainingId === demand.trainingId);
+        return { ...i, score: skill?.level ?? 0 };
+      };
+
+      const byScoreThenName = (
+        a: Instructor & { score: number },
+        b: Instructor & { score: number }
+      ) => (b.score - a.score) || (a.name || '').localeCompare(b.name || '');
+
       const activeCapableInstructors = instructors
-        .filter(
-          i =>
-            i.status === 'ATIVO' &&
-            i.skills?.some(s => s.trainingId === demand.trainingId) &&
-            !hasScheduleConflictForDemand(i.id)
-        )
-        .map(i => {
-          const skill = i.skills?.find(s => s.trainingId === demand.trainingId);
-          return { ...i, score: skill?.level ?? 0 };
-        })
-        .sort((a, b) => b.score - a.score);
+        .filter(i => isEligible(i) && !hasScheduleConflictForDemand(i.id))
+        .map(withScore)
+        .sort(byScoreThenName);
 
       // Instrutores com conflito de alocação (mas não de agenda) — terceira seção
       const alreadyAllocated = instructors
         .filter(
           i =>
-            i.status === 'ATIVO' &&
-            i.skills?.some(s => s.trainingId === demand.trainingId) &&
+            isEligible(i) &&
             hasScheduleConflictForDemand(i.id) &&
             hasAllocationConflict(i.id)
         )
-        .map(i => {
-          const skill = i.skills?.find(s => s.trainingId === demand.trainingId);
-          return { ...i, score: skill?.level ?? 0 };
-        })
-        .sort((a, b) => b.score - a.score);
+        .map(withScore)
+        .sort(byScoreThenName);
 
       const demandState = (demand.demandState || '').trim().toUpperCase();
       const isSameState = (i: { residenceLocation?: string }) =>

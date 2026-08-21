@@ -46,6 +46,24 @@ const STATUS_STYLING: Record<string, string> = {
   CANCELADA: 'bg-red-100 text-red-700'
 };
 
+/**
+ * Hora noturna vale mais e tem tarifa própria no Excel — o indicador deixa isso
+ * visível na listagem e no cabeçalho do Painel de Medição (quem preenche o valor
+ * manual precisa ver a condição sem voltar à listagem).
+ * Regra única em domain/demandDays: fim >= 19:00 ou vira o dia.
+ */
+const NightBadge: React.FC<{ demand?: Demand | null }> = ({ demand }) => {
+  if (!demand || !isNightDemand(demand)) return null;
+  return (
+    <span
+      className="flex items-center gap-0.5 bg-indigo-950 text-indigo-100 border border-indigo-800 text-[9px] font-black uppercase px-1.5 py-0.5 rounded tracking-widest shrink-0"
+      title="Demanda noturna (término >= 19:00) — tarifa própria na aba Tarifas"
+    >
+      <Moon size={9} strokeWidth={2.5} /> N
+    </span>
+  );
+};
+
 const CategoryBlock = ({ 
   category, 
   label, 
@@ -1271,17 +1289,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                     <td className="p-4 font-bold text-blue-600">
                       <div className="flex items-center gap-2">
                         {d?.id}
-                        {/* Hora noturna vale mais e agora tem tarifa própria no
-                            Excel — o indicador deixa isso visível já na listagem.
-                            Regra em domain/demandDays: fim >= 19:00 ou vira o dia. */}
-                        {!!d && isNightDemand(d) && (
-                          <span
-                            className="flex items-center gap-0.5 bg-indigo-950 text-indigo-100 border border-indigo-800 text-[9px] font-black uppercase px-1.5 py-0.5 rounded tracking-widest shrink-0"
-                            title="Turno noturno — tarifa própria na aba Tarifas"
-                          >
-                            <Moon size={9} strokeWidth={2.5} /> N
-                          </span>
-                        )}
+                        <NightBadge demand={d} />
                         {isNoShow && (
                           <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-red-600 text-white tracking-widest">No-Show</span>
                         )}
@@ -1518,6 +1526,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                 <span className="text-[11px] text-slate-500 font-semibold bg-slate-100 px-2.5 py-1 rounded-lg">
                   REF: <span className="font-black text-slate-700">{selectedMeasurement.demandId}</span>
                 </span>
+                <NightBadge demand={demands.find(dm => dm.id === selectedMeasurement.demandId)} />
                 <div className="h-4 w-px bg-slate-200"></div>
                 {(() => {
                   const d = demands.find(dm => dm.id === selectedMeasurement.demandId);

@@ -206,8 +206,21 @@ const TARIFA_VALOR_IDX = 5;
  */
 export type TarifaTipo = 'Treinamento' | 'Interna';
 const NOTURNO_SIM = 'Sim';
-/** Diurno fica VAZIO na planilha; o critério do SUMIFS é "" (célula vazia). */
-const NOTURNO_NAO = '';
+/**
+ * Diurno é 'Não' LITERAL, nunca célula vazia.
+ *
+ * Já foi '' e isso zerava toda linha diurna em silêncio. Vazio não sobrevive à
+ * ida e volta pelo arquivo: na aba Tarifas o '' virava uma célula de TEXTO
+ * vazio (t="s" apontando para uma sharedString em branco), enquanto na aba de
+ * detalhe a mesma coluna saía como célula AUSENTE do XML. O SUMIFS compara os
+ * dois lados e o Excel, ao receber célula vazia como CRITÉRIO, converte o
+ * critério para o número 0 — que não casa com texto vazio. Resultado:
+ * Valor = R$ 0,00 com a tarifa preenchida do lado de lá.
+ *
+ * Rótulo não-vazio dos dois lados mata a classe inteira do problema, e é o
+ * mesmo padrão da coluna Tipo ('Treinamento'/'Interna'), que nunca falhou.
+ */
+const NOTURNO_NAO = 'Não';
 const noturnoLabel = (noturno: boolean) => (noturno ? NOTURNO_SIM : NOTURNO_NAO);
 
 /**
@@ -446,7 +459,7 @@ export async function buildMedicaoWorkbook(
     'interna, e entre hora diurna e noturna. O mesmo instrutor na mesma empresa ' +
     'pode aparecer em mais de uma linha — preencha todas.\n\n' +
     'Tipo: "Treinamento" ou "Interna". Noturno: "Sim" quando o turno termina ' +
-    '19:00 ou mais tarde (ou vira o dia); em branco quando é diurno.\n\n' +
+    '19:00 ou mais tarde (ou vira o dia); "Não" quando é diurno.\n\n' +
     'Ao preencher, o Excel recalcula sozinho a coluna Valor da aba do instrutor, ' +
     'o Total (R$) e o TOTAL GERAL do Resumo.';
 
@@ -582,7 +595,7 @@ export async function buildMedicaoWorkbook(
         null,
         linha.tipo,
         linha.categoria || null,
-        noturnoLabel(linha.noturno) || null,
+        noturnoLabel(linha.noturno),
       ]);
       row.getCell(7).numFmt = FMT_HORAS;
 

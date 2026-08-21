@@ -199,7 +199,9 @@ console.log('\n[4] Workbook gerado');
   checkEq('Tarifas: combinação 3', `${texto(tarifas, 'A4')}/${texto(tarifas, 'B4')}`, 'Bruno Souza/Samarco');
   checkEq('Tarifas: duas demandas da mesma empresa/tipo/turno não duplicam a linha', tarifas.actualRowCount - 1, 3);
   checkEq('Tarifas: tipo preenchido', texto(tarifas, 'C2'), 'Treinamento');
-  checkEq('Tarifas: diurno deixa Noturno em branco', texto(tarifas, 'D2'), '');
+  // Rótulo literal, nunca vazio: célula vazia dos dois lados do SUMIFS
+  // zerava a linha diurna em silêncio (ver bloco [8]).
+  checkEq('Tarifas: diurno marca Noturno como Não', texto(tarifas, 'D2'), 'Não');
   check('Tarifas: coluna E (valor) destravada', tarifas.getCell('E2').protection?.locked === false);
   check('Tarifas: coluna A travada', tarifas.getCell('A2').protection?.locked !== false);
   check('Tarifas: coluna C (chave) travada', tarifas.getCell('C2').protection?.locked !== false);
@@ -227,7 +229,9 @@ console.log('\n[4] Workbook gerado');
   checkEq('Detalhe: Tipo/Categoria/Noturno são I/J/K', ['I1', 'J1', 'K1'].map(a => texto(ana, a)).join(' | '), 'Tipo | Categoria | Noturno');
   checkEq('Detalhe: tipo da demanda de cliente', texto(ana, 'I2'), 'Treinamento');
   checkEq('Detalhe: demanda de cliente não tem categoria', texto(ana, 'J2'), '');
-  checkEq('Detalhe: diurno deixa Noturno em branco', texto(ana, 'K2'), '');
+  // Diurno tem que ser rótulo LITERAL: em branco, o SUMIFS da tarifa zerava
+  // (critério vindo de célula vazia vira 0 e não casa com texto vazio).
+  checkEq('Detalhe: diurno marca Noturno como Não', texto(ana, 'K2'), 'Não');
 
   /* ---- fórmula de valor: tarifa cruzada por empresa da própria linha ---- */
   checkEq(
@@ -395,14 +399,14 @@ console.log('\n[4] Workbook gerado');
     .map((r: any) => [r.getCell(2).value, r.getCell(3).value, r.getCell(4).value || ''].join('/'));
 
   checkEq('4 demandas na mesma empresa geram 3 tarifas', combos.length, 3);
-  check('tem FIDENS/Treinamento diurno', combos.includes('FIDENS/Treinamento/'));
+  check('tem FIDENS/Treinamento diurno', combos.includes('FIDENS/Treinamento/Não'));
   check('tem FIDENS/Treinamento NOTURNO', combos.includes('FIDENS/Treinamento/Sim'));
-  check('tem FIDENS/Interna', combos.includes('FIDENS/Interna/'));
+  check('tem FIDENS/Interna', combos.includes('FIDENS/Interna/Não'));
   check('sem produto cartesiano (não inventa Interna noturna)', !combos.includes('FIDENS/Interna/Sim'));
 
   // Preenche as 3 tarifas com valores DIFERENTES e recalcula à mão as fórmulas
   const tarifaPor = (empresa: string, tipo: string, noturno: string) =>
-    ({ 'FIDENS/Treinamento/': 100, 'FIDENS/Treinamento/Sim': 150, 'FIDENS/Interna/': 60 } as Record<string, number>)[
+    ({ 'FIDENS/Treinamento/Não': 100, 'FIDENS/Treinamento/Sim': 150, 'FIDENS/Interna/Não': 60 } as Record<string, number>)[
       `${empresa}/${tipo}/${noturno}`
     ] ?? 0;
 
@@ -437,6 +441,138 @@ console.log('\n[4] Workbook gerado');
     tarGran.getRows(2, tarGran.actualRowCount - 1)
       .filter((r: any) => r.getCell(5).value === null || r.getCell(5).value === undefined || r.getCell(5).value === '').length,
     3);
+
+  /* ======================================================================== */
+  /* [8] REGRESSÃO — a tarifa da PRIMEIRA linha de Tarifas tem que calcular   */
+  /* ======================================================================== */
+  // Bug real: tarifa preenchida na linha 2 da aba Tarifas (primeiro instrutor
+  // alfabético, Treinamento diurno) não refletia na aba de detalhe — Valor
+  // ficava R$ 0,00 com as 4 chaves batendo.
+  //
+  // Não era off-by-one de range: a fórmula usa coluna inteira ($E:$E). Era o
+  // diurno gravado como '' na aba Tarifas (célula de TEXTO vazio) contra célula
+  // AUSENTE na aba de detalhe — e o Excel converte critério vindo de célula
+  // vazia para o número 0, que não casa com texto vazio.
+  //
+  // Os blocos acima não pegavam porque nenhum deles AVALIA o SUMIFS: eles
+  // reimplementam a busca em JS lendo B/I/K e consultando um mapa escrito à
+  // mão, e ainda normalizam os dois lados com `?? ''` / `|| ''` — que apaga
+  // exatamente a distinção ''-vs-vazio que causou o bug. Aqui a fórmula é
+  // PARSEADA da célula e executada contra as células como saíram do arquivo.
+  console.log('\n[8] Regressão: SUMIFS avaliado de verdade sobre a linha 2 de Tarifas');
+
+  const wbReg = await buildMedicaoWorkbook(
+    [{
+      // Primeiro alfabeticamente -> cai na LINHA 2 da aba Tarifas, a posição
+      // que o bug escondia.
+      instructorId: 'i5', nome: 'Alexandre Eduardo', cpf: '',
+      linhas: [
+        { demandId: 'DEM-1406', empresa: 'VALE', trainingName: 'NR 35', dias: ['2026-07-06'], local: 'BH - MG', modalidade: 'Presencial', horas: 8, categoria: '', tipo: 'Treinamento' as const, noturno: false },
+        { demandId: 'DEM-1407', empresa: 'VALE', trainingName: 'NR 33', dias: ['2026-07-07'], local: 'BH - MG', modalidade: 'Presencial', horas: 4, categoria: '', tipo: 'Treinamento' as const, noturno: false },
+      ],
+    }] as any,
+    periodo
+  );
+
+  const bufReg = await wbReg.xlsx.writeBuffer();
+  const wbLidoReg = new ExcelJSModule.default.Workbook();
+  await wbLidoReg.xlsx.load(bufReg as any);
+  const tarReg = wbLidoReg.getWorksheet('Tarifas');
+  const detReg = wbLidoReg.getWorksheet('Alexandre Eduardo');
+
+  checkEq('cenário: as 2 linhas geram 1 única tarifa, na linha 2', tarReg.actualRowCount - 1, 1);
+  checkEq('cenário: a tarifa testada é mesmo a 1a linha de dados', String(tarReg.getCell('A2').value ?? ''), 'Alexandre Eduardo');
+
+  /* ---- invariante estrutural: chave de SUMIFS nunca pode ser vazia ---- */
+  // Zero assunção sobre semântica do Excel: só exige que toda célula-chave
+  // tenha conteúdo. Teria pegado o bug sozinha.
+  const vaziaReg = (v: any) => v === null || v === undefined || String(v) === '';
+  const chavesVazias: string[] = [];
+  for (let r = 2; r <= tarReg.actualRowCount; r++) {
+    for (const col of ['A', 'B', 'C', 'D']) {
+      if (vaziaReg(tarReg.getCell(col + r).value)) chavesVazias.push('Tarifas!' + col + r);
+    }
+  }
+  for (let r = 2; r <= 3; r++) {
+    for (const col of ['B', 'I', 'K']) {
+      if (vaziaReg(detReg.getCell(col + r).value)) chavesVazias.push('detalhe!' + col + r);
+    }
+  }
+  check('nenhuma célula-chave de SUMIFS sai vazia', chavesVazias.length === 0, chavesVazias.join(', '));
+
+  /* ---- avaliador de SUMIFS: roda a fórmula que está mesmo na célula ---- */
+  // Separa argumentos no nível de cima respeitando "" (nome pode ter vírgula).
+  const splitArgs = (src: string) => {
+    const out: string[] = [];
+    let atual = '';
+    let aspas = false;
+    for (let i = 0; i < src.length; i++) {
+      const ch = src[i];
+      if (ch === '"') { aspas = !aspas; atual += ch; continue; }
+      if (ch === ',' && !aspas) { out.push(atual); atual = ''; continue; }
+      atual += ch;
+    }
+    out.push(atual);
+    return out;
+  };
+
+  // 'Tarifas!$D:$D' -> valores das linhas de dados daquela coluna.
+  const colunaTarifas = (ref: string) => {
+    const m = /^Tarifas!\$([A-Z]+):\$([A-Z]+)$/.exec(ref.trim());
+    if (!m || m[1] !== m[2]) throw new Error('range inesperado: ' + ref);
+    const vals: any[] = [];
+    for (let r = 2; r <= tarReg.actualRowCount; r++) vals.push(tarReg.getCell(m[1] + r).value);
+    return vals;
+  };
+
+  // Critério: literal entre aspas, ou referência a célula da aba de detalhe.
+  // O caso decisivo é a referência a célula VAZIA — o Excel converte para 0.
+  const criterioDe = (arg: string) => {
+    const t = arg.trim();
+    if (t.startsWith('"')) {
+      return { tipo: 'texto' as const, valor: t.slice(1, -1).replace(/""/g, '"').replace(/~([*?~])/g, '$1') };
+    }
+    const v = detReg.getCell(t).value;
+    if (v === null || v === undefined) return { tipo: 'vazioVira0' as const, valor: '' };
+    return { tipo: 'texto' as const, valor: String(v) };
+  };
+
+  const casa = (celula: any, crit: { tipo: string; valor: string }) => {
+    const celulaVazia = celula === null || celula === undefined;
+    // Critério vindo de célula vazia é o NÚMERO 0: não casa com texto vazio nem
+    // com célula vazia. Foi exatamente aqui que a tarifa diurna se perdia.
+    if (crit.tipo === 'vazioVira0') return celula === 0;
+    if (crit.valor === '') return celulaVazia || celula === '';
+    if (celulaVazia) return false;
+    return String(celula).toLowerCase() === crit.valor.toLowerCase();
+  };
+
+  const avaliarValor = (rowIdx: number, tarifaNaLinha2: number | null) => {
+    const f = String(formula(detReg, 'H' + rowIdx));
+    const m = /^G(\d+)\*SUMIFS\((.*)\)$/.exec(f);
+    if (!m) throw new Error('fórmula fora do formato esperado: ' + f);
+    const args = splitArgs(m[2]);
+    // Só E2 (a 1a linha de dados) recebe tarifa — é o cenário do bug.
+    const somaCol = colunaTarifas(args[0]).map((_v, i) => (i === 0 ? tarifaNaLinha2 : null));
+    let total = 0;
+    for (let i = 0; i < somaCol.length; i++) {
+      let bate = true;
+      for (let a = 1; a < args.length; a += 2) {
+        if (!casa(colunaTarifas(args[a])[i], criterioDe(args[a + 1]))) { bate = false; break; }
+      }
+      if (bate) total += Number(somaCol[i] ?? 0);
+    }
+    return Number(detReg.getCell('G' + m[1]).value ?? 0) * total;
+  };
+
+  // O caso do bug: R$ 50,00 digitado em E2, 8h na linha 2 do detalhe.
+  checkEq('tarifa em E2 (1a linha de Tarifas) chega na 1a linha do detalhe: 8h x 50', avaliarValor(2, 50), 400);
+  checkEq('e tambem na 2a linha, mesma combinacao: 4h x 50', avaliarValor(3, 50), 200);
+  checkEq('sem tarifa preenchida o valor e 0 (e nao um numero errado)', avaliarValor(2, null), 0);
+
+  // Contraprova de que o avaliador NAO e complacente: chave divergente nao casa.
+  check('avaliador rejeita chave divergente (Sim x Nao)', casa('Sim', criterioDe('K2')) === false);
+
   console.log(falhas === 0 ? '\n✅ Todos os checks passaram.' : `\n❌ ${falhas} check(s) falharam.`);
   process.exit(falhas === 0 ? 0 : 1);
 })().catch(e => {

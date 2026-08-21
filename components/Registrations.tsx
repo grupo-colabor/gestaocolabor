@@ -154,6 +154,7 @@ const Registrations: React.FC = () => {
     skills: InstructorSkill[];
     observations: string;
     residenceLocation: string;
+    address: string;
     agendaRole: string;
     operationalNotes: string;
   }>({
@@ -165,6 +166,7 @@ const Registrations: React.FC = () => {
     skills: [],
     observations: '',
     residenceLocation: '',
+    address: '',
     agendaRole: 'Instrutor',
     operationalNotes: ''
   });
@@ -461,6 +463,7 @@ const Registrations: React.FC = () => {
       { header: 'Status',                 width: 14 },
       { header: 'Regiões de Atuação',     width: 36 },
       { header: 'Local de Residência',    width: 20 },
+      { header: 'Endereço',               width: 44 },
       { header: 'Treinamentos (resumo)',  width: 60 },
       { header: 'Notas Operacionais',     width: 40 },
     ];
@@ -490,11 +493,14 @@ const Registrations: React.FC = () => {
         i.status,
         regionNames || '-',
         i.residenceLocation || '-',
+        i.address || '-',
         trainingsSummary || '-',
         i.operationalNotes || '-',
       ]);
+      // Índices seguem a ordem de mainCols: 8 = Endereço, 9 = Treinamentos, 10 = Notas.
       row.getCell(8).alignment = { wrapText: true, vertical: 'top' };
       row.getCell(9).alignment = { wrapText: true, vertical: 'top' };
+      row.getCell(10).alignment = { wrapText: true, vertical: 'top' };
     });
 
     // ── Aba 2: Treinamentos por Instrutor ───────────────────────────────────
@@ -631,7 +637,7 @@ const Registrations: React.FC = () => {
   // --- Instructor Handlers ---
   const handleOpenInstructorCreateModal = () => {
     setEditingInstructorId(null);
-    setInstructorFormData({ name: '', email: '', cpf: '', status: 'ATIVO', regionIds: [], skills: [], observations: '', residenceLocation: '', agendaRole: 'Instrutor', operationalNotes: '' });
+    setInstructorFormData({ name: '', email: '', cpf: '', status: 'ATIVO', regionIds: [], skills: [], observations: '', residenceLocation: '', address: '', agendaRole: 'Instrutor', operationalNotes: '' });
     setTempSkill({ trainingId: '', level: 3 });
 
     // ✅ garante que sempre abre “destravado”
@@ -651,6 +657,7 @@ const Registrations: React.FC = () => {
       skills: [...instructor.skills.map(s => ({ ...s }))],
       observations: instructor.observations || '',
       residenceLocation: instructor.residenceLocation || '',
+      address: instructor.address || '',
       agendaRole: (instructor as any).agendaRole || 'Instrutor',
       operationalNotes: instructor.operationalNotes || '',
       });
@@ -718,6 +725,14 @@ const Registrations: React.FC = () => {
     return 'BASICO';
   };
 
+  // Texto livre vazio ou só com espaços vira NULL no banco, nunca '' — assim
+  // "limpar o campo" some do registro em vez de virar uma string vazia que
+  // passa em toda checagem de truthiness lá na frente.
+  const cleanOrNull = (v?: string | null) => {
+    const s = (v ?? '').trim();
+    return s.length ? s : null;
+  };
+
   const getDbRegion = (regionIds: string[]) => {
     const first = regionIds[0];
     const region = regions.find(r => r.id === first);
@@ -765,6 +780,7 @@ const Registrations: React.FC = () => {
           observations: instructorFormData.observations,
           agendaRole: instructorFormData.agendaRole,
           cpf: cpfDigits || undefined,
+          address: cleanOrNull(instructorFormData.address),
         };
         (fallback as any).email = instructorFormData.email;
 
@@ -797,6 +813,7 @@ const Registrations: React.FC = () => {
               region: dbRegion,
               is_active: isActive,
               residence_location: instructorFormData.residenceLocation || null,
+              address: cleanOrNull(instructorFormData.address),
               agenda_role: instructorFormData.agendaRole || null,
               operational_notes: instructorFormData.operationalNotes || null,
             })
@@ -822,6 +839,7 @@ const Registrations: React.FC = () => {
               region: dbRegion,
               is_active: isActive,
               residence_location: instructorFormData.residenceLocation || null,
+              address: cleanOrNull(instructorFormData.address),
               agenda_role: instructorFormData.agendaRole || null,
             })
             .select('id')
@@ -2318,6 +2336,22 @@ const handleRemoveBaseItem = async (item: string) => {
                         <option key={loc} value={loc}>{loc}</option>
                       ))}
                     </select>
+                  </div>
+
+                  {/* Endereço (texto livre, opcional) */}
+                  <div className="md:col-span-12">
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                      Endereço
+                    </label>
+                    <input
+                      type="text"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      value={instructorFormData.address}
+                      onChange={(e) =>
+                        setInstructorFormData({ ...instructorFormData, address: e.target.value })
+                      }
+                      placeholder="Ex: Rua, número, bairro, cidade/UF, CEP"
+                    />
                   </div>
 
                 </div>

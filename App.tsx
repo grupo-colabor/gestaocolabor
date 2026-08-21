@@ -691,6 +691,7 @@ const syncEvidencesFromDb = useCallback(async () => {
         })),
         observations: '',
         residenceLocation: row.residence_location ?? '',
+        address: row.address ?? '',
         currentLocation: Array.isArray(row.coverage_locations) ? (row.coverage_locations[0] || '') : (row.coverage_locations || ''),
         agendaRole: row.agenda_role || 'Instrutor',
         operationalNotes: row.operational_notes ?? '',

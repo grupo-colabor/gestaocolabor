@@ -124,6 +124,7 @@ export interface Instructor {
   email?: string;
   cpf?: string;
   residenceLocation?: string;
+  address?: string | null;
   currentLocation?: string;
   agendaRole?: string;
   operationalNotes?: string;

@@ -80,6 +80,9 @@ import {
 } from 'docx';
 
 import { calculateDemandStatus } from '../domain/demandStatus';
+// Tabela de permissões compartilhada com o formulário de demanda interna —
+// alias local para manter as chamadas existentes (canPerformAction) intactas.
+import { canPerformDemandAction as canPerformAction } from '../domain/demandPermissions';
 import { useAuth } from '../contexts/AuthContext';
 
 /* ===== SERVICES (SUPABASE) ===== */
@@ -105,6 +108,11 @@ import {
   type LogisticBlockRow
 } from '../services/logistics';
 import { fetchLocationAssociations, type LocationAssociation } from '../services/locationAssociations';
+import {
+  buildDemandTextContent,
+  downloadDemandWord,
+  type DemandDocFields,
+} from '../services/demandDocument';
 import ExportDemandsModal from './ExportDemandsModal';
 
 /* ===== SEÇÕES REUTILIZÁVEIS DO FORMULÁRIO ===== */
@@ -126,25 +134,6 @@ const generateId = (): string =>
 
 
 
-type Action =
-  | 'create_demand'
-  | 'edit_demand'
-  | 'delete_demand'
-  | 'cancel_demand';
-
-const ROLE_ACTIONS: Record<string, Action[]> = {
-  admin: ['create_demand', 'edit_demand', 'delete_demand', 'cancel_demand'],
-  analista: ['create_demand', 'edit_demand', 'delete_demand', 'cancel_demand'],
-  coordenador: []
-};
-
-const canPerformAction = (
-  role: string | undefined,
-  action: Action
-) => {
-  if (!role) return false;
-  return ROLE_ACTIONS[role]?.includes(action);
-};
 
 const Demands: React.FC = () => {
   const {
@@ -1175,91 +1164,89 @@ useEffect(() => {
     setConfirmReactivate(false);
   };
 
-  const getDemandContentString = (isWhatsApp = false) => {
-    const training = getTrainingName(formDemand.trainingId!);
-    const company = getCompanyName(formDemand.companyId!);
-    const start = formatDateTime(formDemand.startDate);
-    const end = formatDateTime(formDemand.endDate);
-    const instructor = getInstructorName(formDemand.instructorId);
-    const b = (text: string) => isWhatsApp ? `*${text}*` : text;
-    
+  /**
+   * Modelo de exibição do documento da demanda (Word / e-mail / WhatsApp).
+   * A montagem em si vive em services/demandDocument.ts, compartilhada com a
+   * demanda interna — aqui só se resolvem os nomes e os formatos.
+   */
+  const buildDemandDocFields = (): DemandDocFields => {
+    const trainingData = trainings.find(t => t.id === formDemand.trainingId);
+    const isOnline = !requiresLogistics(formDemand.modality);
+
     const currentStatus = calculateDemandStatus({
       startDate: formDemand.startDate!,
       endDate: formDemand.endDate!,
       instructorId: formDemand.instructorId,
       cancelled: formDemand.status === 'CANCELADA',
       trainingLocal: formDemand.trainingLocal,
-      modality: formDemand.modality // ou a normalizada, se já existir
-    });
+      modality: formDemand.modality,
+    } as any);
 
+    const diasEspecificos =
+      formDemand.dateMode === 'DIAS_ESPECIFICOS' &&
+      Array.isArray(formDemand.specificDates) &&
+      formDemand.specificDates.length > 0
+        ? [...formDemand.specificDates]
+            .sort((a, b) => a.data.localeCompare(b.data))
+            .map(e => `${new Date(e.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${e.horarioInicio}-${e.horarioFim}`)
+            .join(', ')
+        : null;
 
-    let content = `
-${b('📄 DEMANDA DE TREINAMENTO')}
-----------------------------------
-ID: #${formDemand.id}
-Empresa: ${company}
-Treinamento: ${training}
-Instrutor: ${instructor}
-
-${b('📘 INFORMAÇÕES GERAIS')}
-• Período: ${start} até ${end}${formDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(formDemand.specificDates) && formDemand.specificDates.length > 0 ? `\n• Dias específicos: ${[...formDemand.specificDates].sort((a, b) => a.data.localeCompare(b.data)).map(e => `${new Date(e.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${e.horarioInicio}-${e.horarioFim}`).join(', ')}` : ''}
-• Unidade/Local: ${!requiresLogistics(formDemand.modality) ? 'N/A' : (formDemand.trainingLocal || 'N/A')}
-• Modalidade: ${formDemand.modality}
-• Região: ${getRegionName(formDemand.regionId!)}
-• Corredor: ${formDemand.corredor || 'Não informado'}
-• Estado: ${formDemand.demandState || 'Não informado'}
-• Solicitante: ${formDemand.requester || 'Não informado'}
-
-`;
-
+    // Fallback para os campos planos legados quando não há blocos multi-instrutor
     const locoBlocks = formDemand.logisticasLocomocao?.length
       ? formDemand.logisticasLocomocao
       : [{ id: '', transportType: formDemand.transportType, rentalCompany: formDemand.rentalCompany, rentalLocator: formDemand.rentalLocator, rentalAgencyLocation: formDemand.rentalAgencyLocation, rentalCheckIn: formDemand.rentalCheckIn, rentalCheckOut: formDemand.rentalCheckOut }];
     const hospBlocks = formDemand.logisticasHospedagem?.length
       ? formDemand.logisticasHospedagem
       : [{ id: '', accommodationType: formDemand.accommodationType, hotelName: formDemand.hotelName, hotelCity: formDemand.hotelCity, hotelCheckIn: formDemand.hotelCheckIn, hotelCheckOut: formDemand.hotelCheckOut, hotelPayment: formDemand.hotelPayment }];
-    const multiLoco = locoBlocks.length > 1;
-    const multiHosp = hospBlocks.length > 1;
 
-    for (const block of locoBlocks) {
-      const label = multiLoco && block.instructorName ? ` (${block.instructorName})` : '';
-      content += `\n${b(`🚗 LOGÍSTICA — LOCOMOÇÃO${label}`)}`;
-      content += `\n• Meio de Transporte: ${(block as any).transportType || 'N/A'}`;
-      if ((block as any).transportType === 'Carro Alugado') {
-        content += `
-• Locadora: ${(block as any).rentalCompany || 'N/A'}
-• Localizador: ${(block as any).rentalLocator || 'A definir'}
-• Local da Agência: ${(block as any).rentalAgencyLocation || 'N/A'}
-• Check-in: ${(block as any).rentalCheckIn ? formatDateTime((block as any).rentalCheckIn) : 'N/A'}
-• Check-out: ${(block as any).rentalCheckOut ? formatDateTime((block as any).rentalCheckOut) : 'N/A'}`;
-      }
-    }
+    const trainingName = getTrainingName(formDemand.trainingId!);
 
-    for (const block of hospBlocks) {
-      const label = multiHosp && block.instructorName ? ` (${block.instructorName})` : '';
-      content += `\n\n${b(`🏨 LOGÍSTICA — HOSPEDAGEM${label}`)}`;
-      content += `\n• Hospedagem: ${(block as any).accommodationType === 'Hotel' ? 'Hotel Requerido' : 'N/A'}`;
-      if ((block as any).accommodationType === 'Hotel') {
-        content += `
-• Hotel: ${(block as any).hotelName || 'A definir'}
-• Cidade / Estado: ${(block as any).hotelCity || 'N/A'}
-• Check-in: ${(block as any).hotelCheckIn ? formatDateTime((block as any).hotelCheckIn) : 'N/A'}
-• Check-out: ${(block as any).hotelCheckOut ? formatDateTime((block as any).hotelCheckOut) : 'N/A'}
-• Pagamento: ${(block as any).hotelPayment || 'N/A'}`;
-      }
-    }
-
-    content += `
-
-${b('📌 STATUS ATUAL')}
-• Status: ${currentStatus.replace('_', ' ')}
-
-${b('📝 OBSERVAÇÕES')}
-${formDemand.observations || 'N/A'}
-    `.trim();
-
-    return content;
+    return {
+      id: String(formDemand.id ?? ''),
+      tituloDocumento: 'DEMANDA DE TREINAMENTO',
+      empresaLabel: '🏢 Empresa / Cliente: ',
+      empresa: getCompanyName(formDemand.companyId!),
+      identificacaoTexto: [{ label: 'Treinamento', value: trainingName }],
+      identificacaoWord: [
+        { label: '🎓 Treinamento: ', value: trainingName },
+        { label: 'Categoria: ', value: trainingData?.category || 'N/A' },
+        { label: 'Carga Horária: ', value: `${trainingData?.hours || '0'}h` },
+      ],
+      modalidade: formDemand.modality!,
+      periodo: `${formatDateTime(formDemand.startDate)} até ${formatDateTime(formDemand.endDate)}`,
+      diasEspecificos,
+      local: isOnline ? 'N/A' : (formDemand.trainingLocal || 'N/A'),
+      corredor: formDemand.corredor || 'Não informado',
+      estado: formDemand.demandState || 'Não informado',
+      regiao: getRegionName(formDemand.regionId!),
+      solicitante: formDemand.requester || 'Não informado',
+      instrutor: getInstructorName(formDemand.instructorId),
+      status: currentStatus.replace('_', ' '),
+      observacoes: formDemand.observations || 'N/A',
+      loco: locoBlocks.map((b: any) => ({
+        instructorName: b.instructorName,
+        transportType: b.transportType,
+        rentalCompany: b.rentalCompany,
+        rentalLocator: b.rentalLocator,
+        rentalAgencyLocation: b.rentalAgencyLocation,
+        rentalCheckIn: b.rentalCheckIn ? formatDateTime(b.rentalCheckIn) : null,
+        rentalCheckOut: b.rentalCheckOut ? formatDateTime(b.rentalCheckOut) : null,
+      })),
+      hosp: hospBlocks.map((b: any) => ({
+        instructorName: b.instructorName,
+        accommodationType: b.accommodationType,
+        hotelName: b.hotelName,
+        hotelCity: b.hotelCity,
+        hotelCheckIn: b.hotelCheckIn ? formatDateTime(b.hotelCheckIn) : null,
+        hotelCheckOut: b.hotelCheckOut ? formatDateTime(b.hotelCheckOut) : null,
+        hotelPayment: b.hotelPayment,
+      })),
+    };
   };
+
+  const getDemandContentString = (isWhatsApp = false) =>
+    buildDemandTextContent(buildDemandDocFields(), isWhatsApp);
 
   const handleGenerateWord = async () => {
     const trainingName = getTrainingName(formDemand.trainingId!);
@@ -1267,186 +1254,9 @@ ${formDemand.observations || 'N/A'}
     const instructorName = getInstructorName(formDemand.instructorId).split(' ')[0] || 'NaoAlocado';
     const fileName = `Demanda_${trainingName.replace(/\s+/g, '_')}_${startStr}_${instructorName}.docx`;
 
-    const trainingData = trainings.find(t => t.id === formDemand.trainingId);
-   
-    const currentStatus = calculateDemandStatus({
-    startDate: formDemand.startDate!,
-    endDate: formDemand.endDate!,
-    instructorId: formDemand.instructorId,
-    cancelled: formDemand.status === 'CANCELADA',
-    trainingLocal: formDemand.trainingLocal,
-    modality: formDemand.modality,
-  } as any);
-
-
-    const doc = new Document({
-      sections: [{
-        properties: {},
-        children: [
-          new Paragraph({
-            text: "📄 DEMANDA DE TREINAMENTO",
-            heading: HeadingLevel.HEADING_1,
-            alignment: AlignmentType.CENTER,
-            spacing: { after: 200 },
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({
-                text: "📌 Documento oficial para alinhamento com instrutor",
-                italics: true,
-                color: "64748b",
-                size: 20,
-              }),
-            ],
-            spacing: { after: 100 },
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({
-                text: `Identificador: #${formDemand.id}`,
-                bold: true,
-                size: 20,
-              }),
-            ],
-            spacing: { after: 400 },
-          }),
-
-          new Paragraph({
-            text: "📘 INFORMAÇÕES GERAIS",
-            heading: HeadingLevel.HEADING_2,
-            border: { bottom: { color: "e2e8f0", space: 1, style: BorderStyle.SINGLE, size: 6 } },
-            spacing: { before: 200, after: 200 },
-          }),
-          new Paragraph({ children: [new TextRun({ text: "🏢 Empresa / Cliente: ", bold: true }), new TextRun(getCompanyName(formDemand.companyId!))] }),
-          new Paragraph({ children: [new TextRun({ text: "🎓 Treinamento: ", bold: true }), new TextRun(trainingName)] }),
-          new Paragraph({ children: [new TextRun({ text: "Categoria: ", bold: true }), new TextRun(trainingData?.category || 'N/A')] }),
-          new Paragraph({ children: [new TextRun({ text: "Carga Horária: ", bold: true }), new TextRun(`${trainingData?.hours || '0'}h`)] }),
-          new Paragraph({ children: [new TextRun({ text: "🌐 Modalidade: ", bold: true }), new TextRun(formDemand.modality!)] }),
-          new Paragraph({ children: [new TextRun({ text: "📅 Período: ", bold: true }), new TextRun(`${formatDateTime(formDemand.startDate)} até ${formatDateTime(formDemand.endDate)}`)] }),
-          ...(formDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(formDemand.specificDates) && formDemand.specificDates.length > 0
-            ? [new Paragraph({ children: [new TextRun({ text: "📅 Dias específicos: ", bold: true }), new TextRun([...formDemand.specificDates].sort((a, b) => a.data.localeCompare(b.data)).map(e => `${new Date(e.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${e.horarioInicio}-${e.horarioFim}`).join(', '))] })]
-            : []),
-          new Paragraph({ children: [new TextRun({ text: "📍 Local / Unidade: ", bold: true }), new TextRun(!requiresLogistics(formDemand.modality) ? 'N/A' : (formDemand.trainingLocal || 'N/A'))] }),
-          new Paragraph({ children: [new TextRun({ text: "🏢 Corredor: ", bold: true }), new TextRun(formDemand.corredor || 'Não informado')] }),
-          new Paragraph({ children: [new TextRun({ text: "📌 Estado: ", bold: true }), new TextRun(formDemand.demandState || 'Não informado')] }),
-          new Paragraph({ children: [new TextRun({ text: "🌎 Região: ", bold: true }), new TextRun(getRegionName(formDemand.regionId!))] }),
-          new Paragraph({ children: [new TextRun({ text: "🧑‍💼 Solicitante: ", bold: true }), new TextRun(formDemand.requester || 'Não informado')] }),
-
-          new Paragraph({
-            text: "👨‍🏫 INSTRUTOR",
-            heading: HeadingLevel.HEADING_2,
-            border: { bottom: { color: "e2e8f0", space: 1, style: BorderStyle.SINGLE, size: 6 } },
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({ children: [new TextRun({ text: "👤 Instrutor alocado: ", bold: true }), new TextRun(getInstructorName(formDemand.instructorId))] }),
-
-          // ── Locomoção: um ou mais blocos ──────────────────────────────────
-          ...(() => {
-            const blocks = formDemand.logisticasLocomocao?.length
-              ? formDemand.logisticasLocomocao
-              : [{ id: '', transportType: formDemand.transportType, rentalCompany: formDemand.rentalCompany, rentalLocator: formDemand.rentalLocator, rentalAgencyLocation: formDemand.rentalAgencyLocation, rentalCheckIn: formDemand.rentalCheckIn, rentalCheckOut: formDemand.rentalCheckOut }];
-            const multi = blocks.length > 1;
-            const rows: any[] = [];
-            for (const block of blocks) {
-              const b = block as any;
-              const label = multi && b.instructorName ? ` (${b.instructorName})` : '';
-              rows.push(new Paragraph({
-                text: `🚗 LOGÍSTICA — LOCOMOÇÃO${label}`,
-                heading: HeadingLevel.HEADING_2,
-                border: { bottom: { color: "e2e8f0", space: 1, style: BorderStyle.SINGLE, size: 6 } },
-                spacing: { before: 400, after: 200 },
-              }));
-              rows.push(new Paragraph({ children: [new TextRun({ text: "Meio de Transporte: ", bold: true }), new TextRun(b.transportType || 'N/A')] }));
-              if (b.transportType === 'Carro Alugado') {
-                rows.push(new Paragraph({ children: [new TextRun({ text: "Locadora: ", bold: true }), new TextRun(b.rentalCompany || 'N/A')] }));
-                rows.push(new Paragraph({ children: [new TextRun({ text: "Localizador: ", bold: true }), new TextRun(b.rentalLocator || 'A definir')] }));
-                rows.push(new Paragraph({ children: [new TextRun({ text: "Local da Agência: ", bold: true }), new TextRun(b.rentalAgencyLocation || 'N/A')] }));
-                rows.push(new Paragraph({ children: [new TextRun({ text: "Check-in: ", bold: true }), new TextRun(b.rentalCheckIn ? formatDateTime(b.rentalCheckIn) : 'N/A')] }));
-                rows.push(new Paragraph({ children: [new TextRun({ text: "Check-out: ", bold: true }), new TextRun(b.rentalCheckOut ? formatDateTime(b.rentalCheckOut) : 'N/A')] }));
-              }
-            }
-            return rows;
-          })(),
-
-          // ── Hospedagem: um ou mais blocos ─────────────────────────────────
-          ...(() => {
-            const blocks = formDemand.logisticasHospedagem?.length
-              ? formDemand.logisticasHospedagem
-              : [{ id: '', accommodationType: formDemand.accommodationType, hotelName: formDemand.hotelName, hotelCity: formDemand.hotelCity, hotelCheckIn: formDemand.hotelCheckIn, hotelCheckOut: formDemand.hotelCheckOut, hotelPayment: formDemand.hotelPayment }];
-            const multi = blocks.length > 1;
-            const rows: any[] = [];
-            for (const block of blocks) {
-              const b = block as any;
-              const label = multi && b.instructorName ? ` (${b.instructorName})` : '';
-              rows.push(new Paragraph({
-                text: `🏨 LOGÍSTICA — HOSPEDAGEM${label}`,
-                heading: HeadingLevel.HEADING_2,
-                border: { bottom: { color: "e2e8f0", space: 1, style: BorderStyle.SINGLE, size: 6 } },
-                spacing: { before: 400, after: 200 },
-              }));
-              rows.push(new Paragraph({ children: [new TextRun({ text: "Hospedagem: ", bold: true }), new TextRun(b.accommodationType === 'Hotel' ? 'Hotel Requerido' : 'N/A')] }));
-              if (b.accommodationType === 'Hotel') {
-                rows.push(new Paragraph({ children: [new TextRun({ text: "Hotel: ", bold: true }), new TextRun(b.hotelName || 'A definir')] }));
-                rows.push(new Paragraph({ children: [new TextRun({ text: "Cidade / Estado: ", bold: true }), new TextRun(b.hotelCity || 'N/A')] }));
-                rows.push(new Paragraph({ children: [new TextRun({ text: "Check-in: ", bold: true }), new TextRun(b.hotelCheckIn ? formatDateTime(b.hotelCheckIn) : 'N/A')] }));
-                rows.push(new Paragraph({ children: [new TextRun({ text: "Check-out: ", bold: true }), new TextRun(b.hotelCheckOut ? formatDateTime(b.hotelCheckOut) : 'N/A')] }));
-                rows.push(new Paragraph({ children: [new TextRun({ text: "Pagamento: ", bold: true }), new TextRun(b.hotelPayment || 'N/A')] }));
-              }
-            }
-            return rows;
-          })(),
-          
-          new Paragraph({
-            text: "📌 STATUS DA DEMANDA",
-            heading: HeadingLevel.HEADING_2,
-            border: { bottom: { color: "e2e8f0", space: 1, style: BorderStyle.SINGLE, size: 6 } },
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({ children: [new TextRun({ text: "Status Atual: ", bold: true }), new TextRun(currentStatus.replace('_', ' '))] }),
-
-          new Paragraph({
-            text: "📝 OBSERVAÇÕES",
-            heading: HeadingLevel.HEADING_2,
-            border: { bottom: { color: "e2e8f0", space: 1, style: BorderStyle.SINGLE, size: 6 } },
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: formDemand.observations || "N/A",
-                italics: true,
-              }),
-            ],
-            spacing: { before: 100 },
-          }),
-
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({
-                text: `\nGerado automaticamente via Colabor Training Manager em ${new Date().toLocaleString('pt-BR')}`,
-                size: 16,
-                color: "94a3b8",
-              }),
-            ],
-            spacing: { before: 1000 },
-          }),
-        ],
-      }],
-    });
-
-    const blob = await Packer.toBlob(doc);
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    await downloadDemandWord(buildDemandDocFields(), fileName);
   };
+
 
   const handleSendEmail = () => {
     const training = getTrainingName(formDemand.trainingId!);

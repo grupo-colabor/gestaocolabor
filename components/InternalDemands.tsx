@@ -287,7 +287,9 @@ const InternalDemands: React.FC = () => {
     setOpenSections(prev => ({ ...prev, [section]: !prev[section] }));
 
   useEffect(() => {
-    fetchLocationAssociations().then(setLocationAssociations).catch(console.error);
+    // Cascata da demanda INTERNA: conjunto próprio, separado do de cliente
+    // (migration 014). Nasceu como cópia integral, mas diverge daí em diante.
+    fetchLocationAssociations('interna').then(setLocationAssociations).catch(console.error);
   }, []);
 
   useEffect(() => {

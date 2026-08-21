@@ -49,7 +49,8 @@ import {
   fetchLocationAssociations,
   upsertLocationAssociation,
   deleteLocationAssociation,
-  type LocationAssociation
+  type LocationAssociation,
+  type LocationContext
 } from '../services/locationAssociations';
 import { useAuth, type Role } from '../contexts/AuthContext';
 import { fetchMyProfile, updateMyProfile, fetchAllProfiles, type ProfileData } from '../services/profiles';
@@ -190,6 +191,9 @@ const Registrations: React.FC = () => {
 
   // --- Bases sub-tab & Associations State ---
   const [basesSubTab, setBasesSubTab] = useState<'listas' | 'associacoes'>('listas');
+  // Qual conjunto de locais está sendo gerenciado. São independentes: o que é
+  // criado/editado/excluído num não afeta o outro (migration 014).
+  const [assocContexto, setAssocContexto] = useState<LocationContext>('cliente');
   const [locationAssociations, setLocationAssociations] = useState<LocationAssociation[]>([]);
   const [isAssocLoading, setIsAssocLoading] = useState(false);
   const [isAssocModalOpen, setIsAssocModalOpen] = useState(false);
@@ -913,12 +917,14 @@ const Registrations: React.FC = () => {
     if (activeTab === 'bases' && basesSubTab === 'associacoes') {
       loadAssociations();
     }
-  }, [activeTab, basesSubTab]);
+    // assocContexto entra nas deps: trocar de aba recarrega a lista do outro
+    // conjunto (são consultas separadas, não um filtro sobre a mesma lista).
+  }, [activeTab, basesSubTab, assocContexto]);
 
   const loadAssociations = async () => {
     setIsAssocLoading(true);
     try {
-      const data = await fetchLocationAssociations();
+      const data = await fetchLocationAssociations(assocContexto);
       setLocationAssociations(data);
     } catch (err: any) {
       console.error('[Associations] load error:', err);
@@ -942,8 +948,12 @@ const Registrations: React.FC = () => {
     if (!assocForm.local.trim()) return alert('Local de Treinamento é obrigatório.');
     setIsSavingAssoc(true);
     try {
+      // O contexto vem da aba em que o usuário está — é assim que um local novo
+      // nasce pertencendo a um conjunto só.
       await upsertLocationAssociation(
-        editingAssocId ? { ...assocForm, id: editingAssocId } : assocForm
+        editingAssocId
+          ? { ...assocForm, contexto: assocContexto, id: editingAssocId }
+          : { ...assocForm, contexto: assocContexto }
       );
       await loadAssociations();
       setIsAssocModalOpen(false);
@@ -1374,12 +1384,36 @@ const handleRemoveBaseItem = async (item: string) => {
             {/* ── Sub-tab: Associações ── */}
             {basesSubTab === 'associacoes' && (
               <div className="flex flex-col gap-4 flex-1">
+                {/* Seletor de conjunto: são duas listas independentes, não um
+                    filtro sobre a mesma. Mesma UI para os dois. */}
+                <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
+                  <button
+                    type="button"
+                    onClick={() => setAssocContexto('cliente')}
+                    className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${assocContexto === 'cliente' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    Locais — Demandas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAssocContexto('interna')}
+                    className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${assocContexto === 'interna' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    Locais — Demandas Internas
+                  </button>
+                </div>
+
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-gray-500">Vincule cada Local de Treinamento ao seu Corredor, Estado (UF) e Região para preenchimento automático nas demandas.</p>
+                  <p className="text-sm text-gray-500">
+                    Vincule cada Local de Treinamento ao seu Corredor, Estado (UF) e Região para preenchimento automático nas demandas.
+                    {assocContexto === 'interna'
+                      ? ' Este conjunto vale só para Demandas Internas.'
+                      : ' Este conjunto vale só para Demandas de cliente.'}
+                  </p>
                   <button
                     type="button"
                     onClick={() => handleOpenAssocModal()}
-                    className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md hover:bg-blue-700 transition"
+                    className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md hover:bg-blue-700 transition whitespace-nowrap"
                   >
                     <Plus size={16} /> Nova Associação
                   </button>
@@ -1465,9 +1499,16 @@ const handleRemoveBaseItem = async (item: string) => {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
               <div className="flex items-center justify-between p-6 border-b border-gray-100">
-                <h3 className="text-base font-bold text-gray-800">
-                  {editingAssocId ? 'Editar Associação' : 'Nova Associação'}
-                </h3>
+                <div>
+                  <h3 className="text-base font-bold text-gray-800">
+                    {editingAssocId ? 'Editar Associação' : 'Nova Associação'}
+                  </h3>
+                  {/* Deixa explícito em qual conjunto vai gravar — os dois têm a
+                      mesma cara e criar no lado errado seria fácil. */}
+                  <p className="text-[10px] font-black uppercase tracking-widest text-blue-600 mt-0.5">
+                    {assocContexto === 'interna' ? 'Locais — Demandas Internas' : 'Locais — Demandas'}
+                  </p>
+                </div>
                 <button type="button" onClick={() => setIsAssocModalOpen(false)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition">
                   <X size={18} />
                 </button>

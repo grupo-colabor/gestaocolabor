@@ -259,7 +259,9 @@ useEffect(() => {
 
   // Load location associations on mount
   useEffect(() => {
-    fetchLocationAssociations().then(setLocationAssociations).catch(console.error);
+    // Cascata do formulário de CLIENTE: lê só o conjunto 'cliente'. O conjunto
+    // 'interna' é independente e vive no formulário de demanda interna.
+    fetchLocationAssociations('cliente').then(setLocationAssociations).catch(console.error);
   }, []);
 
   // Reset auto-fill state when modal closes

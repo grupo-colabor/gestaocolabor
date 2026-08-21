@@ -10,6 +10,7 @@ import React, {
 import {
   LayoutDashboard,
   Briefcase,
+  Building2,
   Calendar,
   Settings,
   Menu,
@@ -59,6 +60,7 @@ import {
 import Dashboard from './components/Dashboard';
 import Registrations from './components/Registrations';
 import Demands from './components/Demands';
+import InternalDemands from './components/InternalDemands';
 import CalendarView from './components/CalendarView';
 import Logistics from './components/Logistics';
 import LogisticsControl from './components/LogisticsControl';
@@ -135,6 +137,7 @@ type View =
   | 'dashboard'
   | 'notifications'
   | 'demands'
+  | 'internal-demands'
   | 'calendar'
   | 'registrations'
   | 'logistics'
@@ -427,6 +430,7 @@ const [operationalBases, setOperationalBases] = useState<OperationalBases>({
   funcoesAgenda: [],
   regioes: [],
   categoriasCarros: [],
+  categoriasInternas: [],
 });
 
 const regions = useMemo<Region[]>(() => {
@@ -484,6 +488,7 @@ useEffect(() => {
           funcoesAgenda: [],
           regioes: [],
           categoriasCarros: [],
+          categoriasInternas: [],
         };
 
         for (const row of rows) {
@@ -881,6 +886,7 @@ const syncCompanionAllocationsFromDb = useCallback(async () => {
       tipo: (row.tipo ?? 'cliente') as 'cliente' | 'interna',
       categoriaInterna: row.categoria_interna ?? null,
       horasPrevistas: row.horas_previstas ?? null,
+      descricaoInterna: row.descricao_interna ?? null,
       companyId: row.company_id ?? '',
       trainingId: row.training_id ?? '',
       regionId: row.region_id ?? '',
@@ -960,6 +966,7 @@ const syncCompanionAllocationsFromDb = useCallback(async () => {
     tipo: cleanOrNull((d as any).tipo) === 'interna' ? 'interna' : 'cliente',
     categoria_interna: cleanOrNull((d as any).categoriaInterna),
     horas_previstas: cleanNumberOrNull((d as any).horasPrevistas),
+    descricao_interna: cleanOrNull((d as any).descricaoInterna),
     company_id: cleanOrNull(d.companyId),
     training_id: cleanOrNull(d.trainingId),
     region_id: cleanOrNull(d.regionId),
@@ -3137,11 +3144,15 @@ type Action =
   | 'manage_logistics'
   | 'manage_measurement';
 
+// ⚠️ 'internal-demands' está nos TRÊS perfis de propósito: demanda interna é
+// trabalho da Colabor com o próprio instrutor, e qualquer perfil precisa poder
+// registrar e consultar (decisão fechada com o negócio).
 const ROLE_PERMISSIONS: Record<string, View[]> = {
   admin: [
     'dashboard',
     'notifications',
     'demands',
+    'internal-demands',
     'calendar',
     'registrations',
     'logistics',
@@ -3154,13 +3165,14 @@ const ROLE_PERMISSIONS: Record<string, View[]> = {
     'dashboard',
     'notifications',
     'demands',
+    'internal-demands',
     'calendar',
     'registrations',
     'logistics',
     'logistics-control',
     'evidences',
   ],
-  coordenador: ['calendar'] // apenas visualização
+  coordenador: ['calendar', 'internal-demands']
 };
 
 const ROLE_ACTIONS: Record<string, Action[]> = {
@@ -3284,6 +3296,8 @@ const renderContent = () => {
         return <Notifications />;
       case 'demands':
         return <Demands />;
+      case 'internal-demands':
+        return <InternalDemands />;
       case 'calendar':
         return <CalendarView />;
       case 'registrations':
@@ -3391,6 +3405,16 @@ const renderContent = () => {
               label="Demandas"
               active={currentView === 'demands'}
               onClick={() => setCurrentView('demands')}
+              collapsed={isSidebarCollapsed}
+            />
+          )}
+
+          {canAccessView(profile?.role, 'internal-demands') && (
+            <SidebarButton
+              icon={Building2}
+              label="Demandas Internas"
+              active={currentView === 'internal-demands'}
+              onClick={() => setCurrentView('internal-demands')}
               collapsed={isSidebarCollapsed}
             />
           )}

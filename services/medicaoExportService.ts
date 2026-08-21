@@ -128,6 +128,7 @@ function mapDemand(row: any): Demand {
     tipo: (row.tipo ?? 'cliente') as 'cliente' | 'interna',
     categoriaInterna: row.categoria_interna ?? null,
     horasPrevistas: row.horas_previstas ?? null,
+    descricaoInterna: row.descricao_interna ?? null,
     companyId: row.company_id ?? '',
     trainingId: row.training_id ?? '',
     regionId: row.region_id ?? '',

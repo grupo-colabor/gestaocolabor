@@ -16,6 +16,9 @@ export type DemandRow = {
   tipo: 'cliente' | 'interna';
   categoria_interna: string | null;
   horas_previstas: number | null;
+  // Descrição curta da interna — ocupa na listagem o lugar do nome do
+  // treinamento. Obrigatória no form, sem CHECK no banco.
+  descricao_interna: string | null;
 
   status: string;
   modality: string;
@@ -65,7 +68,7 @@ export async function fetchDemands(): Promise<DemandRow[]> {
         .from('demands')
         .select(`
           id, number, company_id, training_id, status, modality,
-          tipo, categoria_interna, horas_previstas,
+          tipo, categoria_interna, horas_previstas, descricao_interna,
           date_mode, specific_dates,
           start_date, end_date,
           practice_start_date, practice_end_date,

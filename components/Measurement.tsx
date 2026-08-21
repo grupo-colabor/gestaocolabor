@@ -212,6 +212,37 @@ const MeasurementView: React.FC = () => {
 
   const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
   const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
+
+  // ⚠️ Demanda interna aparece SIM na medição (é trabalho pago ao instrutor
+  // igual a qualquer outro) — o que ela não tem é empresa e treinamento. As
+  // duas colunas passam a ser resolvidas a partir da demanda inteira, não do
+  // id solto, senão as duas mostrariam 'N/A'.
+  const isInterna = (d?: Demand) => d?.tipo === 'interna';
+
+  const getDemandCompanyLabel = (d?: Demand) =>
+    isInterna(d) ? 'Colabor (Interna)' : getCompanyName(d?.companyId || '');
+
+  const getDemandTrainingLabel = (d?: Demand) => {
+    if (!isInterna(d)) return getTrainingName(d?.trainingId || '');
+    const categoria = (d?.categoriaInterna || '').trim();
+    const descricao = (d?.descricaoInterna || '').trim();
+    if (categoria && descricao) return `${categoria} — ${descricao}`;
+    return categoria || descricao || 'Demanda interna';
+  };
+
+  /**
+   * Carga horária padrão da demanda para o campo Hora/Aula.
+   * Cliente: horas do treinamento. Interna: horasPrevistas — é a única carga
+   * que ela tem (mesma prioridade de `effectiveDemandHours` em instructorHours).
+   */
+  const getDemandDefaultHours = (d?: Demand): number => {
+    if (isInterna(d)) {
+      const previstas = Number(d?.horasPrevistas);
+      return Number.isFinite(previstas) && previstas > 0 ? previstas : 0;
+    }
+    const t = d ? trainings.find(tr => tr.id === d.trainingId) : null;
+    return typeof t?.hours === 'number' ? t.hours : Number((t as any)?.hours) || 0;
+  };
   const getRegionName = (id: string) => regions.find(r => r.id === id)?.name || 'N/A';
   const getInstructorName = (id?: string) => instructors.find(i => i.id === id)?.name || 'Não Alocado';
 
@@ -243,8 +274,8 @@ const MeasurementView: React.FC = () => {
       const matchesText =
         d.id.toLowerCase().includes(filter.toLowerCase()) ||
         (d.clientDemandId || '').toLowerCase().includes(filter.toLowerCase()) ||
-        getCompanyName(d.companyId).toLowerCase().includes(filter.toLowerCase()) ||
-        getTrainingName(d.trainingId).toLowerCase().includes(filter.toLowerCase());
+        getDemandCompanyLabel(d).toLowerCase().includes(filter.toLowerCase()) ||
+        getDemandTrainingLabel(d).toLowerCase().includes(filter.toLowerCase());
 
       if (!matchesText) return false;
       if (advancedFilters.companyId && d.companyId !== advancedFilters.companyId) return false;
@@ -386,12 +417,12 @@ const totals = useMemo(() => {
   const hourRate = Number((selectedMeasurement?.expenses as any)?.hourRate ?? 0) || 0;
   const hourClassTotal = classHours * hourRate;
 
-  // Horas padrão do treinamento vinculado à medição selecionada (para reset e comparação)
+  // Horas padrão da demanda selecionada (para reset e comparação).
+  // Numa interna o "padrão" vem de horasPrevistas, não de um treinamento que
+  // ela não tem — senão o botão de restaurar zeraria o campo.
   const _selDemand = demands.find(d => d.id === selectedMeasurement?.demandId);
-  const _selTraining = _selDemand ? trainings.find(tr => tr.id === _selDemand.trainingId) : null;
-  const trainingDefaultHours = typeof _selTraining?.hours === 'number'
-    ? _selTraining.hours
-    : Number((_selTraining as any)?.hours) || 0;
+  const _selIsInterna = isInterna(_selDemand);
+  const trainingDefaultHours = getDemandDefaultHours(_selDemand);
   const isClassHoursEdited = !!selectedMeasurement && classHours !== trainingDefaultHours;
 
 
@@ -411,12 +442,12 @@ const totals = useMemo(() => {
 
   const handleOpenDetail = (m: Measurement) => {
   const d = demands.find(dm => dm.id === m.demandId);
-  const t = d ? trainings.find(tr => tr.id === d.trainingId) : null;
 
-  const trainingHours =
-    typeof t?.hours === 'number'
-      ? t.hours
-      : Number((t as any)?.hours) || undefined; // fallback se vier string
+  // Cliente: horas do treinamento. Interna: horasPrevistas — sem isso o campo
+  // Hora/Aula abria vazio e o recibo saía zerado.
+  // `|| undefined` (e não `?? `) de propósito: 0 precisa cair no undefined pra
+  // não travar o campo em zero, igual ao comportamento anterior.
+  const trainingHours = getDemandDefaultHours(d) || undefined;
 
   const next: Measurement = {
   ...m,
@@ -1229,8 +1260,8 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                       </div>
                     </td>
                     <td className="p-4 text-xs text-gray-500">{d?.clientDemandId || '—'}</td>
-                    <td className="p-4 font-medium">{getCompanyName(d?.companyId || '')}</td>
-                    <td className="p-4">{getTrainingName(d?.trainingId || '')}</td>
+                    <td className="p-4 font-medium">{getDemandCompanyLabel(d)}</td>
+                    <td className="p-4">{getDemandTrainingLabel(d)}</td>
                     <td className="p-4 text-xs">{getInstructorName(d?.instructorId)}</td>
                     <td className="p-4 text-xs">{d?.corredor || '—'}</td>
                     <td className="p-4 text-xs">{d?.trainingLocal || '—'}</td>
@@ -1358,10 +1389,10 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
 
                         <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
                           <div className="md:col-span-5">
-                            <h4 className="text-sm font-black text-slate-800 truncate" title={getTrainingName(d?.trainingId || '')}>{getTrainingName(d?.trainingId || '')}</h4>
+                            <h4 className="text-sm font-black text-slate-800 truncate" title={getDemandTrainingLabel(d)}>{getDemandTrainingLabel(d)}</h4>
                             <div className="flex items-center gap-3 mt-1">
                               <span className="text-[10px] font-bold text-blue-600 font-mono tracking-tighter">#{d?.id}</span>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase truncate" title={getCompanyName(d?.companyId || '')}>{getCompanyName(d?.companyId || '')}</span>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase truncate" title={getDemandCompanyLabel(d)}>{getDemandCompanyLabel(d)}</span>
                               <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded shadow-sm ${STATUS_STYLING[cDemandStatus] || 'bg-slate-200'}`}>
                                 {cDemandStatus.replace('_', ' ')}
                               </span>
@@ -1528,7 +1559,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                     {isClassHoursEdited && (
                       <button
                         type="button"
-                        title="Restaurar valor do treinamento"
+                        title={_selIsInterna ? 'Restaurar horas previstas da demanda' : 'Restaurar valor do treinamento'}
                         onClick={() => setSelectedMeasurement({
                           ...selectedMeasurement!,
                           expenses: {
@@ -1545,7 +1576,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                   <p className="text-[10px] mt-1">
                     {isClassHoursEdited
                       ? <span className="text-amber-500 font-bold">Editado manualmente</span>
-                      : <span className="text-slate-400">Puxado do Treinamento</span>
+                      : <span className="text-slate-400">{_selIsInterna ? 'Puxado da Demanda' : 'Puxado do Treinamento'}</span>
                     }
                   </p>
                 </div>

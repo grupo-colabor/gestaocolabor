@@ -85,6 +85,7 @@ const BASE_LABELS: Record<OperationalBaseKey, string> = {
   matriculadores: 'Matriculadores',
   funcoesAgenda: 'Funções da Agenda',
   regioes: 'Regiões',
+  categoriasInternas: 'Categorias de Demanda Interna',
 };
 
 const Registrations: React.FC = () => {

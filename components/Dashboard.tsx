@@ -346,7 +346,14 @@ const HelpDrawer: React.FC<{ tab: string; onClose: () => void }> = ({ tab, onClo
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
 const Dashboard: React.FC = () => {
-  const { demands, companies, regions, instructors, trainings, measurements, instructorAllocations, getEvidenceAutoStatus } = useApp();
+  const { demands: allDemands, companies, regions, instructors, trainings, measurements, instructorAllocations, getEvidenceAutoStatus } = useApp();
+
+  // ⚠️ FONTE ÚNICA do Dashboard: demanda de cliente.
+  // Todo KPI, total de horas e ranking daqui pra baixo mede entrega a cliente —
+  // demanda interna (sem empresa, sem treinamento, horas próprias) distorceria
+  // cada um deles de um jeito diferente. O corte é aqui, na entrada, uma vez só,
+  // e não gráfico a gráfico.
+  const demands = useMemo(() => allDemands.filter(d => d.tipo !== 'interna'), [allDemands]);
 
   // ✅ NORMALIZADOR (1 vez só)
   const normId = (v: any) => String(v ?? '').trim().replace(/^#/, '');

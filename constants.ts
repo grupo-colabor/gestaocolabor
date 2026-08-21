@@ -327,6 +327,9 @@ export const INITIAL_OPERATIONAL_BASES: OperationalBases = {
     "Grupo B", "Grupo BE", "Grupo C", "Grupo CE", "Grupo CS",
     "Grupo F", "Grupo FS", "Grupo FH", "Grupo FX"
   ],
+  // Mesmo seed da migration 013 — no modo supabase quem manda é
+  // operational_bases_items; isto aqui só cobre o modo mock.
+  categoriasInternas: ["Visita", "SIPAT", "Apoio Logístico", "Evento", "Outro"],
 };
 
 export const HISTORICAL_MATRICULADORES = ["Bernardo", "Micaelle", "Tallita", "Yara"];

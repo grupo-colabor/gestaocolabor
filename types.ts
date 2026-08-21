@@ -206,6 +206,8 @@ export interface Demand {
   tipo: 'cliente' | 'interna';
   categoriaInterna?: string | null;
   horasPrevistas?: number | null;
+  /** Descrição curta da interna — ocupa o lugar do nome do treinamento. */
+  descricaoInterna?: string | null;
 
   companyId: string;
   regionId: string;
@@ -352,7 +354,8 @@ export type OperationalBaseKey =
   | 'funcoesAgenda'
   | 'matriculadores'
   | 'regioes'
-  | 'categoriasCarros';
+  | 'categoriasCarros'
+  | 'categoriasInternas';
 
 export interface OperationalBases {
   aprovadores: string[];
@@ -368,6 +371,8 @@ export interface OperationalBases {
   funcoesAgenda: string[];
   regioes: string[];
   categoriasCarros: string[];
+  /** Categorias de demanda interna (Visita, SIPAT, Apoio Logístico...). */
+  categoriasInternas: string[];
 }
 
 // --- ASSOCIAÇÕES DE LOCAL ---

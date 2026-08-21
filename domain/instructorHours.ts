@@ -106,9 +106,11 @@ function clipToPeriod(days: string[], periodStart?: string, periodEnd?: string):
 /**
  * Carga horária "real" da demanda, em ordem de prioridade:
  *  1. `measurements.expenses.classHours` — override medido, se > 0.
- *  2. Se a demanda é HÍBRIDA: `training.practicalHours` — só a parte
+ *  2. Demanda INTERNA: `demand.horasPrevistas` — interna não tem treinamento,
+ *     a carga é a que foi prevista no cadastro da própria demanda.
+ *  3. Se a demanda é HÍBRIDA: `training.practicalHours` — só a parte
  *     presencial (a EAD não tem instrutor, não deve contar aqui).
- *  3. `training.hours` — carga nominal (demais modalidades, ou híbrido
+ *  4. `training.hours` — carga nominal (demais modalidades, ou híbrido
  *     sem `practicalHours` cadastrado).
  */
 function effectiveDemandHours(
@@ -118,6 +120,15 @@ function effectiveDemandHours(
 ): number {
   const override = Number((measurementByDemandId.get(demand.id)?.expenses as any)?.classHours);
   if (Number.isFinite(override) && override > 0) return override;
+
+  // Interna: sem training_id, os fallbacks abaixo devolveriam 0 e o
+  // `if (horasTotais <= 0) continue` lá embaixo derrubaria a demanda inteira —
+  // ela sumiria da planilha de pagamento sem nenhum erro. `horasPrevistas` é a
+  // única fonte de carga que uma interna tem (CHECK no banco garante > 0).
+  if (demand.tipo === 'interna') {
+    const previstas = Number(demand.horasPrevistas);
+    return Number.isFinite(previstas) && previstas > 0 ? previstas : 0;
+  }
 
   const training = trainingsById.get(String(demand.trainingId));
 

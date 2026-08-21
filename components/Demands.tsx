@@ -147,8 +147,8 @@ const canPerformAction = (
 };
 
 const Demands: React.FC = () => {
-  const { 
-    demands, companies, trainings, regions, instructors, operationalBases,
+  const {
+    demands: allDemands, companies, trainings, regions, instructors, operationalBases,
     measurements, agendaItems, instructorAllocations, resourceAllocations,companionAllocations,
     updateDemand, addDemand, deleteDemand, deallocateInstructor, recommendInstructors,
     updateMeasurement, removeAgendaItem, hasResourceConflict,
@@ -157,6 +157,12 @@ const Demands: React.FC = () => {
   } = useApp();
   
   const { profile } = useAuth();
+
+  // ⚠️ FONTE ÚNICA desta tela: demanda de cliente.
+  // Demandas internas (Colabor → instrutor, sem empresa nem treinamento) têm
+  // aba própria. O corte é aqui, na entrada dos dados, e não espalhado por
+  // render/memo — qualquer coisa abaixo que fale `demands` já vem filtrada.
+  const demands = useMemo(() => allDemands.filter(d => d.tipo !== 'interna'), [allDemands]);
 
   // Flags de perfil
   const isCoordinator = profile?.role === 'coordenador';

@@ -66,6 +66,13 @@ const AGENDA_STYLING: Record<string, { bg: string; text: string; border: string 
   APOIO: { bg: 'bg-amber-500', text: 'text-white', border: 'border-amber-600' }
 };
 
+/**
+ * Demanda interna usa o MESMO código visual do bloco APOIO da agenda: elas vão
+ * substituir o mecanismo de apoio, então quem olha a grade não deveria precisar
+ * distinguir os dois. O APOIO em si continua existindo e inalterado.
+ */
+const INTERNAL_DEMAND_STYLING = AGENDA_STYLING.APOIO;
+
 const AGENDA_TYPES: AgendaType[] = [
   'FOLGA',
   'INDISPONIVEL',
@@ -1668,6 +1675,14 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                         let aBg = AGENDA_STYLING[allocItem.type]?.bg || 'bg-gray-100';
                         let aText = AGENDA_STYLING[allocItem.type]?.text || 'text-gray-600';
                         let aBorder = AGENDA_STYLING[allocItem.type]?.border || 'border-gray-200';
+                        // Interna troca o azul de TREINAMENTO pelo âmbar do APOIO.
+                        // Antes do 'a confirmar' de propósito: aquilo é estado da
+                        // demanda e continua tendo precedência, igual ao cliente.
+                        if (isInternalDemand(aLinkedDemand)) {
+                          aBg = INTERNAL_DEMAND_STYLING.bg;
+                          aText = INTERNAL_DEMAND_STYLING.text;
+                          aBorder = INTERNAL_DEMAND_STYLING.border;
+                        }
                         if (aIsAConfirmar) { aBg = 'bg-amber-400'; aText = 'text-amber-900'; aBorder = 'border-amber-500'; }
                         return (
                           <div
@@ -1716,6 +1731,15 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                         let baseBg = AGENDA_STYLING[cellItem.data.type]?.bg || 'bg-gray-100';
                         let baseText = AGENDA_STYLING[cellItem.data.type]?.text || 'text-gray-600';
                         let baseBorder = AGENDA_STYLING[cellItem.data.type]?.border || 'border-gray-200';
+
+                        // 🟠 Interna: mesmo código visual do APOIO (ver
+                        // INTERNAL_DEMAND_STYLING). Vem antes do "a confirmar"
+                        // e do acompanhante, que continuam com precedência.
+                        if (isInternalDemand(linkedDemand)) {
+                          baseBg = INTERNAL_DEMAND_STYLING.bg;
+                          baseText = INTERNAL_DEMAND_STYLING.text;
+                          baseBorder = INTERNAL_DEMAND_STYLING.border;
+                        }
 
                         // 🟡 A Confirmar: sobrescreve para amarelo
                         if (isAConfirmar) {

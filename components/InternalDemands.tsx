@@ -34,10 +34,21 @@ import {
   Tag,
   User,
   AlertTriangle,
+  Mail,
+  MessageCircle,
+  FileText as FileWordIcon,
+  Edit3,
+  Check,
 } from 'lucide-react';
 
 import { calculateDemandStatus } from '../domain/demandStatus';
+import { canPerformDemandAction } from '../domain/demandPermissions';
 import { getDemandCompanyLabel } from '../domain/demandLabel';
+import {
+  buildDemandTextContent,
+  downloadDemandWord,
+  type DemandDocFields,
+} from '../services/demandDocument';
 import { logAction } from '../services/auditLog';
 import { upsertMeasurementByDemandId } from '../services/measurements';
 import {
@@ -248,6 +259,9 @@ const InternalDemands: React.FC = () => {
   const isAnalyst = profile?.role === 'analista';
   const canDelete = isAdmin || isAnalyst;
   const canCancel = isAdmin || isAnalyst;
+  // Mesmo nome e mesma definição do modal de cliente (Demands.tsx), para os dois
+  // modais responderem igual a uma mudança de permissão.
+  const canEditDemand = isAdmin || isAnalyst;
 
   // ⚠️ FONTE ÚNICA desta tela.
   const internalDemands = useMemo(
@@ -889,6 +903,119 @@ const InternalDemands: React.FC = () => {
     }
   };
 
+  /* ─────────────── Documento: Word / E-mail / WhatsApp ─────────────── */
+
+  /**
+   * Modelo de exibição do documento — mesmo contrato do formulário de cliente
+   * (services/demandDocument.ts). As diferenças da interna são só as linhas de
+   * identificação: não existe treinamento, então entram categoria, descrição e
+   * as horas previstas (a carga que a medição usa).
+   */
+  const buildInternalDocFields = (): DemandDocFields => {
+    const categoria = (formDemand.categoriaInterna || '').trim() || 'N/A';
+    const descricao = (formDemand.descricaoInterna || '').trim() || 'N/A';
+    const horas = formDemand.horasPrevistas != null && String(formDemand.horasPrevistas) !== ''
+      ? `${formDemand.horasPrevistas}h`
+      : 'N/A';
+
+    const diasEspecificos =
+      formDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(formDemand.specificDates) && formDemand.specificDates.length > 0
+        ? [...formDemand.specificDates]
+            .sort((a, b) => a.data.localeCompare(b.data))
+            .map(e => `${new Date(e.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${e.horarioInicio}-${e.horarioFim}`)
+            .join(', ')
+        : null;
+
+    const locoBlocks = formDemand.logisticasLocomocao?.length
+      ? formDemand.logisticasLocomocao
+      : [emptyLocomocaoBlock()];
+    const hospBlocks = formDemand.logisticasHospedagem?.length
+      ? formDemand.logisticasHospedagem
+      : [emptyHospedagemBlock()];
+
+    const instrutorIds = allInstructorsByDemandId[String(formDemand.id ?? '')] ?? [];
+    const instrutor = instrutorIds.length > 0
+      ? instrutorIds.map(getInstructorName).join(', ')
+      : getInstructorName(formDemand.instructorId);
+
+    return {
+      id: String(formDemand.id ?? ''),
+      tituloDocumento: 'DEMANDA INTERNA',
+      // Sem "/ Cliente": numa interna a empresa é onde o trabalho acontece,
+      // não quem contratou.
+      empresaLabel: '🏢 Empresa: ',
+      empresa: getDemandCompanyLabel(formDemand as Demand, companies),
+      identificacaoTexto: [
+        { label: 'Categoria', value: categoria },
+        { label: 'Descrição', value: descricao },
+      ],
+      identificacaoWord: [
+        { label: '🏷️ Categoria: ', value: categoria },
+        { label: '📋 Descrição: ', value: descricao },
+        { label: 'Carga Horária: ', value: horas },
+      ],
+      modalidade: formDemand.modality || 'PRESENCIAL',
+      periodo: `${formatDateTime(formDemand.startDate)} até ${formatDateTime(formDemand.endDate)}`,
+      diasEspecificos,
+      local: formDemand.trainingLocal || 'N/A',
+      corredor: formDemand.corredor || 'Não informado',
+      estado: formDemand.demandState || 'Não informado',
+      regiao: regions.find(r => r.id === formDemand.regionId)?.name || 'N/A',
+      solicitante: formDemand.requester || 'Não informado',
+      instrutor,
+      status: getStatusOf(formDemand as Demand).replace('_', ' '),
+      observacoes: formDemand.observations || 'N/A',
+      loco: locoBlocks.map(b => ({
+        instructorName: b.instructorName,
+        transportType: b.transportType,
+        rentalCompany: b.rentalCompany,
+        rentalLocator: b.rentalLocator,
+        rentalAgencyLocation: b.rentalAgencyLocation,
+        rentalCheckIn: b.rentalCheckIn ? formatDateTime(b.rentalCheckIn) : null,
+        rentalCheckOut: b.rentalCheckOut ? formatDateTime(b.rentalCheckOut) : null,
+      })),
+      hosp: hospBlocks.map(b => ({
+        instructorName: b.instructorName,
+        accommodationType: b.accommodationType,
+        hotelName: b.hotelName,
+        hotelCity: b.hotelCity,
+        hotelCheckIn: b.hotelCheckIn ? formatDateTime(b.hotelCheckIn) : null,
+        hotelCheckOut: b.hotelCheckOut ? formatDateTime(b.hotelCheckOut) : null,
+        hotelPayment: b.hotelPayment,
+      })),
+    };
+  };
+
+  const handleGenerateWord = async () => {
+    const categoria = (formDemand.categoriaInterna || 'Interna').replace(/\s+/g, '_');
+    const startStr = formDemand.startDate?.split('T')[0] || 'data';
+    const primeiroNome = getInstructorName(formDemand.instructorId).split(' ')[0] || 'NaoAlocado';
+    await downloadDemandWord(
+      buildInternalDocFields(),
+      `DemandaInterna_${categoria}_${startStr}_${primeiroNome}.docx`
+    );
+  };
+
+  const handleSendEmail = () => {
+    const categoria = (formDemand.categoriaInterna || 'Interna').trim();
+    const start = formatDateTime(formDemand.startDate).split(' ')[0];
+    const subject = encodeURIComponent(`Demanda Interna – ${categoria} – ${start}`);
+    const introText = 'Olá,\n\nSeguem abaixo os dados da demanda interna para sua análise e organização:\n\n';
+    const body = encodeURIComponent(
+      introText + buildDemandTextContent(buildInternalDocFields(), false) +
+      '\n\nAtenciosamente,\nEquipe de Gestão Colabor.'
+    );
+    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+  };
+
+  const handleSendWhatsApp = () => {
+    const text = encodeURIComponent(
+      `Olá! Seguem os dados da demanda interna:\n\n${buildDemandTextContent(buildInternalDocFields(), true)}`
+    );
+    window.open(`https://wa.me/?text=${text}`, '_blank');
+  };
+
+
   /* ──────────────────── Cancelar / Excluir / Reativar ──────────────────── */
 
   const currentStatus = formDemand.startDate
@@ -1158,27 +1285,51 @@ const InternalDemands: React.FC = () => {
             className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[95vh] animate-fade-in"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
-            <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-black text-slate-800 uppercase tracking-tight">
+            {/* Header — mesmas classes do modal de demanda de cliente */}
+            <div className="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center no-print">
+              <div className="flex flex-col">
+                <h2 className="text-xl font-bold text-gray-800">
                   {modalSubMode === 'VIEW'
                     ? 'Visualização da Demanda Interna'
                     : (modalMode === 'CREATE' ? 'Nova Demanda Interna' : 'Editar Demanda Interna')}
                 </h2>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
-                  {formDemand.id ? `${formDemand.id} · ` : ''}Colabor (Interna)
-                </p>
+                {modalSubMode === 'VIEW' && <p className="text-xs text-slate-400 font-mono mt-1">ID: {formDemand.id}</p>}
               </div>
-              <div className="flex items-center gap-3">
-                <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${statusColor(currentStatus)}`}>
-                  {currentStatus.replace('_', ' ')}
-                </span>
+              <div className="flex items-center gap-2">
+                {modalSubMode === 'VIEW' && (
+                  <>
+                    <div className="h-8 w-px bg-slate-200 mx-2"></div>
+                    <button onClick={handleGenerateWord} className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition font-bold text-xs border border-blue-200 shadow-sm" title="Word">
+                      <FileWordIcon size={14} /> Word
+                    </button>
+                    <button onClick={handleSendEmail} className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-bold text-xs border border-blue-700 shadow-sm" title="E-mail">
+                      <Mail size={14} /> E-mail
+                    </button>
+                    <button onClick={handleSendWhatsApp} className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-bold text-xs border border-green-200 shadow-sm" title="WhatsApp">
+                      <MessageCircle size={14} /> WhatsApp
+                    </button>
+                    <div className="h-8 w-px bg-slate-200 mx-2"></div>
+                    {currentStatus !== 'CANCELADA' && canPerformDemandAction(profile?.role, 'edit_demand') && (
+                      <button
+                        onClick={() => setModalSubMode('FORM')}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition font-bold text-xs border border-slate-200"
+                        title="Editar"
+                      >
+                        <Edit3 size={14} /> Editar
+                      </button>
+                    )}
+                  </>
+                )}
                 <button
-                  onClick={() => setIsModalOpen(false)}
-                  className="p-2 text-slate-300 hover:text-slate-600 transition-colors"
+                  onClick={() => {
+                    setConfirmDelete(false);
+                    setConfirmCancel(false);
+                    setConfirmReactivate(false);
+                    setIsModalOpen(false);
+                  }}
+                  className="text-gray-400 hover:text-gray-600 transition p-1 hover:bg-gray-100 rounded-lg"
                 >
-                  <X size={20} />
+                  <X size={24} />
                 </button>
               </div>
             </div>
@@ -1500,6 +1651,12 @@ const InternalDemands: React.FC = () => {
                           icon={Building}
                         />
                         <DataViewField label="Solicitante" value={formDemand.requester} icon={User} />
+                        <div className="flex flex-col space-y-1">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Status Atual</span>
+                          <span className={`w-fit px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor(currentStatus)}`}>
+                            {currentStatus.replace('_', ' ')}
+                          </span>
+                        </div>
                         <div className="md:col-span-3">
                           <DataViewField label="Descrição" value={formDemand.descricaoInterna || '---'} icon={Building} />
                         </div>
@@ -1651,34 +1808,34 @@ const InternalDemands: React.FC = () => {
                 )}
               </div>
 
-              <div className="flex gap-3">
+              {/* Direita — mesmas classes do rodapé do modal de cliente.
+                  Editar vive só no cabeçalho, como lá. */}
+              <div className="flex space-x-3">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-5 py-2.5 rounded-xl border border-slate-200 bg-white text-slate-600 font-black text-xs uppercase tracking-widest hover:bg-slate-50 transition"
+                  onClick={() => {
+                    setConfirmDelete(false);
+                    setConfirmCancel(false);
+                    setConfirmReactivate(false);
+                    setFormError(null);
+                    setIsModalOpen(false);
+                  }}
+                  className="px-6 py-2.5 text-slate-600 bg-white border border-slate-300 hover:bg-slate-50 rounded-xl transition font-black text-xs uppercase tracking-widest"
                 >
-                  Fechar
+                  {modalSubMode === 'VIEW' ? 'Fechar' : 'Cancelar'}
                 </button>
 
-                {modalSubMode === 'VIEW' ? (
-                  <button
-                    type="button"
-                    onClick={() => setModalSubMode('FORM')}
-                    className="px-5 py-2.5 rounded-xl bg-gray-900 hover:bg-gray-800 text-white font-black text-xs uppercase tracking-widest transition shadow-md"
-                  >
-                    Editar
-                  </button>
-                ) : (
+                {modalSubMode === 'FORM' && canEditDemand && (
                   <button
                     type="button"
                     onClick={handleSave}
                     disabled={!isFormValid || isSaving}
-                    className={`px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest transition shadow-md
+                    className={`px-8 py-2.5 font-black rounded-xl transition shadow-lg text-xs uppercase tracking-widest flex items-center gap-2
                       ${isFormValid && !isSaving
                         ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                        : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+                        : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`}
                   >
-                    {isSaving ? 'Salvando...' : (modalMode === 'CREATE' ? 'Criar Demanda' : 'Salvar Alterações')}
+                    <Check size={16} /> {isSaving ? 'Salvando...' : (modalMode === 'CREATE' ? 'Criar Demanda' : 'Salvar Alterações')}
                   </button>
                 )}
               </div>

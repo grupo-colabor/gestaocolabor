@@ -1277,7 +1277,18 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                       </div>
                     </td>
                     <td className="p-4 text-xs text-gray-500">{d?.clientDemandId || '—'}</td>
-                    <td className="p-4 font-medium">{getDemandCompanyLabel(d)}</td>
+                    <td className="p-4 font-medium">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate">{getDemandCompanyLabel(d)}</span>
+                        {/* Mesmo badge da Logística: com empresa vinculada, o nome
+                            da empresa sozinho nao distingue interna de cliente. */}
+                        {isInterna(d) && (
+                          <span className="bg-violet-100 text-violet-700 border border-violet-200 text-[9px] font-black uppercase px-1.5 py-0.5 rounded tracking-widest shrink-0">
+                            Interna
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="p-4">{getDemandTrainingLabel(d)}</td>
                     <td className="p-4 text-xs">{getInstructorName(d?.instructorId)}</td>
                     <td className="p-4 text-xs">{d?.corredor || '—'}</td>

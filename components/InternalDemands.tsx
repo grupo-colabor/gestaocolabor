@@ -255,6 +255,8 @@ const InternalDemands: React.FC = () => {
     instructors,
     operationalBases,
     instructorAllocations,
+    notificationTarget,
+    setNotificationTarget,
     addDemand,
     updateDemand,
     deleteDemand,
@@ -337,6 +339,17 @@ const InternalDemands: React.FC = () => {
   useEffect(() => {
     if (!isModalOpen) setAutoFilledFields(new Set());
   }, [isModalOpen]);
+
+  // Navegação vinda da Central de Notificações — mesmo contrato de Demands.tsx
+  // e Evidences.tsx. Os alertas de alocação e de cancelamento mandam a interna
+  // para cá (demandListView); sem consumir o alvo, o clique trocava de tela mas
+  // caía na lista inteira, sem filtro, e o usuário tinha que procurar o ID.
+  useEffect(() => {
+    if (notificationTarget?.view === 'internal-demands') {
+      setFilter(notificationTarget.demandId);
+      setNotificationTarget(null);
+    }
+  }, [notificationTarget]);
 
   useEffect(() => {
     const anyOpen = isModalOpen || isExportOpen || confirmCancel || confirmDelete || confirmReactivate;

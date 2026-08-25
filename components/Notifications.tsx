@@ -5,7 +5,15 @@ import {
   ChevronDown, ChevronUp, ExternalLink
 } from 'lucide-react';
 import { calculateDemandStatus } from '../domain/demandStatus';
-import { requiresInstructor, requiresLogistics } from '../domain/modalityRules';
+import { getDemandTitle, getDemandCompanyLabel, isInternalDemand } from '../domain/demandLabel';
+import {
+  hasPendingLogistics,
+  hasPendingEvidence,
+  isAwaitingInstructor,
+  hasPendingMeasurement,
+  demandListView,
+  type DemandAlertContext,
+} from '../domain/notificationAlerts';
 
 const PREVIEW_COUNT = 6;
 
@@ -110,6 +118,24 @@ const AlertCard = ({
   );
 };
 
+/**
+ * Badge INTERNA — mesmo estilo de Logística, Controle Logístico, Agenda e da
+ * listagem de Medição.
+ *
+ * Fica colado no nome da empresa, e não no ID, pelo mesmo motivo que levou o
+ * badge para lá na Medição: uma interna PODE ter empresa vinculada (acontece no
+ * cliente), e aí a linha exibe "Vale S.A." igualzinho a uma demanda de cliente.
+ * Sem o badge, as duas ficam indistinguíveis exatamente no caso ambíguo.
+ */
+const InternaBadge: React.FC<{ demand?: any }> = ({ demand }) => {
+  if (!isInternalDemand(demand)) return null;
+  return (
+    <span className="bg-violet-100 text-violet-700 border border-violet-200 text-[9px] font-black uppercase px-1.5 py-0.5 rounded tracking-widest shrink-0">
+      Interna
+    </span>
+  );
+};
+
 const Notifications: React.FC = () => {
   const {
     demands, companies, trainings, measurements, getEvidenceAutoStatus,
@@ -125,8 +151,13 @@ const Notifications: React.FC = () => {
   const toggleBlock = (key: string) =>
     setExpandedBlocks(prev => ({ ...prev, [key]: !prev[key] }));
 
-  const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
-  const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
+  // Mesmos builders de Logística, Controle Logístico, Medição e Agenda. Numa
+  // demanda interna o "treinamento" é `categoria — descrição` e a empresa vira
+  // "Colabor (Interna)" quando não há empresa vinculada. Enquanto esta tela
+  // resolvia os dois inline (`trainings.find(...)?.name || 'N/A'`), TODA linha
+  // de alerta de interna saía como "N/A" em cima e "N/A" embaixo.
+  const demandTitleOf = (d: any) => getDemandTitle(d, trainings, 'N/A');
+  const demandCompanyOf = (d: any) => getDemandCompanyLabel(d, companies, 'N/A');
 
   const fmtDate = (dateStr: string) =>
     new Date(dateStr).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
@@ -153,12 +184,6 @@ const Notifications: React.FC = () => {
     } as any);
 
   // --- Blocos de alertas ---
-  const activeDemands = useMemo(() =>
-    demands.filter(d => {
-      const s = getCalculatedStatus(d);
-      return s !== 'CANCELADA';
-    }), [demands, trainings]);
-
   // Ordena: vencidas (mais antigas primeiro) → próximas (mais próximas primeiro)
   const sortByUrgency = (a: any, b: any) => {
     const now = new Date();
@@ -180,16 +205,51 @@ const Notifications: React.FC = () => {
     return map;
   }, [logisticAllocations]);
 
-  const pendingLogistics = useMemo(() => {
-    return activeDemands.filter(d => {
-      if (!requiresLogistics(getDemandModality(d))) return false;
-      const status = getCalculatedStatus(d);
-      if (status === 'CONCLUIDA') return false;
-      const alloc = logisticsByDemandId[normId(d.id)];
-      if (!alloc) return false;
-      return String(alloc.overall_status ?? 'PENDENTE').toUpperCase() !== 'CONCLUIDA';
-    }).sort(sortByUrgency);
-  }, [activeDemands, logisticsByDemandId, trainings]);
+  const measurementByDemandId = useMemo(() => {
+    const map: Record<string, typeof measurements[number]> = {};
+    for (const m of measurements) {
+      const key = normId(m?.demandId);
+      if (key) map[key] = m;
+    }
+    return map;
+  }, [measurements]);
+
+  /**
+   * Contexto de alerta de cada demanda, resolvido UMA vez por render e
+   * reaproveitado pelos 4 blocos. Antes cada bloco recalculava status e
+   * modalidade por conta própria; o de medição ainda varria `measurements`
+   * com um `find` por demanda.
+   *
+   * As REGRAS de cada bloco não moram mais aqui — estão em
+   * domain/notificationAlerts, onde são verificáveis por execução
+   * (npm run smoke:notificacoes).
+   */
+  const alertContexts = useMemo<DemandAlertContext[]>(() =>
+    demands.map(d => ({
+      demand: d,
+      status: getCalculatedStatus(d),
+      modality: getDemandModality(d),
+      // Distingue "sem linha de logística" (null, não é pendência) de "linha
+      // sem status preenchido" (PENDENTE, é pendência).
+      logisticsStatus: (() => {
+        const alloc = logisticsByDemandId[normId(d.id)];
+        return alloc ? String(alloc.overall_status ?? 'PENDENTE') : null;
+      })(),
+      evidenceStatus: getEvidenceAutoStatus(d.id),
+      // null = nenhuma linha de medição; string = o status que veio do banco.
+      measurementStatus: (() => {
+        const m = measurementByDemandId[normId(d.id)];
+        return m ? String(m.status ?? '') : null;
+      })(),
+    })),
+  [demands, trainings, logisticsByDemandId, measurementByDemandId, getEvidenceAutoStatus]);
+
+  /** Aplica um predicado de domain/notificationAlerts e devolve as demandas. */
+  const demandsMatching = (predicate: (ctx: DemandAlertContext) => boolean) =>
+    alertContexts.filter(predicate).map(ctx => ctx.demand as any).sort(sortByUrgency);
+
+  const pendingLogistics = useMemo(
+    () => demandsMatching(hasPendingLogistics), [alertContexts]);
 
   // Janela de 3 semanas: semana passada → próxima semana
   const { inicioSemanaPassada, fimProximaSemana } = useMemo(() => {
@@ -216,28 +276,15 @@ const Notifications: React.FC = () => {
     });
   }, [pendingLogistics, inicioSemanaPassada, fimProximaSemana]);
 
-  const pendingEvidences = useMemo(() =>
-    demands.filter(d => {
-      if (getCalculatedStatus(d) !== 'CONCLUIDA') return false;
-      if (!requiresInstructor(getDemandModality(d))) return false;
-      return getEvidenceAutoStatus(d.id) !== 'COMPLETA';
-    }).sort(sortByUrgency), [demands, trainings, getEvidenceAutoStatus]);
+  // Interna NÃO entra aqui — a regra e o porquê estão em notificationAlerts.
+  const pendingEvidences = useMemo(
+    () => demandsMatching(hasPendingEvidence), [alertContexts]);
 
-  const noInstructorDemands = useMemo(() =>
-    activeDemands.filter(d => {
-      const status = getCalculatedStatus(d);
-      if (status === 'CONCLUIDA') return false;
-      if (!requiresInstructor(getDemandModality(d))) return false;
-      return !d.instructorId;
-    }).sort(sortByUrgency), [activeDemands, trainings]);
+  const noInstructorDemands = useMemo(
+    () => demandsMatching(isAwaitingInstructor), [alertContexts]);
 
-  const noMeasurementDemands = useMemo(() =>
-    demands.filter(d => {
-      if (getCalculatedStatus(d) !== 'CONCLUIDA') return false;
-      if (!d.instructorId) return false;
-      const m = measurements.find(m => m.demandId === d.id);
-      return !m || m.status === 'NAO_INICIADA';
-    }).sort(sortByUrgency), [demands, measurements, trainings]);
+  const noMeasurementDemands = useMemo(
+    () => demandsMatching(hasPendingMeasurement), [alertContexts]);
 
   const cancelledDemands = useMemo(() =>
     demands.filter(d => d.status === 'CANCELADA').sort(sortByUrgency),
@@ -246,7 +293,7 @@ const Notifications: React.FC = () => {
   const totalAlerts = pendingLogistics.length + pendingEvidences.length + noInstructorDemands.length + noMeasurementDemands.length;
 
   // --- Navegação ao clicar numa demanda ---
-  type TargetView = 'logistics-control' | 'evidences' | 'demands' | 'measurement';
+  type TargetView = 'logistics-control' | 'evidences' | 'demands' | 'internal-demands' | 'measurement';
 
   const handleDemandClick = (demandId: string, view: TargetView) => {
     setNotificationTarget({ demandId, view });
@@ -266,9 +313,12 @@ const Notifications: React.FC = () => {
         <div className="overflow-hidden">
           <p className="text-[11px] font-black text-slate-700 truncate group-hover:text-blue-700">
             <span className="text-blue-600 font-mono mr-1">#{d.id}</span>
-            {getTrainingName(d.trainingId)}
+            {demandTitleOf(d)}
           </p>
-          <p className="text-[9px] font-bold text-slate-400 uppercase truncate">{getCompanyName(d.companyId)}</p>
+          <div className="flex items-center gap-1.5 overflow-hidden">
+            <p className="text-[9px] font-bold text-slate-400 uppercase truncate">{demandCompanyOf(d)}</p>
+            <InternaBadge demand={d} />
+          </div>
           {d.corredor && d.corredor !== 'N/A' && (
             <p className="text-[9px] font-bold text-slate-400 uppercase truncate">{d.corredor}</p>
           )}
@@ -392,7 +442,7 @@ const Notifications: React.FC = () => {
             d={d}
             badge="PENDENTE"
             badgeCls="bg-orange-100 text-orange-600"
-            targetView="demands"
+            targetView={demandListView(d)}
           />
         )}
       />
@@ -449,15 +499,18 @@ const Notifications: React.FC = () => {
               {cancelledDemands.map(d => (
                 <button
                   key={d.id}
-                  onClick={() => handleDemandClick(d.id, 'demands')}
+                  onClick={() => handleDemandClick(d.id, demandListView(d))}
                   className="w-full flex items-center justify-between text-[11px] bg-slate-50 p-3 rounded-xl border border-slate-100 hover:bg-blue-50 hover:border-blue-200 transition-colors group text-left"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="font-mono text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded shrink-0">#{d.id}</span>
-                    <span className="truncate font-bold text-slate-700 group-hover:text-blue-700">{getTrainingName(d.trainingId)}</span>
+                    <span className="truncate font-bold text-slate-700 group-hover:text-blue-700">{demandTitleOf(d)}</span>
                   </div>
                   <div className="flex items-center gap-4 shrink-0 ml-3">
-                    <span className="text-slate-400 uppercase text-[9px] font-black">{getCompanyName(d.companyId)}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-slate-400 uppercase text-[9px] font-black">{demandCompanyOf(d)}</span>
+                      <InternaBadge demand={d} />
+                    </div>
                     <span className="text-[9px] font-bold text-slate-300">{new Date(d.startDate).toLocaleDateString('pt-BR')}</span>
                     <ExternalLink size={10} className="text-slate-300 group-hover:text-blue-400" />
                   </div>

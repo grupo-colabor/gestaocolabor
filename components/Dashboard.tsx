@@ -10,7 +10,8 @@ import {
   Truck, DollarSign, Award, Target, Zap, ShieldAlert,
   Download, MousePointer2,
   Info, Ban, Bell, Package, FileText, UserCheck, Hotel, Car,
-  HelpCircle, X, ArrowLeftRight, Monitor, Home
+  HelpCircle, X, ArrowLeftRight, Monitor, Home,
+  Link2, Tag
 } from 'lucide-react';
 import { Demand } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
@@ -2732,43 +2733,68 @@ const pendingLogisticsDemands = useMemo(() => {
     return (
       <div className="space-y-6 animate-fade-in">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Demandas Internas</p>
-            <p className="text-3xl font-black text-slate-800 leading-none">{internaKpis.totalDemandas}</p>
-            <div className="flex flex-wrap gap-1 mt-3 min-h-[1.5rem]">
-              {internaKpis.porStatus.map(([status, n]) => (
-                <span key={status} className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${STATUS_BADGE[status] ?? 'bg-slate-100 text-slate-600'}`}>
-                  {status.replace('_', ' ')} {n}
-                </span>
-              ))}
+          {/* Mesma casca do KPICard das demais abas (título, valor e o ícone no
+              quadradinho colorido à direita). Não dá para usar o componente em
+              si: os quatro cards daqui têm rodapé próprio — badges de status,
+              tooltip de horas, valor composto — que `subtext` não expressa. */}
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-start justify-between hover:shadow-md transition-all group">
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-slate-600 transition-colors">Demandas Internas</p>
+              <h3 className="text-2xl font-black text-slate-800">{internaKpis.totalDemandas}</h3>
+              <div className="flex flex-wrap gap-1 mt-3 min-h-[1.5rem]">
+                {internaKpis.porStatus.map(([status, n]) => (
+                  <span key={status} className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${STATUS_BADGE[status] ?? 'bg-slate-100 text-slate-600'}`}>
+                    {status.replace('_', ' ')} {n}
+                  </span>
+                ))}
+              </div>
+            </div>
+            {/* Violeta: mesma cor do badge INTERNA em Logística, Medição e Agenda. */}
+            <div className="p-3 rounded-xl bg-violet-50 text-violet-600 group-hover:scale-110 transition-transform shrink-0 ml-3">
+              <Building2 size={20} />
             </div>
           </div>
 
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Horas Previstas</p>
-            <p className="text-3xl font-black text-slate-800 leading-none">{formatHoursValue(internaKpis.horasPrevistas)}h</p>
-            <p
-              className="text-[9px] font-bold text-slate-400 mt-3 min-h-[1.5rem]"
-              title="Horas já ministradas: só demandas concluídas E com linha em instructor_allocations, rateadas por dia — mesma conta do card de instrutor e da medição. Interna com instrutor só no cadastro da demanda não entra aqui."
-            >
-              {formatHoursValue(internaKpis.horasMinistradas)}h já ministradas
-            </p>
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-start justify-between hover:shadow-md transition-all group">
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-slate-600 transition-colors">Horas Previstas</p>
+              <h3 className="text-2xl font-black text-slate-800">{formatHoursValue(internaKpis.horasPrevistas)}h</h3>
+              <p
+                className="text-[9px] font-bold text-slate-400 mt-3 min-h-[1.5rem]"
+                title="Horas já ministradas: só demandas concluídas E com linha em instructor_allocations, rateadas por dia — mesma conta do card de instrutor e da medição. Interna com instrutor só no cadastro da demanda não entra aqui."
+              >
+                {formatHoursValue(internaKpis.horasMinistradas)}h já ministradas
+              </p>
+            </div>
+            <div className="p-3 rounded-xl bg-blue-50 text-blue-600 group-hover:scale-110 transition-transform shrink-0 ml-3">
+              <Clock size={20} />
+            </div>
           </div>
 
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Vínculo</p>
-            <p className="text-3xl font-black text-slate-800 leading-none">
-              {internaKpis.comEmpresa}<span className="text-slate-300"> / </span>{internaKpis.semEmpresa}
-            </p>
-            <p className="text-[9px] font-bold text-slate-400 mt-3 min-h-[1.5rem]">Com empresa vinculada / Colabor</p>
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-start justify-between hover:shadow-md transition-all group">
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-slate-600 transition-colors">Vínculo</p>
+              <h3 className="text-2xl font-black text-slate-800">
+                {internaKpis.comEmpresa}<span className="text-slate-300"> / </span>{internaKpis.semEmpresa}
+              </h3>
+              <p className="text-[9px] font-bold text-slate-400 mt-3 min-h-[1.5rem]">Com empresa vinculada / Colabor</p>
+            </div>
+            <div className="p-3 rounded-xl bg-teal-50 text-teal-600 group-hover:scale-110 transition-transform shrink-0 ml-3">
+              <Link2 size={20} />
+            </div>
           </div>
 
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Categorias</p>
-            <p className="text-3xl font-black text-slate-800 leading-none">{internaKpis.categorias.length}</p>
-            <p className="text-[9px] font-bold text-slate-400 mt-3 min-h-[1.5rem] truncate" title={internaKpis.categorias[0]?.nome ?? ''}>
-              {internaKpis.categorias.length > 0 ? `Maior: ${internaKpis.categorias[0].nome}` : 'Sem categoria no recorte'}
-            </p>
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-start justify-between hover:shadow-md transition-all group">
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-slate-600 transition-colors">Categorias</p>
+              <h3 className="text-2xl font-black text-slate-800">{internaKpis.categorias.length}</h3>
+              <p className="text-[9px] font-bold text-slate-400 mt-3 min-h-[1.5rem] truncate" title={internaKpis.categorias[0]?.nome ?? ''}>
+                {internaKpis.categorias.length > 0 ? `Maior: ${internaKpis.categorias[0].nome}` : 'Sem categoria no recorte'}
+              </p>
+            </div>
+            <div className="p-3 rounded-xl bg-amber-50 text-amber-600 group-hover:scale-110 transition-transform shrink-0 ml-3">
+              <Tag size={20} />
+            </div>
           </div>
         </div>
 

@@ -10,7 +10,7 @@ import {
   Truck, DollarSign, Award, Target, Zap, ShieldAlert,
   Download, MousePointer2,
   Info, Ban, Bell, Package, FileText, UserCheck, Hotel, Car,
-  HelpCircle, X, ArrowLeftRight, Monitor
+  HelpCircle, X, ArrowLeftRight, Monitor, Home
 } from 'lucide-react';
 import { Demand } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
@@ -45,7 +45,7 @@ const STATUS_LABELS: Record<string, string> = {
   CANCELADA: 'Cancelada'
 };
 
-type TabType = 'GERAL' | 'OPERACIONAL' | 'INSTRUTORES' | 'CLIENTES' | 'CUSTOS';
+type TabType = 'GERAL' | 'OPERACIONAL' | 'INSTRUTORES' | 'CLIENTES' | 'CUSTOS' | 'INTERNAS';
 
 const PERIOD_COLORS = ['#378ADD', '#1D9E75', '#EF9F27', '#D85A30', '#7F77DD', '#D4537E'] as const;
 
@@ -148,6 +148,16 @@ const RankedListChart: React.FC<{
   );
 };
 
+/** Cor do chip de status. Módulo (não local do render) porque Operacional e Internas usam. */
+const STATUS_BADGE: Record<string, string> = {
+  NOVA:        'bg-violet-100 text-violet-700',
+  PENDENTE:    'bg-amber-100 text-amber-700',
+  ALOCADA:     'bg-blue-100 text-blue-700',
+  EM_ANDAMENTO:'bg-emerald-100 text-emerald-700',
+  CONCLUIDA:   'bg-slate-100 text-slate-500',
+  CANCELADA:   'bg-red-100 text-red-500',
+};
+
 // ─── Glossário de ajuda por aba ─────────────────────────────────────────────
 
 const TAB_LABELS: Record<string, string> = {
@@ -156,6 +166,7 @@ const TAB_LABELS: Record<string, string> = {
   INSTRUTORES: 'Instrutores',
   CLIENTES: 'Clientes',
   CUSTOS: 'Custos',
+  INTERNAS: 'Internas',
 };
 
 type HelpItem    = { term: string; desc: string };
@@ -221,7 +232,7 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
     {
       section: 'Gráficos e Blocos',
       items: [
-        { term: 'Horas Ministradas por Instrutor', desc: 'Todos os instrutores com horas > 0 em demandas concluídas no período, ordenados por horas (rolagem vertical). Horas calculadas por instructor_allocations — proporcionais aos dias que cada um efetivamente ministrou, não à carga cheia do treinamento. "N div." indica demandas divididas com outro instrutor.' },
+        { term: 'Horas Ministradas por Instrutor', desc: 'Todos os instrutores com horas > 0 em demandas concluídas no período, ordenados por horas (rolagem vertical). Horas calculadas por instructor_allocations — proporcionais aos dias que cada um efetivamente ministrou, não à carga cheia do treinamento. O toggle no cabeçalho troca o recorte: "Treinamentos" (padrão) mostra só demanda de cliente, "Internas" mostra só demanda interna. Os dois NÃO se somam — são leituras separadas. "N div." indica demandas divididas com outro instrutor.' },
         { term: 'Risco de Dependência (lista)', desc: 'NRs e treinamentos onde apenas 1 ou nenhum instrutor tem nível ≥ 3. Risco: se esse instrutor ficar indisponível, a execução pode ser comprometida.' },
         { term: 'Disponíveis nos Próximos 30 Dias', desc: 'Lista nominal de instrutores sem alocação ativa prevista — candidatos para absorver novas demandas.' },
         { term: 'Sem Demanda no Período', desc: 'Instrutores sem nenhuma participação no filtro ativo. Pode indicar ociosidade ou escopo fora da região selecionada.' },
@@ -259,6 +270,33 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
         { term: 'Status das Medições', desc: 'Funil de progresso: Não Iniciada → Em Lançamento → Em Conferência → Pronta Faturamento → Faturada. Percentuais calculados sobre o total de demandas concluídas.' },
         { term: 'Top Instrutores por Custo', desc: 'Ranking dos instrutores cujas demandas geraram o maior volume de despesas no período filtrado.' },
         { term: 'Evolução Mensal de Custos', desc: 'Histórico dos últimos 6 meses de despesas registradas. Não é restrito pelo filtro de período — exibe o histórico completo para comparação de tendências.' },
+      ],
+    },
+  ],
+  INTERNAS: [
+    {
+      section: 'Cards de Indicadores',
+      items: [
+        { term: 'Demandas Internas', desc: 'Quantidade de demandas internas (visita, SIPAT, apoio logístico, eventos da Colabor) no período e filtros selecionados, com a quebra por status calculado.' },
+        { term: 'Horas Previstas', desc: 'Soma de horas_previstas das demandas do recorte. É a carga PLANEJADA e existe em qualquer status — responde "quanto de interna tem no período".' },
+        { term: 'Horas Já Ministradas', desc: 'Linha menor do card de horas. Mede outra coisa: só demandas CONCLUÍDAS e COM alocação em instructor_allocations, rateadas por dia. É a mesma conta do card de instrutor e da medição. Interna cujo instrutor foi definido só no cadastro da demanda NÃO entra aqui — o vínculo tem que existir na agenda.' },
+        { term: 'Vínculo', desc: 'Demandas com empresa vinculada (company_id preenchido) versus demandas da própria Colabor. Interna pode ou não ter empresa: uma visita técnica na Vale tem, uma SIPAT interna não.' },
+        { term: 'Categorias', desc: 'Quantas categorias distintas aparecem no recorte, e qual delas concentra mais horas previstas.' },
+      ],
+    },
+    {
+      section: 'Gráficos e Blocos',
+      items: [
+        { term: 'Distribuição por Categoria', desc: 'Horas previstas e número de demandas por categoria interna, ordenado por horas. Demanda sem categoria cadastrada aparece agrupada em "Sem categoria".' },
+        { term: 'Top Instrutores em Horas Internas', desc: 'Ranking por horas internas MINISTRADAS (não previstas) — mesma fonte do card "Horas Ministradas por Instrutor" no toggle Internas. Top 8.' },
+        { term: 'Aviso de concluída sem alocação', desc: 'Aparece quando existe demanda interna concluída sem nenhuma alocação de instrutor. Essas demandas contam em "Demandas Internas" e em "Horas Previstas", mas ficam fora de "Horas Já Ministradas" e do ranking, porque a fonte de horas é instructor_allocations e não o instrutor do cadastro. É a explicação para ver demanda concluída e 0h ministradas ao mesmo tempo.' },
+      ],
+    },
+    {
+      section: 'Filtros',
+      items: [
+        { term: 'Filtros aplicáveis', desc: 'Período/mês, região, estado, local, corredor e status funcionam igual às demais abas. Empresa também: como company_id é opcional na interna, filtrar por uma empresa esconde as internas da Colabor — o que é o correto, elas não são daquela empresa.' },
+        { term: 'Modalidade não se aplica', desc: 'Demanda interna é sempre presencial por construção (o formulário nem oferece o campo) e não tem treinamento de onde herdar modalidade. O filtro de modalidade é ignorado nesta aba de propósito: aplicá-lo zeraria o painel inteiro sem significar nada.' },
       ],
     },
   ],
@@ -355,10 +393,20 @@ const Dashboard: React.FC = () => {
   // e não gráfico a gráfico.
   const demands = useMemo(() => allDemands.filter(d => d.tipo !== 'interna'), [allDemands]);
 
+  // Exceção deliberada ao corte acima, e a ÚNICA: métrica sobre INSTRUTOR
+  // ("quanto ele trabalhou") soma cliente + interna — o instrutor que passou a
+  // semana numa SIPAT trabalhou, e o ranking que o mostrava com menos horas que
+  // o colega estava errado sobre ele. Métrica sobre CLIENTE/TREINAMENTO
+  // (receita, volume por empresa, ranking de treinamento) continua saindo só de
+  // `demands`. Esta lista NÃO entra em nenhum outro KPI.
+  const internaDemands = useMemo(() => allDemands.filter(d => d.tipo === 'interna'), [allDemands]);
+
   // ✅ NORMALIZADOR (1 vez só)
   const normId = (v: any) => String(v ?? '').trim().replace(/^#/, '');
 
   const [activeTab, setActiveTab] = useState<TabType>('GERAL');
+  /** Toggle do card "Horas Ministradas por Instrutor": troca o dataset, não soma. */
+  const [instructorRanking, setInstructorRanking] = useState<'TREINAMENTOS' | 'INTERNAS'>('TREINAMENTOS');
   const [showHelp, setShowHelp] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showNoInstructorTooltip, setShowNoInstructorTooltip] = useState(false);
@@ -823,6 +871,131 @@ const pendingLogisticsDemands = useMemo(() => {
       });
     });
   }, [allFilteredDemandsList, instructorAllocations, trainings, measurements, filters.startDate, filters.endDate, extraPeriods]);
+
+  /**
+   * Internas recortadas pelos filtros do Dashboard, um array por período.
+   * Fonte única da aba INTERNAS e do toggle "Internas" do card de horas.
+   *
+   * FILTROS QUE SE APLICAM (mesma semântica da demanda de cliente):
+   *   • período/mês — via demandIntersectsRange, igual ao cliente
+   *   • região      — interna tem region_id
+   *   • estado      — demand_state
+   *   • local       — training_local
+   *   • corredor    — corredor
+   *   • status      — calculado por data, igual ao cliente
+   *   • empresa     — company_id é OPCIONAL na interna; filtrar por empresa
+   *                   esconde as internas da Colabor, que é o correto (elas
+   *                   não são daquela empresa)
+   *
+   * FILTRO QUE NÃO SE APLICA:
+   *   • modalidade  — interna é sempre PRESENCIAL por construção (o form nem
+   *                   oferece o campo) e não tem treinamento de onde herdar
+   *                   modalidade. Filtrar por ONLINE/HÍBRIDO zeraria a aba
+   *                   inteira sem que isso significasse nada. Fica de fora
+   *                   de propósito.
+   */
+  const filteredInternasByPeriod = useMemo(() => {
+    return allFilteredDemandsList.map((_dList, i) => {
+      const { start, end } = getPeriodBounds(i);
+      return internaDemands.filter(d => {
+        if (start || end) {
+          if (!demandIntersectsRange(d, start, end)) return false;
+        }
+        if (filters.companyId && d.companyId !== filters.companyId) return false;
+        if (filters.regionId && d.regionId !== filters.regionId) return false;
+        if (filters.status && getCalculatedStatus(d) !== filters.status) return false;
+        if (filters.trainingLocal && (d.trainingLocal ?? '') !== filters.trainingLocal) return false;
+        if (filters.corredor && (d.corredor ?? '') !== filters.corredor) return false;
+        if (filters.demandState && (d.demandState ?? '') !== filters.demandState) return false;
+        return true;
+      });
+    });
+  }, [allFilteredDemandsList, internaDemands, filters, extraPeriods]);
+
+  /**
+   * Horas de demanda INTERNA por instrutor, um Map por período — espelho do
+   * mapa acima, alimentado pela outra metade do dataset.
+   *
+   * Deliberadamente SEPARADO em vez de jogar as internas dentro de
+   * `instructorHoursMapsByPeriod`: aquele mapa alimenta "Horas Ministradas",
+   * "Produtividade Global" e o export XLSX, que são leitura de entrega a
+   * CLIENTE. Com dois mapas, nada soma os dois — o card de horas por instrutor
+   * TROCA de mapa pelo toggle, e todo o resto do Dashboard fica intacto.
+   */
+  const internaHoursMapsByPeriod = useMemo(() => {
+    return filteredInternasByPeriod.map((internasDoPeriodo, i) => {
+      const { start, end } = getPeriodBounds(i);
+      return computeInstructorHours({
+        demands: internasDoPeriodo,
+        instructorAllocations,
+        trainings,
+        measurements,
+        periodStart: start,
+        periodEnd: end,
+      });
+    });
+  }, [filteredInternasByPeriod, instructorAllocations, trainings, measurements, filters.startDate, filters.endDate, extraPeriods]);
+
+  /**
+   * Agregados da aba INTERNAS. Duas fontes de hora, de propósito:
+   *  - `horasPrevistas` da demanda: carga PLANEJADA, existe em qualquer status.
+   *    Responde "quanto de interna tem no período".
+   *  - `computeInstructorHours`: horas MINISTRADAS, só de demanda concluída e
+   *    COM linha em instructor_allocations, rateadas por dia. Mesma função do
+   *    card de instrutor e da medição — se divergirem, um dos dois está errado.
+   * Somar as duas daria um número que não significa nada.
+   */
+  const internaKpis = useMemo(() => {
+    const lista = filteredInternasByPeriod[0] ?? [];
+    const mapa = internaHoursMapsByPeriod[0] ?? new Map<string, InstructorHoursEntry>();
+
+    const porStatus = new Map<string, number>();
+    for (const d of lista) {
+      const s = getCalculatedStatus(d);
+      porStatus.set(s, (porStatus.get(s) ?? 0) + 1);
+    }
+
+    const horasDe = (d: Demand) => {
+      const h = Number(d.horasPrevistas);
+      return Number.isFinite(h) && h > 0 ? h : 0;
+    };
+
+    const porCategoria = new Map<string, { n: number; horas: number }>();
+    for (const d of lista) {
+      const cat = (d.categoriaInterna || '').trim() || 'Sem categoria';
+      const cur = porCategoria.get(cat) ?? { n: 0, horas: 0 };
+      cur.n += 1;
+      cur.horas += horasDe(d);
+      porCategoria.set(cat, cur);
+    }
+
+    const instrutoresPorNome = new Map(instructors.map(i => [i.id, i.name]));
+    const topInstrutores = [...mapa.entries()]
+      .map(([id, e]) => ({ id, nome: instrutoresPorNome.get(id) ?? id, horas: e.horas, nDemandas: e.nDemandas }))
+      .filter(r => r.horas > 0)
+      .sort((a, b) => b.horas - a.horas)
+      .slice(0, 8);
+
+    const comEmpresa = lista.filter(d => String(d.companyId ?? '').trim()).length;
+
+    return {
+      totalDemandas: lista.length,
+      porStatus: [...porStatus.entries()].sort((a, b) => b[1] - a[1]),
+      horasPrevistas: lista.reduce((acc, d) => acc + horasDe(d), 0),
+      horasMinistradas: [...mapa.values()].reduce((acc, e) => acc + e.horas, 0),
+      categorias: [...porCategoria.entries()]
+        .map(([nome, v]) => ({ nome, ...v }))
+        .sort((a, b) => b.horas - a.horas || b.n - a.n || a.nome.localeCompare(b.nome, 'pt-BR')),
+      topInstrutores,
+      comEmpresa,
+      semEmpresa: lista.length - comEmpresa,
+      /** Concluídas sem alocação: explicam "0h ministradas" com demanda concluída. */
+      concluidasSemAlocacao: lista.filter(d =>
+        getCalculatedStatus(d) === 'CONCLUIDA' &&
+        !instructorAllocations.some(a => a.demandId === d.id && a.instructorId)
+      ).length,
+    };
+  }, [filteredInternasByPeriod, internaHoursMapsByPeriod, instructors, instructorAllocations, trainings]);
 
   const sumInstructorHours = (map: Map<string, InstructorHoursEntry>) => {
     let sum = 0;
@@ -1481,15 +1654,6 @@ const pendingLogisticsDemands = useMemo(() => {
       { label: 'Híbrido', value: filteredDemands.filter(d => getDemandModality(d) === 'HIBRIDO').length, color: 'bg-violet-500' },
     ].filter(m => m.value > 0);
 
-    const STATUS_BADGE: Record<string, string> = {
-      NOVA:        'bg-violet-100 text-violet-700',
-      PENDENTE:    'bg-amber-100 text-amber-700',
-      ALOCADA:     'bg-blue-100 text-blue-700',
-      EM_ANDAMENTO:'bg-emerald-100 text-emerald-700',
-      CONCLUIDA:   'bg-slate-100 text-slate-500',
-      CANCELADA:   'bg-red-100 text-red-500',
-    };
-
     // Valores de comparação para Operacional
     const noInstructor2 = compareMode ? filteredDemands2.filter(d => {
       const s = getCalculatedStatus(d);
@@ -1705,10 +1869,16 @@ const pendingLogisticsDemands = useMemo(() => {
     // ✅ Mesma fonte usada pelo KPI "Horas Concluídas"/"Produtividade Global" e pelo export
     // XLSX — nenhuma lógica duplicada. Mostra TODOS os instrutores com horas > 0 (não só
     // top 10): com dezenas de instrutores, o card rola verticalmente.
-    const instructorHoursMap = instructorHoursMapsByPeriod[0] ?? new Map<string, InstructorHoursEntry>();
+    // Os dois recortes NÃO se somam: o toggle do card troca de dataset. Cliente
+    // e interna respondem a perguntas diferentes ("quanto entregou ao cliente"
+    // vs "quanto gastou em trabalho interno") e misturá-las num número só
+    // escondia as duas. Mesma função, mesmo layout, datasets separados.
+    const rankingMap = instructorRanking === 'INTERNAS'
+      ? (internaHoursMapsByPeriod[0] ?? new Map<string, InstructorHoursEntry>())
+      : (instructorHoursMapsByPeriod[0] ?? new Map<string, InstructorHoursEntry>());
     const instructorHoursList = activeInstructors
       .map(inst => {
-        const entry = instructorHoursMap.get(inst.id);
+        const entry = rankingMap.get(inst.id);
         return {
           id: inst.id,
           name: inst.name,
@@ -1836,6 +2006,21 @@ const pendingLogisticsDemands = useMemo(() => {
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center justify-between shrink-0">
               <span>Horas Ministradas por Instrutor</span>
               <span className="flex items-center gap-2">
+                {/* Mesmo toggle do modal de export de medição (MedicaoExportModal):
+                    trilho cinza, pill branca na aba ativa. */}
+                <span className="flex gap-1 bg-slate-100 p-0.5 rounded-lg">
+                  {(['TREINAMENTOS', 'INTERNAS'] as const).map(modo => (
+                    <button
+                      key={modo}
+                      onClick={() => setInstructorRanking(modo)}
+                      className={`px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-widest transition ${
+                        instructorRanking === modo ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+                      }`}
+                    >
+                      {modo === 'TREINAMENTOS' ? 'Treinamentos' : 'Internas'}
+                    </button>
+                  ))}
+                </span>
                 <span className="text-[9px] font-black text-slate-300 normal-case tracking-normal">{instructorHoursList.length} instrutor{instructorHoursList.length !== 1 ? 'es' : ''}</span>
                 <Award size={13} className="text-slate-300" />
               </span>
@@ -1843,14 +2028,14 @@ const pendingLogisticsDemands = useMemo(() => {
             <div className="flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar space-y-1">
               {instructorHoursList.length > 0 ? instructorHoursList.map((row, idx) => {
                 const pct = Math.max(2, Math.round((row.horas / maxInstructorHours) * 100));
-                const tooltip = `${row.name} — ${formatHoursValue(row.horas)}h · ${row.nDemandas} demanda${row.nDemandas !== 1 ? 's' : ''} concluída${row.nDemandas !== 1 ? 's' : ''}` +
+                const tooltip = `${row.name} — ${formatHoursValue(row.horas)}h · ${row.nDemandas} ${instructorRanking === 'INTERNAS' ? 'demanda interna' : 'demanda'}${row.nDemandas !== 1 ? 's' : ''} concluída${row.nDemandas !== 1 ? 's' : ''}` +
                   (row.nDivididas > 0 ? ` · ${row.nDivididas} dividida${row.nDivididas !== 1 ? 's' : ''} com outro instrutor` : '');
                 return (
                   <div key={row.id} className="flex items-center gap-2 py-1 px-1.5 rounded-lg hover:bg-slate-50 transition-colors" title={tooltip}>
                     <span className="text-[9px] font-black text-slate-300 w-5 text-right shrink-0">{idx + 1}</span>
                     <span className="text-[10px] font-bold text-slate-600 truncate shrink-0 w-32" title={row.name}>{row.name}</span>
                     <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full bg-indigo-500 transition-all" style={{ width: `${pct}%` }} />
+                      <div className={`h-full rounded-full transition-all ${instructorRanking === 'INTERNAS' ? 'bg-teal-500' : 'bg-indigo-500'}`} style={{ width: `${pct}%` }} />
                     </div>
                     <div className="shrink-0 w-14 text-right text-[10px] font-black text-slate-700">{formatHoursValue(row.horas)}h</div>
                     <div className="shrink-0 w-8 text-right text-[9px] font-bold text-slate-400">{row.nDemandas}d</div>
@@ -1865,7 +2050,9 @@ const pendingLogisticsDemands = useMemo(() => {
                   </div>
                 );
               }) : (
-                <div className="h-full flex items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem horas concluídas no período</div>
+                <div className="h-full flex items-center justify-center text-slate-300 italic text-xs uppercase font-bold">
+                  {instructorRanking === 'INTERNAS' ? 'Sem horas internas concluídas no período' : 'Sem horas concluídas no período'}
+                </div>
               )}
             </div>
           </div>
@@ -2531,6 +2718,130 @@ const pendingLogisticsDemands = useMemo(() => {
     );
   };
 
+  /* ─────────────────────────────── ABA INTERNAS ───────────────────────────────
+   * Painel próprio das demandas internas: visita, SIPAT, apoio logístico e
+   * eventos da Colabor. Estava no topo da tela Demandas Internas e veio pra cá
+   * para o acompanhamento gerencial ficar todo no Dashboard, junto dos filtros
+   * de período/região/etc. A tela Demandas Internas voltou a ser filtros +
+   * listagem.
+   */
+  const renderInternas = () => {
+    const maxCategoriaHoras = Math.max(...internaKpis.categorias.map(c => c.horas), 1);
+    const maxInstrutorHoras = Math.max(...internaKpis.topInstrutores.map(r => r.horas), 1);
+
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Demandas Internas</p>
+            <p className="text-3xl font-black text-slate-800 leading-none">{internaKpis.totalDemandas}</p>
+            <div className="flex flex-wrap gap-1 mt-3 min-h-[1.5rem]">
+              {internaKpis.porStatus.map(([status, n]) => (
+                <span key={status} className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${STATUS_BADGE[status] ?? 'bg-slate-100 text-slate-600'}`}>
+                  {status.replace('_', ' ')} {n}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Horas Previstas</p>
+            <p className="text-3xl font-black text-slate-800 leading-none">{formatHoursValue(internaKpis.horasPrevistas)}h</p>
+            <p
+              className="text-[9px] font-bold text-slate-400 mt-3 min-h-[1.5rem]"
+              title="Horas já ministradas: só demandas concluídas E com linha em instructor_allocations, rateadas por dia — mesma conta do card de instrutor e da medição. Interna com instrutor só no cadastro da demanda não entra aqui."
+            >
+              {formatHoursValue(internaKpis.horasMinistradas)}h já ministradas
+            </p>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Vínculo</p>
+            <p className="text-3xl font-black text-slate-800 leading-none">
+              {internaKpis.comEmpresa}<span className="text-slate-300"> / </span>{internaKpis.semEmpresa}
+            </p>
+            <p className="text-[9px] font-bold text-slate-400 mt-3 min-h-[1.5rem]">Com empresa vinculada / Colabor</p>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Categorias</p>
+            <p className="text-3xl font-black text-slate-800 leading-none">{internaKpis.categorias.length}</p>
+            <p className="text-[9px] font-bold text-slate-400 mt-3 min-h-[1.5rem] truncate" title={internaKpis.categorias[0]?.nome ?? ''}>
+              {internaKpis.categorias.length > 0 ? `Maior: ${internaKpis.categorias[0].nome}` : 'Sem categoria no recorte'}
+            </p>
+          </div>
+        </div>
+
+        {/* Concluída sem alocação vira 0h ministradas sem avisar — o mesmo silêncio
+            que já mordeu a medição. Só aparece quando existe o caso. */}
+        {internaKpis.concluidasSemAlocacao > 0 && (
+          <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-2xl">
+            <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+            <p className="text-[11px] font-bold text-amber-800 leading-relaxed">
+              {internaKpis.concluidasSemAlocacao} demanda{internaKpis.concluidasSemAlocacao !== 1 ? 's' : ''} interna{internaKpis.concluidasSemAlocacao !== 1 ? 's' : ''} concluída{internaKpis.concluidasSemAlocacao !== 1 ? 's' : ''} sem alocação de instrutor.
+              <span className="font-medium"> Não entra{internaKpis.concluidasSemAlocacao !== 1 ? 'm' : ''} em "horas já ministradas" nem no ranking: a fonte de horas é <code className="font-mono">instructor_allocations</code>, não o instrutor do cadastro da demanda. Aloque pela agenda para as horas passarem a contar.</span>
+            </p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center justify-between shrink-0">
+              <span>Distribuição por Categoria</span>
+              <span className="text-[9px] font-black text-slate-300 normal-case tracking-normal">horas previstas</span>
+            </h3>
+            {internaKpis.categorias.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem demandas internas no período</div>
+            ) : (
+              <div className="flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar space-y-1">
+                {internaKpis.categorias.map(cat => {
+                  const pct = Math.max(2, Math.round((cat.horas / maxCategoriaHoras) * 100));
+                  return (
+                    <div key={cat.nome} className="flex items-center gap-2 py-1 px-1.5 rounded-lg hover:bg-slate-50 transition-colors" title={`${cat.nome} — ${cat.n} demanda${cat.n !== 1 ? 's' : ''} · ${formatHoursValue(cat.horas)}h previstas`}>
+                      <span className="text-[10px] font-bold text-slate-600 truncate shrink-0 w-32">{cat.nome}</span>
+                      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full bg-teal-500 transition-all" style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="shrink-0 w-14 text-right text-[10px] font-black text-slate-700">{formatHoursValue(cat.horas)}h</div>
+                      <div className="shrink-0 w-8 text-right text-[9px] font-bold text-slate-400">{cat.n}d</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center justify-between shrink-0">
+              <span>Top Instrutores em Horas Internas</span>
+              <span className="text-[9px] font-black text-slate-300 normal-case tracking-normal">ministradas</span>
+            </h3>
+            {internaKpis.topInstrutores.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center text-slate-300 italic text-xs uppercase font-bold text-center px-4">Nenhuma hora interna ministrada no período</div>
+            ) : (
+              <div className="flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar space-y-1">
+                {internaKpis.topInstrutores.map((row, idx) => {
+                  const pct = Math.max(2, Math.round((row.horas / maxInstrutorHoras) * 100));
+                  return (
+                    <div key={row.id} className="flex items-center gap-2 py-1 px-1.5 rounded-lg hover:bg-slate-50 transition-colors" title={`${row.nome} — ${formatHoursValue(row.horas)}h em ${row.nDemandas} demanda${row.nDemandas !== 1 ? 's' : ''} interna${row.nDemandas !== 1 ? 's' : ''} concluída${row.nDemandas !== 1 ? 's' : ''}`}>
+                      <span className="text-[9px] font-black text-slate-300 w-5 text-right shrink-0">{idx + 1}</span>
+                      <span className="text-[10px] font-bold text-slate-600 truncate shrink-0 w-32">{row.nome}</span>
+                      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full bg-teal-500 transition-all" style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="shrink-0 w-14 text-right text-[10px] font-black text-slate-700">{formatHoursValue(row.horas)}h</div>
+                      <div className="shrink-0 w-8 text-right text-[9px] font-bold text-slate-400">{row.nDemandas}d</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // ─── Excel Export ────────────────────────────────────────────────────────────
   const handleExportDashboard = async (mode: 'current' | 'all') => {
     setShowExportMenu(false);
@@ -2802,12 +3113,35 @@ const pendingLogisticsDemands = useMemo(() => {
       addSection(ws, 'Custo por Instrutor', ['Instrutor', 'Total de Despesas'], instrCostRows);
     };
 
+    const buildInternas = (ws: any) => {
+      addSection(ws, 'Resumo', ['Indicador', 'Valor'],
+        [
+          ['Demandas internas', internaKpis.totalDemandas],
+          ['Horas previstas', `${formatHoursValue(internaKpis.horasPrevistas)}h`],
+          ['Horas já ministradas', `${formatHoursValue(internaKpis.horasMinistradas)}h`],
+          ['Com empresa vinculada', internaKpis.comEmpresa],
+          ['Colabor (sem empresa)', internaKpis.semEmpresa],
+          ['Concluídas sem alocação', internaKpis.concluidasSemAlocacao],
+        ]
+      );
+      addSection(ws, 'Por Status', ['Status', 'Qtd'],
+        internaKpis.porStatus.map(([status, n]) => [status.replace('_', ' '), n])
+      );
+      addSection(ws, 'Por Categoria', ['Categoria', 'Demandas', 'Horas Previstas'],
+        internaKpis.categorias.map(c => [c.nome, c.n, `${formatHoursValue(c.horas)}h`])
+      );
+      addSection(ws, 'Top Instrutores em Horas Internas', ['Instrutor', 'Horas Ministradas', 'Demandas'],
+        internaKpis.topInstrutores.map(r => [r.nome, `${formatHoursValue(r.horas)}h`, r.nDemandas])
+      );
+    };
+
     const TAB_CONFIG: { id: TabType; label: string; build: (ws: any) => void }[] = [
       { id: 'GERAL',       label: 'Visão Geral',  build: buildGeral },
       { id: 'OPERACIONAL', label: 'Operacional',  build: buildOperacional },
       { id: 'INSTRUTORES', label: 'Instrutores',  build: buildInstrutores },
       { id: 'CLIENTES',    label: 'Clientes',     build: buildClientes },
       { id: 'CUSTOS',      label: 'Custos',       build: buildCustos },
+      { id: 'INTERNAS',    label: 'Internas',     build: buildInternas },
     ];
 
     const tabs = mode === 'current' ? TAB_CONFIG.filter(t => t.id === activeTab) : TAB_CONFIG;
@@ -2851,7 +3185,10 @@ const pendingLogisticsDemands = useMemo(() => {
               { id: 'OPERACIONAL', label: 'Operacional', icon: Truck },
               { id: 'INSTRUTORES', label: 'Instrutores', icon: Award },
               { id: 'CLIENTES', label: 'Clientes', icon: Building2 },
-              { id: 'CUSTOS', label: 'Custos', icon: DollarSign }
+              { id: 'CUSTOS', label: 'Custos', icon: DollarSign },
+              // Building2 seria o icone do menu, mas ja e o da aba Clientes aqui —
+              // Home evita a colisao e le como "casa", que e o que interna e.
+              { id: 'INTERNAS', label: 'Internas', icon: Home }
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -3115,6 +3452,7 @@ const pendingLogisticsDemands = useMemo(() => {
         {activeTab === 'INSTRUTORES' && renderInstrutores()}
         {activeTab === 'CLIENTES' && renderClientes()}
         {activeTab === 'CUSTOS' && renderCustos()}
+        {activeTab === 'INTERNAS' && renderInternas()}
       </div>
 
       {/* Drawer de ajuda */}

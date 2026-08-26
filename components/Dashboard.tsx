@@ -2863,6 +2863,41 @@ const pendingLogisticsDemands = useMemo(() => {
                 </span>
               </div>
 
+              {/* Quem JA recebeu. Omitida quando X = 0 — secao vazia so ocupa
+                  espaco; a lista ambar abaixo ja diz que ninguem foi coberto. */}
+              {idleCoverage.covered.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                    Com interna no período ({idleCoverage.covered.length})
+                  </p>
+                  <div className="max-h-52 overflow-y-auto custom-scrollbar">
+                    <div className="grid grid-cols-2 gap-2">
+                      {idleCoverage.covered.map(i => {
+                        const internas = idleCoverage.internalsByInstructor.get(i.id) ?? [];
+                        const extras = internas.length - 1;
+                        return (
+                          <div
+                            key={i.id}
+                            className="flex items-center gap-2 p-2.5 bg-emerald-50/60 rounded-xl border border-emerald-100 min-w-0"
+                            title={internas.map(d => d.id).join(', ')}
+                          >
+                            <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                            <span className="text-[11px] font-bold text-slate-700 truncate">
+                              {i.name.split(' ').slice(0, 2).join(' ')}
+                            </span>
+                            {internas[0] && (
+                              <span className="text-[10px] font-bold text-emerald-600 shrink-0 ml-auto">
+                                {internas[0].id}{extras > 0 ? ` +${extras}` : ''}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {idleCoverage.uncovered.length > 0 ? (
                 <div>
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">

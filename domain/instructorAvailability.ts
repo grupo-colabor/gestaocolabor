@@ -48,6 +48,8 @@ export interface AvailabilityInstructor {
 
 /** Só o que a regra lê de uma demanda. */
 export interface AvailabilityDemand {
+  /** Usado só para citar a demanda na UI (ex.: "DEM-1513"). */
+  id?: string;
   instructorId?: string | null;
   startDate?: string | null;
   endDate?: string | null;
@@ -117,13 +119,20 @@ export function getAvailableInstructors<I extends AvailabilityInstructor, D exte
 }
 
 /** Resultado do card "Cobertura de Ociosidade". */
-export interface IdleCoverage<I> {
+export interface IdleCoverage<I, D> {
   /** Y — ociosos na janela (sem demanda de cliente). */
   available: I[];
   /** X — dentre os ociosos, os que receberam ao menos uma interna no período. */
   covered: I[];
   /** Y − X — a lista de ação. */
   uncovered: I[];
+  /**
+   * As internas de cada instrutor COBERTO, na ordem em que apareceram na lista
+   * recebida. Sai da mesma passada que monta `covered` — o card usa para citar
+   * a demanda ao lado do nome em vez de mandar o usuário cruzar telas.
+   * Instrutor não coberto não tem chave aqui.
+   */
+  internalsByInstructor: Map<string, D[]>;
 }
 
 /**
@@ -135,16 +144,21 @@ export function computeIdleCoverage<I extends AvailabilityInstructor, D extends 
   available: I[],
   internalDemands: D[],
   options: Pick<AvailabilityOptions<D>, 'statusOf'>
-): IdleCoverage<I> {
-  const withInternal = new Set(
-    (internalDemands ?? [])
-      .filter(d => !!d.instructorId && options.statusOf(d) !== 'CANCELADA')
-      .map(d => d.instructorId as string)
-  );
+): IdleCoverage<I, D> {
+  const byInstructor = new Map<string, D[]>();
+  for (const d of internalDemands ?? []) {
+    if (!d.instructorId) continue;
+    if (options.statusOf(d) === 'CANCELADA') continue;
+    const key = d.instructorId as string;
+    const list = byInstructor.get(key);
+    if (list) list.push(d);
+    else byInstructor.set(key, [d]);
+  }
 
   return {
     available,
-    covered: available.filter(i => withInternal.has(i.id)),
-    uncovered: available.filter(i => !withInternal.has(i.id)),
+    covered: available.filter(i => byInstructor.has(i.id)),
+    uncovered: available.filter(i => !byInstructor.has(i.id)),
+    internalsByInstructor: byInstructor,
   };
 }

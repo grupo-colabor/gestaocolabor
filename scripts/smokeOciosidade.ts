@@ -119,6 +119,35 @@ console.log('\n— Cobertura: 3 ociosos, 1 com interna -> "1 de 3"');
   checkEq('Y = 3', cob.available.length, 3);
   checkEq('coberto e o Bruno', cob.covered.map(i => i.name), ['Bruno']);
   checkEq('lista de acao = os 2 certos', cob.uncovered.map(i => i.name), ['Carla', 'Daniel']);
+
+  // O card nomeia os cobertos e cita a interna ao lado do nome.
+  checkEq('os cobertos sao nomeaveis', cob.covered.map(i => i.name), ['Bruno']);
+  checkEq('e a interna do Bruno vem junto',
+    (cob.internalsByInstructor.get('INST-B') ?? []).map(d => d.id), ['INT-1']);
+  checkEq('quem nao foi coberto nao tem chave no mapa',
+    cob.internalsByInstructor.has('INST-C'), false);
+}
+
+console.log('\n— Chip verde: varias internas viram "a primeira + contador"');
+{
+  const ociosos = getAvailableInstructors(instrutores, demandas, janela, {
+    statusOf, countsAsBusy: d => d.tipo !== 'interna',
+  });
+  const varias: D[] = [
+    { id: 'INT-10', instructorId: 'INST-B', startDate: '2026-03-16', endDate: '2026-03-17', tipo: 'interna' },
+    { id: 'INT-11', instructorId: 'INST-B', startDate: '2026-03-18', endDate: '2026-03-19', tipo: 'interna' },
+    { id: 'INT-12', instructorId: 'INST-B', startDate: '2026-03-20', endDate: '2026-03-21', tipo: 'interna' },
+    { id: 'INT-13', instructorId: 'INST-C', startDate: '2026-03-22', endDate: '2026-03-23', tipo: 'interna', cancelada: true },
+  ];
+  const cob = computeIdleCoverage(ociosos, varias, { statusOf });
+
+  checkEq('Bruno continua contando uma vez so', cob.covered.map(i => i.name), ['Bruno']);
+  const doBruno = cob.internalsByInstructor.get('INST-B') ?? [];
+  checkEq('as 3 internas dele estao no mapa, na ordem', doBruno.map(d => d.id), ['INT-10', 'INT-11', 'INT-12']);
+  checkEq('o chip mostra a primeira', doBruno[0]?.id, 'INT-10');
+  checkEq('e o contador e +2', doBruno.length - 1, 2);
+  check('Carla, so com interna CANCELADA, nao aparece como coberta',
+    !cob.internalsByInstructor.has('INST-C'));
 }
 
 console.log('\n— Cobertura: os descartes');

@@ -42,6 +42,13 @@ export interface DemandAlertContext {
   modality: string;
   /** `overall_status` da linha em logistic_allocations; `null` = sem linha. */
   logisticsStatus?: string | null;
+  /**
+   * Prontidão logística recalculada por `domain/demandLogisticsStatus.ts` a
+   * partir da MESMA linha que o Controle Logístico usa. Quando vem preenchida
+   * ela manda, e as duas telas passam a concordar por construção.
+   * `undefined`/`null` = não foi calculada; cai no `logisticsStatus` persistido.
+   */
+  logisticsReady?: boolean | null;
   /** Saída de `getEvidenceAutoStatus(demandId)`. */
   evidenceStatus?: string | null;
   /** `status` da medição; `null`/`undefined` = nenhuma linha de medição. */
@@ -62,12 +69,20 @@ const isCancelled = (ctx: DemandAlertContext) =>
  *
  * Interna entra: é sempre PRESENCIAL por construção, e o formulário dela cria a
  * linha de logística no save (upsertLogisticByDemandId).
+ *
+ * A prontidão vem de `ctx.logisticsReady` — a regra compartilhada com o
+ * Controle Logístico (`domain/demandLogisticsStatus.ts`). O `logisticsStatus`
+ * persistido continua como fallback para quem não calcula o checklist: ele só
+ * fica correto depois que alguém abre o Controle Logístico (que faz o
+ * write-back), e era justamente essa dependência que fazia as duas telas
+ * divergirem.
  */
 export function hasPendingLogistics(ctx: DemandAlertContext): boolean {
   if (isCancelled(ctx)) return false;
   if (!requiresLogistics(ctx.modality)) return false;
   if (ctx.status === 'CONCLUIDA') return false;
   if (ctx.logisticsStatus == null) return false;
+  if (ctx.logisticsReady != null) return !ctx.logisticsReady;
   return upper(ctx.logisticsStatus || 'PENDENTE') !== 'CONCLUIDA';
 }
 

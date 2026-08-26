@@ -17,6 +17,7 @@ import {
   ChevronRight,
   RotateCcw
 } from 'lucide-react';
+import { buildLogisticsChecklist, type ChecklistState } from '../domain/demandLogisticsStatus';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { demandIntersectsRange } from '../domain/demandDays';
 
@@ -168,68 +169,44 @@ const LogisticsControl: React.FC = () => {
 
   const handleToday = () => setReferenceDate(new Date());
 
-  // ✅ Helpers de “OK” usando Supabase (alloc)
-  const isCarOkFromAlloc = (alloc?: LogisticAllocationRow) => {
-    if (!alloc) return null;
-
-    if (alloc.has_car === true) return true;
-
-    const m = (alloc.transport_mode || '').toUpperCase();
-    if (m === 'NAO_NECESSARIO') return true;
-    if (m === 'CARRO_ALUGADO') return true;
-    if (m === 'CARRO_PROPRIO') return true;
-
-    return false;
-  };
-
-  const isHotelOkFromAlloc = (alloc?: LogisticAllocationRow) => {
-    if (!alloc) return null;
-
-    if (alloc.has_hotel === true) return true;
-
-    const m = (alloc.lodging_mode || '').toUpperCase();
-    if (m === 'NAO_NECESSARIO') return true;
-    if (m === 'PRECISA_HOTEL') return true;
-
-    return false;
-  };
-
-  const isMaterialOkFromAlloc = (alloc?: LogisticAllocationRow) => {
-    if (!alloc) return null;
-    return alloc.has_material === true;
-  };
-
-  // ✅ PDFs: prioridade é demand_documents (docsByDemandId)
-  const isReleaseOkFromDocs = (demandId: string) => {
-    const id = normId(demandId);
-    return docsByDemandId?.[id]?.has_release_pdf === true;
-  };
-
-  const isListOkFromDocs = (demandId: string) => {
-    const id = normId(demandId);
-    return docsByDemandId?.[id]?.has_class_list_pdf === true;
-  };
+  // ✅ Checklist: a regra vive em domain/demandLogisticsStatus.ts, compartilhada
+  // com a Central de Notificações. Aqui só se monta a entrada dela.
+  const checklistFor = (
+    d: Demand,
+    alloc?: LogisticAllocationRow,
+    docs?: { has_class_list_pdf: boolean; has_release_pdf: boolean }
+  ) =>
+    buildLogisticsChecklist({
+      isInternal: isInternalDemand(d),
+      hasAlloc: !!alloc,
+      hasCar: alloc?.has_car,
+      transportMode: alloc?.transport_mode,
+      hasHotel: alloc?.has_hotel,
+      lodgingMode: alloc?.lodging_mode,
+      hasMaterial: alloc?.has_material,
+      // PDFs: prioridade é demand_documents; sem ele, cai nas flags da própria
+      // linha (que este componente mantém em dia no write-back).
+      hasReleasePdf: docs ? docs.has_release_pdf : alloc?.has_release_pdf,
+      hasClassListPdf: docs ? docs.has_class_list_pdf : alloc?.has_class_list_pdf,
+      legacy: {
+        logisticsHotel: d.logisticsHotel,
+        logisticsTransport: d.logisticsTransport,
+        materialReady: d.materialReady,
+      },
+    });
 
   // ✅ cálculo oficial do overall (alloc + docs)
   const computeOverallStatusFromAllocAndDocs = (
+    d: Demand,
     alloc?: LogisticAllocationRow,
     docs?: { has_class_list_pdf: boolean; has_release_pdf: boolean }
   ) => {
     if (!alloc) return { overall: 'PENDENTE', has_release_pdf: false, has_class_list_pdf: false };
-
-    const carOk = isCarOkFromAlloc(alloc) === true;
-    const hotelOk = isHotelOkFromAlloc(alloc) === true;
-    const materialOk = isMaterialOkFromAlloc(alloc) === true;
-
-    const releaseOk = docs?.has_release_pdf === true;
-    const listOk = docs?.has_class_list_pdf === true;
-
-    const allReady = carOk && hotelOk && materialOk && releaseOk && listOk;
-
+    const c = checklistFor(d, alloc, docs);
     return {
-      overall: allReady ? 'CONCLUIDA' : 'PENDENTE',
-      has_release_pdf: releaseOk,
-      has_class_list_pdf: listOk,
+      overall: c.ready ? 'CONCLUIDA' : 'PENDENTE',
+      has_release_pdf: docs?.has_release_pdf === true,
+      has_class_list_pdf: docs?.has_class_list_pdf === true,
     };
   };
 
@@ -294,7 +271,11 @@ const LogisticsControl: React.FC = () => {
         const alloc = allocMap[demandId];
         const docs = docsMap[demandId]; // pode ser undefined
 
-        const computed = computeOverallStatusFromAllocAndDocs(alloc, docs);
+        // A regra depende do tipo da demanda (interna dispensa material/lista),
+        // entao a linha de logistica sozinha nao basta.
+        const demandOfAlloc = demands.find(x => normId(x.id) === demandId);
+        if (!demandOfAlloc) continue;
+        const computed = computeOverallStatusFromAllocAndDocs(demandOfAlloc, alloc, docs);
 
         const nextOverall = String(computed.overall).toUpperCase();
         const currentOverall = String(alloc?.overall_status ?? 'PENDENTE').toUpperCase();
@@ -411,8 +392,19 @@ const LogisticsControl: React.FC = () => {
     });
   };
 
-  const StatusIcon = ({ ok }: { ok?: boolean }) => {
-    if (ok) return <CheckCircle2 size={18} className="text-emerald-500" />;
+  /**
+   * NAO_APLICA e' o estado neutro (tracinho): a coluna nao vale para esta
+   * demanda e nao conta como pendencia. Sem ele, uma coluna inaplicavel ficava
+   * com o mesmo "!" de uma pendencia real.
+   */
+  const StatusIcon = ({ state }: { state: ChecklistState }) => {
+    if (state === 'OK') return <CheckCircle2 size={18} className="text-emerald-500" />;
+    if (state === 'NAO_APLICA')
+      return (
+        <span className="text-slate-300 text-[13px] font-black leading-none" title="Nao se aplica a esta demanda">
+          —
+        </span>
+      );
     return <AlertCircle size={18} className="text-slate-200" />;
   };
 
@@ -562,29 +554,9 @@ const LogisticsControl: React.FC = () => {
                     const demandId = normId(d.id);
                     const alloc = logisticsByDemandId?.[demandId];
 
-                    // ✅ Preferência: Supabase. Fallback: campos antigos.
-                    const carOkFromDb = isCarOkFromAlloc(alloc);
-                    const hotelOkFromDb = isHotelOkFromAlloc(alloc);
-                    const materialOkFromDb = isMaterialOkFromAlloc(alloc);
-
-                    // PDFs: prioridade = demand_documents
-                    const releaseOkFromDocs = isReleaseOkFromDocs(demandId);
-                    const listOkFromDocs = isListOkFromDocs(demandId);
-
-                    // legacy fallback (só pra não quebrar nada)
-                    const isHotelOkLegacy =
-                      d.logisticsHotel === 'CONFIRMADO' || d.logisticsHotel === 'NAO_NECESSARIO';
-                    const isCarOkLegacy =
-                      d.logisticsTransport === 'CONFIRMADO' || d.logisticsTransport === 'NAO_NECESSARIO';
-                    const isMaterialOkLegacy = d.materialReady === true;
-
-                    const isHotelOk = hotelOkFromDb ?? isHotelOkLegacy;
-                    const isCarOk = carOkFromDb ?? isCarOkLegacy;
-                    const isMaterialOk = materialOkFromDb ?? isMaterialOkLegacy;
-
-                    // ✅ PDFs finais
-                    const isReleaseOk = releaseOkFromDocs;
-                    const isListOk = listOkFromDocs;
+                    // ✅ Regra unica (domain/demandLogisticsStatus.ts): mesma
+                    // usada no write-back e na Central de Notificacoes.
+                    const check = checklistFor(d, alloc, docsByDemandId?.[demandId]);
 
                     const statusLegacy = calculateDemandStatus(
                       {
@@ -597,7 +569,7 @@ const LogisticsControl: React.FC = () => {
                       } as any
                     );
 
-                    const allReady = isHotelOk && isCarOk && isMaterialOk && isReleaseOk && isListOk;
+                    const allReady = check.ready;
 
                     // ✅ Corrige “PRONTO em cima e PENDENTE embaixo”
                     const statusLabel = allReady ? 'CONCLUÍDO' : 'PENDÊNCIA LOGÍSTICA';
@@ -656,51 +628,55 @@ const LogisticsControl: React.FC = () => {
                         {/* HOTEL */}
                         <td className="p-5 text-center">
                           <div className="flex justify-center">
-                            <StatusIcon ok={isHotelOk} />
+                            <StatusIcon state={check.hotel} />
                           </div>
                         </td>
 
                         {/* CARRO */}
                         <td className="p-5 text-center">
                           <div className="flex justify-center">
-                            <StatusIcon ok={isCarOk} />
+                            <StatusIcon state={check.car} />
                           </div>
                         </td>
 
-                        {/* MATERIAL (manual) */}
+                        {/* MATERIAL (manual) — neutro quando nao se aplica */}
                         <td className="p-5 text-center">
                           <div className="flex justify-center">
-                            <button
-                              onClick={() => {
-                                // Se já tem row do Supabase, toggle lá. Se não tiver, mantém legacy por enquanto.
-                                if (alloc) toggleMaterial(d);
-                                else toggleMaterialLegacy(d);
-                              }}
-                              className={`p-1 rounded-md transition-all hover:bg-slate-100 ${
-                                isMaterialOk ? 'text-emerald-500' : 'text-slate-300'
-                              }`}
-                              title={alloc ? 'Marcar Material (Supabase)' : 'Marcar Material (legacy)'}
-                            >
-                              <Package
-                                size={20}
-                                fill={isMaterialOk ? 'currentColor' : 'none'}
-                                strokeWidth={isMaterialOk ? 1.5 : 2}
-                              />
-                            </button>
+                            {check.material === 'NAO_APLICA' ? (
+                              <StatusIcon state="NAO_APLICA" />
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  // Se já tem row do Supabase, toggle lá. Se não tiver, mantém legacy por enquanto.
+                                  if (alloc) toggleMaterial(d);
+                                  else toggleMaterialLegacy(d);
+                                }}
+                                className={`p-1 rounded-md transition-all hover:bg-slate-100 ${
+                                  check.material === 'OK' ? 'text-emerald-500' : 'text-slate-300'
+                                }`}
+                                title={alloc ? 'Marcar Material (Supabase)' : 'Marcar Material (legacy)'}
+                              >
+                                <Package
+                                  size={20}
+                                  fill={check.material === 'OK' ? 'currentColor' : 'none'}
+                                  strokeWidth={check.material === 'OK' ? 1.5 : 2}
+                                />
+                              </button>
+                            )}
                           </div>
                         </td>
 
                         {/* LIBERAÇÃO */}
                         <td className="p-5 text-center">
                           <div className="flex justify-center">
-                            <StatusIcon ok={isReleaseOk} />
+                            <StatusIcon state={check.release} />
                           </div>
                         </td>
 
                         {/* LISTA */}
                         <td className="p-5 text-center">
                           <div className="flex justify-center">
-                            <StatusIcon ok={isListOk} />
+                            <StatusIcon state={check.list} />
                           </div>
                         </td>
 

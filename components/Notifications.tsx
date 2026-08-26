@@ -14,6 +14,7 @@ import {
   demandListView,
   type DemandAlertContext,
 } from '../domain/notificationAlerts';
+import { buildLogisticsChecklist } from '../domain/demandLogisticsStatus';
 
 const PREVIEW_COUNT = 6;
 
@@ -234,6 +235,23 @@ const Notifications: React.FC = () => {
       logisticsStatus: (() => {
         const alloc = logisticsByDemandId[normId(d.id)];
         return alloc ? String(alloc.overall_status ?? 'PENDENTE') : null;
+      })(),
+      // Mesma regra do Controle Logístico, sobre a mesma linha: as flags de PDF
+      // são mantidas em dia pelo write-back daquela tela.
+      logisticsReady: (() => {
+        const alloc: any = logisticsByDemandId[normId(d.id)];
+        if (!alloc) return null;
+        return buildLogisticsChecklist({
+          isInternal: d.tipo === 'interna',
+          hasAlloc: true,
+          hasCar: alloc.has_car,
+          transportMode: alloc.transport_mode,
+          hasHotel: alloc.has_hotel,
+          lodgingMode: alloc.lodging_mode,
+          hasMaterial: alloc.has_material,
+          hasReleasePdf: alloc.has_release_pdf,
+          hasClassListPdf: alloc.has_class_list_pdf,
+        }).ready;
       })(),
       evidenceStatus: getEvidenceAutoStatus(d.id),
       // null = nenhuma linha de medição; string = o status que veio do banco.

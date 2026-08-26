@@ -63,7 +63,12 @@ const AGENDA_STYLING: Record<string, { bg: string; text: string; border: string 
   'DESLOCAMENTO': { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
   EVENTO: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
   RESERVADO: { bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200' },
-  APOIO: { bg: 'bg-amber-500', text: 'text-white', border: 'border-amber-600' }
+  // Texto em amber-950, nao branco: as linhas 2-3 do card sao atenuadas
+  // (opacity 90%/85%) e branco atenuado sobre amber-500 dava 1,99:1 e
+  // 1,91:1 de contraste. Escurecer o texto mantem o laranja da identidade
+  // e leva as tres linhas para >=5,2:1 (AA); escurecer o FUNDO nao resolvia
+  // (branco sobre amber-600 fica em 2,72:1, sobre amber-700 em 4,08:1).
+  APOIO: { bg: 'bg-amber-500', text: 'text-amber-950', border: 'border-amber-600' }
 };
 
 /**

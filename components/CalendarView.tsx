@@ -1855,13 +1855,13 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                             </span>
                             {/* Linha 2: Local do Treinamento (sem emoji, fonte levemente maior) */}
                             {demand?.trainingLocal && demand.trainingLocal !== 'N/A' && (
-                              <span className="text-[12px] font-semibold text-white/90 w-full text-center leading-tight">
+                              <span className="text-[12px] font-semibold opacity-90 w-full text-center leading-tight">
                                 {demand.trainingLocal}
                               </span>
                             )}
                             {/* Linha 3: ID SAP / Pedido Cliente */}
                             {demand?.clientDemandId && (
-                              <span className="text-[10px] font-semibold text-white/85 w-full text-center leading-tight">
+                              <span className="text-[10px] font-semibold opacity-[0.85] w-full text-center leading-tight">
                                 {demand.clientDemandId}
                               </span>
                             )}

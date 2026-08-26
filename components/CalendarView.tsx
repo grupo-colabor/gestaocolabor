@@ -101,8 +101,11 @@ const AGENDA_TYPES: AgendaType[] = [
   'ESCRITORIO_BH',
   'ESCRITORIO_VITORIA',
   'HOME_OFFICE',
-  'EXTERNO',
-  'APOIO'
+  'EXTERNO'
+  // APOIO saiu daqui: demandas internas (categoria Apoio Logistico) substituem
+  // o mecanismo, entao nao se cria mais registro novo de apoio. O tipo segue
+  // vivo no dominio (AgendaType, AGENDA_LABELS, AGENDA_STYLING.APOIO) porque os
+  // registros ja existentes continuam sendo exibidos normalmente na agenda.
 ];
 
 const AGENDA_LABELS: Record<string, string> = {
@@ -2283,7 +2286,14 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
               ) : (
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-1.5">
-                    {(isMobileContext ? MOBILE_AGENDA_TYPES : AGENDA_TYPES).map(type => (
+                    {(() => {
+                      const options: string[] = isMobileContext ? MOBILE_AGENDA_TYPES : AGENDA_TYPES;
+                      // Tipo atual entra na lista mesmo se saiu das opcoes de criacao
+                      // (ex.: um APOIO legado aberto para edicao): sem isso o seletor
+                      // apareceria sem nenhum botao ativo e forcaria trocar o tipo.
+                      // Na criacao formType e' sempre um tipo valido, entao nada muda.
+                      const types = options.includes(formType) ? options : [...options, formType];
+                      return types.map(type => (
                       <button
                         key={type}
                         onClick={() => setFormType(type)}
@@ -2293,7 +2303,8 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                       >
                         {getAgendaLabel(type)}
                       </button>
-                    ))}
+                      ));
+                    })()}
                   </div>
 
                   {/* Data de início (só exibição) + Data fim */}

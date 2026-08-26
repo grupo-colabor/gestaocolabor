@@ -296,6 +296,14 @@ export interface Attachment {
   category: ExpenseCategory;
   value: number | string; // Valor monetário da notinha (aceita string para digitação fluida)
   otherId?: string; // Vinculo opcional para despesas em 'Outros'
+  /**
+   * Despesa que o CLIENTE nao reembolsa (ex.: Uber ate a locadora, almoco
+   * acima do teto) — a Colabor absorve. Ausente = reembolsavel: os itens ja
+   * gravados seguem valendo sem backfill, porque a leitura e `!== false`.
+   * O item marcado continua no total e na sua categoria; e um recorte, nao
+   * uma subtracao. Ver domain/measurementTotals.ts.
+   */
+  reembolsavel?: boolean;
   bucket?: string;
   path?: string;
   size?: number;

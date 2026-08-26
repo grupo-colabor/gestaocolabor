@@ -16,6 +16,7 @@ import {
 import { Demand, type Instructor } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { demandIntersectsRange } from '../domain/demandDays';
+import { aggregateMeasurements } from '../domain/measurementTotals';
 import {
   getAvailableInstructors,
   defaultAvailabilityWindow,
@@ -262,6 +263,8 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
       section: 'Cards de Indicadores',
       items: [
         { term: 'Total em Despesas', desc: 'Soma de todos os valores de anexos (notas e comprovantes) registrados nas medições do período filtrado.' },
+        { term: 'Despesas Não Reembolsáveis', desc: 'Recorte do Total em Despesas: itens marcados na Medição como não reembolsáveis pelo cliente (ex.: Uber até a locadora, almoço acima do teto). A Colabor absorve. Continuam somados no total e na categoria — é um recorte, não uma subtração.' },
+        { term: 'Escopo desta aba', desc: 'Só demandas de CLIENTE. O custo de demanda interna não é reembolsável por natureza e aparece na aba Internas, em "Custo das Demandas Internas".' },
         { term: 'Ticket Médio/Medição', desc: 'Média de despesas por medição registrada no período.' },
         { term: 'Não Iniciadas', desc: 'Demandas concluídas no período sem medição em andamento — status NAO_INICIADA ou sem registro.' },
         { term: 'Pronta Faturamento', desc: 'Medições conferidas e aguardando emissão de nota fiscal.' },
@@ -288,6 +291,7 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
         { term: 'Horas Já Ministradas', desc: 'Linha menor do card de horas. Mede outra coisa: só demandas CONCLUÍDAS e COM alocação em instructor_allocations, rateadas por dia. É a mesma conta do card de instrutor e da medição. Interna cujo instrutor foi definido só no cadastro da demanda NÃO entra aqui — o vínculo tem que existir na agenda.' },
         { term: 'Vínculo', desc: 'Demandas com empresa vinculada (company_id preenchido) versus demandas da própria Colabor. Interna pode ou não ter empresa: uma visita técnica na Vale tem, uma SIPAT interna não.' },
         { term: 'Categorias', desc: 'Quantas categorias distintas aparecem no recorte, e qual delas concentra mais horas previstas.' },
+        { term: 'Custo das Demandas Internas', desc: 'Soma das medições das demandas internas do recorte: Hora/Aula (horas lançadas × valor/hora) + Despesas (notas e valores avulsos). Interna não é reembolsada pelo cliente — este número é o custo que a Colabor absorve por inteiro, e por isso vive aqui e não na aba Custos.' },
       ],
     },
     {
@@ -2393,6 +2397,22 @@ const pendingLogisticsDemands = useMemo(() => {
       ).length;
     };
 
+    // --- Despesas Nao Reembolsaveis ---
+    // O cliente reembolsa a medicao, mas nao todo item (Uber ate a locadora,
+    // almoco acima do teto). Isto e um RECORTE do total acima, nao uma parcela
+    // separada: o item marcado continua somando na sua categoria.
+    // `filteredMeasurements` ja e cliente-only, entao interna nao entra aqui —
+    // o custo dela e integral e aparece na aba INTERNAS.
+    const naoReemb = aggregateMeasurements(filteredMeasurements as any);
+    const naoReembCategorias = [
+      { label: 'Hospedagem', valor: naoReemb.naoReembolsavelPorCategoria.HOSPEDAGEM },
+      { label: 'Locomoção', valor: naoReemb.naoReembolsavelPorCategoria.LOCOMOCAO },
+      { label: 'Café da Manhã', valor: naoReemb.naoReembolsavelPorCategoria.CAFE },
+      { label: 'Almoço', valor: naoReemb.naoReembolsavelPorCategoria.ALMOCO },
+      { label: 'Jantar', valor: naoReemb.naoReembolsavelPorCategoria.JANTAR },
+      { label: 'Outros', valor: naoReemb.naoReembolsavelPorCategoria.OUTROS },
+    ].filter(c => c.valor > 0).sort((x, y) => y.valor - x.valor);
+
     // Totais por categoria (com normalização)
     const hospTotal  = sumByCategory(filteredMeasurements, 'HOSPEDAGEM');
     const locoTotal  = sumByCategory(filteredMeasurements, 'LOCOMOCAO');
@@ -2538,6 +2558,47 @@ const pendingLogisticsDemands = useMemo(() => {
           <KPICard title="Não Iniciadas" value={naoIniciadaCount} compareValue={naoIniciada2} positiveIsGood={false} periods={mkPeriods((d, m) => { const conc = d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA'); return conc.filter((x: any) => !m.some((mx: any) => mx.demandId === x.id) || m.find((mx: any) => mx.demandId === x.id)?.status === 'NAO_INICIADA').length; })} icon={Clock} colorClass="bg-orange-50 text-orange-600" subtext="Demandas concluídas" />
           <KPICard title="Pronta Faturamento" value={filteredMeasurements.filter(m => m.status === 'PRONTA_FATURAMENTO').length} compareValue={compareMode ? filteredMeasurements2.filter(m => m.status === 'PRONTA_FATURAMENTO').length : undefined} periods={mkPeriods((_d, m) => m.filter((x: any) => x.status === 'PRONTA_FATURAMENTO').length)} icon={CheckCircle} colorClass="bg-violet-50 text-violet-600" />
           <KPICard title="Faturadas" value={filteredMeasurements.filter(m => m.status === 'FATURADA').length} compareValue={compareMode ? filteredMeasurements2.filter(m => m.status === 'FATURADA').length : undefined} periods={mkPeriods((_d, m) => m.filter((x: any) => x.status === 'FATURADA').length)} icon={Award} colorClass="bg-emerald-50 text-emerald-600" />
+        </div>
+
+        {/* Despesas Nao Reembolsaveis */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="text-xs font-black text-slate-800 uppercase tracking-tight">Despesas Não Reembolsáveis</h3>
+              <p className="text-[10px] font-bold text-slate-400 mt-0.5 uppercase tracking-widest">
+                O que a Colabor absorve — já incluso no total acima
+              </p>
+            </div>
+            <div className="p-3 rounded-xl bg-amber-50 text-amber-600 shrink-0">
+              <ShieldAlert size={20} />
+            </div>
+          </div>
+
+          {naoReemb.naoReembolsavel <= 0 ? (
+            <p className="px-5 py-8 text-center text-[11px] text-slate-300 italic font-bold">
+              Nenhuma despesa marcada como não reembolsável no período.
+            </p>
+          ) : (
+            <div className="p-5 space-y-4">
+              <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                <h4 className="text-2xl font-black text-amber-600">{formatCurrency(naoReemb.naoReembolsavel)}</h4>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                  {naoReemb.itensNaoReembolsaveis} ite{naoReemb.itensNaoReembolsaveis === 1 ? 'm' : 'ns'} em {naoReemb.medicoesComNaoReembolsavel} medi{naoReemb.medicoesComNaoReembolsavel === 1 ? 'ção' : 'ções'}
+                </span>
+              </div>
+
+              {naoReembCategorias.length > 0 && (
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+                  {naoReembCategorias.map(c => (
+                    <div key={c.label} className="flex items-center justify-between gap-2 p-2.5 bg-amber-50/60 rounded-xl border border-amber-100 min-w-0">
+                      <span className="text-[11px] font-bold text-slate-700 truncate">{c.label}</span>
+                      <span className="text-[11px] font-black text-amber-700 shrink-0">{formatCurrency(c.valor)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Mix de Despesas + Média por Categoria */}
@@ -2733,15 +2794,27 @@ const pendingLogisticsDemands = useMemo(() => {
     const maxCategoriaHoras = Math.max(...internaKpis.categorias.map(c => c.horas), 1);
     const maxInstrutorHoras = Math.max(...internaKpis.topInstrutores.map(r => r.horas), 1);
 
+    // --- Custo das Demandas Internas ---
+    // Interna nao gera reembolso: o que a Colabor gasta nela e custo proprio,
+    // inteiro. Por isso o numero vive AQUI e nao na aba CUSTOS, que mede o que
+    // e reembolsado pelo cliente (`demands` ja e cliente-only na linha ~400).
+    // Mesma conta da tela de Medicao — domain/measurementTotals.ts.
+    const internaIdsNoPeriodo = new Set((filteredInternasByPeriod[0] ?? []).map(d => d.id));
+    const custoInterna = aggregateMeasurements(
+      measurements.filter(m => internaIdsNoPeriodo.has(m.demandId)) as any
+    );
+
     // --- Cobertura de Ociosidade ---
     // "A ferramenta de ocupacao esta sendo usada?" — dos instrutores ociosos no
     // recorte, quantos receberam demanda interna.
     //
     // A disponibilidade vem do MESMO helper do card da aba INSTRUTORES
-    // (domain/instructorAvailability.ts). A unica diferenca e o countsAsBusy:
-    // aqui a ociosidade e medida contra o trabalho de CLIENTE. Se a interna
-    // tambem ocupasse, receber uma interna tiraria o instrutor de "ocioso" e a
-    // resposta seria zero por construcao — ver o cabecalho do modulo.
+    // (domain/instructorAvailability.ts). O countsAsBusy deixa explicito que a
+    // ociosidade e medida contra o trabalho de CLIENTE: se a interna tambem
+    // ocupasse, receber uma interna tiraria o instrutor de "ocioso" e a resposta
+    // seria zero por construcao. Hoje ele e redundante — `demands` ja e
+    // cliente-only (ver o corte na entrada, ~linha 400) — mas fica como guarda
+    // caso esse dataset mude.
     const { start: internaStart, end: internaEnd } = getPeriodBounds(0);
     const hasInternaPeriod = !!(internaStart || internaEnd);
     const idleWindow = hasInternaPeriod
@@ -2829,6 +2902,30 @@ const pendingLogisticsDemands = useMemo(() => {
             <div className="p-3 rounded-xl bg-amber-50 text-amber-600 group-hover:scale-110 transition-transform shrink-0 ml-3">
               <Tag size={20} />
             </div>
+          </div>
+        </div>
+
+        {/* Custo das Demandas Internas */}
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-start justify-between hover:shadow-md transition-all group">
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-slate-600 transition-colors">
+              Custo das Demandas Internas
+            </p>
+            <h3 className="text-2xl font-black text-slate-800">{formatCurrency(custoInterna.total)}</h3>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 min-h-[1.5rem]">
+              <span className="text-[9px] font-bold text-slate-400">
+                Hora/Aula <span className="text-slate-700">{formatCurrency(custoInterna.horaAula)}</span>
+              </span>
+              <span className="text-[9px] font-bold text-slate-400">
+                Despesas <span className="text-slate-700">{formatCurrency(custoInterna.despesas)}</span>
+              </span>
+              <span className="text-[9px] font-bold text-slate-300">
+                {custoInterna.medicoes} medi{custoInterna.medicoes === 1 ? 'ção' : 'ções'} no recorte
+              </span>
+            </div>
+          </div>
+          <div className="p-3 rounded-xl bg-rose-50 text-rose-600 group-hover:scale-110 transition-transform shrink-0 ml-3">
+            <DollarSign size={20} />
           </div>
         </div>
 

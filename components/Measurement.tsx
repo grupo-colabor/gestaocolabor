@@ -8,6 +8,10 @@ import {
   getDemandCompanyLabel as getDemandCompanyLabelDomain,
   isInternalDemand,
 } from '../domain/demandLabel';
+import {
+  computeMeasurementTotals,
+  isNaoReembolsavel,
+} from '../domain/measurementTotals';
 import { usePagination } from '../hooks/usePagination';
 import Pagination from './Pagination';
 import { 
@@ -76,7 +80,9 @@ const CategoryBlock = ({
   onUploadFile,
   onUpdateValue,
   onRemoveAttachment,
-  onAddManualValue
+  onAddManualValue,
+  showReembolsavel,
+  onToggleReembolsavel
 }: { 
   category: ExpenseCategory, 
   label: string, 
@@ -89,7 +95,14 @@ const CategoryBlock = ({
   onUploadFile: (cat: ExpenseCategory, oid?: string) => void,
   onUpdateValue: (id: string, val: string) => void,
   onRemoveAttachment: (id: string) => void,
-  onAddManualValue: (cat: ExpenseCategory, oid?: string) => void
+  onAddManualValue: (cat: ExpenseCategory, oid?: string) => void,
+  /**
+   * Interna nao mostra o toggle: TODA despesa de interna e custo Colabor por
+   * natureza, entao marcar item a item criaria um conceito duplicado. O custo
+   * dela e capturado inteiro pelo card "Custo das Demandas Internas".
+   */
+  showReembolsavel?: boolean,
+  onToggleReembolsavel?: (id: string) => void
 }) => {
   const relevantAttachments = attachments.filter(a => 
     a.category === category && (otherId ? a.otherId === otherId : !a.otherId)
@@ -153,6 +166,22 @@ const CategoryBlock = ({
                 onChange={e => onUpdateValue(a.id, e.target.value)}
               />
             </div>
+            {showReembolsavel && (
+              <button
+                type="button"
+                onClick={() => onToggleReembolsavel?.(a.id)}
+                title={isNaoReembolsavel(a)
+                  ? 'Cliente NAO reembolsa este item — clique para voltar a reembolsavel'
+                  : 'Marcar como nao reembolsavel pelo cliente'}
+                className={`shrink-0 px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest border transition-all ${
+                  isNaoReembolsavel(a)
+                    ? 'bg-amber-100 text-amber-700 border-amber-300'
+                    : 'bg-white text-slate-300 border-slate-200 hover:text-amber-600 hover:border-amber-200'
+                }`}
+              >
+                {isNaoReembolsavel(a) ? 'Nao reemb.' : 'Reembolsavel'}
+              </button>
+            )}
             <button onClick={() => onRemoveAttachment(a.id)} className="p-1 text-slate-300 hover:text-red-500 transition-colors">
               <Trash2 size={14} />
             </button>
@@ -372,31 +401,10 @@ const MeasurementView: React.FC = () => {
     });
   }, [measurements, demands, exportFilters, companies, trainings, instructors, regions]);
 
-  const getMeasurementTotals = (m: Measurement) => {
-    const sum = (cat: ExpenseCategory, oid?: string) => m.attachments
-      .filter(a => a.category === cat && (oid ? a.otherId === oid : !a.otherId))
-      .reduce((acc, curr) => {
-        const val = typeof curr.value === 'string' ? parseFloat(curr.value.replace(',', '.')) : curr.value;
-        return acc + (val || 0);
-      }, 0);
-
-    const h = sum('HOSPEDAGEM');
-    const l = sum('LOCOMOCAO');
-    const c = sum('CAFE');
-    const alm = sum('ALMOCO');
-    const j = sum('JANTAR');
-    const o = m.otherExpenses.reduce((acc, curr) => acc + sum('OUTROS', curr.id), 0);
-
-    return {
-      hospedagem: h,
-      locomocao: l,
-      cafe: c,
-      almoco: alm,
-      jantar: j,
-      outros: o,
-      total: h + l + c + alm + j + o
-    };
-  };
+  // Delegado para domain/measurementTotals.ts: o card "Custo das Demandas
+  // Internas" e o de "Despesas Nao Reembolsaveis" (Dashboard) precisam da mesma
+  // conta. A forma de retorno segue igual para os consumidores locais.
+  const getMeasurementTotals = (m: Measurement) => computeMeasurementTotals(m as any);
 
 const totals = useMemo(() => {
   if (!selectedMeasurement) {
@@ -670,6 +678,21 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
       ...prev,
       attachments: [...prev.attachments, newAttachment]
     } : null);
+  };
+
+  /**
+   * Alterna "o cliente reembolsa este item?". So altera o item; o valor
+   * continua contando no total e na categoria — nao reembolsavel e recorte,
+   * nao subtracao. Persiste junto com o resto no Salvar (jsonb attachments).
+   */
+  const handleToggleReembolsavel = (id: string) => {
+    if (!selectedMeasurement) return;
+    setSelectedMeasurement({
+      ...selectedMeasurement,
+      attachments: selectedMeasurement.attachments.map(a =>
+        a.id === id ? { ...a, reembolsavel: a.reembolsavel === false } : a
+      ),
+    });
   };
 
   const handleUpdateAttachmentValue = (id: string, value: string) => {
@@ -1670,12 +1693,14 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                   attachments={selectedMeasurement.attachments}
                   onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                   onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
                 />
                 <CategoryBlock 
                   category="LOCOMOCAO" label="Locomoção" icon={Truck} colorClass="text-amber-500" 
                   attachments={selectedMeasurement.attachments}
                   onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                   onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
                 />
               </div>
 
@@ -1687,6 +1712,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                   attachments={selectedMeasurement.attachments}
                   onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                   onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
                 />
                 <CategoryBlock 
                   category="ALMOCO" label="Almoço" icon={Tag} colorClass="text-blue-500" 
@@ -1695,6 +1721,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                   attachments={selectedMeasurement.attachments}
                   onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                   onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
                 />
                 <CategoryBlock 
                   category="JANTAR" label="Jantar" icon={Tag} colorClass="text-blue-600" 
@@ -1703,6 +1730,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                   attachments={selectedMeasurement.attachments}
                   onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                   onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
                 />
               </div>
 
@@ -1734,6 +1762,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                           attachments={selectedMeasurement.attachments}
                           onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                           onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
                         />
                       </div>
                     </div>
@@ -1743,6 +1772,12 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
             </div>
 
             <div className="p-7 bg-white border-t border-slate-200 flex justify-end items-center gap-6">
+              {!_selIsInterna && totals.naoReembolsavel > 0 && (
+                <div className="flex flex-col text-right">
+                  <span className="text-[10px] font-black text-amber-500 uppercase tracking-widest">Nao reembolsavel</span>
+                  <span className="text-lg font-black text-amber-600 leading-tight">{formatCurrency(totals.naoReembolsavel)}</span>
+                </div>
+              )}
               <div className="flex flex-col text-right">
                 <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Subtotal Final</span>
                 <span className="text-2xl font-black text-slate-900 leading-tight">{formatCurrency(totals.total)}</span>

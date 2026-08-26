@@ -355,7 +355,8 @@ export type OperationalBaseKey =
   | 'matriculadores'
   | 'regioes'
   | 'categoriasCarros'
-  | 'categoriasInternas';
+  | 'categoriasInternas'
+  | 'locaisDemandasInternas';
 
 export interface OperationalBases {
   aprovadores: string[];
@@ -373,6 +374,13 @@ export interface OperationalBases {
   categoriasCarros: string[];
   /** Categorias de demanda interna (Visita, SIPAT, Apoio Logístico...). */
   categoriasInternas: string[];
+  /**
+   * Locais de demanda interna. Alimenta as SUGESTOES do campo Local do form
+   * interno. A CASCATA (local -> corredor/estado/regiao) continua vindo das
+   * location_associations com contexto='interna' — mesma divisao de papeis da
+   * dupla locaisTreinamento/associations do form de cliente.
+   */
+  locaisDemandasInternas: string[];
 }
 
 // --- ASSOCIAÇÕES DE LOCAL ---

@@ -330,6 +330,11 @@ export const INITIAL_OPERATIONAL_BASES: OperationalBases = {
   // Mesmo seed da migration 013 — no modo supabase quem manda é
   // operational_bases_items; isto aqui só cobre o modo mock.
   categoriasInternas: ["Visita", "SIPAT", "Apoio Logístico", "Evento", "Outro"],
+  // Modo mock. No supabase quem manda e' operational_bases_items: a migration
+  // 015 semeia esta base a partir das location_associations com contexto='interna'
+  // mais os 3 escritorios. So os escritorios sao reproduziveis aqui (o resto
+  // depende dos dados da base), entao o mock fica com eles.
+  locaisDemandasInternas: ["Escritório BH", "Escritório Alphaville", "Escritório Vitória"],
 };
 
 export const HISTORICAL_MATRICULADORES = ["Bernardo", "Micaelle", "Tallita", "Yara"];

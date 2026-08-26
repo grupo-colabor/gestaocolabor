@@ -431,6 +431,7 @@ const [operationalBases, setOperationalBases] = useState<OperationalBases>({
   regioes: [],
   categoriasCarros: [],
   categoriasInternas: [],
+  locaisDemandasInternas: [],
 });
 
 const regions = useMemo<Region[]>(() => {
@@ -489,6 +490,7 @@ useEffect(() => {
           regioes: [],
           categoriasCarros: [],
           categoriasInternas: [],
+          locaisDemandasInternas: [],
         };
 
         for (const row of rows) {

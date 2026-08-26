@@ -1202,7 +1202,9 @@ const InternalDemands: React.FC = () => {
       {/* Datalists consumidos pelo form e pelas seções extraídas */}
       <DataList id="corredores-list" items={operationalBases.corredores ?? []} />
       <DataList id="localidades-list" items={operationalBases.localidades ?? []} />
-      <DataList id="locais-treinamento-list" items={operationalBases.locaisTreinamento ?? []} />
+      {/* Sugestoes do campo Local: base propria da demanda interna. A cascata
+          (local -> corredor/estado/regiao) continua nas location_associations. */}
+      <DataList id="locais-internos-list" items={operationalBases.locaisDemandasInternas ?? []} />
       <DataList id="hoteis-list" items={operationalBases.hoteis ?? []} />
       <DataList id="cidades-list" items={operationalBases.localidades ?? []} />
       <DataList id="agencias-list" items={operationalBases.locaisAgencia ?? []} />
@@ -1658,7 +1660,7 @@ const InternalDemands: React.FC = () => {
                         <div>
                           <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Local *</label>
                           <input
-                            list="locais-treinamento-list"
+                            list="locais-internos-list"
                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                             value={formDemand.trainingLocal || ''}
                             onChange={(e) => handleTrainingLocalChange(e.target.value)}

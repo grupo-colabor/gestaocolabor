@@ -87,6 +87,7 @@ const BASE_LABELS: Record<OperationalBaseKey, string> = {
   funcoesAgenda: 'Funções da Agenda',
   regioes: 'Regiões',
   categoriasInternas: 'Categorias de Demanda Interna',
+  locaisDemandasInternas: 'Local de Demanda Interna',
 };
 
 const Registrations: React.FC = () => {

@@ -13,9 +13,14 @@ import {
   HelpCircle, X, ArrowLeftRight, Monitor, Home,
   Link2, Tag
 } from 'lucide-react';
-import { Demand } from '../types';
+import { Demand, type Instructor } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { demandIntersectsRange } from '../domain/demandDays';
+import {
+  getAvailableInstructors,
+  defaultAvailabilityWindow,
+  computeIdleCoverage,
+} from '../domain/instructorAvailability';
 import { computeInstructorHours, InstructorHoursEntry } from '../domain/instructorHours';
 import { buildModalityOptions, buildTrainingsById, matchesModality } from '../domain/modalityOptions';
 import Pagination from './Pagination';
@@ -1900,17 +1905,15 @@ const pendingLogisticsDemands = useMemo(() => {
     })).filter(r => r.count <= 1).sort((a, b) => a.count - b.count).slice(0, 10);
 
     // --- Disponibilidade nos próximos 30 dias ---
-    const busyNext30Ids = new Set(
-      demands.filter(d => {
-        const s = getCalculatedStatus(d);
-        if (s === 'CANCELADA' || s === 'CONCLUIDA') return false;
-        if (!d.instructorId) return false;
-        const start = new Date(d.startDate);
-        const end   = new Date(d.endDate);
-        return end >= today && start <= next30;
-      }).map(d => d.instructorId!)
+    // A regra saiu daqui para domain/instructorAvailability.ts, para que o card
+    // "Cobertura de Ociosidade" (aba INTERNAS) use a MESMA definição em vez de
+    // reimplementá-la. Comportamento idêntico ao anterior.
+    const availableNext30 = getAvailableInstructors<Instructor, Demand>(
+      instructors,
+      demands,
+      { from: today, to: next30 },
+      { statusOf: getCalculatedStatus }
     );
-    const availableNext30 = activeInstructors.filter(i => !busyNext30Ids.has(i.id));
 
     // --- Sem demanda no período filtrado ---
     const instructorsWithDemandIds = new Set(
@@ -2730,6 +2733,37 @@ const pendingLogisticsDemands = useMemo(() => {
     const maxCategoriaHoras = Math.max(...internaKpis.categorias.map(c => c.horas), 1);
     const maxInstrutorHoras = Math.max(...internaKpis.topInstrutores.map(r => r.horas), 1);
 
+    // --- Cobertura de Ociosidade ---
+    // "A ferramenta de ocupacao esta sendo usada?" — dos instrutores ociosos no
+    // recorte, quantos receberam demanda interna.
+    //
+    // A disponibilidade vem do MESMO helper do card da aba INSTRUTORES
+    // (domain/instructorAvailability.ts). A unica diferenca e o countsAsBusy:
+    // aqui a ociosidade e medida contra o trabalho de CLIENTE. Se a interna
+    // tambem ocupasse, receber uma interna tiraria o instrutor de "ocioso" e a
+    // resposta seria zero por construcao — ver o cabecalho do modulo.
+    const { start: internaStart, end: internaEnd } = getPeriodBounds(0);
+    const hasInternaPeriod = !!(internaStart || internaEnd);
+    const idleWindow = hasInternaPeriod
+      ? {
+          from: new Date(`${internaStart ?? internaEnd}T00:00:00`),
+          to: new Date(`${internaEnd ?? internaStart}T23:59:59`),
+        }
+      : defaultAvailabilityWindow(today);
+
+    const idleCoverage = computeIdleCoverage<Instructor, Demand>(
+      getAvailableInstructors<Instructor, Demand>(
+        instructors,
+        demands,
+        idleWindow,
+        { statusOf: getCalculatedStatus, countsAsBusy: d => d.tipo !== 'interna' }
+      ),
+      filteredInternasByPeriod[0] ?? [],
+      { statusOf: getCalculatedStatus }
+    );
+    const idleTotal = idleCoverage.available.length;
+    const idleCovered = idleCoverage.covered.length;
+
     return (
       <div className="space-y-6 animate-fade-in">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -2796,6 +2830,62 @@ const pendingLogisticsDemands = useMemo(() => {
               <Tag size={20} />
             </div>
           </div>
+        </div>
+
+        {/* Cobertura de Ociosidade */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="text-xs font-black text-slate-800 uppercase tracking-tight">Cobertura de Ociosidade</h3>
+              <p className="text-[10px] font-bold text-slate-400 mt-0.5 uppercase tracking-widest">
+                {hasInternaPeriod
+                  ? 'Ociosos no período com demanda interna'
+                  : 'Ociosos nos próximos 30 dias com demanda interna'}
+              </p>
+            </div>
+            <div className="p-3 rounded-xl bg-violet-50 text-violet-600 shrink-0">
+              <UserCheck size={20} />
+            </div>
+          </div>
+
+          {idleTotal === 0 ? (
+            <p className="px-5 py-8 text-center text-[11px] text-slate-300 italic font-bold">
+              Nenhum instrutor ocioso no período.
+            </p>
+          ) : (
+            <div className="p-5 space-y-4">
+              <div className="flex items-baseline gap-2">
+                <h4 className="text-2xl font-black text-slate-800">
+                  {idleCovered}<span className="text-slate-300"> de </span>{idleTotal}
+                </h4>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                  receberam demanda interna
+                </span>
+              </div>
+
+              {idleCoverage.uncovered.length > 0 ? (
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                    Sem interna no período ({idleCoverage.uncovered.length})
+                  </p>
+                  <div className="max-h-52 overflow-y-auto custom-scrollbar">
+                    <div className="grid grid-cols-2 gap-2">
+                      {idleCoverage.uncovered.map(i => (
+                        <div key={i.id} className="flex items-center gap-2 p-2.5 bg-amber-50/60 rounded-xl border border-amber-100">
+                          <div className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                          <span className="text-[11px] font-bold text-slate-700 truncate">{i.name.split(' ').slice(0, 2).join(' ')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[11px] font-bold text-emerald-600">
+                  Todos os instrutores ociosos receberam demanda interna no período.
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Concluída sem alocação vira 0h ministradas sem avisar — o mesmo silêncio

@@ -73,6 +73,19 @@ const AGENDA_STYLING: Record<string, { bg: string; text: string; border: string 
  */
 const INTERNAL_DEMAND_STYLING = AGENDA_STYLING.APOIO;
 
+/**
+ * "A Confirmar" e' estado provisorio da demanda, nao um tipo de compromisso: por
+ * isso ele nao reusa o bloco solido de interna/APOIO (ambar) nem o de cliente
+ * (azul). Fundo claro + borda tracejada leem como "ainda nao vale" e separam o
+ * card a primeira vista sem mexer nos outros tres. Texto em amber-800 para
+ * manter contraste AA tanto sobre amber-50 quanto sobre o amber-100 do hover.
+ */
+const A_CONFIRMAR_STYLING = {
+  bg: 'bg-amber-50 hover:bg-amber-100',
+  text: 'text-amber-800',
+  border: 'border-dashed border-amber-500',
+};
+
 const AGENDA_TYPES: AgendaType[] = [
   'FOLGA',
   'INDISPONIVEL',
@@ -1683,7 +1696,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                           aText = INTERNAL_DEMAND_STYLING.text;
                           aBorder = INTERNAL_DEMAND_STYLING.border;
                         }
-                        if (aIsAConfirmar) { aBg = 'bg-amber-400'; aText = 'text-amber-900'; aBorder = 'border-amber-500'; }
+                        if (aIsAConfirmar) { aBg = A_CONFIRMAR_STYLING.bg; aText = A_CONFIRMAR_STYLING.text; aBorder = A_CONFIRMAR_STYLING.border; }
                         return (
                           <div
                             key={allocItem.id}
@@ -1741,11 +1754,12 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                           baseBorder = INTERNAL_DEMAND_STYLING.border;
                         }
 
-                        // 🟡 A Confirmar: sobrescreve para amarelo
+                        // 🟡 A Confirmar: sobrescreve para o estilo provisorio
+                        // (claro + tracejado). Mantem a precedencia sobre interna.
                         if (isAConfirmar) {
-                          baseBg = 'bg-amber-400';
-                          baseText = 'text-amber-900';
-                          baseBorder = 'border-amber-500';
+                          baseBg = A_CONFIRMAR_STYLING.bg;
+                          baseText = A_CONFIRMAR_STYLING.text;
+                          baseBorder = A_CONFIRMAR_STYLING.border;
                         }
 
                         // ✅ Companion: força VERDE

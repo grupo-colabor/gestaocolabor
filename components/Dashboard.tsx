@@ -11,12 +11,19 @@ import {
   Download, MousePointer2,
   Info, Ban, Bell, Package, FileText, UserCheck, Hotel, Car,
   HelpCircle, X, ArrowLeftRight, Monitor, Home,
-  Link2, Tag
+  Link2, Tag, Plus
 } from 'lucide-react';
+import { ExpenseSummaryCard } from './ui/ExpenseSummaryCard';
 import { Demand, type Instructor } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { demandIntersectsRange } from '../domain/demandDays';
-import { aggregateMeasurements } from '../domain/measurementTotals';
+import {
+  aggregateMeasurements,
+  aggregatePanelExpenseBreakdown,
+  isNaoReembolsavel,
+  PANEL_EXPENSE_LABELS,
+  type PanelExpenseBucket,
+} from '../domain/measurementTotals';
 import {
   getAvailableInstructors,
   defaultAvailabilityWindow,
@@ -31,6 +38,28 @@ import {
   fetchLogisticAllocations,
   LogisticAllocationRow
 } from '../services/logisticAllocations';
+
+/**
+ * Ícone e cor de cada categoria de despesa, nas mesmas matizes do Painel de
+ * Medição (Measurement.tsx, a fileira de mini-cards no topo do modal):
+ * Hospedagem verde, Locomoção âmbar, Alimentação azul, Outros roxo. Só o
+ * estilo mora aqui — rótulo e ordem vêm de PANEL_EXPENSE_LABELS, no domínio,
+ * para os dois lugares não saírem do lugar um sem o outro.
+ *
+ * Um degrau acima do painel (-700 e não -600) por contraste: medido sobre o
+ * slate-50 destes mini-cards, green-600 dá 3,15:1 e amber-600 3,04:1 — abaixo
+ * dos 4,5:1 de AA para texto deste tamanho. Em -700 sobem para 4,79 e 4,80.
+ * Azul e roxo já passavam em -600; foram junto só para a fileira não ter dois
+ * degraus. A matiz é a mesma, a diferença a olho é mínima.
+ * PENDÊNCIA: o painel continua em -600 e reprova nos mesmos dois — corrigir lá
+ * é mexer no modal de Medição, fora do escopo deste card.
+ */
+const PANEL_EXPENSE_STYLE: Record<PanelExpenseBucket, { icon: any; colorClass: string }> = {
+  hospedagem:  { icon: Home,  colorClass: 'text-green-700' },
+  locomocao:   { icon: Truck, colorClass: 'text-amber-700' },
+  alimentacao: { icon: Tag,   colorClass: 'text-blue-700' },
+  outros:      { icon: Plus,  colorClass: 'text-purple-700' },
+};
 
 // --- Constantes Visuais ---
 const COLORS = {
@@ -291,7 +320,7 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
         { term: 'Horas Já Ministradas', desc: 'Linha menor do card de horas. Mede outra coisa: só demandas CONCLUÍDAS e COM alocação em instructor_allocations, rateadas por dia. É a mesma conta do card de instrutor e da medição. Interna cujo instrutor foi definido só no cadastro da demanda NÃO entra aqui — o vínculo tem que existir na agenda.' },
         { term: 'Vínculo', desc: 'Demandas com empresa vinculada (company_id preenchido) versus demandas da própria Colabor. Interna pode ou não ter empresa: uma visita técnica na Vale tem, uma SIPAT interna não.' },
         { term: 'Categorias', desc: 'Quantas categorias distintas aparecem no recorte, e qual delas concentra mais horas previstas.' },
-        { term: 'Custo das Demandas Internas', desc: 'Soma das medições das demandas internas do recorte: Hora/Aula (horas lançadas × valor/hora) + Despesas (notas e valores avulsos). Interna não é reembolsada pelo cliente — este número é o custo que a Colabor absorve por inteiro, e por isso vive aqui e não na aba Custos.' },
+        { term: 'Custo das Demandas Internas', desc: 'Soma das medições das demandas internas do recorte: Hora/Aula (horas lançadas × valor/hora) + Despesas, estas discriminadas nas mesmas quatro categorias do Painel de Medição — Hospedagem, Locomoção, Alimentação (café da manhã + almoço + jantar) e Outros, cuja soma fecha com o valor do card. Interna não é reembolsada pelo cliente — este número é o custo que a Colabor absorve por inteiro, e por isso vive aqui e não na aba Custos.' },
       ],
     },
     {
@@ -2403,15 +2432,21 @@ const pendingLogisticsDemands = useMemo(() => {
     // separada: o item marcado continua somando na sua categoria.
     // `filteredMeasurements` ja e cliente-only, entao interna nao entra aqui —
     // o custo dela e integral e aparece na aba INTERNAS.
-    const naoReemb = aggregateMeasurements(filteredMeasurements as any);
-    const naoReembCategorias = [
-      { label: 'Hospedagem', valor: naoReemb.naoReembolsavelPorCategoria.HOSPEDAGEM },
-      { label: 'Locomoção', valor: naoReemb.naoReembolsavelPorCategoria.LOCOMOCAO },
-      { label: 'Café da Manhã', valor: naoReemb.naoReembolsavelPorCategoria.CAFE },
-      { label: 'Almoço', valor: naoReemb.naoReembolsavelPorCategoria.ALMOCO },
-      { label: 'Jantar', valor: naoReemb.naoReembolsavelPorCategoria.JANTAR },
-      { label: 'Outros', valor: naoReemb.naoReembolsavelPorCategoria.OUTROS },
-    ].filter(c => c.valor > 0).sort((x, y) => y.valor - x.valor);
+    // A quebra nas QUATRO categorias do Painel de Medição, restrita aos itens
+    // marcados — mesmo percurso do card das internas, só que com predicado
+    // (domain/measurementTotals.ts). `isNaoReembolsavel` é o mesmo helper que o
+    // painel usa no botãozinho de cada item: `reembolsavel === false`, nunca
+    // `=== true`, então item antigo sem o campo é reembolsável e fica de fora.
+    //
+    // O total exibido vem daqui, e não do `naoReembolsavel` de
+    // `aggregateMeasurements`, para a soma dos quatro mini-cards fechar com o
+    // número grande por construção — é a mesma conta, um percurso só. Os
+    // dois só divergem se existir item marcado com categoria fora das seis —
+    // que a quebra joga em Outros e o outro descarta. A UI não grava isso; o
+    // smoke prende a igualdade para os dados bem-formados.
+    const naoReembQuebra = aggregatePanelExpenseBreakdown(filteredMeasurements as any, {
+      itemFilter: isNaoReembolsavel,
+    });
 
     // Totais por categoria (com normalização)
     const hospTotal  = sumByCategory(filteredMeasurements, 'HOSPEDAGEM');
@@ -2574,30 +2609,41 @@ const pendingLogisticsDemands = useMemo(() => {
             </div>
           </div>
 
-          {naoReemb.naoReembolsavel <= 0 ? (
-            <p className="px-5 py-8 text-center text-[11px] text-slate-300 italic font-bold">
+          {/* Mesmo tratamento do card "Custo das Demandas Internas": total em
+              destaque à esquerda, os quatro mini-cards do Painel de Medição
+              preenchendo a direita. Sem mini-card de Hora/Aula — hora/aula não
+              tem flag de reembolso, o toggle vive só nos itens de despesa.
+
+              Os mini-cards aparecem SEMPRE, zerados inclusive. O empty state
+              anterior trocava o bloco inteiro por uma frase, então o card
+              mudava de altura no instante em que a primeira despesa fosse
+              marcada; agora a frase entra discreta embaixo e nada pula. */}
+          <div className="p-5 flex flex-col lg:flex-row lg:items-center gap-5">
+            <div className="lg:w-48 xl:w-56 shrink-0 min-w-0">
+              <h4 className="text-2xl font-black text-amber-600">{formatCurrency(naoReembQuebra.total)}</h4>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                {naoReembQuebra.itens} ite{naoReembQuebra.itens === 1 ? 'm' : 'ns'} em {naoReembQuebra.medicoes} medi{naoReembQuebra.medicoes === 1 ? 'ção' : 'ções'}
+              </p>
+            </div>
+
+            <div className="flex-1 min-w-0 grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {PANEL_EXPENSE_LABELS.map(({ key, label }) => (
+                <ExpenseSummaryCard
+                  key={key}
+                  label={label}
+                  value={formatCurrency(naoReembQuebra[key])}
+                  icon={PANEL_EXPENSE_STYLE[key].icon}
+                  colorClass={PANEL_EXPENSE_STYLE[key].colorClass}
+                  surfaceClass="bg-slate-50"
+                />
+              ))}
+            </div>
+          </div>
+
+          {naoReembQuebra.total <= 0 && (
+            <p className="px-5 pb-5 -mt-2 text-[11px] text-slate-300 italic font-bold">
               Nenhuma despesa marcada como não reembolsável no período.
             </p>
-          ) : (
-            <div className="p-5 space-y-4">
-              <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-                <h4 className="text-2xl font-black text-amber-600">{formatCurrency(naoReemb.naoReembolsavel)}</h4>
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                  {naoReemb.itensNaoReembolsaveis} ite{naoReemb.itensNaoReembolsaveis === 1 ? 'm' : 'ns'} em {naoReemb.medicoesComNaoReembolsavel} medi{naoReemb.medicoesComNaoReembolsavel === 1 ? 'ção' : 'ções'}
-                </span>
-              </div>
-
-              {naoReembCategorias.length > 0 && (
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
-                  {naoReembCategorias.map(c => (
-                    <div key={c.label} className="flex items-center justify-between gap-2 p-2.5 bg-amber-50/60 rounded-xl border border-amber-100 min-w-0">
-                      <span className="text-[11px] font-bold text-slate-700 truncate">{c.label}</span>
-                      <span className="text-[11px] font-black text-amber-700 shrink-0">{formatCurrency(c.valor)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           )}
         </div>
 
@@ -2799,10 +2845,20 @@ const pendingLogisticsDemands = useMemo(() => {
     // inteiro. Por isso o numero vive AQUI e nao na aba CUSTOS, que mede o que
     // e reembolsado pelo cliente (`demands` ja e cliente-only na linha ~400).
     // Mesma conta da tela de Medicao — domain/measurementTotals.ts.
+    //
+    // As despesas aparecem discriminadas nas MESMAS quatro categorias do
+    // Painel de Medição (Hospedagem / Locomoção / Alimentação / Outros) —
+    // `aggregatePanelExpenseBreakdown`, em domain/measurementTotals.ts. O
+    // valor principal usa `despesasInterna.total` em vez de
+    // `custoInterna.despesas` de propósito: assim a soma dos quatro sublabels
+    // fecha com o número grande por construção, e um item de categoria
+    // desconhecida (que a quebra joga em Outros) não fica de fora do total.
+    // Para os dados de hoje os dois são idênticos.
     const internaIdsNoPeriodo = new Set((filteredInternasByPeriod[0] ?? []).map(d => d.id));
-    const custoInterna = aggregateMeasurements(
-      measurements.filter(m => internaIdsNoPeriodo.has(m.demandId)) as any
-    );
+    const medicoesInternas = measurements.filter(m => internaIdsNoPeriodo.has(m.demandId));
+    const custoInterna = aggregateMeasurements(medicoesInternas as any);
+    const despesasInterna = aggregatePanelExpenseBreakdown(medicoesInternas as any);
+    const custoInternaTotal = custoInterna.horaAula + despesasInterna.total;
 
     // --- Cobertura de Ociosidade ---
     // "A ferramenta de ocupacao esta sendo usada?" — dos instrutores ociosos no
@@ -2905,27 +2961,57 @@ const pendingLogisticsDemands = useMemo(() => {
           </div>
         </div>
 
-        {/* Custo das Demandas Internas */}
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-start justify-between hover:shadow-md transition-all group">
-          <div className="flex-1 min-w-0">
+        {/* ── Custo das Demandas Internas ──────────────────────────────────
+            A composição do custo saiu dos sublabels miúdos e virou a MESMA
+            fileira de mini-cards do topo do modal de Medição
+            (components/ui/ExpenseSummaryCard), que o gestor já conhece: quatro
+            categorias de despesa nas cores do painel, mais a Hora/Aula. Elas
+            ocupam a direita, que antes era só espaço vazio.
+
+            NÃO existe mini-card de "Total Geral" como no painel: o valor
+            grande à esquerda já é esse número (Hora/Aula + as quatro), e
+            repeti-lo dentro da fileira seria a mesma conta duas vezes na mesma
+            linha de visão.
+
+            O ícone $ rosa do canto saiu: a fileira tomou a direita e o cifrão
+            esmeralda da Hora/Aula já ocupa esse papel — dois cifrões de cores
+            diferentes lado a lado liam como duas métricas diferentes. */}
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex flex-col lg:flex-row lg:items-center gap-5 hover:shadow-md transition-all group">
+          <div className="lg:w-56 xl:w-64 shrink-0 min-w-0">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-slate-600 transition-colors">
               Custo das Demandas Internas
             </p>
-            <h3 className="text-2xl font-black text-slate-800">{formatCurrency(custoInterna.total)}</h3>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 min-h-[1.5rem]">
-              <span className="text-[9px] font-bold text-slate-400">
-                Hora/Aula <span className="text-slate-700">{formatCurrency(custoInterna.horaAula)}</span>
-              </span>
-              <span className="text-[9px] font-bold text-slate-400">
-                Despesas <span className="text-slate-700">{formatCurrency(custoInterna.despesas)}</span>
-              </span>
-              <span className="text-[9px] font-bold text-slate-300">
-                {custoInterna.medicoes} medi{custoInterna.medicoes === 1 ? 'ção' : 'ções'} no recorte
-              </span>
-            </div>
+            <h3 className="text-2xl font-black text-slate-800">{formatCurrency(custoInternaTotal)}</h3>
+            <p className="text-[9px] font-bold text-slate-400 mt-1">
+              {custoInterna.medicoes} medi{custoInterna.medicoes === 1 ? 'ção' : 'ções'} no recorte
+            </p>
           </div>
-          <div className="p-3 rounded-xl bg-rose-50 text-rose-600 group-hover:scale-110 transition-transform shrink-0 ml-3">
-            <DollarSign size={20} />
+
+          {/* 2 colunas no celular, 3 no tablet/notebook, os 5 em linha só a
+              partir de xl. Em 1024px cinco colunas espremeriam "R$ 12.345,67"
+              para duas linhas dentro da caixinha; ali eles ficam 3+2 ao lado do
+              valor, que ainda ocupa a direita sem apertar. */}
+          <div className="flex-1 min-w-0 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3">
+            {/* Esmeralda + cifrão: o mesmo do cabeçalho do bloco Hora/Aula do
+                painel, um degrau mais escuro pelo motivo do PANEL_EXPENSE_STYLE
+                (emerald-600 dá 3,60:1 sobre slate-50; -700 dá 5,24:1). */}
+            <ExpenseSummaryCard
+              label="Hora/Aula"
+              value={formatCurrency(custoInterna.horaAula)}
+              icon={DollarSign}
+              colorClass="text-emerald-700"
+              surfaceClass="bg-slate-50"
+            />
+            {PANEL_EXPENSE_LABELS.map(({ key, label }) => (
+              <ExpenseSummaryCard
+                key={key}
+                label={label}
+                value={formatCurrency(despesasInterna[key])}
+                icon={PANEL_EXPENSE_STYLE[key].icon}
+                colorClass={PANEL_EXPENSE_STYLE[key].colorClass}
+                surfaceClass="bg-slate-50"
+              />
+            ))}
           </div>
         </div>
 

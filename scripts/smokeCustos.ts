@@ -6,6 +6,11 @@
  * Cobre as duas features de custo:
  *  A) o card "Custo das Demandas Internas" (Hora/Aula + Despesas)
  *  B) a flag `reembolsavel` por item de despesa
+ *  C) a quebra das despesas nas quatro categorias do Painel de Medicao, que
+ *     alimenta os mini-cards do card A (aba INTERNAS) e os do card
+ *     "Despesas Nao Reembolsaveis" (aba CUSTOS)
+ *  D) o recorte por predicado (`itemFilter`) que da a quebra do card de nao
+ *     reembolsaveis sem duplicar o mapa 6->4 nem o tratamento de orfaos
  *
  * O ponto central e a REGRESSAO: `computeMeasurementTotals` tem de devolver
  * exatamente as mesmas somas por categoria que o `getMeasurementTotals`
@@ -16,6 +21,9 @@
 import {
   computeMeasurementTotals,
   aggregateMeasurements,
+  computePanelExpenseBreakdown,
+  aggregatePanelExpenseBreakdown,
+  PANEL_EXPENSE_LABELS,
   isNaoReembolsavel,
   parseExpenseValue,
 } from '../domain/measurementTotals';
@@ -188,6 +196,379 @@ console.log('\n— Agregacao: contadores');
   checkEq('lista vazia nao quebra', aggregateMeasurements([]).total, 0);
 }
 
+
+console.log('\n— Quebra por categoria: os quatro buckets do Painel de Medicao');
+{
+  // As SEIS categorias do JSON caem nos QUATRO buckets que o painel exibe:
+  // CAFE + ALMOCO + JANTAR viram "Alimentacao".
+  const completa = {
+    attachments: [
+      att({ id: 'h1', cat: 'HOSPEDAGEM', v: '450,00' }),
+      att({ id: 'l1', cat: 'LOCOMOCAO', v: 120 }),
+      att({ id: 'c1', cat: 'CAFE', v: '18,90' }),
+      att({ id: 'm1', cat: 'ALMOCO', v: '62,00' }),
+      att({ id: 'j1', cat: 'JANTAR', v: 40 }),
+      att({ id: 'o1', cat: 'OUTROS', v: '80,00', oid: 'OE-1' }),
+    ],
+    otherExpenses: [{ id: 'OE-1' }],
+    expenses: { classHours: 4, hourRate: 90 },
+  };
+  const b = computePanelExpenseBreakdown(completa as any);
+
+  checkEq('hospedagem', b.hospedagem, 450);
+  checkEq('locomocao', b.locomocao, 120);
+  checkEq('alimentacao = cafe + almoco + jantar', b.alimentacao, 120.9);
+  checkEq('outros', b.outros, 80);
+  checkEq('total = soma dos quatro', b.total, 770.9);
+  checkEq('os 6 itens foram classificados', b.itens, 6);
+  checkEq('nenhum orfao', b.itensOrfaos, 0);
+
+  // CONTRAPROVA 1 — nada descartado: a soma bruta de TODO valor do JSON tem de
+  // reaparecer nos quatro buckets. Se um item sumisse, isto quebraria.
+  const somaBruta = completa.attachments.reduce((acc, a) => acc + parseExpenseValue(a.value), 0);
+  checkEq('soma bruta do JSON reaparece inteira nos buckets', b.total, somaBruta);
+  checkEq('e todo item do JSON foi contado', b.itens + b.itensOrfaos, completa.attachments.length);
+
+  // CONTRAPROVA 2 — a quebra fecha com a conta compartilhada do painel.
+  const t = computeMeasurementTotals(completa as any);
+  checkEq('total da quebra bate com computeMeasurementTotals', b.total, t.total);
+  checkEq('alimentacao bate com cafe+almoco+jantar do painel', b.alimentacao, t.cafe + t.almoco + t.jantar);
+}
+
+console.log('\n— Quebra: categoria desconhecida/ausente cai em Outros');
+{
+  const suja = {
+    attachments: [
+      att({ id: 'a1', cat: 'HOSPEDAGEM', v: 100 }),
+      att({ id: 'a2', cat: 'ESTACIONAMENTO', v: 30 }),   // categoria fora das seis
+      att({ id: 'a3', cat: null, v: 20 }),               // categoria nula
+      { id: 'a4', value: 5 },                            // sem o campo category
+    ],
+    otherExpenses: [], expenses: {},
+  };
+  const b = computePanelExpenseBreakdown(suja as any);
+
+  checkEq('conhecida vai pro bucket dela', b.hospedagem, 100);
+  checkEq('desconhecida + nula + ausente caem em Outros', b.outros, 55);
+  checkEq('nada foi parar em locomocao', b.locomocao, 0);
+  checkEq('nada foi parar em alimentacao', b.alimentacao, 0);
+  checkEq('total = 155 (nenhum item descartado)', b.total, 155);
+  checkEq('os 4 itens foram classificados', b.itens, 4);
+
+  // CONTRAPROVA — sem o fallback pra Outros, estes 55 sumiriam: e exatamente o
+  // que `computeMeasurementTotals` faz, e por isso a quebra NAO deriva dele.
+  const t = computeMeasurementTotals(suja as any);
+  checkEq('a conta do painel de fato perde os 55', t.total, 100);
+  check('a quebra resgata o que a conta do painel perde', b.total > t.total);
+}
+
+console.log('\n— Quebra: orfao de OUTROS fora do total, mas contado');
+{
+  // Anexo apontando pra linha de other_expenses apagada. Mesma exclusao do
+  // painel (apagar a linha e apagar a despesa) — o que NAO pode e ser silencioso.
+  const comOrfao = {
+    attachments: [
+      att({ id: 'o1', cat: 'OUTROS', v: 80, oid: 'OE-1' }),
+      att({ id: 'o2', cat: 'OUTROS', v: 999, oid: 'OE-APAGADA' }),
+      att({ id: 'o3', cat: 'OUTROS', v: 500 }),           // sem otherId nenhum
+    ],
+    otherExpenses: [{ id: 'OE-1' }], expenses: {},
+  };
+  const b = computePanelExpenseBreakdown(comOrfao as any);
+
+  checkEq('so o anexo com linha viva entra em Outros', b.outros, 80);
+  checkEq('total idem', b.total, 80);
+  checkEq('2 orfaos contados, nao sumidos', b.itensOrfaos, 2);
+  checkEq('todo item do JSON foi visto', b.itens + b.itensOrfaos, comOrfao.attachments.length);
+
+  const t = computeMeasurementTotals(comOrfao as any);
+  checkEq('mesma exclusao de computeMeasurementTotals', b.total, t.total);
+}
+
+console.log('\n— Quebra: estado zerado nao quebra');
+{
+  const casos: [string, any][] = [
+    ['medicao null', null],
+    ['medicao undefined', undefined],
+    ['attachments ausente', { otherExpenses: [], expenses: {} }],
+    ['attachments null', { attachments: null, otherExpenses: null, expenses: null }],
+    ['attachments vazio', { attachments: [], otherExpenses: [], expenses: {} }],
+    ['item null dentro do array', { attachments: [null], otherExpenses: [], expenses: {} }],
+  ];
+  for (const [nome, m] of casos) {
+    const b = computePanelExpenseBreakdown(m);
+    checkEq(`${nome} -> quatro zeros`,
+      [b.hospedagem, b.locomocao, b.alimentacao, b.outros, b.total], [0, 0, 0, 0, 0]);
+  }
+  const vazio = aggregatePanelExpenseBreakdown([]);
+  checkEq('lista vazia -> quatro zeros', [vazio.hospedagem, vazio.locomocao, vazio.alimentacao, vazio.outros], [0, 0, 0, 0]);
+  checkEq('lista null -> quatro zeros', aggregatePanelExpenseBreakdown(null).total, 0);
+  checkEq('lista so com nulos -> zero', aggregatePanelExpenseBreakdown([null, undefined]).total, 0);
+
+  // E o estado de hoje: nenhuma interna tem despesa. Os quatro sublabels
+  // precisam renderizar R$ 0,00, nao NaN nem undefined.
+  const zerado = aggregatePanelExpenseBreakdown([]);
+  for (const { key, label } of PANEL_EXPENSE_LABELS) {
+    check(`sublabel "${label}" e 0 numerico`, zerado[key] === 0 && Number.isFinite(zerado[key]));
+  }
+  checkEq('os quatro rotulos, na ordem do card',
+    PANEL_EXPENSE_LABELS.map(x => x.label), ['Hospedagem', 'Locomoção', 'Alimentação', 'Outros']);
+}
+
+console.log('\n— Card A: quebra agregada so das internas, e fechando com o valor principal');
+{
+  // Mesmo recorte que o Dashboard faz: ids das internas do periodo.
+  const demandas = [
+    { id: 'DEM-1', tipo: 'cliente' },
+    { id: 'INT-1', tipo: 'interna' },
+    { id: 'INT-2', tipo: 'interna' },
+  ];
+  const medicoes = [
+    // Medicao de CLIENTE — valores grandes e distintos, pra denunciar vazamento.
+    { demandId: 'DEM-1', otherExpenses: [{ id: 'OE-C' }], expenses: { classHours: 10, hourRate: 100 },
+      attachments: [
+        att({ id: 'c1', cat: 'HOSPEDAGEM', v: 9000 }),
+        att({ id: 'c2', cat: 'LOCOMOCAO', v: 8000 }),
+        att({ id: 'c3', cat: 'ALMOCO', v: 7000 }),
+        att({ id: 'c4', cat: 'OUTROS', v: 6000, oid: 'OE-C' }),
+      ] },
+    { demandId: 'INT-1', otherExpenses: [{ id: 'OE-1' }], expenses: { classHours: 6, hourRate: 50 },
+      attachments: [
+        att({ id: 'i1', cat: 'HOSPEDAGEM', v: '250,00' }),
+        att({ id: 'i2', cat: 'LOCOMOCAO', v: 75 }),
+        att({ id: 'i3', cat: 'CAFE', v: '12,50' }),
+        att({ id: 'i4', cat: 'JANTAR', v: 45 }),
+        att({ id: 'i5', cat: 'OUTROS', v: 30, oid: 'OE-1' }),
+        att({ id: 'i6', cat: 'PEDAGIO', v: 20 }),        // desconhecida -> Outros
+      ] },
+    { demandId: 'INT-2', otherExpenses: [], expenses: { classHours: 2, hourRate: 80 },
+      attachments: [att({ id: 'i7', cat: 'ALMOCO', v: '37,50' })] },
+  ];
+
+  const idsInterna = new Set(demandas.filter(d => d.tipo === 'interna').map(d => d.id));
+  const internas = medicoes.filter(m => idsInterna.has(m.demandId));
+
+  const custo = aggregateMeasurements(internas as any);
+  const quebra = aggregatePanelExpenseBreakdown(internas as any);
+
+  checkEq('card A ve as 2 internas', custo.medicoes, 2);
+  checkEq('hospedagem so das internas', quebra.hospedagem, 250);
+  checkEq('locomocao so das internas', quebra.locomocao, 75);
+  checkEq('alimentacao = 12,50 + 45 + 37,50', quebra.alimentacao, 95);
+  checkEq('outros = 30 + os 20 da categoria desconhecida', quebra.outros, 50);
+  checkEq('total das despesas internas', quebra.total, 470);
+
+  // Nenhum valor do cliente vazou pra dentro de bucket nenhum.
+  for (const { key, label } of PANEL_EXPENSE_LABELS) {
+    check(`nada de cliente em ${label}`, quebra[key] < 1000);
+  }
+  checkEq('nenhum item de cliente contado', quebra.itens, 7);
+
+  // CONTRAPROVA — a soma dos quatro sublabels tem de bater com o valor
+  // principal do card menos a Hora/Aula. E a formula do Dashboard.
+  const valorPrincipal = custo.horaAula + quebra.total;
+  checkEq('hora/aula das internas = 6x50 + 2x80', custo.horaAula, 460);
+  checkEq('valor principal do card', valorPrincipal, 930);
+  checkEq('soma dos quatro = valor principal - hora/aula',
+    quebra.hospedagem + quebra.locomocao + quebra.alimentacao + quebra.outros,
+    valorPrincipal - custo.horaAula);
+
+  // Cliente entrando no recorte por engano seria pego aqui.
+  const comCliente = aggregatePanelExpenseBreakdown(medicoes as any);
+  check('quebra do dataset inteiro e MAIOR — prova que o recorte filtra', comCliente.total > quebra.total);
+  checkEq('e a diferenca e exatamente a medicao de cliente', comCliente.total - quebra.total, 30000);
+}
+
+
+console.log('\n— Quebra com predicado: recorte NAO REEMBOLSAVEL');
+{
+  // Itens mistos nas quatro categorias. So os marcados (`re: false`) contam.
+  const mista = {
+    demandId: 'DEM-1',
+    attachments: [
+      att({ id: 'h1', cat: 'HOSPEDAGEM', v: 400 }),                 // reembolsavel
+      att({ id: 'h2', cat: 'HOSPEDAGEM', v: 100, re: false }),
+      att({ id: 'l1', cat: 'LOCOMOCAO', v: '35,50', re: false }),
+      att({ id: 'c1', cat: 'CAFE', v: 10, re: false }),
+      att({ id: 'm1', cat: 'ALMOCO', v: 62, re: false }),
+      att({ id: 'j1', cat: 'JANTAR', v: 28 }),                      // reembolsavel
+      att({ id: 'o1', cat: 'OUTROS', v: 15, re: false, oid: 'OE-1' }),
+      att({ id: 'x1', cat: 'ALMOCO', v: 999, re: true }),           // explicitamente reembolsavel
+      { id: 'x2', category: 'CAFE', value: 777 },                   // SEM a flag -> default reembolsavel
+    ],
+    otherExpenses: [{ id: 'OE-1' }], expenses: { classHours: 4, hourRate: 90 },
+  };
+
+  const q = aggregatePanelExpenseBreakdown([mista] as any, { itemFilter: isNaoReembolsavel });
+
+  checkEq('hospedagem: so os 100 marcados', q.hospedagem, 100);
+  checkEq('locomocao marcada', q.locomocao, 35.5);
+  checkEq('alimentacao = cafe 10 + almoco 62 (jantar 28 e reembolsavel)', q.alimentacao, 72);
+  checkEq('outros marcado', q.outros, 15);
+  checkEq('total = soma dos quatro', q.total, 222.5);
+  checkEq('5 itens marcados', q.itens, 5);
+  checkEq('1 medicao com item marcado', q.medicoes, 1);
+
+  // DEFAULT DA FLAG — o ponto que mantem as medicoes antigas corretas.
+  check('item sem o campo NAO entrou (default reembolsavel)', q.total === 222.5);
+  check('os 777 do item sem flag ficaram fora', q.alimentacao === 72);
+  check('os 999 do reembolsavel: true ficaram fora', q.alimentacao === 72);
+
+  // AMARRACAO — o numero grande do card e a soma dos quatro mini-cards.
+  checkEq('total do card = soma dos quatro buckets',
+    q.total, q.hospedagem + q.locomocao + q.alimentacao + q.outros);
+
+  // MESMA FONTE DE VERDADE — bate com o subtotal "NAO REEMB." do painel.
+  const t = computeMeasurementTotals(mista as any);
+  checkEq('total bate com o naoReembolsavel do painel', q.total, t.naoReembolsavel);
+  checkEq('contagem de itens bate com a do painel', q.itens, t.itensNaoReembolsaveis);
+  checkEq('hospedagem bate com a quebra do painel', q.hospedagem, t.naoReembolsavelPorCategoria.HOSPEDAGEM);
+  checkEq('alimentacao bate com CAFE+ALMOCO+JANTAR do painel',
+    q.alimentacao,
+    t.naoReembolsavelPorCategoria.CAFE + t.naoReembolsavelPorCategoria.ALMOCO + t.naoReembolsavelPorCategoria.JANTAR);
+
+  // O recorte nunca passa do gasto cheio da mesma medicao.
+  const cheio = aggregatePanelExpenseBreakdown([mista] as any);
+  check('o recorte marcado <= o gasto cheio', q.total < cheio.total);
+  checkEq('gasto cheio soma tudo, marcado ou nao', cheio.total, 2426.5);
+}
+
+console.log('\n— Quebra com predicado: categoria desconhecida marcada cai em Outros');
+{
+  const suja = {
+    attachments: [
+      att({ id: 'a1', cat: 'HOSPEDAGEM', v: 100, re: false }),
+      att({ id: 'a2', cat: 'ESTACIONAMENTO', v: 30, re: false }),  // fora das seis
+      att({ id: 'a3', cat: null, v: 20, re: false }),              // categoria nula
+      { id: 'a4', value: 5, reembolsavel: false },                 // sem category
+      att({ id: 'a5', cat: 'ESTACIONAMENTO', v: 888 }),            // desconhecida mas reembolsavel
+    ],
+    otherExpenses: [], expenses: {},
+  };
+  const q = aggregatePanelExpenseBreakdown([suja] as any, { itemFilter: isNaoReembolsavel });
+
+  checkEq('conhecida marcada vai pro bucket dela', q.hospedagem, 100);
+  checkEq('desconhecida + nula + ausente, todas marcadas, caem em Outros', q.outros, 55);
+  checkEq('a desconhecida REEMBOLSAVEL ficou fora', q.total, 155);
+  checkEq('4 itens marcados classificados', q.itens, 4);
+  checkEq('total = soma dos quatro', q.total, q.hospedagem + q.locomocao + q.alimentacao + q.outros);
+
+  // Aqui a quebra e o `naoReembolsavel` do painel DIVERGEM de proposito: o
+  // painel descarta categoria fora das seis, a quebra manda pra Outros. Por
+  // isso o card exibe o total DA QUEBRA — senao os quatro nao fechariam.
+  const t = computeMeasurementTotals(suja as any);
+  checkEq('o painel perde os 55 da categoria desconhecida', t.naoReembolsavel, 100);
+  check('a quebra resgata o que o painel perde', q.total > t.naoReembolsavel);
+}
+
+console.log('\n— Quebra com predicado: orfao de OUTROS marcado');
+{
+  const comOrfao = {
+    attachments: [
+      att({ id: 'o1', cat: 'OUTROS', v: 80, re: false, oid: 'OE-1' }),
+      att({ id: 'o2', cat: 'OUTROS', v: 999, re: false, oid: 'OE-APAGADA' }),  // orfao marcado
+      att({ id: 'o3', cat: 'OUTROS', v: 500, oid: 'OE-APAGADA' }),             // orfao reembolsavel
+    ],
+    otherExpenses: [{ id: 'OE-1' }], expenses: {},
+  };
+  const q = aggregatePanelExpenseBreakdown([comOrfao] as any, { itemFilter: isNaoReembolsavel });
+
+  checkEq('so o marcado com linha viva entra', q.outros, 80);
+  checkEq('total idem', q.total, 80);
+  checkEq('orfao contado e o do recorte — o reembolsavel nem foi olhado', q.itensOrfaos, 1);
+
+  const t = computeMeasurementTotals(comOrfao as any);
+  checkEq('mesma exclusao do painel', q.total, t.naoReembolsavel);
+}
+
+console.log('\n— Card CUSTOS: cliente only, interna ignorada');
+{
+  // `filteredMeasurements` do Dashboard ja e cliente-only; aqui o recorte e
+  // reproduzido pelos ids, como o componente faz.
+  const demandas = [
+    { id: 'DEM-1', tipo: 'cliente' },
+    { id: 'DEM-2', tipo: 'cliente' },
+    { id: 'INT-1', tipo: 'interna' },
+  ];
+  const medicoes = [
+    { demandId: 'DEM-1', otherExpenses: [], expenses: {},
+      attachments: [
+        att({ id: 'a1', cat: 'HOSPEDAGEM', v: 200, re: false }),
+        att({ id: 'a2', cat: 'LOCOMOCAO', v: 50 }),
+      ] },
+    { demandId: 'DEM-2', otherExpenses: [], expenses: {},
+      attachments: [
+        att({ id: 'b1', cat: 'ALMOCO', v: 40, re: false }),
+        att({ id: 'b2', cat: 'JANTAR', v: 10, re: false }),
+      ] },
+    // Interna: NAO tem toggle na UI, mas mesmo que viesse marcada nao pode
+    // entrar — o custo dela e integral e vive na aba INTERNAS.
+    { demandId: 'INT-1', otherExpenses: [], expenses: {},
+      attachments: [
+        att({ id: 'z1', cat: 'HOSPEDAGEM', v: 5000, re: false }),
+        att({ id: 'z2', cat: 'LOCOMOCAO', v: 3000, re: false }),
+      ] },
+  ];
+
+  const idsCliente = new Set(demandas.filter(d => d.tipo !== 'interna').map(d => d.id));
+  const cliente = medicoes.filter(m => idsCliente.has(m.demandId));
+  const q = aggregatePanelExpenseBreakdown(cliente as any, { itemFilter: isNaoReembolsavel });
+
+  checkEq('hospedagem so de cliente', q.hospedagem, 200);
+  checkEq('locomocao: nada marcado em cliente', q.locomocao, 0);
+  checkEq('alimentacao de cliente', q.alimentacao, 50);
+  checkEq('total do card', q.total, 250);
+  checkEq('3 itens marcados em cliente', q.itens, 3);
+  checkEq('em 2 medicoes', q.medicoes, 2);
+  check('os 5000 da interna NAO entram em hospedagem', q.hospedagem === 200);
+  check('os 3000 da interna NAO entram em locomocao', q.locomocao === 0);
+
+  // Se o recorte cliente-only quebrasse, isto denunciaria.
+  const comInterna = aggregatePanelExpenseBreakdown(medicoes as any, { itemFilter: isNaoReembolsavel });
+  checkEq('a interna sozinha valeria +8000', comInterna.total - q.total, 8000);
+
+  checkEq('total = soma dos quatro mini-cards',
+    q.total, q.hospedagem + q.locomocao + q.alimentacao + q.outros);
+}
+
+console.log('\n— Card CUSTOS: estado zerado renderiza os quatro em zero');
+{
+  // Producao hoje: ninguem marcou nada. Os mini-cards aparecem zerados.
+  const semMarcado = [
+    { demandId: 'D1', otherExpenses: [], expenses: { classHours: 8, hourRate: 100 },
+      attachments: [att({ id: 'p', cat: 'HOSPEDAGEM', v: 300 }), att({ id: 'q', cat: 'ALMOCO', v: 40 })] },
+    { demandId: 'D2', otherExpenses: [], expenses: {}, attachments: [] },
+    null,
+  ];
+  const q = aggregatePanelExpenseBreakdown(semMarcado as any, { itemFilter: isNaoReembolsavel });
+
+  checkEq('quatro zeros', [q.hospedagem, q.locomocao, q.alimentacao, q.outros], [0, 0, 0, 0]);
+  checkEq('total zero', q.total, 0);
+  checkEq('nenhum item', q.itens, 0);
+  checkEq('nenhuma medicao', q.medicoes, 0);
+  for (const { key, label } of PANEL_EXPENSE_LABELS) {
+    check(`mini-card "${label}" e 0 numerico`, q[key] === 0 && Number.isFinite(q[key]));
+  }
+  checkEq('lista vazia com predicado', aggregatePanelExpenseBreakdown([], { itemFilter: isNaoReembolsavel }).total, 0);
+  checkEq('lista null com predicado', aggregatePanelExpenseBreakdown(null, { itemFilter: isNaoReembolsavel }).total, 0);
+
+  // O gasto cheio das mesmas medicoes segue existindo — o card de cima nao zera.
+  checkEq('mas o total geral de despesas nao e zero', aggregatePanelExpenseBreakdown(semMarcado as any).total, 340);
+}
+
+console.log('\n— Predicado nao vaza: card das INTERNAS segue somando tudo');
+{
+  // Regressao do card da outra aba: sem `itemFilter`, nada muda.
+  const interna = {
+    demandId: 'INT-9', otherExpenses: [], expenses: { classHours: 6, hourRate: 50 },
+    attachments: [att({ id: 'i1', cat: 'ALMOCO', v: 60, re: false }), att({ id: 'i2', cat: 'CAFE', v: 20 })],
+  };
+  const cheio = aggregatePanelExpenseBreakdown([interna] as any);
+  checkEq('sem predicado soma marcado e nao marcado', cheio.total, 80);
+  checkEq('alimentacao cheia', cheio.alimentacao, 80);
+  checkEq('1 medicao contribuiu', cheio.medicoes, 1);
+  checkEq('opcoes vazias equivalem a sem opcoes', aggregatePanelExpenseBreakdown([interna] as any, {}).total, 80);
+}
 console.log('');
 if (falhas > 0) { console.log(`❌ ${falhas} check(s) falharam.`); process.exit(1); }
 console.log('✅ Todos os checks passaram.');

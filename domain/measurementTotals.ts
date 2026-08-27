@@ -188,3 +188,164 @@ export function aggregateMeasurements(ms: (TotalizableMeasurement | null | undef
   return acc;
 }
 
+
+/* ───────────────────────── QUEBRA POR CATEGORIA DO PAINEL ─────────────────────────
+ *
+ * O JSON guarda SEIS categorias (ver `ExpenseCategoryKey`), mas o Painel de
+ * Medição sempre mostrou QUATRO: as três de comida aparecem somadas como
+ * "Alimentação" (Measurement.tsx — resumo por demanda, resumo WhatsApp e o
+ * quadro de totais, todos com `cafe + almoco + jantar`). O card "Custo das
+ * Demandas Internas" discrimina as despesas com o MESMO agrupamento, para o
+ * gestor não ver quatro linhas no painel e outras seis no Dashboard.
+ *
+ * ---------------------------------------------------------------------------
+ * Por que esta função re-percorre os attachments em vez de somar os campos de
+ * `computeMeasurementTotals`
+ * ---------------------------------------------------------------------------
+ * Porque `h + l + (c+a+j) + o` daquela função NÃO cobre todo o JSON: um item
+ * com `category` ausente ou fora das seis não casa com nenhum `sum()` e some
+ * da conta sem deixar rastro. Aqui ele cai em OUTROS — a quebra é uma
+ * PARTIÇÃO dos itens, e `total` é a soma das quatro por construção. É o que
+ * permite o card afirmar que os quatro sublabels fecham com o valor principal.
+ *
+ * A ÚNICA exclusão preservada é o anexo de OUTROS órfão (aponta para linha de
+ * `other_expenses` apagada). Ela não é uma perda: no painel, apagar a linha É
+ * apagar a despesa, e o mesmo anexo já está fora de `computeMeasurementTotals`.
+ * Trazê-lo para cá faria a interna divergir do próprio painel. Para não ser
+ * silencioso, ele volta contado em `itensOrfaos`.
+ */
+
+/** Os quatro buckets que o Painel de Medição exibe. */
+export type PanelExpenseBucket = 'hospedagem' | 'locomocao' | 'alimentacao' | 'outros';
+
+/** 6 categorias do JSON → 4 buckets do painel. Sem strings soltas nos componentes. */
+const BUCKET_POR_CATEGORIA: Record<ExpenseCategoryKey, PanelExpenseBucket> = {
+  HOSPEDAGEM: 'hospedagem',
+  LOCOMOCAO: 'locomocao',
+  CAFE: 'alimentacao',
+  ALMOCO: 'alimentacao',
+  JANTAR: 'alimentacao',
+  OUTROS: 'outros',
+};
+
+/** Rótulos como aparecem no painel — a ordem é a de exibição no card. */
+export const PANEL_EXPENSE_LABELS: { key: PanelExpenseBucket; label: string }[] = [
+  { key: 'hospedagem', label: 'Hospedagem' },
+  { key: 'locomocao', label: 'Locomoção' },
+  { key: 'alimentacao', label: 'Alimentação' },
+  { key: 'outros', label: 'Outros' },
+];
+
+export interface PanelExpenseBreakdown extends Record<PanelExpenseBucket, number> {
+  /** Soma dos quatro buckets. É o total de despesas da quebra. */
+  total: number;
+  /** Itens de despesa que entraram em algum bucket. */
+  itens: number;
+  /**
+   * Anexos de OUTROS apontando para linha de `other_expenses` inexistente:
+   * fora do total, como no painel — mas contados, nunca silenciosos.
+   */
+  itensOrfaos: number;
+}
+
+/** Agregado de várias medições: a quebra mais quantas medições contribuíram. */
+export interface AggregatedPanelExpenseBreakdown extends PanelExpenseBreakdown {
+  /** Medições com ao menos um item dentro do recorte (ver `itemFilter`). */
+  medicoes: number;
+}
+
+export interface PanelExpenseBreakdownOptions {
+  /**
+   * Recorte por item. Ausente = todo item entra (o caso do card "Custo das
+   * Demandas Internas", que quer o gasto cheio).
+   *
+   * O card "Despesas Não Reembolsáveis" passa `isNaoReembolsavel` e recebe a
+   * MESMA quebra, restrita aos itens marcados. É o que evita uma segunda
+   * função com o mapa 6→4 e o tratamento de órfão copiados — os dois cards
+   * percorrem exatamente este laço.
+   *
+   * O filtro roda ANTES do teste de órfão, de propósito: assim `itensOrfaos`
+   * conta os órfãos DO RECORTE, e não órfãos que nem pertenciam a ele.
+   */
+  itemFilter?: (a: TotalizableAttachment) => boolean;
+}
+
+const zeroBreakdown = (): PanelExpenseBreakdown => ({
+  hospedagem: 0, locomocao: 0, alimentacao: 0, outros: 0,
+  total: 0, itens: 0, itensOrfaos: 0,
+});
+
+/**
+ * Quebra as despesas de UMA medição nos quatro buckets do painel.
+ *
+ * Todo item do JSON cai em exatamente um bucket; `category` ausente ou fora
+ * das seis conhecidas vai para OUTROS. Único fora da partição: o órfão de
+ * OUTROS descrito no cabeçalho, devolvido em `itensOrfaos`.
+ *
+ * Com `opts.itemFilter`, tudo isso vale igual — só que sobre o subconjunto de
+ * itens que passam no predicado.
+ */
+export function computePanelExpenseBreakdown(
+  m: TotalizableMeasurement | null | undefined,
+  opts: PanelExpenseBreakdownOptions = {}
+): PanelExpenseBreakdown {
+  const acc = zeroBreakdown();
+  const outrosIds = new Set((m?.otherExpenses ?? []).map(o => o.id));
+  const { itemFilter } = opts;
+
+  for (const a of m?.attachments ?? []) {
+    if (!a) continue;
+    if (itemFilter && !itemFilter(a)) continue;
+
+    const cat = a.category as ExpenseCategoryKey;
+    const conhecida = Object.prototype.hasOwnProperty.call(BUCKET_POR_CATEGORIA, cat);
+
+    // Órfão de OUTROS: mesma exclusão de `computeMeasurementTotals`, para a
+    // interna não divergir do painel. Contado, não sumido.
+    if (conhecida && cat === 'OUTROS' && (!a.otherId || !outrosIds.has(a.otherId))) {
+      acc.itensOrfaos += 1;
+      continue;
+    }
+
+    // Categoria desconhecida/ausente cai em OUTROS em vez de evaporar.
+    const bucket: PanelExpenseBucket = conhecida ? BUCKET_POR_CATEGORIA[cat] : 'outros';
+    acc[bucket] += parseExpenseValue(a.value);
+    acc.itens += 1;
+  }
+
+  acc.total = acc.hospedagem + acc.locomocao + acc.alimentacao + acc.outros;
+  return acc;
+}
+
+/**
+ * Soma a quebra de várias medições, já recortadas pelos filtros do Dashboard.
+ * Lista vazia / null / medição sem attachments devolvem os quatro zerados.
+ *
+ * Dois consumidores, o mesmo percurso:
+ *   • "Custo das Demandas Internas" (aba INTERNAS) — sem `itemFilter`.
+ *   • "Despesas Não Reembolsáveis" (aba CUSTOS) — `itemFilter: isNaoReembolsavel`.
+ */
+export function aggregatePanelExpenseBreakdown(
+  ms: (TotalizableMeasurement | null | undefined)[] | null | undefined,
+  opts: PanelExpenseBreakdownOptions = {}
+): AggregatedPanelExpenseBreakdown {
+  const acc: AggregatedPanelExpenseBreakdown = { ...zeroBreakdown(), medicoes: 0 };
+
+  for (const m of ms ?? []) {
+    if (!m) continue;
+    const b = computePanelExpenseBreakdown(m, opts);
+    acc.hospedagem += b.hospedagem;
+    acc.locomocao += b.locomocao;
+    acc.alimentacao += b.alimentacao;
+    acc.outros += b.outros;
+    acc.itens += b.itens;
+    acc.itensOrfaos += b.itensOrfaos;
+    // Medição só conta se contribuiu com item DO RECORTE. Sem o filtro isso é
+    // "tem despesa"; com `isNaoReembolsavel`, é "tem item marcado" — que é o
+    // "em N medições" do card.
+    if (b.itens > 0) acc.medicoes += 1;
+  }
+
+  acc.total = acc.hospedagem + acc.locomocao + acc.alimentacao + acc.outros;
+  return acc;
+}

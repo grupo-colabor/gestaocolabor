@@ -23,6 +23,7 @@ import {
   FileSpreadsheet, Moon
 } from 'lucide-react';
 import MedicaoExportModal from './MedicaoExportModal';
+import { ExpenseSummaryCard } from './ui/ExpenseSummaryCard';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ImageRun, ExternalHyperlink } from 'docx';
 import * as pdfjsLib from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
@@ -1588,13 +1589,16 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                    { label: 'Outros', val: totals.outros, color: 'text-purple-600', icon: Plus },
                    { label: 'TOTAL GERAL', val: totals.total, color: 'text-slate-900 bg-slate-200/50', icon: Wallet, span: 'col-span-2' }
                  ].map((item, idx) => (
-                   <div key={idx} className={`p-4 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-center ${item.span || ''}`}>
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <item.icon size={12} className="text-slate-400" />
-                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{item.label}</span>
-                      </div>
-                      <span className={`text-sm font-black ${item.color}`}>{formatCurrency(item.val)}</span>
-                   </div>
+                   /* Casca em components/ui/ExpenseSummaryCard — a mesma que o
+                      card "Custo das Demandas Internas" do Dashboard usa. */
+                   <ExpenseSummaryCard
+                     key={idx}
+                     label={item.label}
+                     value={formatCurrency(item.val)}
+                     icon={item.icon}
+                     colorClass={item.color}
+                     className={item.span || ''}
+                   />
                  ))}
               </div>
 

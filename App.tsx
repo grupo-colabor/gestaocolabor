@@ -73,7 +73,7 @@ import { fetchTrainings, deleteTrainingById } from './services/trainings';
 import { fetchCompanies, insertCompany, updateCompanyById, CompanyRow } from './services/companies';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { isDemandDay, getDemandDays } from './domain/demandDays';
-import { isEAD } from './domain/modalityRules';
+import { isEAD, requiresLogistics } from './domain/modalityRules';
 import { fetchInstructors, fetchInstructorTrainings, deleteInstructorById } from './services/instructors';
 import { fetchMeasurements, upsertMeasurementByDemandId } from './services/measurements';
 import { fetchEvidences, upsertEvidenceByDemandId } from './services/evidences';
@@ -2929,17 +2929,26 @@ const hasScheduleConflict = useCallback(
       const isSameState = (i: { residenceLocation?: string }) =>
         !!demandState && (i.residenceLocation || '').trim().toUpperCase() === demandState;
 
+      // Demanda sem âncora geográfica não filtra instrutor por UF de residência.
+      // Antes bastava o local 'N/A', porque o form gravava N/A em toda modalidade
+      // sem logística. Agora essas modalidades aceitam local real (de referência,
+      // não de deslocamento), então o marcador passa a ser a própria modalidade.
+      // Usa requiresLogistics, e NÃO isEAD: TUTORIA é EAD mas exige logística —
+      // com isEAD aqui, tutoria com local real perderia o filtro por UF.
+      const semAncoraGeografica =
+        demand.trainingLocal === 'N/A' || !requiresLogistics(demand.modality);
+
       return {
         suggested: activeCapableInstructors.filter(
           i =>
             !demandState ||
-            demand.trainingLocal === 'N/A' ||
+            semAncoraGeografica ||
             isSameState(i)
         ),
         exceptions: activeCapableInstructors.filter(
           i =>
             !!demandState &&
-            demand.trainingLocal !== 'N/A' &&
+            !semAncoraGeografica &&
             !isSameState(i)
         ),
         alreadyAllocated,

@@ -411,6 +411,29 @@ useEffect(() => {
 
   // Note: attachments is handled dynamically in formDemand
   const [formDemand, setFormDemand] = useState<Partial<Demand & { cancelledAt?: string, attachments?: { classListPdf?: { name: string; base64: string }; instructorReleasePdf?: { name: string; base64: string } }, cancelInfo?: { reason: string, note: string, date: string } }>>(initialDemandState());
+
+  /**
+   * Sugestões do campo Local: base operacional + locais já usados nas
+   * associações (que na prática saem da mesma base, mas linhas legadas podem
+   * ter divergido).
+   *
+   * 'N/A' só é oferecido quando a modalidade NÃO exige logística (ONLINE / EAD /
+   * ONLINE_AO_VIVO). Num PRESENCIAL/HÍBRIDO/TUTORIA, 'N/A' faria a demanda
+   * travar em PENDENTE pelo motor de status (demandStatus.ts) — não é opção.
+   */
+  const localOptions = useMemo(() => {
+    const isNAValue = (v: string) => v.trim().toUpperCase() === 'N/A';
+    const base = [
+      ...(operationalBases.locaisTreinamento ?? []),
+      ...locationAssociations.map(a => a.local),
+    ]
+      .map(v => (v ?? '').trim())
+      .filter(v => !!v && !isNAValue(v));
+
+    const unique = Array.from(new Set(base)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    return requiresLogistics(formDemand.modality) ? unique : ['N/A', ...unique];
+  }, [operationalBases.locaisTreinamento, locationAssociations, formDemand.modality]);
+
   const [activeDemand, setActiveDemand] = useState<Demand | null>(null);
 
 
@@ -1171,7 +1194,6 @@ useEffect(() => {
    */
   const buildDemandDocFields = (): DemandDocFields => {
     const trainingData = trainings.find(t => t.id === formDemand.trainingId);
-    const isOnline = !requiresLogistics(formDemand.modality);
 
     const currentStatus = calculateDemandStatus({
       startDate: formDemand.startDate!,
@@ -1216,7 +1238,7 @@ useEffect(() => {
       modalidade: formDemand.modality!,
       periodo: `${formatDateTime(formDemand.startDate)} até ${formatDateTime(formDemand.endDate)}`,
       diasEspecificos,
-      local: isOnline ? 'N/A' : (formDemand.trainingLocal || 'N/A'),
+      local: formDemand.trainingLocal || 'N/A',
       corredor: formDemand.corredor || 'Não informado',
       estado: formDemand.demandState || 'Não informado',
       regiao: getRegionName(formDemand.regionId!),
@@ -1439,7 +1461,9 @@ const handleSave = async () => {
       practiceStartDate: ((formDemand as any).practiceStartDate || null) as any,
       practiceEndDate: ((formDemand as any).practiceEndDate || null) as any,
 
-      trainingLocal: !requiresLogistics(formDemand.modality) ? '' : (formDemand.trainingLocal || ''),
+      // O local NÃO é mais zerado nas modalidades sem logística: o online passou
+      // a aceitar local real (ou 'N/A' explícito). Segue opcional na validação.
+      trainingLocal: formDemand.trainingLocal || '',
       regionId: formDemand.regionId || '',
 
       logisticsTransport:
@@ -2371,7 +2395,7 @@ const companionInstructorIds = useMemo(() => {
     <DataList id="analistas-list" items={operationalBases.analistas ?? []} />
     <DataList id="corredores-list" items={operationalBases.corredores ?? []} />
     <DataList id="localidades-list" items={operationalBases.localidades ?? []} />
-    <DataList id="locais-treinamento-list" items={operationalBases.locaisTreinamento ?? []} />
+    <DataList id="locais-treinamento-list" items={localOptions} />
     <DataList id="hoteis-list" items={operationalBases.hoteis ?? []} />
     <DataList id="agencias-list" items={operationalBases.locaisAgencia ?? []} />
     <DataList id="matriculadores-list" items={operationalBases.matriculadores ?? []} />
@@ -2885,16 +2909,21 @@ const companionInstructorIds = useMemo(() => {
                                   Local do Treinamento {requiresLogistics(formDemand.modality) ? '*' : ''}
                                 </label>
 
+                              {/* Editável em TODAS as modalidades. No online o campo é opcional
+                                  (a validação só exige local onde requiresLogistics) e 'N/A' vem
+                                  no topo do datalist — ver localOptions. */}
                               <input
                                 list="locais-treinamento-list"
-                                className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${
-                                  !requiresLogistics(formDemand.modality) ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''
-                                }`}
-                                value={!requiresLogistics(formDemand.modality) ? '' : (formDemand.trainingLocal || '')}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                value={formDemand.trainingLocal || ''}
                                 onChange={(e) => handleTrainingLocalChange(e.target.value)}
-                                placeholder={!requiresLogistics(formDemand.modality) ? 'N/A' : 'Ex: Brucutu, Vitória...'}
-                                disabled={!requiresLogistics(formDemand.modality)}
+                                placeholder={!requiresLogistics(formDemand.modality) ? 'N/A ou local de referência...' : 'Ex: Brucutu, Vitória...'}
                               />
+                              {!requiresLogistics(formDemand.modality) && (
+                                <p className="text-[10px] text-slate-400 mt-1">
+                                  Opcional para online — use N/A se não houver local de referência.
+                                </p>
+                              )}
 
                               </div>
                               <div>
@@ -3092,7 +3121,7 @@ const companionInstructorIds = useMemo(() => {
                                 {getCompanyName(formDemand.companyId!).toUpperCase().includes('VALE') && (<DataViewField label="ID SAP / Pedido Cliente" value={formDemand.clientDemandId || '---'} icon={Tag} />)}
                                 <DataViewField label="Treinamento" value={getTrainingName(formDemand.trainingId!)} icon={BookOpen} />
                                 <DataViewField label="Carga Horária" value={getTrainingHours(formDemand.trainingId!)} icon={Clock} />
-                                <DataViewField label="Unidade / Local" value={!requiresLogistics(formDemand.modality) ? 'N/A' : formDemand.trainingLocal} icon={MapPin} />
+                                <DataViewField label="Unidade / Local" value={formDemand.trainingLocal || 'N/A'} icon={MapPin} />
                                 {formDemand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(formDemand.specificDates) && formDemand.specificDates.length > 0 ? (
                                   <>
                                     <div className="flex flex-col space-y-1 md:col-span-3">

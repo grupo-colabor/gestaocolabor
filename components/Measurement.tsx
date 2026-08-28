@@ -8,10 +8,7 @@ import {
   getDemandCompanyLabel as getDemandCompanyLabelDomain,
   isInternalDemand,
 } from '../domain/demandLabel';
-import {
-  computeMeasurementTotals,
-  isNaoReembolsavel,
-} from '../domain/measurementTotals';
+import { computeMeasurementTotals } from '../domain/measurementTotals';
 import { usePagination } from '../hooks/usePagination';
 import Pagination from './Pagination';
 import { 
@@ -19,10 +16,13 @@ import {
   ChevronDown, ChevronUp, MapPin, Truck, Home, 
   Calendar, Check, AlertCircle, Building, 
   Tag, Info, BookOpen, Clock, Mail, MessageCircle, 
-  FileDown, Upload, Trash2, ExternalLink, User, Plus, Paperclip, DollarSign, Wallet, CheckSquare, Square, RotateCcw,
+  FileDown, Upload, ExternalLink, User, Plus, Paperclip, DollarSign, Wallet, CheckSquare, Square, RotateCcw,
   FileSpreadsheet, Moon
 } from 'lucide-react';
 import MedicaoExportModal from './MedicaoExportModal';
+// Linha do item de despesa: UMA para as seis categorias. O layout dela não pode
+// depender da largura da coluna que a hospeda — ver o comentário no arquivo.
+import ExpenseItemRow from './measurement/ExpenseItemRow';
 import { ExpenseSummaryCard } from './ui/ExpenseSummaryCard';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ImageRun, ExternalHyperlink } from 'docx';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -139,54 +139,14 @@ const CategoryBlock = ({
 
       <div className="space-y-2">
         {relevantAttachments.map(a => (
-          <div key={a.id} className="flex items-center gap-3 bg-slate-50 p-2 rounded-lg border border-slate-100 group">
-            <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-2">
-              <span className="text-slate-300"><Paperclip size={12}/></span>
-              {a.url && a.url !== '#' ? (
-                <a
-                  href={a.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] text-blue-600 font-medium truncate hover:underline flex items-center gap-1"
-                  title={a.name}
-                >
-                  {a.name}
-                  <ExternalLink size={10} className="flex-shrink-0" />
-                </a>
-              ) : (
-                <p className="text-[10px] text-slate-600 font-medium truncate" title={a.name}>{a.name}</p>
-              )}
-            </div>
-            <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-md px-2 py-0.5 shadow-inner">
-              <span className="text-[9px] font-bold text-slate-400">R$</span>
-              <input 
-                type="text" 
-                className="w-20 bg-transparent text-[11px] font-black text-slate-700 outline-none text-right"
-                value={a.value}
-                placeholder="0,00"
-                onChange={e => onUpdateValue(a.id, e.target.value)}
-              />
-            </div>
-            {showReembolsavel && (
-              <button
-                type="button"
-                onClick={() => onToggleReembolsavel?.(a.id)}
-                title={isNaoReembolsavel(a)
-                  ? 'Cliente NAO reembolsa este item — clique para voltar a reembolsavel'
-                  : 'Marcar como nao reembolsavel pelo cliente'}
-                className={`shrink-0 px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest border transition-all ${
-                  isNaoReembolsavel(a)
-                    ? 'bg-amber-100 text-amber-700 border-amber-300'
-                    : 'bg-white text-slate-300 border-slate-200 hover:text-amber-600 hover:border-amber-200'
-                }`}
-              >
-                {isNaoReembolsavel(a) ? 'Nao reemb.' : 'Reembolsavel'}
-              </button>
-            )}
-            <button onClick={() => onRemoveAttachment(a.id)} className="p-1 text-slate-300 hover:text-red-500 transition-colors">
-              <Trash2 size={14} />
-            </button>
-          </div>
+          <ExpenseItemRow
+            key={a.id}
+            attachment={a}
+            onUpdateValue={onUpdateValue}
+            onRemove={onRemoveAttachment}
+            showReembolsavel={showReembolsavel}
+            onToggleReembolsavel={onToggleReembolsavel}
+          />
         ))}
         
         <div className="flex gap-2 mt-2">

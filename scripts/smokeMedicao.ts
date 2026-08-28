@@ -16,6 +16,7 @@ import {
   countDaysInclusive,
   resolvePeriodo,
 } from '../services/medicaoWorkbook';
+import { resolveAttachmentLink, UNLINKED_LABEL } from '../domain/measurementAttachment';
 
 let falhas = 0;
 
@@ -572,6 +573,105 @@ console.log('\n[4] Workbook gerado');
 
   // Contraprova de que o avaliador NAO e complacente: chave divergente nao casa.
   check('avaliador rejeita chave divergente (Sim x Nao)', casa('Sim', criterioDe('K2')) === false);
+
+  /* ======================================================================== */
+  /* Item de despesa do Painel: nome/link do anexo                            */
+  /* ======================================================================== */
+  //
+  // O bug: a notinha anexada em Cafe/Almoco/Jantar/Outros aparecia sem link. A
+  // causa era layout (a linha nao cabia na coluna estreita e o nome era o unico
+  // elemento encolhivel), mas a montagem do item tem regra propria — e e ela
+  // que decide entre link, texto simples e rotulo neutro. E o que da para
+  // travar aqui, sem DOM.
+  //
+  // ⚠️ A resolucao NAO olha categoria. Se alguem introduzir um ramo por
+  // categoria, o primeiro bloco abaixo pega — ele roda a MESMA asserção para
+  // as seis.
+
+  console.log('\n— Item de despesa: nome e link do anexo');
+
+  const PUB = 'https://xyz.supabase.co/storage/v1/object/public';
+  const resolveStorageUrl = (bucket: string, path: string) => `${PUB}/${bucket}/${path}`;
+
+  const CATEGORIAS = ['HOSPEDAGEM', 'LOCOMOCAO', 'CAFE', 'ALMOCO', 'JANTAR', 'OUTROS'];
+
+  {
+    // 1. Item com arquivo completo — o caso normal do upload.
+    for (const cat of CATEGORIAS) {
+      const r = resolveAttachmentLink({
+        name: 'nota-fiscal.pdf',
+        url: `${PUB}/measurement-attachments/measurements/DEM-1/FILE-1-nota-fiscal.pdf`,
+        type: 'application/pdf',
+        bucket: 'measurement-attachments',
+        path: 'measurements/DEM-1/FILE-1-nota-fiscal.pdf',
+      });
+      check(
+        `[${cat}] arquivo completo vira LINK com o nome do arquivo`,
+        r.kind === 'link' && r.label === 'nota-fiscal.pdf' && (r as any).href.endsWith('nota-fiscal.pdf')
+      );
+    }
+  }
+
+  {
+    // 2. Valor avulso — nunca teve arquivo, NAO pode virar link.
+    //    E exatamente o que handleAddManualValue grava.
+    for (const cat of CATEGORIAS) {
+      const r = resolveAttachmentLink({
+        name: 'Lançamento Avulso',
+        url: '#',
+        type: 'text/plain',
+      });
+      check(
+        `[${cat}] valor avulso NAO mostra link (texto simples)`,
+        r.kind === 'plain' && r.label === 'Lançamento Avulso'
+      );
+    }
+  }
+
+  {
+    // 3. Referencia ausente — item de arquivo que perdeu url e path.
+    //    Nao pode virar link morto; rotulo neutro.
+    const r = resolveAttachmentLink({
+      name: 'recibo-almoco.jpg',
+      url: '#',
+      type: 'image/jpeg',
+    });
+    check('referencia ausente NAO vira link', r.kind === 'unlinked');
+    check('referencia ausente mantem o nome conhecido como rotulo', r.label === 'recibo-almoco.jpg');
+
+    const semNome = resolveAttachmentLink({ url: '', type: 'image/png' });
+    checkEq('referencia ausente e sem nome cai no rotulo neutro', semNome.label, UNLINKED_LABEL);
+    check('referencia ausente e sem nome tambem nao vira link', semNome.kind === 'unlinked');
+  }
+
+  {
+    // 4. Reconciliacao em leitura: url perdida, mas bucket + path sobreviveram.
+    //    Reconstroi o destino sem gravar nada (sem backfill, sem migration).
+    const r = resolveAttachmentLink(
+      {
+        name: 'cupom.jpg',
+        url: '#',
+        type: 'image/jpeg',
+        bucket: 'measurement-attachments',
+        path: 'measurements/DEM-9/FILE-9-cupom.jpg',
+      },
+      { resolveStorageUrl }
+    );
+    check('url perdida + bucket/path presentes: reconstroi o LINK', r.kind === 'link');
+    checkEq(
+      'link reconstruido aponta para o objeto certo',
+      (r as any).href,
+      `${PUB}/measurement-attachments/measurements/DEM-9/FILE-9-cupom.jpg`
+    );
+
+    // Sem o resolvedor injetado, degrada para rotulo neutro — nunca link morto.
+    const semResolver = resolveAttachmentLink({
+      name: 'cupom.jpg', url: '#', type: 'image/jpeg',
+      bucket: 'measurement-attachments', path: 'measurements/DEM-9/FILE-9-cupom.jpg',
+    });
+    check('sem resolvedor de storage, degrada para rotulo neutro (nao link morto)', semResolver.kind === 'unlinked');
+  }
+
 
   console.log(falhas === 0 ? '\n✅ Todos os checks passaram.' : `\n❌ ${falhas} check(s) falharam.`);
   process.exit(falhas === 0 ? 0 : 1);

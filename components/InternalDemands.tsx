@@ -40,10 +40,14 @@ import {
   Edit3,
   Check,
   FileDown,
+  Users,
+  Truck,
+  Calendar,
 } from 'lucide-react';
 
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { canPerformDemandAction } from '../domain/demandPermissions';
+import { resolveDemandInstructors, resolveDemandInstructorIds } from '../domain/demandInstructors';
 import { getDemandCompanyLabel } from '../domain/demandLabel';
 import {
   buildDemandTextContent,
@@ -70,7 +74,10 @@ import DataViewField from './demand-form/DataViewField';
 import LogisticaLocomocaoSection, { emptyLocomocaoBlock } from './demand-form/LogisticaLocomocaoSection';
 import LogisticaHospedagemSection, { emptyHospedagemBlock } from './demand-form/LogisticaHospedagemSection';
 import DocumentosDemandaSection, { type DbDocs, type PendingPdfs } from './demand-form/DocumentosDemandaSection';
-import { formatDateTime } from './demand-form/formatters';
+import { formatDateTime, formatDateOnlySafe } from './demand-form/formatters';
+// Alocação de CTM: MESMO hook e MESMO modal do formulário de cliente.
+import ResourceAllocationModal from './ResourceAllocationModal';
+import { useResourceAllocation } from '../hooks/useResourceAllocation';
 import {
   FilterPanelShell,
   FilterGrid,
@@ -255,6 +262,10 @@ const InternalDemands: React.FC = () => {
     instructors,
     operationalBases,
     instructorAllocations,
+    resourceAllocations,
+    addResourceAllocation,
+    removeResourceAllocation,
+    hasResourceConflict,
     notificationTarget,
     setNotificationTarget,
     addDemand,
@@ -274,6 +285,9 @@ const InternalDemands: React.FC = () => {
   // Mesmo nome e mesma definição do modal de cliente (Demands.tsx), para os dois
   // modais responderem igual a uma mudança de permissão.
   const canEditDemand = isAdmin || isAnalyst;
+  // Alocar CTM: mesma tabela de permissão do modal de cliente (admin e analista;
+  // coordenador não). Fonte única em domain/demandPermissions.ts.
+  const canAllocateResource = canPerformDemandAction(profile?.role, 'alocarRecurso');
 
   // ⚠️ FONTE ÚNICA desta tela.
   const internalDemands = useMemo(
@@ -362,14 +376,16 @@ const InternalDemands: React.FC = () => {
   const getInstructorName = (id?: string) =>
     instructors.find(i => i.id === id)?.name || 'Não Alocado';
 
+  /**
+   * Instrutores por demanda, com o fallback para `demands.instructor_id`.
+   * A regra saiu daqui para `domain/demandInstructors.ts` porque o bloco
+   * INSTRUTORES do modal precisa da MESMA leitura (só que com os períodos
+   * junto) — duas cópias divergiriam no primeiro ajuste.
+   */
   const allInstructorsByDemandId = useMemo(() => {
     const map: Record<string, string[]> = {};
     for (const d of internalDemands) {
-      const allocs = instructorAllocations
-        .filter(a => a.demandId === d.id && a.instructorId)
-        .sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
-      const ids = [...new Set(allocs.map(a => a.instructorId))];
-      map[d.id] = ids.length > 0 ? ids : (d.instructorId ? [d.instructorId] : []);
+      map[d.id] = resolveDemandInstructorIds(d.id, d.instructorId, instructorAllocations);
     }
     return map;
   }, [internalDemands, instructorAllocations]);
@@ -1110,6 +1126,40 @@ const InternalDemands: React.FC = () => {
   const currentStatus = formDemand.startDate
     ? getStatusOf(formDemand as Demand)
     : ('NOVA' as DemandStatus);
+
+  /* ───────── Blocos INSTRUTORES (leitura) e CENTRO MÓVEL (funcional) ─────────
+   *
+   * Mesmo par de cards do modal de cliente, com UMA diferença de escopo:
+   * o bloco de instrutores aqui é SOMENTE LEITURA. Nada nesta tela escreve em
+   * `instructor_allocations` — decisão registrada: o botão do cliente faz
+   * split destrutivo de período (substitui a alocação anterior), e portar esse
+   * comportamento para a interna ficou para depois.
+   */
+
+  /** Alocações de instrutor da demanda, com fallback para o principal. Leitura pura. */
+  const currentInstructorEntries = useMemo(() => {
+    if (!formDemand.id) return [];
+    return resolveDemandInstructors(formDemand.id, formDemand.instructorId, instructorAllocations);
+  }, [formDemand.id, formDemand.instructorId, instructorAllocations]);
+
+  const currentResourceAllocations = useMemo(() => {
+    if (!formDemand.id) return [];
+    return resourceAllocations.filter(a => a.demandId === formDemand.id);
+  }, [resourceAllocations, formDemand.id]);
+
+  // Slot de erro próprio do modal de CTM desta tela. No modal de cliente ele é
+  // compartilhado com o fluxo de instrutor; aqui não existe fluxo de instrutor,
+  // então o estado é local.
+  const [resourceError, setResourceError] = useState<string | null>(null);
+
+  const ctmAllocation = useResourceAllocation({
+    demand: formDemand,
+    addResourceAllocation,
+    hasResourceConflict,
+    error: resourceError,
+    setError: setResourceError,
+    canAllocate: canAllocateResource,
+  });
 
   const handleCancelDemand = () => {
     if (!formDemand?.id || !selectedCancelReason) return;
@@ -1903,6 +1953,105 @@ const InternalDemands: React.FC = () => {
                 )}
               </div>
 
+              {/* SEÇÃO DE ALOCAÇÕES POR PERÍODO (INSTRUTORES E RECURSOS)
+                  Mesmo par de cards do modal de cliente (Demands.tsx). */}
+              {modalSubMode === 'VIEW' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 no-print">
+                  {/* Instrutores — SOMENTE LEITURA.
+                      Sem botão de adicionar e sem nenhum caminho de escrita em
+                      instructor_allocations: alocar instrutor em demanda interna
+                      fica para depois (o fluxo do cliente substitui a alocação
+                      anterior por split de período, fora de escopo aqui).
+                      As linhas exibidas podem ter vindo da agenda. */}
+                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                    <div className="w-full px-6 py-4 flex items-center justify-between bg-white">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-blue-50 rounded-lg text-blue-600"><Users size={20} /></div>
+                        <h3 className="font-bold text-slate-800 uppercase text-sm">Instrutores</h3>
+                      </div>
+                    </div>
+                    <div className="px-6 py-4 border-t border-slate-100 bg-white min-h-[100px]">
+                      {currentInstructorEntries.length > 0 ? (
+                        <div className="space-y-3">
+                          {currentInstructorEntries.map((entry, idx) => (
+                            <div
+                              key={entry.allocationId || `${entry.instructorId}-${idx}`}
+                              className="flex items-center gap-4 p-3 bg-slate-50 rounded-xl border border-slate-200"
+                            >
+                              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-xs uppercase">
+                                {getInstructorName(entry.instructorId).charAt(0)}
+                              </div>
+                              <div>
+                                <p className="text-sm font-bold text-slate-800">{getInstructorName(entry.instructorId)}</p>
+                                {entry.startDate ? (
+                                  <p className="text-[10px] font-medium text-slate-500 flex items-center gap-2">
+                                    <Calendar size={10} /> {formatDateOnlySafe(entry.startDate)} até {formatDateOnlySafe(entry.endDate)}
+                                  </p>
+                                ) : (
+                                  <p className="text-[10px] font-medium text-slate-400">Instrutor principal da demanda</p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-400 italic py-2">Nenhum instrutor alocado.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Centro Móvel — funcional, idêntico ao cliente:
+                      mesmo hook, mesmo modal, mesma escrita em resource_allocations
+                      e mesma checagem de conflito bloqueante (neutra quanto a tipo:
+                      uma interna bloqueia uma de cliente e vice-versa). */}
+                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                    <div className="w-full px-6 py-4 flex items-center justify-between bg-white">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-amber-50 rounded-lg text-amber-600"><Truck size={20} /></div>
+                        <h3 className="font-bold text-slate-800 uppercase text-sm">Centro Móvel</h3>
+                      </div>
+                      {currentStatus !== 'CANCELADA' && canAllocateResource && (
+                        <button
+                          onClick={ctmAllocation.open}
+                          className="text-[10px] font-black text-amber-600 uppercase tracking-widest flex items-center gap-1.5 hover:bg-amber-50 px-3 py-1.5 rounded-lg transition"
+                        >
+                          <Plus size={14} /> Alocar CTM
+                        </button>
+                      )}
+                    </div>
+                    <div className="px-6 py-4 border-t border-slate-100 bg-white min-h-[100px]">
+                      {currentResourceAllocations.length > 0 ? (
+                        <div className="space-y-3">
+                          {currentResourceAllocations.map(allocation => (
+                            <div key={allocation.id} className="flex items-center justify-between p-3 bg-amber-50/30 rounded-xl border border-amber-100 group">
+                              <div className="flex items-center gap-4">
+                                <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600 border border-amber-200 shadow-sm"><Truck size={14}/></div>
+                                <div>
+                                  <p className="text-sm font-bold text-amber-800">Centro Móvel</p>
+                                  <p className="text-[10px] font-medium text-amber-600 flex items-center gap-2">
+                                    <Calendar size={10} /> {formatDateOnlySafe(allocation.startDate)} até {formatDateOnlySafe(allocation.endDate)}
+                                  </p>
+                                </div>
+                              </div>
+                              {canAllocateResource && (
+                                <button
+                                  onClick={() => removeResourceAllocation(allocation.id)}
+                                  className="p-2 text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-400 italic py-2">Nenhum recurso logístico alocado por período.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <LogisticaLocomocaoSection
                 form={formDemand}
                 setForm={setFormDemand}
@@ -2149,6 +2298,11 @@ const InternalDemands: React.FC = () => {
         </div>,
         document.body
       )}
+
+      {/* MODAL DE ALOCAÇÃO DE RECURSO (CTM) — o MESMO componente e o MESMO
+          fluxo do modal de cliente (components/ResourceAllocationModal.tsx +
+          hooks/useResourceAllocation.ts). */}
+      <ResourceAllocationModal {...ctmAllocation.modalProps} />
     </>
   );
 };

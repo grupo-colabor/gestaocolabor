@@ -74,6 +74,7 @@ import { fetchCompanies, insertCompany, updateCompanyById, CompanyRow } from './
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { isDemandDay, getDemandDays } from './domain/demandDays';
 import { isEAD, requiresLogistics } from './domain/modalityRules';
+import { hasResourceOverlap } from './domain/resourceConflict';
 import { fetchInstructors, fetchInstructorTrainings, deleteInstructorById } from './services/instructors';
 import { fetchMeasurements, upsertMeasurementByDemandId } from './services/measurements';
 import { fetchEvidences, upsertEvidenceByDemandId } from './services/evidences';
@@ -2518,10 +2519,19 @@ const removeAgendaItem = useCallback(
 
       await syncResourceAllocationsFromDb();
     } catch (e) {
+      // ⚠️ NADA de falha silenciosa aqui. O estado local acima é otimista: se a
+      // escrita não passou (RLS, rede), a tela continuaria mostrando um CTM que
+      // não existe no banco. Avisa o usuário e re-sincroniza para voltar à
+      // verdade do servidor.
       console.error('[ResourceAllocations] add error', e);
+      setNotification({
+        message: `Falha ao alocar o Centro Móvel: ${(e as any)?.message || 'erro desconhecido'}`,
+        type: 'error'
+      });
+      await syncResourceAllocationsFromDb();
     }
   })();
-}, [AUTH_MODE, syncResourceAllocationsFromDb]);
+}, [AUTH_MODE, syncResourceAllocationsFromDb, setNotification]);
 
 
   const updateResourceAllocation = useCallback((a: LogisticAllocation) => {
@@ -2574,10 +2584,17 @@ const removeAgendaItem = useCallback(
 
       await syncResourceAllocationsFromDb();
     } catch (e) {
+      // Mesmo motivo do add: a remoção local já aconteceu, então um erro mudo
+      // esconderia um CTM que continua reservado no banco.
       console.error('[ResourceAllocations] remove error', e);
+      setNotification({
+        message: `Falha ao remover o Centro Móvel: ${(e as any)?.message || 'erro desconhecido'}`,
+        type: 'error'
+      });
+      await syncResourceAllocationsFromDb();
     }
   })();
-}, [AUTH_MODE, syncResourceAllocationsFromDb]);
+}, [AUTH_MODE, syncResourceAllocationsFromDb, setNotification]);
 
 
  const updateOperationalBase = useCallback(
@@ -2767,21 +2784,15 @@ const hasScheduleConflict = useCallback(
       excludeDemandId?: string,
       excludeAllocationId?: string
     ): boolean => {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-
-      return resourceAllocations.some(a => {
-        if (excludeAllocationId && a.id === excludeAllocationId) return false;
-
-        const d = demands.find(dm => dm.id === a.demandId);
-        if (d) {
-          if (excludeDemandId && d.id === excludeDemandId) return false;
-          if (d.status === 'CANCELADA') return false;
-        }
-
-        const aStart = new Date(a.startDate);
-        const aEnd = new Date(a.endDate);
-        return start <= aEnd && end >= aStart;
+      // Regra em `domain/resourceConflict.ts` — pura, para o smoke poder
+      // exercitar o bloqueio cruzado interna x cliente sem montar o React.
+      return hasResourceOverlap({
+        startDate,
+        endDate,
+        allocations: resourceAllocations,
+        demands,
+        excludeDemandId,
+        excludeAllocationId,
       });
     },
     [resourceAllocations, demands]

@@ -16,11 +16,20 @@ export type DemandAction =
   | 'create_demand'
   | 'edit_demand'
   | 'delete_demand'
-  | 'cancel_demand';
+  | 'cancel_demand'
+  /**
+   * Alocar recurso logístico (Centro de Treinamento Móvel) na demanda.
+   * Vale para os DOIS modais — cliente e interna. Até aqui o botão ALOCAR CTM
+   * não tinha guard nenhum: quem enxergava a tela alocava. Portar o bloco para
+   * a interna replicaria o buraco, então ele fecha nos dois de uma vez.
+   *
+   * ⚠️ Nome fora do padrão snake_case das demais por escolha explícita do time.
+   */
+  | 'alocarRecurso';
 
 const DEMAND_ROLE_ACTIONS: Record<string, DemandAction[]> = {
-  admin: ['create_demand', 'edit_demand', 'delete_demand', 'cancel_demand'],
-  analista: ['create_demand', 'edit_demand', 'delete_demand', 'cancel_demand'],
+  admin: ['create_demand', 'edit_demand', 'delete_demand', 'cancel_demand', 'alocarRecurso'],
+  analista: ['create_demand', 'edit_demand', 'delete_demand', 'cancel_demand', 'alocarRecurso'],
   coordenador: [],
 };
 

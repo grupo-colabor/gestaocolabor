@@ -123,6 +123,10 @@ import LogisticaLocomocaoSection from './demand-form/LogisticaLocomocaoSection';
 import LogisticaHospedagemSection from './demand-form/LogisticaHospedagemSection';
 import DocumentosDemandaSection from './demand-form/DocumentosDemandaSection';
 import { formatDateTime, formatDateOnlySafe } from './demand-form/formatters';
+// Fluxo de alocação de CTM: hook (estado + regras) e modal (apresentação).
+// Extraídos daqui para que a demanda INTERNA use o MESMO fluxo, não uma cópia.
+import ResourceAllocationModal from './ResourceAllocationModal';
+import { useResourceAllocation } from '../hooks/useResourceAllocation';
 
 // UUID v4 sem crypto.randomUUID() — compatível com HTTP e browsers antigos.
 // Necessário porque a coluna id da tabela logistic_blocks é do tipo uuid no PostgreSQL.
@@ -161,6 +165,9 @@ const Demands: React.FC = () => {
   // Permissões
   const canEditDemand = isAdmin || isAnalyst;
   const canDeleteDemand = isAdmin || isAnalyst;
+  // O botão ALOCAR CTM não tinha guard nenhum: bastava enxergar a tela.
+  // Fechado aqui e no modal de interna ao mesmo tempo, pela mesma tabela.
+  const canAllocateResource = canPerformAction(profile?.role, 'alocarRecurso');
 
 const [filter, setFilter] = useState('');
 const [isExportDemandsOpen, setIsExportDemandsOpen] = useState(false);
@@ -243,9 +250,6 @@ useEffect(() => {
   });
   const [pendingConflictAllocation, setPendingConflictAllocation] = useState<InstructorAllocation | null>(null);
 
-  // Resource Modal State (CTM)
-  const [isResourceModalOpen, setIsResourceModalOpen] = useState(false);
-
   // Load location associations on mount
   useEffect(() => {
     // Cascata do formulário de CLIENTE: lê só o conjunto 'cliente'. O conjunto
@@ -258,16 +262,9 @@ useEffect(() => {
     if (!isModalOpen) setAutoFilledFields(new Set());
   }, [isModalOpen]);
 
-  // Body scroll lock when any modal is open
-  useEffect(() => {
-    const anyOpen = isModalOpen || isAllocationModalOpen || !!pendingConflictAllocation || isResourceModalOpen || confirmCancel || confirmDelete || confirmReactivate || confirmAllocationCase !== null || confirmDateChange || confirmLocalChange;
-    document.body.style.overflow = anyOpen ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [isModalOpen, isAllocationModalOpen, pendingConflictAllocation, isResourceModalOpen, confirmCancel, confirmDelete, confirmReactivate, confirmAllocationCase, confirmDateChange, confirmLocalChange]);
-  const [resourceForm, setResourceForm] = useState({
-    startDate: '',
-    endDate: ''
-  });
+  // O lock de scroll do body foi para junto do hook `ctmAllocation`, mais
+  // abaixo: ele depende de `ctmAllocation.isOpen`, e a lista de dependências
+  // é avaliada durante o render — antes da declaração daria TDZ.
 
   // Accordion state
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
@@ -2099,70 +2096,27 @@ const endLocal = usePractice
     setIsAllocationModalOpen(false);
   };
 
-  const handleOpenResourceModal = () => {
-    if (!formDemand.id) return;
-    setResourceError(null);
-    setResourceForm({
-      startDate: toLocalDateInputFromAny(formDemand.startDate) || '',
-      endDate: toLocalDateInputFromAny(formDemand.endDate) || ''
+  /**
+   * Alocação de CTM — fluxo compartilhado com o modal de demanda interna.
+   * O slot de erro continua sendo o `resourceError` desta tela (compartilhado
+   * com o fluxo de instrutor e com o toast global), para o comportamento aqui
+   * não mudar com a extração.
+   */
+  const ctmAllocation = useResourceAllocation({
+    demand: formDemand,
+    addResourceAllocation,
+    hasResourceConflict,
+    error: resourceError,
+    setError: setResourceError,
+    canAllocate: canAllocateResource,
+  });
 
-    });
-    setIsResourceModalOpen(true);
-  };
-
-  const handleAddResourceAllocation = () => {
-    setResourceError(null);
-    if (!resourceForm.startDate || !resourceForm.endDate) {
-      setResourceError("Preencha as datas de alocação do CTM.");
-      setTimeout(() => setResourceError(null), 4000);
-      return;
-    }
-
-    const normalizeStart = (dateStr: string) => new Date(dateStr.split('T')[0] + 'T00:00:00');
-    const normalizeEnd = (dateStr: string) => new Date(dateStr.split('T')[0] + 'T23:59:59');
-
-    const allocStartLimit = normalizeStart(resourceForm.startDate);
-    const allocEndLimit = normalizeEnd(resourceForm.endDate);
-    const demandStartLimit = normalizeStart(formDemand.startDate!);
-    const demandEndLimit = normalizeEnd(formDemand.endDate!);
-
-    // 1. Validar limites da demanda
-    if (allocStartLimit < demandStartLimit || allocEndLimit > demandEndLimit) {
-      setResourceError("O período do CTM deve estar dentro do período da demanda.");
-      setTimeout(() => setResourceError(null), 4000);
-      return;
-    }
-
-    // 2. Validar conflito do CTM
-    if (hasResourceConflict(resourceForm.startDate, resourceForm.endDate, formDemand.id)) {
-      setResourceError("O Centro de Treinamento Móvel já possui um compromisso neste período.");
-      setTimeout(() => setResourceError(null), 4000);
-      return;
-    }
-
-    // ✅ FIX: Adicionar horário para evitar deslocamento de timezone
-    // Usa o mesmo padrão do Logistics.tsx (buildDateTime)
-    // Formato: "YYYY-MM-DDTHH:mm" é interpretado como hora LOCAL
-    const buildDateTimeLocal = (date: string, fallbackTime: string) => {
-      if (!date) return '';
-      const dateOnly = date.split('T')[0]; // Garante apenas a parte da data
-      return `${dateOnly}T${fallbackTime}`;
-    };
-
-    const startDateTime = buildDateTimeLocal(resourceForm.startDate, '08:00');
-    const endDateTime = buildDateTimeLocal(resourceForm.endDate, '18:00');
-
-    const newAllocation: LogisticAllocation = {
-      id: `RES-${Date.now()}`,
-      demandId: formDemand.id!,
-      resourceType: 'CENTRO_TREINAMENTO_MOVEL',
-      startDate: startDateTime,
-      endDate: endDateTime
-    };
-
-    addResourceAllocation(newAllocation);
-    setIsResourceModalOpen(false);
-  };
+  // Body scroll lock when any modal is open
+  useEffect(() => {
+    const anyOpen = isModalOpen || isAllocationModalOpen || !!pendingConflictAllocation || ctmAllocation.isOpen || confirmCancel || confirmDelete || confirmReactivate || confirmAllocationCase !== null || confirmDateChange || confirmLocalChange;
+    document.body.style.overflow = anyOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [isModalOpen, isAllocationModalOpen, pendingConflictAllocation, ctmAllocation.isOpen, confirmCancel, confirmDelete, confirmReactivate, confirmAllocationCase, confirmDateChange, confirmLocalChange]);
 
   const statusColor = (status: string) => {
     switch(status) {
@@ -3261,9 +3215,9 @@ const companionInstructorIds = useMemo(() => {
                               <div className="p-2 bg-amber-50 rounded-lg text-amber-600"><Truck size={20} /></div>
                               <h3 className="font-bold text-slate-800 uppercase text-sm">Centro Móvel</h3>
                             </div>
-                            {currentStatus !== 'CANCELADA' && (
+                            {currentStatus !== 'CANCELADA' && canAllocateResource && (
                               <button 
-                                onClick={handleOpenResourceModal}
+                                onClick={ctmAllocation.open}
                                 className="text-[10px] font-black text-amber-600 uppercase tracking-widest flex items-center gap-1.5 hover:bg-amber-50 px-3 py-1.5 rounded-lg transition"
                               >
                                 <Plus size={14} /> Alocar CTM
@@ -3617,64 +3571,9 @@ const companionInstructorIds = useMemo(() => {
         </div>
       , document.body)}
 
-      {/* MODAL DE ALOCAÇÃO DE RECURSO (CTM) */}
-      {isResourceModalOpen && createPortal(
-        <div className="fixed inset-0 z-[210] bg-black/70 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-scale-up">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <h3 className="text-lg font-black text-amber-700 uppercase tracking-tight">Alocar Centro Móvel</h3>
-              <button onClick={() => setIsResourceModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={24}/></button>
-            </div>
-            <div className="p-6 space-y-4">
-              {resourceError && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 animate-fade-in mb-2">
-                  <AlertCircle size={18} className="text-red-500 shrink-0 mt-0.5" />
-                  <p className="text-[11px] font-bold text-red-700 leading-tight">
-                    {resourceError}
-                  </p>
-                </div>
-              )}
-              <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 flex items-center gap-4">
-                <div className="p-3 bg-white rounded-xl text-amber-600 shadow-sm border border-amber-100"><Truck size={24}/></div>
-                <div>
-                   <p className="text-sm font-black text-amber-900 uppercase">Recurso Logístico</p>
-                   <p className="text-xs font-bold text-amber-600">Centro de Treinamento Móvel</p>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Data Início</label>
-                  <input 
-                    type="date" 
-                    className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" 
-                    value={resourceForm.startDate} 
-                    onChange={e => { setResourceForm({...resourceForm, startDate: e.target.value}); setResourceError(null); }}
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Data Fim</label>
-                  <input 
-                    type="date" 
-                    className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" 
-                    value={resourceForm.endDate} 
-                    onChange={e => { setResourceForm({...resourceForm, endDate: e.target.value}); setResourceError(null); }}
-                  />
-                </div>
-              </div>
-              <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 flex items-start gap-2">
-                <Info size={14} className="text-blue-500 shrink-0 mt-0.5" />
-                <p className="text-[10px] font-bold text-blue-700 leading-tight">
-                  O CTM deve estar dentro do período: {formatDateTime(formDemand.startDate?.split('T')[0])} e {formatDateTime(formDemand.endDate?.split('T')[0])}
-                </p>
-              </div>
-            </div>
-            <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-3">
-              <button onClick={() => setIsResourceModalOpen(false)} className="flex-1 py-3 bg-white border border-slate-200 rounded-xl font-black text-[10px] uppercase tracking-widest text-slate-500">Cancelar</button>
-              <button onClick={handleAddResourceAllocation} className="flex-1 py-3 bg-amber-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-amber-200">Confirmar</button>
-            </div>
-          </div>
-        </div>
-      , document.body)}
+      {/* MODAL DE ALOCAÇÃO DE RECURSO (CTM) — componente compartilhado com o
+          modal de demanda interna (components/ResourceAllocationModal.tsx) */}
+      <ResourceAllocationModal {...ctmAllocation.modalProps} />
 
       {/* MODAL DE MOTIVO DE CANCELAMENTO */}
       {confirmCancel && createPortal(

@@ -15,6 +15,7 @@ import { Demand, Company, Training, Region, Instructor, InstructorAllocation } f
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { getDemandCompanyLabel } from '../domain/demandLabel';
 import { demandIntersectsRange } from '../domain/demandDays';
+import { formatDateOnlySafe } from './demand-form/formatters';
 import { buildModalityOptions, buildTrainingsById, matchesModality } from '../domain/modalityOptions';
 import { fetchLogisticBlocksByDemandIds, LogisticBlockRow } from '../services/logistics';
 
@@ -107,12 +108,12 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
     cancelled: d.status === 'CANCELADA',
   });
 
+  // Parede pura: start_date/end_date guardam o horário que o usuário digitou.
+  // new Date().toLocaleDateString() reinterpretava o "+00:00" como instante e
+  // voltava um dia na borda de meia-noite.
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '—';
-    try {
-      const d = new Date(dateStr);
-      return d.toLocaleDateString('pt-BR');
-    } catch { return dateStr; }
+    return formatDateOnlySafe(dateStr);
   };
 
   /* ---------- state ---------- */

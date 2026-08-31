@@ -123,6 +123,20 @@ import LogisticaLocomocaoSection from './demand-form/LogisticaLocomocaoSection';
 import LogisticaHospedagemSection from './demand-form/LogisticaHospedagemSection';
 import DocumentosDemandaSection from './demand-form/DocumentosDemandaSection';
 import { formatDateTime, formatDateOnlySafe } from './demand-form/formatters';
+// Conversão data+hora de início/fim da demanda: helper ÚNICO, compartilhado com
+// o form de demanda interna (InternalDemands.tsx). Não reimplementar aqui.
+import {
+  DEFAULT_START_TIME,
+  DEFAULT_END_TIME,
+  toDemandDateInput,
+  toDemandTimeInput,
+  buildDemandDateTime,
+  toDemandDateTimeInput,
+  isoToLocalDTL,
+  isoToDateOnly,
+  toIsoFromDateTimeLocalSafe,
+  toIsoFromDateInputSafe,
+} from '../domain/demandDateTime';
 // Fluxo de alocação de CTM: hook (estado + regras) e modal (apresentação).
 // Extraídos daqui para que a demanda INTERNA use o MESMO fluxo, não uma cópia.
 import ResourceAllocationModal from './ResourceAllocationModal';
@@ -1338,48 +1352,9 @@ useEffect(() => {
 
 
 
-// ===============================
-// ✅ Helpers ÚNICOS (não duplicar)
-// - Usados no handleSave e na logística
-// - IMPORTANTE: NÃO use toISOString() para startDate/endDate da demanda
-// ===============================
-
-const toIsoFromAnyDateSafe = (v?: string | null) => {
-  const s = (v ?? '').trim();
-  if (!s) return null;
-
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return null;
-
-  return d.toISOString();
-};
-
-// datetime-local ("YYYY-MM-DDTHH:mm") -> ISO (para campos de logística que são timestamptz)
-const toIsoFromDateTimeLocalSafe = (dt?: string | null) => {
-  const s = (dt ?? '').trim();
-  if (!s) return null;
-
-  // aceita yyyy-mm-ddThh:mm
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) return null;
-
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return null;
-
-  return d.toISOString();
-};
-
-// date ("YYYY-MM-DD") -> ISO 00:00:00 (para hotelCheckIn/out se forem timestamptz/date no banco)
-const toIsoFromDateInputSafe = (dateStr?: string | null) => {
-  const s = (dateStr ?? '').trim();
-  if (!s) return null;
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
-
-  const d = new Date(`${s}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return null;
-
-  return d.toISOString();
-};
+// ⚠️ A conversão de data/hora (demanda e logística) mora em
+// domain/demandDateTime.ts. Não reintroduzir cópia local aqui — em especial,
+// NÃO passe startDate/endDate por new Date()/toISOString().
 
 const handleSave = async () => {
   if (!isFormValid) return;
@@ -1538,7 +1513,10 @@ const handleSave = async () => {
         const before = activeDemand;
         const diffParts: string[] = [];
         if (before) {
-          const nd = (d: any) => d ? new Date(d).toISOString() : '';
+          // Compara a PAREDE ("YYYY-MM-DDTHH:mm"), não o instante: o valor vindo
+          // do banco traz "+00:00" e o do form não, então new Date() acusava
+          // mudança em toda edição.
+          const nd = (d: any) => (d ? toDemandDateTimeInput(d) : '');
 
           // Informações gerais
           if (before.companyId !== sanitizedDemand.companyId)
@@ -1913,33 +1891,6 @@ const handleSave = async () => {
     setIsSaving(false);
   }
 };
-  const pad2 = (n: number) => String(n).padStart(2, '0');
-
-  // Converte ISO UTC para "YYYY-MM-DDTHH:mm" no fuso local (para inputs datetime-local)
-  const isoToLocalDTL = (iso: string | null | undefined): string | undefined => {
-    if (!iso) return undefined;
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return undefined;
-    const p = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-  };
-
-  // Extrai apenas "YYYY-MM-DD" de qualquer string ISO, sem conversão de fuso
-  const isoToDateOnly = (iso: string | null | undefined): string | undefined => {
-    if (!iso) return undefined;
-    const s = String(iso).trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-    if (s.includes('T')) return s.split('T')[0];
-    return undefined;
-  };
-
-  const toLocalDateInputFromAny = (v?: string) => {
-    if (!v) return '';
-    const d = new Date(v);
-    if (Number.isNaN(d.getTime())) return (v.includes('T') ? v.split('T')[0] : v);
-    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-  };
-
 
   const handleOpenAllocationModal = () => {
     if (!formDemand.id) return;
@@ -1950,12 +1901,12 @@ const handleSave = async () => {
       !!(formDemand as any).practiceEndDate;
 
     const startBase = usePractice
-      ? toLocalDateInputFromAny((formDemand as any).practiceStartDate)
-      : toLocalDateInputFromAny(formDemand.startDate);
+      ? toDemandDateInput((formDemand as any).practiceStartDate)
+      : toDemandDateInput(formDemand.startDate);
 
     const endBase = usePractice
-      ? toLocalDateInputFromAny((formDemand as any).practiceEndDate)
-      : toLocalDateInputFromAny(formDemand.endDate);
+      ? toDemandDateInput((formDemand as any).practiceEndDate)
+      : toDemandDateInput(formDemand.endDate);
 
     setAllocationForm({
       instructorId: '',
@@ -2008,8 +1959,8 @@ const handleSave = async () => {
   const practiceEndRaw   = (formDemand as any).practiceEndDate as string | undefined;
 
   // datas locais (YYYY-MM-DD) da prática
-  const practiceStartDateOnly = toLocalDateInputFromAny(practiceStartRaw);
-  const practiceEndDateOnly   = toLocalDateInputFromAny(practiceEndRaw);
+  const practiceStartDateOnly = toDemandDateInput(practiceStartRaw);
+  const practiceEndDateOnly   = toDemandDateInput(practiceEndRaw);
 
   // horários locais (HH:mm) da prática
   const practiceStartTime = getHHMMFromISO(practiceStartRaw) || '08:00';
@@ -2137,70 +2088,28 @@ const endLocal = usePractice
 // =======================================
 
   
-  const toLocalDateInput = (v?: string | null) => {
-    const s = (v ?? '').trim();
-    if (!s) return '';
-
-    // Se vier só yyyy-mm-dd, já serve
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-
-    const d = new Date(s);
-    if (Number.isNaN(d.getTime())) {
-      // fallback: tenta cortar "YYYY-MM-DD" se existir
-      if (s.includes('T')) return s.split('T')[0];
-      return '';
-    }
-
-    const y = d.getFullYear();
-    const m = pad2(d.getMonth() + 1);
-    const day = pad2(d.getDate());
-    return `${y}-${m}-${day}`;
-  };
-
-  const toLocalTimeInput = (v?: string | null) => {
-    const s = (v ?? '').trim();
-    if (!s) return '';
-
-    // Se já veio como YYYY-MM-DDTHH:mm (sem seconds/Z), pega HH:mm
-    const m1 = s.match(/T(\d{2}:\d{2})/);
-    if (m1?.[1]) return m1[1];
-
-    const d = new Date(s);
-    if (Number.isNaN(d.getTime())) return '';
-
-    const hh = pad2(d.getHours());
-    const mm = pad2(d.getMinutes());
-    return `${hh}:${mm}`;
-  };
-
-  const buildLocalDateTime = (date: string, time: string) => {
-    const d = (date ?? '').trim();
-    const t = (time ?? '').trim();
-    if (!d) return '';
-    const safeTime = t || '08:00';
-    // datetime-local padrão: YYYY-MM-DDTHH:mm
-    return `${d}T${safeTime}`;
-  };
+  const defaultTimeFor = (field: 'startDate' | 'endDate') =>
+    field === 'startDate' ? DEFAULT_START_TIME : DEFAULT_END_TIME;
 
   const handleDateChange = (field: 'startDate' | 'endDate', val: string) => {
-    const time = toLocalTimeInput(formDemand[field] as any) || '08:00';
-    setFormDemand(prev => ({ ...prev, [field]: buildLocalDateTime(val, time) }));
+    const time = toDemandTimeInput(formDemand[field] as any) || defaultTimeFor(field);
+    setFormDemand(prev => ({ ...prev, [field]: buildDemandDateTime(val, time, defaultTimeFor(field)) }));
     setResourceError(null);
   };
 
   const handleTimeChange = (field: 'startDate' | 'endDate', val: string) => {
-    const date = toLocalDateInput(formDemand[field] as any);
+    const date = toDemandDateInput(formDemand[field] as any);
     if (!date) return;
-    setFormDemand(prev => ({ ...prev, [field]: buildLocalDateTime(date, val) }));
+    setFormDemand(prev => ({ ...prev, [field]: buildDemandDateTime(date, val, defaultTimeFor(field)) }));
     setResourceError(null);
   };
 
   const getDateValue = (field: 'startDate' | 'endDate') => {
-    return toLocalDateInput(formDemand[field] as any);
+    return toDemandDateInput(formDemand[field] as any);
   };
 
   const getTimeValue = (field: 'startDate' | 'endDate') => {
-    return toLocalTimeInput(formDemand[field] as any);
+    return toDemandTimeInput(formDemand[field] as any);
   };
 
   // ✅ Ao entrar em "FORM" no EDIT, garante que os inputs de hora abram com o horário real salvo
@@ -2217,16 +2126,16 @@ const endLocal = usePractice
     if (didSyncEditTimesRef.current) return;
     didSyncEditTimesRef.current = true;
 
-    const startDate = toLocalDateInput(activeDemand.startDate);
-    const startTime = toLocalTimeInput(activeDemand.startDate) || '08:00';
+    const startDate = toDemandDateInput(activeDemand.startDate);
+    const startTime = toDemandTimeInput(activeDemand.startDate) || DEFAULT_START_TIME;
 
-    const endDate = toLocalDateInput(activeDemand.endDate);
-    const endTime = toLocalTimeInput(activeDemand.endDate) || '18:00';
+    const endDate = toDemandDateInput(activeDemand.endDate);
+    const endTime = toDemandTimeInput(activeDemand.endDate) || DEFAULT_END_TIME;
 
     setFormDemand(prev => ({
       ...prev,
-      startDate: buildLocalDateTime(startDate, startTime),
-      endDate: buildLocalDateTime(endDate, endTime),
+      startDate: buildDemandDateTime(startDate, startTime, DEFAULT_START_TIME),
+      endDate: buildDemandDateTime(endDate, endTime, DEFAULT_END_TIME),
     }));
   }, [isModalOpen, modalMode, modalSubMode, activeDemand]);
 

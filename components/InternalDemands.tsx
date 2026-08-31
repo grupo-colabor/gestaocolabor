@@ -75,6 +75,21 @@ import LogisticaLocomocaoSection, { emptyLocomocaoBlock } from './demand-form/Lo
 import LogisticaHospedagemSection, { emptyHospedagemBlock } from './demand-form/LogisticaHospedagemSection';
 import DocumentosDemandaSection, { type DbDocs, type PendingPdfs } from './demand-form/DocumentosDemandaSection';
 import { formatDateTime, formatDateOnlySafe } from './demand-form/formatters';
+// Conversão data+hora de início/fim da demanda: helper ÚNICO, compartilhado com
+// o form de cliente (Demands.tsx). Não reimplementar aqui — foi a cópia local
+// (isoToLocalDTL sobre start_date) que deslocava -3h ao reabrir a interna.
+import {
+  DEFAULT_START_TIME,
+  DEFAULT_END_TIME,
+  toDemandDateInput,
+  toDemandTimeInput,
+  buildDemandDateTime,
+  toDemandDateTimeInput,
+  isoToLocalDTL,
+  isoToDateOnly,
+  toIsoFromDateTimeLocalSafe,
+  toIsoFromDateInputSafe,
+} from '../domain/demandDateTime';
 // Alocação de CTM: MESMO hook e MESMO modal do formulário de cliente.
 import ResourceAllocationModal from './ResourceAllocationModal';
 import { useResourceAllocation } from '../hooks/useResourceAllocation';
@@ -128,61 +143,6 @@ const statusColor = (status: string) => {
     case 'CANCELADA': return 'bg-red-100 text-red-800';
     default: return 'bg-gray-100 text-gray-800';
   }
-};
-
-const pad2 = (n: number) => String(n).padStart(2, '0');
-
-const toLocalDateInput = (v?: string | null) => {
-  const s = (v ?? '').trim();
-  if (!s) return '';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return s.includes('T') ? s.split('T')[0] : '';
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-};
-
-const toLocalTimeInput = (v?: string | null) => {
-  const s = (v ?? '').trim();
-  if (!s) return '';
-  const m1 = s.match(/T(\d{2}:\d{2})/);
-  if (m1?.[1]) return m1[1];
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return '';
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-};
-
-const buildLocalDateTime = (date: string, time: string) => {
-  const d = (date ?? '').trim();
-  if (!d) return '';
-  return `${d}T${(time ?? '').trim() || '08:00'}`;
-};
-
-const isoToLocalDTL = (iso: string | null | undefined): string => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-};
-
-const isoToDateOnly = (iso: string | null | undefined): string => {
-  if (!iso) return '';
-  const s = String(iso).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  return s.includes('T') ? s.split('T')[0] : '';
-};
-
-const toIsoFromDateTimeLocalSafe = (dt?: string | null) => {
-  const s = (dt ?? '').trim();
-  if (!s) return null;
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString();
-};
-
-const toIsoFromDateInputSafe = (dateStr?: string | null) => {
-  const s = (dateStr ?? '').trim();
-  if (!s) return null;
-  const d = new Date(`${s.slice(0, 10)}T12:00:00`);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
 
 const dbTransportToUI = (v?: string | null): TransportType => {
@@ -582,15 +542,16 @@ const InternalDemands: React.FC = () => {
   /* ───────────────────────────── Datas ─────────────────────────────────── */
 
   const handleDateChange = (field: 'startDate' | 'endDate', val: string) => {
-    const time = toLocalTimeInput(formDemand[field] as any) || '08:00';
-    setFormDemand(prev => ({ ...prev, [field]: buildLocalDateTime(val, time) }));
+    const fallback = field === 'startDate' ? DEFAULT_START_TIME : DEFAULT_END_TIME;
+    const time = toDemandTimeInput(formDemand[field] as any) || fallback;
+    setFormDemand(prev => ({ ...prev, [field]: buildDemandDateTime(val, time, fallback) }));
     setFormError(null);
   };
 
   const handleTimeChange = (field: 'startDate' | 'endDate', val: string) => {
-    const date = toLocalDateInput(formDemand[field] as any);
+    const date = toDemandDateInput(formDemand[field] as any);
     if (!date) return;
-    setFormDemand(prev => ({ ...prev, [field]: buildLocalDateTime(date, val) }));
+    setFormDemand(prev => ({ ...prev, [field]: buildDemandDateTime(date, val, field === 'startDate' ? DEFAULT_START_TIME : DEFAULT_END_TIME) }));
     setFormError(null);
   };
 
@@ -696,8 +657,10 @@ const InternalDemands: React.FC = () => {
 
     setFormDemand({
       ...demand,
-      startDate: isoToLocalDTL(demand.startDate) || demand.startDate,
-      endDate: isoToLocalDTL(demand.endDate) || demand.endDate,
+      // Parede pura: nada de new Date() aqui. isoToLocalDTL reinterpretava o
+      // "+00:00" que o PostgREST devolve como instante e devolvia -3h.
+      startDate: toDemandDateTimeInput(demand.startDate, DEFAULT_START_TIME) || demand.startDate,
+      endDate: toDemandDateTimeInput(demand.endDate, DEFAULT_END_TIME) || demand.endDate,
       logisticasLocomocao: [emptyLocomocaoBlock()],
       logisticasHospedagem: [emptyHospedagemBlock()],
     });
@@ -855,9 +818,10 @@ const InternalDemands: React.FC = () => {
             diff.push(`Estado: ${before.demandState || '—'} → ${sanitized.demandState || '—'}`);
           if ((before.requester || '') !== (sanitized.requester || ''))
             diff.push(`Solicitante: ${before.requester || '—'} → ${sanitized.requester || '—'}`);
-          if (new Date(before.startDate).toISOString() !== new Date(sanitized.startDate).toISOString())
+          // Parede, não instante — ver nota equivalente no Demands.tsx.
+          if (toDemandDateTimeInput(before.startDate) !== toDemandDateTimeInput(sanitized.startDate))
             diff.push(`Início: ${formatDateTime(before.startDate)} → ${formatDateTime(sanitized.startDate)}`);
-          if (new Date(before.endDate).toISOString() !== new Date(sanitized.endDate).toISOString())
+          if (toDemandDateTimeInput(before.endDate) !== toDemandDateTimeInput(sanitized.endDate))
             diff.push(`Fim: ${formatDateTime(before.endDate)} → ${formatDateTime(sanitized.endDate)}`);
           if ((before.observations || '') !== (sanitized.observations || ''))
             diff.push(`Observações: ${before.observations || '—'} → ${sanitized.observations || '—'}`);
@@ -1800,15 +1764,15 @@ const InternalDemands: React.FC = () => {
                             <div className="flex flex-col gap-1">
                               <label className="block text-xs font-bold text-gray-500 uppercase">Início *</label>
                               <div className="flex gap-2">
-                                <input type="date" className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={toLocalDateInput(formDemand.startDate)} onChange={(e) => handleDateChange('startDate', e.target.value)} />
-                                <input type="time" className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={toLocalTimeInput(formDemand.startDate)} onChange={(e) => handleTimeChange('startDate', e.target.value)} />
+                                <input type="date" className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={toDemandDateInput(formDemand.startDate)} onChange={(e) => handleDateChange('startDate', e.target.value)} />
+                                <input type="time" className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={toDemandTimeInput(formDemand.startDate)} onChange={(e) => handleTimeChange('startDate', e.target.value)} />
                               </div>
                             </div>
                             <div className="flex flex-col gap-1">
                               <label className="block text-xs font-bold text-gray-500 uppercase">Fim *</label>
                               <div className="flex gap-2">
-                                <input type="date" className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={toLocalDateInput(formDemand.endDate)} onChange={(e) => handleDateChange('endDate', e.target.value)} />
-                                <input type="time" className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={toLocalTimeInput(formDemand.endDate)} onChange={(e) => handleTimeChange('endDate', e.target.value)} />
+                                <input type="date" className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={toDemandDateInput(formDemand.endDate)} onChange={(e) => handleDateChange('endDate', e.target.value)} />
+                                <input type="time" className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={toDemandTimeInput(formDemand.endDate)} onChange={(e) => handleTimeChange('endDate', e.target.value)} />
                               </div>
                             </div>
                           </div>

@@ -9,7 +9,14 @@
  *
  * Sai com código 1 se qualquer asserção falhar.
  */
-import { computeInstructorHours, computeInstructorHoursByDemand } from '../domain/instructorHours';
+import fsSmoke from 'fs';
+import pathSmoke from 'path';
+import { computeInstructorHours, computeInstructorHoursByDemand, eligibleDemandIdsForPayment } from '../domain/instructorHours';
+import { applyMeasurementOverrides } from '../domain/measurementOverrides';
+import { getDemandCompanyLabel, INTERNAL_COMPANY_LABEL } from '../domain/demandLabel';
+
+/** Leitura de fonte, para as guardas que prendem a regra no arquivo certo. */
+const ler = (rel: string) => fsSmoke.readFileSync(pathSmoke.join(process.cwd(), rel), 'utf8');
 // Importa a camada PURA (sem Supabase), para o script rodar em Node sem env.
 import {
   buildMedicaoWorkbook,
@@ -328,7 +335,7 @@ console.log('\n[4] Workbook gerado');
   /* [6] Demanda INTERNA — workbook próprio                                   */
   /* ======================================================================== */
   // Cenário isolado de propósito: a interna acrescenta um par na aba Tarifas
-  // ('(sem empresa)' também precisa de tarifa — é trabalho pago ao instrutor),
+  // ('Colabor (Interna)' também precisa de tarifa — é trabalho pago ao instrutor),
   // e enfiá-la na fixture compartilhada mudaria as contagens de todos os checks
   // acima, escondendo regressão futura atrás de números remexidos.
   console.log('\n[6] Demanda interna na planilha de pagamento');
@@ -338,7 +345,7 @@ console.log('\n[4] Workbook gerado');
       instructorId: 'i3', nome: 'Carla Dias', cpf: '',
       linhas: [
         { demandId: 'DEM-104', empresa: 'Vale', trainingName: 'NR 35', dias: ['2026-07-09'], local: 'Vitória - ES', modalidade: 'Presencial', horas: 8, categoria: '', tipo: 'Treinamento' as const, noturno: false, papel: 'Titular' as const },
-        { demandId: 'DEM-900', empresa: '(sem empresa)', trainingName: 'Organizar van para Brucutu', dias: ['2026-07-08'], local: 'Brucutu - MG', modalidade: 'Presencial', horas: 6, categoria: 'SIPAT', tipo: 'Interna' as const, noturno: false, papel: 'Titular' as const },
+        { demandId: 'DEM-900', empresa: 'Colabor (Interna)', trainingName: 'Organizar van para Brucutu', dias: ['2026-07-08'], local: 'Brucutu - MG', modalidade: 'Presencial', horas: 6, categoria: 'SIPAT', tipo: 'Interna' as const, noturno: false, papel: 'Titular' as const },
       ],
     }] as any,
     periodo
@@ -355,7 +362,10 @@ console.log('\n[4] Workbook gerado');
   const lc = li === '2' ? '3' : '2';
 
   checkEq('Interna: Treinamento traz a descrição', texto(carla, 'C' + li), 'Organizar van para Brucutu');
-  checkEq('Interna: Empresa vira (sem empresa)', texto(carla, 'B' + li), '(sem empresa)');
+  // A planilha diz o MESMO que o app: interna sem cliente e 'Colabor (Interna)'
+  // (domain/demandLabel), nao '(sem empresa)' — um rotulo em cada lugar parecia
+  // cadastro faltando para quem confere pagamento nos dois.
+  checkEq('Interna: Empresa usa o rotulo do app', texto(carla, 'B' + li), 'Colabor (Interna)');
   checkEq('Interna: Tipo na coluna I', texto(carla, 'I' + li), 'Interna');
   checkEq('Interna: Categoria na coluna J', texto(carla, 'J' + li), 'SIPAT');
   checkEq('Interna: horas continuam em G', carla.getCell('G' + li).value, 6);
@@ -759,7 +769,181 @@ console.log('\n[4] Workbook gerado');
   }
 
 
-  console.log(falhas === 0 ? '\n✅ Todos os checks passaram.' : `\n❌ ${falhas} check(s) falharam.`);
+  
+/* ══════════════════════════════════════════════════════════════════════════ */
+/* [9] O override só age sobre demanda ELEGÍVEL para o export                 */
+/* ══════════════════════════════════════════════════════════════════════════ */
+//
+// O bug: o export de 09/2026 trouxe o acompanhante de uma demanda ALOCADA e o
+// titular + participante de outra, também ALOCADA — enquanto o titular da
+// primeira, que passa pelo rateio, corretamente NÃO aparecia. Eram duas regras
+// de elegibilidade para a mesma planilha: o rateio filtrava por status e
+// período, e o override varria TODA medição com blocos.
+console.log('\n[9] Override respeita o recorte do export');
+{
+  const diaRelativo = (n: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+
+  // Duas demandas iguais em tudo, menos a data: uma no passado (CONCLUÍDA) e
+  // outra no futuro (ALOCADA). O status é derivado, não digitado.
+  const passado = diaRelativo(-30);
+  const futuro = diaRelativo(30);
+
+  const demandaBase = {
+    tipo: 'interna',
+    dateMode: 'CONTINUO',
+    modality: 'PRESENCIAL',
+    trainingLocal: 'BH - MG',
+    instructorId: 'TITULAR',
+    horasPrevistas: 8,
+  };
+  const concluida: any = { ...demandaBase, id: 'DEM-OK', startDate: passado + 'T08:00', endDate: passado + 'T18:00' };
+  const alocada: any = { ...demandaBase, id: 'DEM-FUT', startDate: futuro + 'T08:00', endDate: futuro + 'T18:00' };
+
+  const medicaoV2 = (demandId: string) => ({
+    demandId,
+    attachments: [],
+    expenses: {
+      classHours: 8, hourRate: 0,
+      participantes: [
+        { instructorId: 'TITULAR', papel: 'TITULAR' },
+        { instructorId: 'PART', papel: 'PARTICIPANTE' },
+      ],
+    },
+  });
+
+  /* --- o conjunto elegível --- */
+  const elegiveis = eligibleDemandIdsForPayment({
+    demands: [concluida, alocada],
+    trainings: [],
+  });
+  check('demanda CONCLUÍDA é elegível', elegiveis.has('DEM-OK'));
+  check('demanda ALOCADA não é', !elegiveis.has('DEM-FUT'));
+
+  const forasDoPeriodo = eligibleDemandIdsForPayment({
+    demands: [concluida, alocada],
+    trainings: [],
+    periodStart: '2000-01-01',
+    periodEnd: '2000-01-31',
+  });
+  checkEq('e nenhuma delas entra num período que não é o delas', forasDoPeriodo.size, 0);
+
+  /* --- a medição da ALOCADA não põe ninguém na planilha --- */
+  const rowsAlocada = applyMeasurementOverrides({
+    rows: [],
+    measurements: [medicaoV2('DEM-FUT')] as any,
+    demands: [alocada],
+    eligibleDemandIds: elegiveis,
+  });
+  checkEq('medição v2 de demanda ALOCADA gera ZERO linhas', rowsAlocada.length, 0);
+
+  // CONTRAPROVA: sem o conjunto, o override volta a varrer tudo — é o bug.
+  const semRecorte = applyMeasurementOverrides({
+    rows: [],
+    measurements: [medicaoV2('DEM-FUT')] as any,
+    demands: [alocada],
+  });
+  check(
+    '(contraprova) sem o conjunto elegível, a ALOCADA voltaria à planilha',
+    semRecorte.length > 0
+  );
+
+  /* --- a mesma medição, na demanda CONCLUÍDA, entra --- */
+  const rowsConcluida = applyMeasurementOverrides({
+    rows: [
+      { instructorId: 'TITULAR', demandId: 'DEM-OK', horas: 8, dias: [passado], dividida: false },
+    ],
+    measurements: [medicaoV2('DEM-OK')] as any,
+    demands: [concluida],
+    eligibleDemandIds: elegiveis,
+  });
+  checkEq(
+    'a mesma medição numa demanda CONCLUÍDA entra',
+    rowsConcluida.map(r => r.instructorId).sort().join(','),
+    'PART,TITULAR'
+  );
+  checkEq('com o titular pelo rateio', rowsConcluida.find(r => r.instructorId === 'TITULAR')?.horas, 8);
+  checkEq('e o participante pela carga da demanda', rowsConcluida.find(r => r.instructorId === 'PART')?.horas, 8);
+
+  /* --- acompanhante de demanda não elegível também fica de fora --- */
+  const comAcompanhante = applyMeasurementOverrides({
+    rows: [],
+    measurements: [{
+      demandId: 'DEM-FUT',
+      attachments: [],
+      expenses: {
+        classHours: 8, hourRate: 0,
+        participantes: [
+          { instructorId: 'TITULAR', papel: 'TITULAR' },
+          { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', horas: 4 },
+        ],
+      },
+    }] as any,
+    demands: [{ ...alocada, tipo: 'cliente' }],
+    companions: [{ demandId: 'DEM-FUT', instructorId: 'ACOMP', startDate: futuro + 'T08:00' }],
+    eligibleDemandIds: elegiveis,
+  });
+  checkEq('acompanhante de demanda ALOCADA não entra', comAcompanhante.length, 0);
+
+  /* --- guarda de fonte: o serviço passa o conjunto --- */
+  const svc = ler('services/medicaoExportService.ts');
+  check(
+    'o export calcula o conjunto elegível...',
+    svc.includes('eligibleDemandIdsForPayment({')
+  );
+  check(
+    '...e o entrega ao override',
+    svc.includes('eligibleDemandIds: eligibleDemandIdsForPayment({')
+  );
+  check(
+    'com o MESMO período do rateio',
+    /eligibleDemandIdsForPayment\(\{[\s\S]{0,200}periodStart: dataInicio,[\s\S]{0,60}periodEnd: dataFim,/.test(svc)
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/* [10] Rótulo da interna: planilha e app dizem a mesma coisa                 */
+/* ══════════════════════════════════════════════════════════════════════════ */
+console.log('\n[10] Rótulo de empresa da demanda interna');
+{
+  const empresas = [{ id: 'C1', name: 'Vale' }];
+
+  checkEq(
+    'interna sem empresa vinculada usa o rótulo do app',
+    getDemandCompanyLabel({ tipo: 'interna' } as any, empresas),
+    'Colabor (Interna)'
+  );
+  checkEq(
+    'interna COM empresa mostra a empresa',
+    getDemandCompanyLabel({ tipo: 'interna', companyId: 'C1' } as any, empresas),
+    'Vale'
+  );
+  check(
+    'e o rótulo é a constante do domínio, não um literal solto',
+    getDemandCompanyLabel({ tipo: 'interna' } as any, empresas) === INTERNAL_COMPANY_LABEL
+  );
+
+  /* --- guarda de fonte: o export reusa a função, não reimplementa --- */
+  const svc = ler('services/medicaoExportService.ts');
+  check(
+    'o export usa getDemandCompanyLabel para a interna',
+    svc.includes('getDemandCompanyLabel(demand, companiesParaLabel)')
+  );
+  check(
+    'e o rótulo entra na MESMA função que alimenta a chave de tarifa',
+    svc.includes('empresa: nomeEmpresa(demand),')
+  );
+  check(
+    'cliente sem empresa continua diagnosticando o caso ruim',
+    svc.includes("if (!demand.companyId) return '(sem empresa)';") &&
+      svc.includes("return '(empresa não encontrada)';")
+  );
+}
+
+console.log(falhas === 0 ? '\n✅ Todos os checks passaram.' : `\n❌ ${falhas} check(s) falharam.`);
   process.exit(falhas === 0 ? 0 : 1);
 })().catch(e => {
   console.error('ERRO NÃO TRATADO:', e);

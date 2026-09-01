@@ -141,6 +141,39 @@ function effectiveDemandHours(
 }
 
 /**
+ * As demandas ELEGÍVEIS para a planilha de pagamento no período.
+ *
+ * Mesmo par de regras que `computeInstructorHoursByDemand` aplica na entrada:
+ * status CONCLUÍDA e ao menos um dia dentro da janela. Existe como função
+ * separada porque o override da medição (domain/measurementOverrides) precisa
+ * do MESMO conjunto: sem ele, o bloco de uma medição salva numa demanda ainda
+ * ALOCADA inseria linha na planilha, e o participante/acompanhante aparecia
+ * num mês em que o titular dele — corretamente — não aparecia.
+ *
+ * Deliberadamente NÃO é "demandas que geraram linha de rateio": a interna sem
+ * `instructor_allocations` não gera rateio nenhum e mesmo assim é elegível —
+ * os participantes dela são a única fonte de pagamento que ela tem.
+ */
+export function eligibleDemandIdsForPayment(input: {
+  demands: Demand[];
+  trainings: Training[];
+  periodStart?: string;
+  periodEnd?: string;
+}): Set<string> {
+  const { demands, trainings, periodStart, periodEnd } = input;
+  const trainingsById = new Map(trainings.map(t => [String(t.id), t]));
+
+  const ids = new Set<string>();
+  for (const demand of demands) {
+    if (!isDemandConcluida(demand, trainingsById)) continue;
+    const dias = clipToPeriod(getDemandDays(demand), periodStart, periodEnd);
+    if (dias.length === 0) continue;
+    ids.add(demand.id);
+  }
+  return ids;
+}
+
+/**
  * FONTE ÚNICA do cálculo — devolve as linhas (instrutor × demanda) que
  * compõem as horas do período. `computeInstructorHours` é só a agregação
  * destas linhas por instrutor; nenhuma das duas duplica a regra de rateio.

@@ -22,12 +22,12 @@ import { fetchInstructorAllocations } from './instructorAllocations';
 import { fetchMeasurements } from './measurements';
 import { fetchTrainings } from './trainings';
 import { fetchInstructors } from './instructors';
-import { computeInstructorHoursByDemand } from '../domain/instructorHours';
+import { computeInstructorHoursByDemand, eligibleDemandIdsForPayment } from '../domain/instructorHours';
 import { applyMeasurementOverrides } from '../domain/measurementOverrides';
 import { fetchDemandParticipants } from './demandParticipants';
 import { fetchCompanionAllocations } from './companionAllocations';
 import { isNightDemand } from '../domain/demandDays';
-import { getDemandCategoria, isInternalDemand } from '../domain/demandLabel';
+import { getDemandCategoria, isInternalDemand, getDemandCompanyLabel } from '../domain/demandLabel';
 import {
   buildTrainingsById,
   getModalityLabel,
@@ -283,6 +283,14 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
       instructorId: c.instructor_id,
       startDate: c.start_date,
     })),
+    // O override só age sobre o que JÁ é elegível para este export. Mesma
+    // regra de status e período do rateio, calculada uma vez e compartilhada.
+    eligibleDemandIds: eligibleDemandIdsForPayment({
+      demands,
+      trainings,
+      periodStart: dataInicio,
+      periodEnd: dataFim,
+    }),
     periodStart: dataInicio,
     periodEnd: dataFim,
   });
@@ -297,15 +305,30 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
     (companyRows ?? []).map(c => [c.id, (c.name || c.razao_social || '').trim()])
   );
 
+  // As empresas no formato que `getDemandCompanyLabel` lê — a mesma função que
+  // rotula a demanda no app inteiro.
+  const companiesParaLabel = [...companyNameById.entries()].map(([id, name]) => ({ id, name }));
+
   /**
-   * Os dois casos ruins ficam VISÍVEIS na planilha em vez de virarem uma
+   * O rótulo da coluna Empresa (e da chave de tarifa).
+   *
+   * INTERNA usa o MESMO rótulo do app — 'Colabor (Interna)', de
+   * domain/demandLabel — em vez do '(sem empresa)' que a planilha inventava.
+   * Interna não tem cliente por definição; dizer "sem empresa" fazia parecer
+   * cadastro faltando, e quem confere o pagamento via um rótulo na tela e outro
+   * no arquivo. Interna COM empresa vinculada continua mostrando a empresa.
+   *
+   * Para CLIENTE os dois casos ruins continuam VISÍVEIS em vez de virarem uma
    * empresa em branco: demanda sem cliente vinculado é uma coisa, cadastro de
-   * empresa que não veio na busca é outra (e essa segunda é sintoma de bug,
-   * não de dado faltando).
+   * empresa que não veio na busca é outra (e essa segunda é sintoma de bug, não
+   * de dado faltando).
    */
-  const nomeEmpresa = (companyId?: string | null): string => {
-    if (!companyId) return '(sem empresa)';
-    const nome = companyNameById.get(companyId);
+  const nomeEmpresa = (demand: Demand): string => {
+    if (isInternalDemand(demand)) {
+      return getDemandCompanyLabel(demand, companiesParaLabel);
+    }
+    if (!demand.companyId) return '(sem empresa)';
+    const nome = companyNameById.get(demand.companyId);
     if (!nome) return '(empresa não encontrada)';
     return nome;
   };
@@ -332,9 +355,9 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
 
     block.linhas.push({
       demandId: demand.id,
-      // Interna sem empresa cai em '(sem empresa)' pelo nomeEmpresa; com
-      // empresa vinculada usa o nome dela, igual a uma demanda de cliente.
-      empresa: nomeEmpresa(demand.companyId),
+      // Interna sem empresa vinculada sai como 'Colabor (Interna)', o mesmo
+      // rótulo do app; com empresa, o nome dela — igual a uma de cliente.
+      empresa: nomeEmpresa(demand),
       // Interna não tem treinamento: a coluna passa a mostrar a descrição, que
       // é o que identifica a demanda para quem confere o pagamento.
       trainingName: isInternalDemand(demand)

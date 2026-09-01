@@ -172,6 +172,20 @@ export interface ApplyOverridesInput {
   participants?: OverrideParticipantLike[];
   /** Linhas de acompanhante (uma por dia), para os dias da linha inserida. */
   companions?: OverrideCompanionRowLike[];
+  /**
+   * As demandas que o export considera elegíveis — status e período, o mesmo
+   * filtro de `computeInstructorHoursByDemand` (ver `eligibleDemandIdsForPayment`).
+   *
+   * Sem ele, a INSERÇÃO abaixo varre TODAS as medições com blocos e põe na
+   * planilha gente de demanda que nem entrou no recorte: uma medição salva numa
+   * demanda ALOCADA colocava o participante e o acompanhante no mês, enquanto o
+   * titular dos mesmos — que passa pelo rateio — ficava de fora. Duas regras de
+   * elegibilidade para a mesma planilha.
+   *
+   * Omitido = todas as demandas recebidas em `demands` são elegíveis (é o que
+   * os testes de unidade querem, com fixtures montadas à mão).
+   */
+  eligibleDemandIds?: Set<string>;
   /** Recorte do período do export, igual ao do rateio ('YYYY-MM-DD'). */
   periodStart?: string;
   periodEnd?: string;
@@ -200,6 +214,7 @@ export function applyMeasurementOverrides({
   demands,
   participants = [],
   companions = [],
+  eligibleDemandIds,
   periodStart,
   periodEnd,
 }: ApplyOverridesInput): HoursRowLike[] {
@@ -261,6 +276,9 @@ export function applyMeasurementOverrides({
   for (const [demandId, blocos] of blocosPorDemanda) {
     const demand = demandById.get(demandId);
     if (!demand) continue;
+    // Fora do recorte do export (status ou período): a medição pode estar
+    // salva, mas ninguém dessa demanda entra na planilha deste mês.
+    if (eligibleDemandIds && !eligibleDemandIds.has(demandId)) continue;
 
     for (const bloco of blocos) {
       if (!bloco.instructorId) continue;

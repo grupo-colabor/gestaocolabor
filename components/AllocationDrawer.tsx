@@ -87,6 +87,7 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
     recommendInstructors,
     allocateInstructor,
     hasScheduleConflict,
+    ensureLogisticBlocksForPerson,
     addCompanionAllocation,
     setNotification,
     companionAllocations,
@@ -334,6 +335,12 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
           endDate: `${day}T18:00`,
         });
       });
+      // Logística POR PESSOA, uma vez só — e não por dia. O acompanhante é
+      // gravado uma linha por dia; chamar isto dentro do forEach criaria N
+      // vezes o mesmo par de blocos (a função é idempotente, mas seriam N
+      // idas ao banco à toa). Aqui também é onde o bloco anônimo do titular
+      // passa a ser identificado como dele.
+      void ensureLogisticBlocksForPerson(selectedDemand.id, instructor.id);
       setNotification({ type: 'success', message: `Acompanhante ${instructor.name} alocado.` });
     } else {
       const success = allocateInstructor(selectedDemand.id, instructor.id);
@@ -342,7 +349,7 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
         setPreviewItems(prev => prev.filter(p => p.demandId !== selectedDemand.id));
       }
     }
-  }, [selectedDemand, companionMode, allocateInstructor, addCompanionAllocation, setNotification, setPreviewItems]);
+  }, [selectedDemand, companionMode, allocateInstructor, addCompanionAllocation, ensureLogisticBlocksForPerson, setNotification, setPreviewItems]);
 
   const handleAllocateAnyway = useCallback((instructor: Instructor & { score: number }) => {
     setPendingForceAlloc(instructor);
@@ -428,6 +435,8 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
         endDate: `${day}T18:00`,
       });
     });
+    // Ver a nota do modo direto: uma vez por PESSOA, fora do laço de dias.
+    void ensureLogisticBlocksForPerson(selectedDemand.id, pendingCompanionInstructorId);
     setNotification({ type: 'success', message: 'Acompanhante salvo.' });
     setPendingCompanionInstructorId(null);
     setCompanionSelectedDays([]);

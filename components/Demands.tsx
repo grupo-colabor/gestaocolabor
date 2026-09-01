@@ -906,6 +906,7 @@ useEffect(() => {
       const blockToLocomocaoUI = (b: LogisticBlockRow): LogisticaLocomocao => ({
         id: b.id,
         instructorName: b.instructor_name ?? undefined,
+        instructorId: b.instructor_id ?? null,
         transportType: dbTransportToUI(b.transport_mode),
         rentalCompany: (b.rental_company as RentalCompany) ?? 'Localiza',
         rentalAgencyLocation: b.rental_agency_location ?? '',
@@ -921,6 +922,7 @@ useEffect(() => {
       const blockToHospedagemUI = (b: LogisticBlockRow): LogisticaHospedagem => ({
         id: b.id,
         instructorName: b.instructor_name ?? undefined,
+        instructorId: b.instructor_id ?? null,
         accommodationType: dbLodgingToUI(b.lodging_mode),
         hotelCity: b.hotel_city ?? '',
         hotelName: b.hotel_name ?? '',
@@ -1763,6 +1765,11 @@ const handleSave = async () => {
           block_type: 'LOCOMOCAO',
           block_order: i,
           instructor_name: b.instructorName ?? null,
+          // ⚠️ OBRIGATÓRIO carregar o instructor_id aqui. O save é delete-all +
+          // insert; se a coluna não vier junto, salvar o formulário de cliente
+          // APAGA a identificação que o fluxo de acompanhante gravou. Não muda
+          // a semântica do upsert — só impede que ele perca uma coluna.
+          instructor_id: b.instructorId ?? null,
           transport_mode: tm,
           rental_company: isAlugado ? (b.rentalCompany || 'Localiza') : null,
           rental_agency_location: isAlugado ? (b.rentalAgencyLocation || null) : null,
@@ -1789,6 +1796,8 @@ const handleSave = async () => {
           block_type: 'HOSPEDAGEM',
           block_order: i,
           instructor_name: b.instructorName ?? null,
+          // Ver a nota do bloco de LOCOMOÇÃO acima.
+          instructor_id: b.instructorId ?? null,
           transport_mode: null,
           rental_company: null,
           rental_agency_location: null,

@@ -40,6 +40,13 @@ import {
   type PersonAssignmentLike,
   type PersonConflictDemandLike,
 } from '../domain/personScheduleConflict';
+import {
+  hasBlocksFor,
+  planTitularFill,
+  planTitularFills,
+  isLogisticBlockEmpty,
+  hasSecondPerson,
+} from '../domain/logisticBlockOwnership';
 
 let falhas = 0;
 
@@ -388,16 +395,16 @@ console.log('\n[5] Guarda de fonte — isolamento de instructor_allocations');
     !/InstructorAllocation/.test(handler)
   );
   check(
-    'handleAddParticipant pré-preenche o bloco de LOCOMOÇÃO com nome e instructorId',
-    handler.includes('{ ...emptyLocomocaoBlock(), instructorName: nome, instructorId: payload.instructorId }')
+    'handleAddParticipant DELEGA a logística à rotina compartilhada (uma regra para interna e cliente)',
+    handler.includes('await ensureLogisticBlocksForPerson(formDemand.id, payload.instructorId)')
   );
   check(
-    'handleAddParticipant pré-preenche o bloco de HOSPEDAGEM com nome e instructorId',
-    handler.includes('{ ...emptyHospedagemBlock(), instructorName: nome, instructorId: payload.instructorId }')
+    'e NÃO reimplementa a criação de bloco localmente',
+    !handler.includes('emptyLocomocaoBlock()') && !handler.includes('insertLogisticBlocks')
   );
   check(
-    'o bloco só nasce DEPOIS de o participante gravar (nada de bloco órfão)',
-    handler.indexOf('if (!ok) return;') < handler.indexOf('emptyLocomocaoBlock()')
+    'a logística só é preparada DEPOIS de o participante gravar (nada de bloco órfão)',
+    handler.indexOf('if (!ok) return;') < handler.indexOf('ensureLogisticBlocksForPerson')
   );
 
   // O App liga participante ao banco pelo service novo, não pelo de alocação.
@@ -545,35 +552,23 @@ console.log('\n[8] Blocos de logística do participante');
     interna.indexOf('const handleRemoveParticipant')
   );
 
-  // O caso pedido: adicionar participante gera EXATAMENTE 2 blocos, os dois
-  // com instructor_id, sem duplicar os que já existem.
-  const inserts = handler.match(/block_type: '(LOCOMOCAO|HOSPEDAGEM)'/g) ?? [];
-  check('exatamente 2 blocos criados por participante', inserts.length === 2);
-  check('um de LOCOMOCAO e um de HOSPEDAGEM', new Set(inserts).size === 2);
-  check(
-    'os dois levam instructor_id (vínculo por id, não por nome)',
-    (handler.match(/instructor_id: payload\.instructorId/g) ?? []).length === 2
-  );
-  check(
-    'os dois levam instructor_name (rótulo de exibição)',
-    (handler.match(/instructor_name: nome/g) ?? []).length === 2
-  );
-
-  // A escolha que impede duplicação/perda: insert puro, nunca delete-all.
-  check('persiste na hora, com insertLogisticBlocks', handler.includes('await insertLogisticBlocks('));
+  // A CRIAÇÃO em si mora no App (ensureLogisticBlocksForPerson), compartilhada
+  // com o fluxo de acompanhante — as asserções dela estão em [12]. Aqui fica o
+  // contrato do caminho da INTERNA: delegar, e depois refletir na tela.
+  check('a interna delega, não reimplementa', handler.includes('await ensureLogisticBlocksForPerson('));
   check(
     'NÃO usa upsertLogisticBlocks aqui (delete-all apagaria os blocos dos outros)',
     !handler.includes('upsertLogisticBlocks')
   );
   check(
-    'block_order continua a lista existente em vez de sobrescrever a posição 0',
-    handler.includes('(formDemand.logisticasLocomocao || []).length') &&
-      handler.includes('(formDemand.logisticasHospedagem || []).length')
+    'o estado do form vem do BANCO depois de gravar (traz junto o bloco do titular recém-identificado)',
+    handler.includes('await loadLogisticsFor(formDemand.id)') &&
+      handler.includes('logisticasLocomocao: logistics.locoBlocks') &&
+      handler.includes('logisticasHospedagem: logistics.hospBlocks')
   );
   check(
-    'falha ao criar blocos NÃO desfaz o participante (avisa e segue)',
-    /catch \(e: any\)[\s\S]{0,800}blocos de logística não foram criados/.test(handler) &&
-      !/catch \(e: any\)[\s\S]{0,800}removeDemandParticipant/.test(handler)
+    'o recarregamento vem DEPOIS da preparação da logística (senão traria o estado antigo)',
+    handler.indexOf('ensureLogisticBlocksForPerson') < handler.indexOf('loadLogisticsFor')
   );
 
   // insertLogisticBlocks: insert puro e endurecido.
@@ -661,6 +656,231 @@ console.log('\n[9] Indicador de participantes');
   );
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * [10] LOGÍSTICA POR PESSOA — a regra, rodando de verdade
+ *
+ * Com UMA pessoa o bloco fica anônimo, como sempre foi. Entrando a SEGUNDA —
+ * participante (interna) ou acompanhante (cliente) — todo bloco passa a ser
+ * identificado: o da pessoa nova nasce com nome + id, e o anônimo que estava
+ * lá vira do titular.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[10] Logística por pessoa — regra pura');
+{
+  const TITULAR = 'INS-T';
+  const SEGUNDO = 'INS-2';
+
+  // --- gatilho: existe segunda pessoa? ---
+  check('uma pessoa só (nem participante nem acompanhante) não dispara a regra',
+    !hasSecondPerson([], [], TITULAR));
+  check('participante dispara', hasSecondPerson([SEGUNDO], [], TITULAR));
+  check('acompanhante dispara', hasSecondPerson([], [SEGUNDO], TITULAR));
+  check('vínculo que É o próprio titular NÃO dispara (não há segunda pessoa)',
+    !hasSecondPerson([], [TITULAR], TITULAR));
+
+  // --- idempotência: acompanhante é uma linha POR DIA ---
+  const doSegundo = [{ id: 'B1', instructorId: SEGUNDO }];
+  check('pessoa sem bloco -> precisa criar', !hasBlocksFor([], SEGUNDO));
+  check('pessoa que já tem bloco -> não cria de novo', hasBlocksFor(doSegundo, SEGUNDO));
+  check('bloco de outra pessoa não conta', !hasBlocksFor(doSegundo, TITULAR));
+
+  // --- o bloco anônimo do titular ---
+  const anonimo = [{ id: 'B0', instructorId: null }];
+  eq('o anônimo vira do titular',
+    planTitularFill(anonimo, TITULAR, 'Ana')?.blockId, 'B0');
+  eq('e leva o nome junto',
+    planTitularFill(anonimo, TITULAR, 'Ana')?.instructorName, 'Ana');
+
+  check('sem titular definido (Não Alocado), não preenche nada',
+    planTitularFill(anonimo, undefined, 'Ana') === null);
+  check('titular que JÁ tem bloco não ganha um segundo',
+    planTitularFill([{ id: 'B0', instructorId: TITULAR }], TITULAR, 'Ana') === null);
+  check('sem bloco anônimo, nada a fazer',
+    planTitularFill(doSegundo, TITULAR, 'Ana') === null);
+
+  // Trava: vários anônimos -> só o PRIMEIRO. Atribuir todos ao titular seria
+  // inventar vínculo para blocos que o usuário criou à mão.
+  const tresAnonimos = [
+    { id: 'B0', instructorId: null },
+    { id: 'B1', instructorId: null },
+    { id: 'B2', instructorId: null },
+  ];
+  eq('vários anônimos: só o primeiro é preenchido',
+    planTitularFill(tresAnonimos, TITULAR, 'Ana')?.blockId, 'B0');
+
+  // Trava: bloco de OUTRA pessoa nunca é renomeado.
+  const mistura = [{ id: 'BX', instructorId: SEGUNDO }, { id: 'B0', instructorId: null }];
+  eq('pula o bloco de outra pessoa e pega o anônimo',
+    planTitularFill(mistura, TITULAR, 'Ana')?.blockId, 'B0');
+
+  // --- locomoção e hospedagem resolvem independentes ---
+  const fills = planTitularFills(
+    [{ id: 'L0', instructorId: null }],
+    [{ id: 'H0', instructorId: null }],
+    TITULAR,
+    'Ana'
+  );
+  eq('dois preenchimentos: um de cada tipo', fills.map(f => f.blockId).join(','), 'L0,H0');
+  eq('só locomoção anônima -> um preenchimento só',
+    planTitularFills([{ id: 'L0', instructorId: null }], [{ id: 'H0', instructorId: SEGUNDO }], TITULAR, 'Ana').length,
+    1);
+  eq('nada anônimo -> nenhum preenchimento',
+    planTitularFills([{ id: 'L0', instructorId: TITULAR }], [{ id: 'H0', instructorId: SEGUNDO }], TITULAR, 'Ana').length,
+    0);
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [11] BLOCO VAZIO — o que pode e o que não pode ser apagado
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[11] Bloco vazio');
+{
+  check('bloco de locomoção recém-criado está vazio',
+    isLogisticBlockEmpty({ block_type: 'LOCOMOCAO' }));
+  check('bloco de hospedagem recém-criado está vazio',
+    isLogisticBlockEmpty({ block_type: 'HOSPEDAGEM' }));
+
+  // A pegadinha: o formulário cria bloco já com locadora e categoria default.
+  // Contá-los como dado faria TODO bloco parecer preenchido e nada seria limpo.
+  check('locadora/categoria default NÃO contam como dado',
+    isLogisticBlockEmpty({ block_type: 'LOCOMOCAO', rental_company: 'Localiza', car_category: 'Grupo CE' } as any));
+
+  check('com meio de transporte, não é vazio',
+    !isLogisticBlockEmpty({ block_type: 'LOCOMOCAO', transport_mode: 'CARRO_ALUGADO' }));
+  check('com localizador, não é vazio',
+    !isLogisticBlockEmpty({ block_type: 'LOCOMOCAO', rental_locator: 'ABC123' }));
+  check('com notinha anexada, não é vazio',
+    !isLogisticBlockEmpty({ block_type: 'LOCOMOCAO', receipt_url: ['x.pdf'] }));
+  check('com hotel, não é vazio',
+    !isLogisticBlockEmpty({ block_type: 'HOSPEDAGEM', hotel_name: 'Ibis' }));
+  check('array vazio de notinha continua vazio',
+    isLogisticBlockEmpty({ block_type: 'LOCOMOCAO', receipt_url: [] }));
+  check('campo de hospedagem não vaza para a checagem de locomoção',
+    isLogisticBlockEmpty({ block_type: 'LOCOMOCAO', hotel_name: 'Ibis' } as any));
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [12] ACOMPANHANTE — guarda de fonte dos quatro caminhos de criação
+ *
+ * O caso que motivou a idempotência: acompanhante de 3 dias vira 3 linhas de
+ * companion_allocations, mas tem de virar 2 blocos de logística, não 6.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[12] Acompanhante — logística por pessoa');
+{
+  const drawer = ler('components/AllocationDrawer.tsx');
+  const logisticaTela = ler('components/Logistics.tsx');
+  const cal = ler('components/CalendarView.tsx');
+  const app = ler('App.tsx');
+  const service = ler('services/logistics.ts');
+
+  // Os QUATRO caminhos de criação chamam a rotina — e nenhum deles a chama
+  // dentro do laço de dias.
+  const chamadasDrawer = (drawer.match(/ensureLogisticBlocksForPerson\(/g) ?? []).length;
+  const chamadasLogistica = (logisticaTela.match(/ensureLogisticBlocksForPerson\(/g) ?? []).length;
+  eq('AllocationDrawer: 2 caminhos (modo direto + seleção de dias)', chamadasDrawer, 2);
+  eq('Logistics: 2 caminhos (demanda inteira + dias selecionados)', chamadasLogistica, 2);
+
+  /**
+   * A chamada precisa ficar FORA do laço que grava uma linha por dia. A prova:
+   * entre o "forEach(day =>" mais proximo antes dela e a propria chamada
+   * tem de existir um fechamento de laco. Sem isso, um acompanhante de
+   * 3 dias faria 3 idas ao banco para preparar o mesmo par de blocos.
+   */
+  const foraDoLaco = (src: string): boolean => {
+    let ok = true;
+    let from = 0;
+    for (;;) {
+      const chamada = src.indexOf('ensureLogisticBlocksForPerson(', from);
+      if (chamada < 0) break;
+      from = chamada + 1;
+      const laco = src.lastIndexOf('forEach(day =>', chamada);
+      if (laco < 0) continue; // não há laço antes: trivialmente fora
+      if (!src.slice(laco, chamada).includes('});')) ok = false;
+    }
+    return ok;
+  };
+
+  for (const [nome, src] of [['AllocationDrawer', drawer], ['Logistics', logisticaTela]] as const) {
+    check(`${nome}: chamada fica FORA do laço de dias`, foraDoLaco(src));
+  }
+
+  // A idempotência de verdade mora no App, sobre hasBlocksFor.
+  const ensure = app.slice(
+    app.indexOf('const ensureLogisticBlocksForPerson'),
+    app.indexOf('const fillTitularLogisticBlocks')
+  );
+  check('ensure existe', ensure.length > 0);
+  check('só cria se a pessoa ainda não tem bloco', ensure.includes('if (!hasBlocksFor(existentes, instructorId))'));
+  check('cria exatamente 2 blocos', (ensure.match(/block_type: '(LOCOMOCAO|HOSPEDAGEM)'/g) ?? []).length === 2);
+  check('usa insert puro, nunca delete-all', ensure.includes('insertLogisticBlocks(') && !ensure.includes('upsertLogisticBlocks'));
+  check('identifica o bloco anônimo do titular', ensure.includes('aplicarDonoDoTitular(blocks, titularId)'));
+  check('não se identifica a si mesmo como titular', ensure.includes('titularId !== instructorId'));
+
+  // Titular que chega DEPOIS (Programação / Alocação Inteligente / agenda).
+  check('allocateInstructor preenche o bloco do titular', app.includes('void fillTitularLogisticBlocks(demandId, instructorId);'));
+  const fill = app.slice(
+    app.indexOf('const fillTitularLogisticBlocks'),
+    app.indexOf('const releaseLogisticBlocksForPerson')
+  );
+  check(
+    'com UMA pessoa só, o bloco continua anônimo (metade da regra que evita pedir nome de quem não precisa)',
+    fill.includes('if (!temOutraPessoa) return;')
+  );
+
+  // Remoção: só bloco vazio, um id por vez, e só no ÚLTIMO vínculo da pessoa.
+  const release = app.slice(
+    app.indexOf('const releaseLogisticBlocksForPerson'),
+    app.indexOf('const [operationalBases')
+  );
+  check('release só apaga bloco vazio', release.includes('isLogisticBlockEmpty(b)'));
+  check('release filtra pela pessoa que saiu (nunca toca o titular)', release.includes('b.instructor_id === instructorId'));
+  check('release apaga por id, um a um', release.includes('await deleteLogisticBlock(b.id)'));
+  check('release nunca apaga por demand_id', !/delete[\s\S]{0,80}demand_id/.test(release));
+
+  check('Logistics libera só quando cai o último dia da pessoa', logisticaTela.includes('eraUltimoDaPessoa'));
+  check('agenda (× do card) libera só quando cai o último dia', cal.includes('eraUltimoDaPessoa'));
+  // Recorte necessário: `removeCompanionAllocation` também aparece lá em cima,
+  // na desestruturação do contexto — comparar índices no arquivo inteiro
+  // compararia com a linha errada.
+  const trechoLogistica = logisticaTela.slice(logisticaTela.indexOf('const handleRemoveCompanion'));
+  const trechoAgenda = cal.slice(cal.indexOf('title="Remover acompanhante"'));
+  for (const [nome, src] of [['Logistics', trechoLogistica], ['CalendarView', trechoAgenda]] as const) {
+    check(
+      `${nome}: conta os dias restantes ANTES da remoção (que é otimista)`,
+      src.indexOf('eraUltimoDaPessoa') >= 0 &&
+        src.indexOf('eraUltimoDaPessoa') < src.indexOf('removeCompanionAllocation(')
+    );
+  }
+
+  // O update pontual do dono, endurecido.
+  const upd = service.slice(
+    service.indexOf('export async function updateLogisticBlockOwner'),
+    service.indexOf('export async function deleteLogisticBlock')
+  );
+  check('updateLogisticBlockOwner só toca dono e updated_at',
+    upd.includes('instructor_id: instructorId') && upd.includes('instructor_name: instructorName') &&
+    !upd.includes('transport_mode') && !upd.includes('hotel_name'));
+  check('updateLogisticBlockOwner é endurecido (0 linhas por RLS não passa calado)',
+    upd.includes('data.length === 0'));
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [13] O SAVE DO FORM DE CLIENTE NÃO PODE APAGAR A IDENTIFICAÇÃO
+ *
+ * O save do cliente é delete-all + insert. Se o mapeamento não carregar
+ * instructor_id, salvar o formulário APAGA em silêncio o vínculo que o fluxo
+ * de acompanhante gravou.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[13] Round-trip do instructor_id no form de cliente');
+{
+  const cliente = ler('components/Demands.tsx');
+  const interna = ler('components/InternalDemands.tsx');
+
+  for (const [nome, src] of [['Demands.tsx', cliente], ['InternalDemands.tsx', interna]] as const) {
+    check(`${nome}: LÊ instructor_id do banco para o bloco`,
+      (src.match(/instructorId: b\.instructor_id \?\? null/g) ?? []).length === 2);
+    check(`${nome}: ESCREVE instructor_id de volta (senão o save apaga o vínculo)`,
+      (src.match(/instructor_id: b\.instructorId \?\? null/g) ?? []).length === 2);
+  }
+}
 /* ────────────────────────────────────────────────────────────────────────── */
 console.log(
   falhas === 0 ? '\n✅ SMOKE PARTICIPANTES: OK' : `\n❌ SMOKE PARTICIPANTES: ${falhas} falha(s)`

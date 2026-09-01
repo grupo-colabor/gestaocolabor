@@ -233,6 +233,7 @@ const CalendarView: React.FC = () => {
     hasScheduleConflict,
     removeInstructorAllocation,
     removeCompanionAllocation,
+    releaseLogisticBlocksForPerson,
     addInstructorAllocation,
     updateInstructorAllocation, 
     removeResourceAllocation,
@@ -1867,7 +1868,30 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                             onClick={(e) => {
                               e.stopPropagation();
                               e.preventDefault();
+
+                              // Uma linha POR DIA: o × remove um dia, não a
+                              // pessoa. Os blocos de logística dela só são
+                              // liberados quando cai o último dia — a conta vai
+                              // ANTES da remoção, porque ela é otimista e o
+                              // estado já teria mudado depois.
+                              const removidoInstructorId = anyData?.instructorId;
+                              const removidoDemandId = anyData?.demandId;
+                              const eraUltimoDaPessoa =
+                                !!removidoInstructorId &&
+                                !!removidoDemandId &&
+                                companionAllocations.filter(
+                                  ca =>
+                                    ca.demandId === removidoDemandId &&
+                                    ca.instructorId === removidoInstructorId &&
+                                    ca.id !== companionAllocationId
+                                ).length === 0;
+
                               removeCompanionAllocation(companionAllocationId);
+
+                              if (eraUltimoDaPessoa) {
+                                void releaseLogisticBlocksForPerson(removidoDemandId, removidoInstructorId);
+                              }
+
                               setNotification?.({ type: 'success', message: 'Acompanhante removido da agenda.' });
                             }}
                             className="absolute top-1 right-1 w-5 h-5 rounded-md bg-black/20 hover:bg-black/35 text-white flex items-center justify-center text-[12px] font-black leading-none"

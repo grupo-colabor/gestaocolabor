@@ -234,6 +234,7 @@ const InternalDemands: React.FC = () => {
     demandParticipants,
     addDemandParticipant,
     removeDemandParticipant,
+    ensureLogisticBlocksForPerson,
     notificationTarget,
     setNotificationTarget,
     addDemand,
@@ -1203,28 +1204,28 @@ const InternalDemands: React.FC = () => {
   );
 
   /**
-   * Adiciona o participante e JÁ CRIA os blocos de logística dele — no BANCO,
-   * não só no estado.
+   * Adiciona o participante e prepara a logistica por pessoa.
    *
-   * O par locomoção+hospedagem nasce pré-preenchido com nome e `instructorId`
-   * porque a razão de a interna ter participantes é justamente cada um ter
-   * deslocamento e hospedagem próprios — obrigar o usuário a criar os blocos
-   * à mão e redigitar o nome seria repetir o trabalho que a seleção acabou de
-   * fazer, e é por digitação livre que o vínculo por nome se perde.
+   * A criacao dos dois blocos (e a identificacao do bloco anonimo do titular)
+   * NAO mora mais aqui: e a mesma rotina do App que o fluxo de ACOMPANHANTE de
+   * cliente usa, em domain/logisticBlockOwnership.ts + ensureLogisticBlocksForPerson.
+   * A regra e uma so para os dois tipos de demanda; duas copias divergiriam no
+   * primeiro ajuste.
    *
-   * ⚠️ POR QUE PERSISTIR AQUI, e não deixar para o save do formulário — este
+   * ⚠️ POR QUE PERSISTIR AQUI, e nao deixar para o save do formulario — este
    * foi o bug encontrado no teste manual da F1:
    *
-   * O card de Participantes só existe em `modalSubMode === 'VIEW'`, e a VIEW
-   * NÃO TEM botão de salvar (ele é `modalSubMode === 'FORM' && canEditDemand`).
-   * O participante era gravado — o insert vai direto ao banco — mas os dois
-   * blocos ficavam só no estado do formulário e morriam ao fechar o modal.
-   * Pior: reabrir chama `loadLogisticsFor`, que sobrescreve os blocos com o
-   * que está no banco, então sumiam mesmo sem fechar a tela.
+   * O card de Participantes so existe em modalSubMode === VIEW, e a VIEW nao
+   * tem botao de salvar (ele e FORM && canEditDemand). O participante era
+   * gravado — o insert vai direto ao banco — mas os dois blocos ficavam so no
+   * estado do formulario e morriam ao fechar o modal. Pior: reabrir chama
+   * loadLogisticsFor, que sobrescreve os blocos com o que esta no banco.
    *
-   * Usa `insertLogisticBlocks` (insert puro), NÃO `upsertLogisticBlocks`
-   * (delete-all + insert): aqui não temos a lista completa de blocos em mãos,
-   * e mandar só os dois novos com o delete-all apagaria todo o resto.
+   * Depois de gravar, o estado do formulario e RECARREGADO do banco em vez de
+   * ser remendado na mao: e a leitura que ja existe (loadLogisticsFor), e ela
+   * traz junto o bloco do titular que acabou de ser identificado. Seguro
+   * porque o card so aparece em VIEW, onde as secoes de logistica sao somente
+   * leitura — nao existe edicao pendente para ser descartada.
    */
   const handleAddParticipant = useCallback(
     async (payload: { instructorId: string; startDate: string | null; endDate: string | null }) => {
@@ -1237,67 +1238,27 @@ const InternalDemands: React.FC = () => {
         endDate: payload.endDate,
       });
 
-      // Falhou (unique / FK / CHECK / RLS): a notificação já saiu do App e o
-      // modal continua aberto para o usuário corrigir. Nada de bloco órfão.
+      // Falhou (unique / FK / CHECK / RLS): a notificacao ja saiu do App e o
+      // modal continua aberto para o usuario corrigir. Nada de bloco orfao.
       if (!ok) return;
 
       const nome = getInstructorName(payload.instructorId);
-      const locoBlock = { ...emptyLocomocaoBlock(), instructorName: nome, instructorId: payload.instructorId };
-      const hospBlock = { ...emptyHospedagemBlock(), instructorName: nome, instructorId: payload.instructorId };
 
-      // `block_order` segue a posição que o bloco terá no array — mesmo
-      // critério do save, que reescreve todos por índice. Aqui só precisa não
-      // colidir na ordenação da leitura.
-      const locoOrder = (formDemand.logisticasLocomocao || []).length;
-      const hospOrder = (formDemand.logisticasHospedagem || []).length;
+      // Cria os 2 blocos do participante (idempotente) e identifica o bloco
+      // anonimo do titular, que deixa de ser "o unico" agora que ha 2 pessoas.
+      await ensureLogisticBlocksForPerson(formDemand.id, payload.instructorId);
 
-      try {
-        await insertLogisticBlocks(formDemand.id, [
-          {
-            id: locoBlock.id,
-            block_type: 'LOCOMOCAO',
-            block_order: locoOrder,
-            instructor_name: nome,
-            instructor_id: payload.instructorId,
-          },
-          {
-            id: hospBlock.id,
-            block_type: 'HOSPEDAGEM',
-            block_order: hospOrder,
-            instructor_name: nome,
-            instructor_id: payload.instructorId,
-          },
-        ] as any);
-      } catch (e: any) {
-        // O participante JÁ está no banco — só a logística falhou. Não desfaz
-        // o participante (é ele que vale para agenda e conflito); avisa para
-        // os blocos serem criados à mão na aba de Logística.
-        console.error('[InternalDemands] erro ao criar blocos do participante:', e);
-        setIsParticipantModalOpen(false);
-        setNotification({
-          message: `${nome} foi adicionado, mas os blocos de logística não foram criados. Crie-os na aba de Logística.`,
-          type: 'error',
-        });
-        return;
-      }
-
+      const logistics = await loadLogisticsFor(formDemand.id);
       setFormDemand(prev => ({
         ...prev,
-        logisticasLocomocao: [...(prev.logisticasLocomocao || []), locoBlock],
-        logisticasHospedagem: [...(prev.logisticasHospedagem || []), hospBlock],
+        logisticasLocomocao: logistics.locoBlocks,
+        logisticasHospedagem: logistics.hospBlocks,
       }));
 
       setIsParticipantModalOpen(false);
       setNotification({ message: `${nome} adicionado como participante.`, type: 'success' });
     },
-    [
-      formDemand.id,
-      formDemand.logisticasLocomocao,
-      formDemand.logisticasHospedagem,
-      addDemandParticipant,
-      instructors,
-      setNotification,
-    ]
+    [formDemand.id, addDemandParticipant, ensureLogisticBlocksForPerson, instructors, setNotification]
   );
 
   /**

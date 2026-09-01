@@ -300,6 +300,41 @@ export async function insertLogisticBlocks(
   }
 }
 
+/**
+ * Marca o DONO de um bloco já existente — nome e id, nada mais.
+ *
+ * Escrita pontual de propósito: é o que permite identificar o bloco anônimo do
+ * titular quando entra a segunda pessoa, SEM passar pelo delete-all do
+ * `upsertLogisticBlocks` e sem reenviar campos que a tela pode não ter em mãos
+ * (locadora, hotel, notinha). Nenhum outro campo é tocado.
+ */
+export async function updateLogisticBlockOwner(
+  blockId: string,
+  instructorId: string,
+  instructorName: string
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('logistic_blocks')
+    .update({
+      instructor_id: instructorId,
+      instructor_name: instructorName,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', blockId)
+    .select('id');
+
+  if (error) throw error;
+
+  // Endurecido: o id veio de uma linha que acabamos de ler do banco, então 0
+  // linhas só pode ser RLS filtrando o UPDATE. Silenciar isso deixaria o bloco
+  // do titular anônimo para sempre, sem nenhum sinal.
+  if (!data || data.length === 0) {
+    throw new Error(
+      'Bloco de logística não foi atualizado (0 linhas) — verifique permissões (RLS).'
+    );
+  }
+}
+
 export async function deleteLogisticBlock(blockId: string): Promise<void> {
   const { data, error } = await supabase
     .from('logistic_blocks')

@@ -35,6 +35,8 @@ const Logistics: React.FC = () => {
     resourceAllocations,
     operationalBases,
     hasScheduleConflict,
+    ensureLogisticBlocksForPerson,
+    releaseLogisticBlocksForPerson,
     hasResourceConflict,
     recommendInstructors,
     allocateInstructor,
@@ -159,12 +161,32 @@ const handleAddCompanion = (companionInstructorId: string) => {
     endDate: selectedDemand.endDate
   });
 
+  // Logística POR PESSOA: cria os dois blocos do acompanhante (se ele ainda
+  // não tiver) e identifica o bloco anônimo do titular, que deixa de ser
+  // "o único" agora que existe uma segunda pessoa na demanda.
+  void ensureLogisticBlocksForPerson(selectedDemand.id, companionInstructorId);
+
   setNotification({ type: 'success', message: 'Acompanhante alocado com sucesso.' });
   setIsCompanionPickerOpen(false);
 };
 
 const handleRemoveCompanion = (allocationId: string) => {
+  // Acompanhante e uma linha POR DIA: remover uma linha nao significa que a
+  // pessoa saiu da demanda. Os blocos de logistica so sao liberados quando cai
+  // o ULTIMO vinculo dela — e a conta e feita ANTES da remocao, porque
+  // removeCompanionAllocation e otimista e o estado ja teria mudado depois.
+  const alvo = companionsForSelectedDemand.find((a: any) => a.id === allocationId);
+  const eraUltimoDaPessoa =
+    !!alvo &&
+    companionsForSelectedDemand.filter(
+      (a: any) => a.instructorId === alvo.instructorId && a.id !== allocationId
+    ).length === 0;
+
   removeCompanionAllocation(allocationId);
+
+  if (eraUltimoDaPessoa && selectedDemand) {
+    void releaseLogisticBlocksForPerson(selectedDemand.id, alvo.instructorId);
+  }
   logAction({
     modulo: 'Programação',
     acao: 'Cancelar',
@@ -254,6 +276,10 @@ const handleSaveCompanionDays = () => {
       endDate: endDateTime
     });
   });
+
+  // Uma vez por PESSOA, fora do laço de dias: são N linhas de acompanhante
+  // mas UM par de blocos de logística.
+  void ensureLogisticBlocksForPerson(selectedDemand.id, pendingCompanionInstructorId);
 
   logAction({
     modulo: 'Programação',

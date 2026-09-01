@@ -77,6 +77,8 @@ import { isDemandDay, getDemandDays } from './domain/demandDays';
 import { isEAD, requiresLogistics } from './domain/modalityRules';
 import { hasResourceOverlap } from './domain/resourceConflict';
 import { hasPersonScheduleConflict } from './domain/personScheduleConflict';
+import { hasBlocksFor, planTitularFills, isLogisticBlockEmpty } from './domain/logisticBlockOwnership';
+import { resolveDemandInstructors } from './domain/demandInstructors';
 import { fetchInstructors, fetchInstructorTrainings, deleteInstructorById } from './services/instructors';
 import { fetchMeasurements, upsertMeasurementByDemandId } from './services/measurements';
 import { fetchEvidences, upsertEvidenceByDemandId } from './services/evidences';
@@ -124,6 +126,13 @@ import {
   insertDemandParticipant,
   deleteDemandParticipantById
 } from './services/demandParticipants';
+
+import {
+  fetchLogisticBlocksByDemandId,
+  insertLogisticBlocks,
+  updateLogisticBlockOwner,
+  deleteLogisticBlock
+} from './services/logistics';
 
 import {
   fetchLogisticAllocations,
@@ -183,6 +192,23 @@ interface AppState {
   /** Resolve para `false` quando a gravação falha (a notificação já saiu). */
   addDemandParticipant: (p: Omit<DemandParticipant, 'id'>) => Promise<boolean>;
   removeDemandParticipant: (id: string) => Promise<boolean>;
+
+  /**
+   * Garante os blocos de logística de UMA pessoa na demanda e, de quebra,
+   * identifica o bloco anônimo do titular. Idempotente — pode ser chamada N
+   * vezes para a mesma pessoa. Ver a implementação para a regra.
+   */
+  ensureLogisticBlocksForPerson: (demandId: string, instructorId: string) => Promise<void>;
+  /**
+   * Só o preenchimento do bloco anônimo do titular. Para quando o titular
+   * chega DEPOIS da segunda pessoa (alocação pela Programação/agenda).
+   */
+  fillTitularLogisticBlocks: (demandId: string, titularId: string) => Promise<void>;
+  /**
+   * Apaga os blocos VAZIOS de quem saiu da demanda. O chamador só invoca
+   * quando foi o último vínculo daquela pessoa — ver a implementação.
+   */
+  releaseLogisticBlocksForPerson: (demandId: string, instructorId: string) => Promise<void>;
 
   // ✅ Evidências (GLOBAL)
   evidenceStore: Record<string, EvidenceData>;
@@ -511,6 +537,193 @@ const removeCompanionAllocation = useCallback((id: string) => {
       return false;
     }
   }, [AUTH_MODE, user, setNotification]);
+
+  // ====================================================================
+  // LOGISTICA POR PESSOA — regra unificada interna / cliente
+  //
+  // Regra (domain/logisticBlockOwnership.ts): com UMA pessoa na demanda o
+  // bloco fica anonimo, como sempre foi. Entrando a SEGUNDA — participante de
+  // interna ou acompanhante de cliente — todo bloco passa a ser identificado:
+  // o da pessoa nova nasce com nome + instructor_id, e o bloco anonimo que
+  // estava la vira explicitamente do titular.
+  //
+  // Vive no App, e nao na tela, porque os gatilhos estao em cinco lugares
+  // diferentes (form interno, dois caminhos no AllocationDrawer, dois na
+  // Logistics) e porque resolver o titular precisa de demands, instructors e
+  // instructorAllocations ao mesmo tempo.
+  // ====================================================================
+
+  /** Nome para o rotulo do bloco. Vazio nunca — e o campo que a tela exibe. */
+  const nomeDoInstrutor = useCallback(
+    (id?: string | null) => instructors.find(i => i.id === id)?.name || 'Instrutor',
+    [instructors]
+  );
+
+  /**
+   * Titular da demanda: demands.instructor_id e, se vazio, a primeira
+   * instructor_allocation — exatamente a ordem de resolveDemandInstructors,
+   * que e a leitura com fallback ja usada pela tela de internas. Nao inventa
+   * uma terceira definicao de "quem e o titular".
+   */
+  const resolveTitularId = useCallback(
+    (demandId: string): string | undefined => {
+      const demand = demands.find(d => d.id === demandId);
+      if (demand?.instructorId) return demand.instructorId;
+      const entries = resolveDemandInstructors(demandId, demand?.instructorId, instructorAllocations);
+      return entries[0]?.instructorId;
+    },
+    [demands, instructorAllocations]
+  );
+
+  /**
+   * Aplica os preenchimentos do titular sobre os blocos JA LIDOS do banco.
+   * Devolve os ids tocados, para o chamador saber se houve mudanca.
+   */
+  const aplicarDonoDoTitular = useCallback(
+    async (blocks: any[], titularId: string | undefined): Promise<string[]> => {
+      if (!titularId) return [];
+
+      const loco = blocks
+        .filter(b => b.block_type === 'LOCOMOCAO')
+        .map(b => ({ id: b.id, instructorId: b.instructor_id ?? null }));
+      const hosp = blocks
+        .filter(b => b.block_type === 'HOSPEDAGEM')
+        .map(b => ({ id: b.id, instructorId: b.instructor_id ?? null }));
+
+      const fills = planTitularFills(loco, hosp, titularId, nomeDoInstrutor(titularId));
+
+      for (const fill of fills) {
+        await updateLogisticBlockOwner(fill.blockId, fill.instructorId, fill.instructorName);
+      }
+      return fills.map(f => f.blockId);
+    },
+    [nomeDoInstrutor]
+  );
+
+  /** UUID v4 — a coluna id de logistic_blocks e uuid, igual ao gerador das secoes. */
+  const novoBlockId = () =>
+    'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = (Math.random() * 16) | 0;
+      return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+    });
+
+  const ensureLogisticBlocksForPerson = useCallback(
+    async (demandId: string, instructorId: string): Promise<void> => {
+      if (AUTH_MODE !== 'supabase' || !user) return;
+      if (!demandId || !instructorId) return;
+
+      try {
+        const blocks = await fetchLogisticBlocksByDemandId(demandId);
+
+        const existentes = blocks.map(b => ({ id: b.id, instructorId: b.instructor_id ?? null }));
+
+        // Idempotencia: acompanhante e gravado UMA LINHA POR DIA, entao este
+        // caminho roda N vezes para a mesma pessoa. Sem esta guarda, um
+        // acompanhante de 3 dias sairia com 6 blocos em vez de 2.
+        if (!hasBlocksFor(existentes, instructorId)) {
+          const nome = nomeDoInstrutor(instructorId);
+          const locoOrder = blocks.filter(b => b.block_type === 'LOCOMOCAO').length;
+          const hospOrder = blocks.filter(b => b.block_type === 'HOSPEDAGEM').length;
+
+          await insertLogisticBlocks(demandId, [
+            {
+              id: novoBlockId(),
+              block_type: 'LOCOMOCAO',
+              block_order: locoOrder,
+              instructor_name: nome,
+              instructor_id: instructorId,
+            },
+            {
+              id: novoBlockId(),
+              block_type: 'HOSPEDAGEM',
+              block_order: hospOrder,
+              instructor_name: nome,
+              instructor_id: instructorId,
+            },
+          ] as any);
+        }
+
+        // A segunda pessoa acabou de entrar: o bloco anonimo deixa de ser
+        // "o unico" e passa a ser "o do titular".
+        const titularId = resolveTitularId(demandId);
+        if (titularId && titularId !== instructorId) {
+          await aplicarDonoDoTitular(blocks, titularId);
+        }
+      } catch (e) {
+        // Nao derruba o fluxo que chamou: o vinculo da pessoa (acompanhante ou
+        // participante) e o que vale para agenda, conflito e pagamento; a
+        // logistica e complemento e pode ser criada a mao.
+        console.error('[LogisticaPorPessoa] falha ao preparar blocos', { demandId, instructorId }, e);
+        setNotification({
+          message: 'Pessoa vinculada, mas os blocos de logistica dela nao foram criados. Verifique a aba de Logistica.',
+          type: 'error',
+        });
+      }
+    },
+    [AUTH_MODE, user, nomeDoInstrutor, resolveTitularId, aplicarDonoDoTitular, setNotification]
+  );
+
+  const fillTitularLogisticBlocks = useCallback(
+    async (demandId: string, titularId: string): Promise<void> => {
+      if (AUTH_MODE !== 'supabase' || !user) return;
+      if (!demandId || !titularId) return;
+
+      try {
+        const blocks = await fetchLogisticBlocksByDemandId(demandId);
+
+        // So faz sentido identificar o titular se existe OUTRA pessoa com
+        // bloco. Numa demanda de uma pessoa so, o anonimo continua anonimo —
+        // e a metade da regra que evita pedir nome de quem nao precisa.
+        const temOutraPessoa = blocks.some(b => b.instructor_id && b.instructor_id !== titularId);
+        if (!temOutraPessoa) return;
+
+        await aplicarDonoDoTitular(blocks, titularId);
+      } catch (e) {
+        console.error('[LogisticaPorPessoa] falha ao identificar o titular', { demandId, titularId }, e);
+      }
+    },
+    [AUTH_MODE, user, aplicarDonoDoTitular]
+  );
+
+  /**
+   * Libera os blocos de uma pessoa que saiu da demanda — SO OS VAZIOS.
+   *
+   * Chamada quando a pessoa perde o ULTIMO vinculo com a demanda. Quem decide
+   * isso e quem chama, e nao esta funcao: acompanhante e gravado uma linha por
+   * dia, entao remover um dia nao significa que ele saiu — e o estado local do
+   * chamador que sabe quantas linhas sobraram (aqui o estado do App estaria
+   * defasado, por causa da remocao otimista que acabou de acontecer).
+   *
+   * O bloco do TITULAR nunca entra aqui: o filtro e por instructor_id da pessoa
+   * que saiu. Se sobrar so o titular, o bloco dele mantem o nome — desfazer a
+   * identificacao seria voltar a um anonimo que ninguem pediu.
+   */
+  const releaseLogisticBlocksForPerson = useCallback(
+    async (demandId: string, instructorId: string): Promise<void> => {
+      if (AUTH_MODE !== 'supabase' || !user) return;
+      if (!demandId || !instructorId) return;
+
+      try {
+        const blocks = await fetchLogisticBlocksByDemandId(demandId);
+        const alvos = blocks.filter(
+          b => b.instructor_id === instructorId && isLogisticBlockEmpty(b)
+        );
+
+        // Um id por vez, nunca por demand_id: apagar por demanda levaria junto
+        // os blocos do titular e dos outros acompanhantes.
+        for (const b of alvos) {
+          try {
+            await deleteLogisticBlock(b.id);
+          } catch (e) {
+            console.warn('[LogisticaPorPessoa] bloco nao removido', b.id, e);
+          }
+        }
+      } catch (e) {
+        console.error('[LogisticaPorPessoa] falha ao liberar blocos', { demandId, instructorId }, e);
+      }
+    },
+    [AUTH_MODE, user]
+  );
 
 const [operationalBases, setOperationalBases] = useState<OperationalBases>({
   aprovadores: [],
@@ -3212,9 +3425,16 @@ const hasScheduleConflict = useCallback(
         endDate: finalEnd
       });
 
+      // Titular chegando DEPOIS da segunda pessoa (acompanhante ja alocado, ou
+      // participante ja adicionado numa interna sem titular). O bloco que ficou
+      // anonimo enquanto so havia uma pessoa passa a ser identificado como
+      // dele. Nao bloqueia a alocacao: e efeito colateral, roda solto e a
+      // propria funcao ja engole o proprio erro.
+      void fillTitularLogisticBlocks(demandId, instructorId);
+
       return true;
     },
-    [demands, updateDemand, addInstructorAllocation, getEffectiveDemandRange, ensureDateTime]
+    [demands, updateDemand, addInstructorAllocation, getEffectiveDemandRange, ensureDateTime, fillTitularLogisticBlocks]
   );
 
   const deallocateInstructor = useCallback((demandId: string) => {
@@ -3267,6 +3487,9 @@ const hasScheduleConflict = useCallback(
       demandParticipants,
       addDemandParticipant,
       removeDemandParticipant,
+      ensureLogisticBlocksForPerson,
+      fillTitularLogisticBlocks,
+      releaseLogisticBlocksForPerson,
       setNotification,
       setHybridPracticePeriod,
       companionAllocations,
@@ -3366,6 +3589,9 @@ const hasScheduleConflict = useCallback(
       demandParticipants,
       addDemandParticipant,
       removeDemandParticipant,
+      ensureLogisticBlocksForPerson,
+      fillTitularLogisticBlocks,
+      releaseLogisticBlocksForPerson,
       operationalBases,
       setOperationalBases,
       currentView,

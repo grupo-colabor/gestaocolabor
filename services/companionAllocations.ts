@@ -56,3 +56,29 @@ export async function deleteCompanionAllocationById(id: string) {
     throw new Error('Nenhuma linha excluída (companion_allocations) — verifique permissões (RLS).');
   }
 }
+
+/**
+ * Atualiza as datas de UMA linha de acompanhante.
+ *
+ * Uma linha por dia: isto NUNCA deve ser usado para mover alguém de dia — o
+ * recorte de período (domain/allocationReschedule) mantém o dia e só reescreve
+ * a hora, e o que sai do período é DELETADO, não remendado. Foi um UPDATE em
+ * lote com o mesmo par de datas que fez três dias virarem três cards no mesmo
+ * dia.
+ */
+export async function updateCompanionAllocationDates(
+  id: string,
+  startDate: string,
+  endDate: string
+) {
+  const { data, error } = await supabase
+    .from('companion_allocations')
+    .update({ start_date: startDate, end_date: endDate })
+    .eq('id', id)
+    .select('id');
+
+  if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error('Nenhuma linha atualizada (companion_allocations) — verifique permissões (RLS).');
+  }
+}

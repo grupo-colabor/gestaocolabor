@@ -162,3 +162,28 @@ function describeWriteError(error: { code?: string; message?: string }): string 
       return `Erro ao salvar participante: ${error?.message ?? 'causa desconhecida'}`;
   }
 }
+
+/**
+ * Recorta (ou limpa) o período próprio de um participante.
+ *
+ * `null` nos dois é um estado VÁLIDO e significativo: "participa da demanda
+ * inteira". É para lá que volta o participante cujo período ficou inteiramente
+ * fora do novo período da demanda — período vazio é inválido (o CHECK exige
+ * start <= end) e apagar a pessoa seria decidir por ela.
+ */
+export async function updateDemandParticipantPeriod(
+  id: string,
+  startDate: string | null,
+  endDate: string | null
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('demand_participants')
+    .update({ start_date: startDate, end_date: endDate, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select('id');
+
+  if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error('Nenhuma linha atualizada (demand_participants) — verifique permissões (RLS).');
+  }
+}

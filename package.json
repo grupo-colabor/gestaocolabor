@@ -17,6 +17,7 @@
     "smoke:medicao-blocos": "esbuild scripts/smokeMedicaoBlocos.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-medicao-blocos.cjs --log-level=error && node node_modules/.cache/smoke-medicao-blocos.cjs",
     "smoke:participantes": "esbuild scripts/smokeParticipantes.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-participantes.cjs --log-level=error && node node_modules/.cache/smoke-participantes.cjs",
     "smoke:datas": "esbuild scripts/smokeDatasDemanda.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-datas.cjs --log-level=error && node node_modules/.cache/smoke-datas.cjs",
+    "smoke:recorte-alocacoes": "esbuild scripts/smokeRecorteAlocacoes.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-recorte.cjs --log-level=error && node node_modules/.cache/smoke-recorte.cjs",
     "smoke:ctm": "esbuild scripts/smokeCtm.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-ctm.cjs --log-level=error && node node_modules/.cache/smoke-ctm.cjs"
   },
   "dependencies": {

@@ -141,6 +141,10 @@ import {
 // Extraídos daqui para que a demanda INTERNA use o MESMO fluxo, não uma cópia.
 import ResourceAllocationModal from './ResourceAllocationModal';
 import PersonCountBadge from './ui/PersonCountBadge';
+import { planAllocationReschedule, describeReschedule } from '../domain/allocationReschedule';
+import { getDemandDays } from '../domain/demandDays';
+import { updateCompanionAllocationDates } from '../services/companionAllocations';
+import { updateDemandParticipantPeriod } from '../services/demandParticipants';
 import { useResourceAllocation } from '../hooks/useResourceAllocation';
 
 // UUID v4 sem crypto.randomUUID() — compatível com HTTP e browsers antigos.
@@ -158,6 +162,7 @@ const Demands: React.FC = () => {
   const {
     demands: allDemands, companies, trainings, regions, instructors, operationalBases,
     measurements, agendaItems, instructorAllocations, resourceAllocations,companionAllocations,
+    demandParticipants, removeCompanionAllocation,
     updateDemand, addDemand, deleteDemand, deallocateInstructor, recommendInstructors,
     updateMeasurement, removeAgendaItem, hasResourceConflict,
     addInstructorAllocation, removeInstructorAllocation, updateInstructorAllocation, addResourceAllocation, removeResourceAllocation, hasScheduleConflict, setNotification,
@@ -1601,37 +1606,71 @@ const handleSave = async () => {
         });
       }
 
-      // Sync datas das alocações quando o dia da demanda muda
+      // Sync das alocações quando o DIA da demanda muda.
+      //
+      // ⚠️ Era aqui que estava o estrago: este bloco REESCREVIA todas as
+      // alocações da demanda para o período novo cheio. Acompanhante (uma linha
+      // por dia) recebia um UPDATE em lote com o mesmo par de datas — três dias
+      // viravam três cards no mesmo dia; e alocação de SPLIT era expandida para
+      // o período inteiro, fazendo o rateio pagar a carga cheia a cada
+      // instrutor (16h viram 32h).
+      //
+      // A regra agora é uma só e mora no domínio: RECORTE, NUNCA CÓPIA.
+      // Ver domain/allocationReschedule.ts.
       const dataAlterou =
         sanitizedDemand.startDate?.slice(0, 10) !== activeDemand?.startDate?.slice(0, 10) ||
         sanitizedDemand.endDate?.slice(0, 10) !== activeDemand?.endDate?.slice(0, 10);
 
       if (dataAlterou) {
-        instructorAllocations
-          .filter(a => a.demandId === sanitizedDemand.id)
-          .forEach(alloc => {
-            updateInstructorAllocation({
-              ...alloc,
-              startDate: sanitizedDemand.startDate,
-              endDate: sanitizedDemand.endDate,
-            });
-          });
+        const plano = planAllocationReschedule({
+          diasAntigos: activeDemand ? getDemandDays(activeDemand as any) : [],
+          diasNovos: getDemandDays(sanitizedDemand as any),
+          horaInicio: (sanitizedDemand.startDate ?? '').slice(11) || '08:00',
+          horaFim: (sanitizedDemand.endDate ?? '').slice(11) || '18:00',
+          allocations: instructorAllocations.filter(a => a.demandId === sanitizedDemand.id),
+          companions: companionAllocations.filter(ca => ca.demandId === sanitizedDemand.id),
+          participants: demandParticipants.filter(pt => pt.demandId === sanitizedDemand.id),
+        });
 
-        const companionsVinculados = companionAllocations.filter(
-          ca => ca.demandId === sanitizedDemand.id
-        );
-        if (companionsVinculados.length > 0) {
-          try {
-            await supabase
-              .from('companion_allocations')
-              .update({
-                start_date: sanitizedDemand.startDate,
-                end_date: sanitizedDemand.endDate,
-              })
-              .in('id', companionsVinculados.map(ca => ca.id));
-          } catch (e) {
-            console.error('Erro ao sincronizar datas dos acompanhantes:', e);
+        // --- instrutor ---
+        for (const a of [...plano.allocations.paraPeriodoCheio, ...plano.allocations.paraRecortar]) {
+          const original = instructorAllocations.find(x => x.id === a.id);
+          if (original) {
+            updateInstructorAllocation({ ...original, startDate: a.startDate, endDate: a.endDate });
           }
+        }
+        for (const a of plano.allocations.paraRemover) removeInstructorAllocation(a.id);
+
+        // --- acompanhante: o dia NÃO muda; sai quem não tem mais dia ---
+        for (const ca of plano.companions.paraRemover) removeCompanionAllocation(ca.id);
+        for (const ca of plano.companions.paraAtualizar) {
+          try {
+            await updateCompanionAllocationDates(ca.id, ca.startDate, ca.endDate);
+          } catch (e) {
+            console.error('Erro ao sincronizar horário do acompanhante:', e);
+          }
+        }
+
+        // --- participante ---
+        for (const pt of plano.participants.paraRecortar) {
+          try {
+            await updateDemandParticipantPeriod(pt.id, pt.startDate, pt.endDate);
+          } catch (e) {
+            console.error('Erro ao recortar período do participante:', e);
+          }
+        }
+        for (const pt of plano.participants.paraLimparPeriodo) {
+          try {
+            await updateDemandParticipantPeriod(pt.id, null, null);
+          } catch (e) {
+            console.error('Erro ao limpar período do participante:', e);
+          }
+        }
+
+        // --- aviso único, para ninguém descobrir o recorte pela agenda ---
+        const avisos = describeReschedule(plano, getInstructorName);
+        if (avisos.length > 0) {
+          setNotification({ type: 'info', message: avisos.join(' ') });
         }
       }
 

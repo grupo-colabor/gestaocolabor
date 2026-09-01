@@ -105,6 +105,9 @@ import {
 } from './demand-form/FilterPanel';
 import ExportDemandsModal from './ExportDemandsModal';
 import PersonCountBadge from './ui/PersonCountBadge';
+import { planAllocationReschedule, describeReschedule } from '../domain/allocationReschedule';
+import { updateDemandParticipantPeriod } from '../services/demandParticipants';
+import { getDemandDays } from '../domain/demandDays';
 import type { DemandFormState } from './demand-form/types';
 
 /**
@@ -859,6 +862,49 @@ const InternalDemands: React.FC = () => {
           dadosAntes: before ?? undefined,
           dadosDepois: sanitized,
         });
+
+        // O MESMO recorte da tela de cliente (domain/allocationReschedule).
+        //
+        // A interna não tem o bloco que reescrevia alocações — ela nunca teve
+        // sync de datas — mas TEM participantes com período próprio, e mudar o
+        // período da demanda deixava esse período apontando para fora dela.
+        // Acompanhante e alocação entram vazios aqui de propósito: o que a
+        // interna tem é participante; se um dia ela ganhar os outros dois, a
+        // regra já está aplicada.
+        const diaDaData = (v?: string | null) => (v ?? '').slice(0, 10);
+        if (
+          before &&
+          (diaDaData(before.startDate) !== diaDaData(sanitized.startDate) ||
+            diaDaData(before.endDate) !== diaDaData(sanitized.endDate))
+        ) {
+          const plano = planAllocationReschedule({
+            diasAntigos: getDemandDays(before as any),
+            diasNovos: getDemandDays(sanitized as any),
+            horaInicio: (sanitized.startDate ?? '').slice(11) || '08:00',
+            horaFim: (sanitized.endDate ?? '').slice(11) || '18:00',
+            allocations: [],
+            companions: [],
+            participants: demandParticipants.filter(pt => pt.demandId === sanitized.id),
+          });
+
+          for (const pt of plano.participants.paraRecortar) {
+            try {
+              await updateDemandParticipantPeriod(pt.id, pt.startDate, pt.endDate);
+            } catch (e) {
+              console.error('Erro ao recortar período do participante:', e);
+            }
+          }
+          for (const pt of plano.participants.paraLimparPeriodo) {
+            try {
+              await updateDemandParticipantPeriod(pt.id, null, null);
+            } catch (e) {
+              console.error('Erro ao limpar período do participante:', e);
+            }
+          }
+
+          const avisos = describeReschedule(plano, getInstructorName);
+          if (avisos.length > 0) setNotification({ type: 'info', message: avisos.join(' ') });
+        }
       }
 
       if (!demandId) {

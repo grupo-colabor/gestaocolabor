@@ -104,6 +104,7 @@ import {
   FILTER_INPUT_CLASS,
 } from './demand-form/FilterPanel';
 import ExportDemandsModal from './ExportDemandsModal';
+import PersonCountBadge from './ui/PersonCountBadge';
 import type { DemandFormState } from './demand-form/types';
 
 /**
@@ -1602,17 +1603,13 @@ const InternalDemands: React.FC = () => {
                             )}
                             {ids.length === 0 && <span className="text-slate-400">Não Alocado</span>}
                             {/* Participantes NÃO entram na contagem de instrutores:
-                                são vínculo de outra tabela e o badge é de outra cor
-                                (esmeralda, como o card do modal) justamente para não
-                                serem lidos como "mais instrutores alocados". */}
-                            {participantesDaLinha.length > 0 && (
-                              <span
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-600 text-white w-fit"
-                                title={`Participantes: ${participantesDaLinha.join(', ')}`}
-                              >
-                                <Users size={10} /> +{participantesDaLinha.length}
-                              </span>
-                            )}
+                                são vínculo de outra tabela. O que separa os dois
+                                "+N" da mesma célula é o tooltip — e o badge de
+                                instrutores é sólido, este é claro. */}
+                            <PersonCountBadge
+                              count={participantesDaLinha.length}
+                              title={`Participantes: ${participantesDaLinha.join(', ')}`}
+                            />
                           </div>
                         )}
                       </td>
@@ -1706,19 +1703,15 @@ const InternalDemands: React.FC = () => {
                 {modalSubMode === 'VIEW' && (
                   <div className="flex items-center gap-2 mt-1">
                     <p className="text-xs text-slate-400 font-mono">ID: {formDemand.id}</p>
-                    {/* Mesmo badge da listagem, mesma cor do card de Participantes.
-                        Só aparece quando há participantes — em demanda sem eles, o
-                        cabeçalho fica exatamente como era. */}
-                    {currentParticipants.length > 0 && (
-                      <span
-                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600 text-white"
-                        title={`Participantes: ${currentParticipants
-                          .map(pt => getInstructorName(pt.instructorId))
-                          .join(', ')}`}
-                      >
-                        <Users size={10} /> +{currentParticipants.length}
-                      </span>
-                    )}
+                    {/* Mesmo componente da listagem. Só aparece quando há
+                        participantes — em demanda sem eles, o cabeçalho fica
+                        exatamente como era. */}
+                    <PersonCountBadge
+                      count={currentParticipants.length}
+                      title={`Participantes: ${currentParticipants
+                        .map(pt => getInstructorName(pt.instructorId))
+                        .join(', ')}`}
+                    />
                   </div>
                 )}
               </div>

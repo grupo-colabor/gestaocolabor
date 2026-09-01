@@ -140,6 +140,7 @@ import {
 // Fluxo de alocação de CTM: hook (estado + regras) e modal (apresentação).
 // Extraídos daqui para que a demanda INTERNA use o MESMO fluxo, não uma cópia.
 import ResourceAllocationModal from './ResourceAllocationModal';
+import PersonCountBadge from './ui/PersonCountBadge';
 import { useResourceAllocation } from '../hooks/useResourceAllocation';
 
 // UUID v4 sem crypto.randomUUID() — compatível com HTTP e browsers antigos.
@@ -613,6 +614,32 @@ const markDocAsNA = async (docType: 'LISTA_TURMA' | 'LIBERACAO_INSTRUTOR') => {
 
     return map;
   }, [demands, instructorAllocations]);
+
+  /**
+   * Nomes dos ACOMPANHANTES por demanda, para o indicador da listagem.
+   *
+   * `companion_allocations` tem UMA LINHA POR DIA: um acompanhante de 3 dias
+   * são 3 linhas. A contagem é por `instructorId` distinto — senão o "+N"
+   * diria dias, não pessoas.
+   *
+   * Deriva do estado global (carregado no bootstrap e mantido pelo realtime),
+   * como o equivalente de participantes na tela de interna.
+   */
+  const companionNamesByDemandId = useMemo(() => {
+    const porDemanda: Record<string, Set<string>> = {};
+    for (const ca of companionAllocations || []) {
+      if (!ca.demandId || !ca.instructorId) continue;
+      (porDemanda[ca.demandId] ||= new Set<string>()).add(ca.instructorId);
+    }
+
+    const map: Record<string, string[]> = {};
+    for (const [demandId, ids] of Object.entries(porDemanda)) {
+      map[demandId] = [...ids]
+        .map(id => getInstructorName(id))
+        .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    }
+    return map;
+  }, [companionAllocations, instructors]);
 
   // Todos os instrutores por demanda, deduplicados e ordenados por startDate
   const allInstructorsByDemandId = useMemo(() => {
@@ -2599,7 +2626,8 @@ const companionInstructorIds = useMemo(() => {
                     <td className="p-4 font-medium text-gray-900">
                       {(() => {
                         const ids = allInstructorsByDemandId[demand.id] ?? [];
-                        if (ids.length === 0) return 'Não Alocado';
+                        const acompanhantes = companionNamesByDemandId[demand.id] ?? [];
+                        if (ids.length === 0 && acompanhantes.length === 0) return 'Não Alocado';
                         const shown = ids.slice(0, 2);
                         const extra = ids.length - 2;
                         return (
@@ -2607,9 +2635,18 @@ const companionInstructorIds = useMemo(() => {
                             {shown.map(id => (
                               <span key={id}>{getInstructorName(id)}</span>
                             ))}
+                            {ids.length === 0 && <span className="text-slate-400">Não Alocado</span>}
                             {extra > 0 && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-600 text-white w-fit">+{extra}</span>
                             )}
+                            {/* Acompanhante NÃO é instrutor alocado: não ministra,
+                                e é vínculo de outra tabela. Fica fora do "+N" de
+                                cima pelo mesmo motivo que participante fica na
+                                interna. */}
+                            <PersonCountBadge
+                              count={acompanhantes.length}
+                              title={`Acompanhantes: ${acompanhantes.join(', ')}`}
+                            />
                           </div>
                         );
                       })()}
@@ -2689,7 +2726,19 @@ const companionInstructorIds = useMemo(() => {
                       <h2 className="text-xl font-bold text-gray-800">
                         {modalSubMode === 'VIEW' ? 'Visualização da Demanda' : (modalMode === 'CREATE' ? 'Nova Demanda' : 'Editar Demanda')}
                       </h2>
-                      {modalSubMode === 'VIEW' && <p className="text-xs text-slate-400 font-mono mt-1">ID: {formDemand.id}</p>}
+                      {modalSubMode === 'VIEW' && (
+                        <div className="flex items-center gap-2 mt-1">
+                          <p className="text-xs text-slate-400 font-mono">ID: {formDemand.id}</p>
+                          {/* Mesmo componente da listagem. Sem acompanhante, o
+                              cabeçalho fica exatamente como era. */}
+                          <PersonCountBadge
+                            count={companionInstructorIds.length}
+                            title={`Acompanhantes: ${companionInstructorIds
+                              .map(id => getInstructorName(id))
+                              .join(', ')}`}
+                          />
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       {modalSubMode === 'VIEW' && (

@@ -629,20 +629,30 @@ console.log('\n[9] Indicador de participantes');
     'a listagem NÃO busca participante por demanda (nada de N+1)',
     !/fetchDemandParticipants/.test(interna)
   );
-  check('badge +N na coluna do instrutor', interna.includes('<Users size={10} /> +{participantesDaLinha.length}'));
+  // O badge virou componente compartilhado com o de acompanhante
+  // (components/ui/PersonCountBadge.tsx) — a aparência mora lá e é assertada
+  // em [19]. Aqui fica só o que é desta tela: a contagem e o tooltip certos.
+  check(
+    'badge +N na coluna do instrutor',
+    /<PersonCountBadge[\s\S]{0,120}count=\{participantesDaLinha\.length\}/.test(interna)
+  );
   check(
     'tooltip lista os nomes',
     interna.includes('title={`Participantes: ${participantesDaLinha.join(\', \')}`}')
   );
   check(
-    'participante não é contado como instrutor alocado (badge separado, cor própria)',
-    interna.includes('bg-emerald-600 text-white w-fit')
+    'participante não é contado como instrutor alocado (badge separado do de instrutores)',
+    interna.includes('<PersonCountBadge') &&
+      !/count=\{ids\.length/.test(interna)
   );
   check(
     'demanda só com participante deixa de aparecer como "Não Alocado" seco',
     interna.includes("{ids.length === 0 && participantesDaLinha.length === 0 ? 'Não Alocado'")
   );
-  check('badge também no cabeçalho do modal', interna.includes('+{currentParticipants.length}'));
+  check(
+    'badge também no cabeçalho do modal',
+    /<PersonCountBadge[\s\S]{0,120}count=\{currentParticipants\.length\}/.test(interna)
+  );
 
   // Excel: coluna nova só na interna — o export de cliente não muda.
   check('coluna Participantes no export', exportar.includes("key: 'participantes'"));
@@ -1447,6 +1457,63 @@ console.log('\n[18] Agenda — acompanhante convive na célula dividida');
     'e o verde é definido uma vez só',
     (cal.match(/bg-emerald-600/g) ?? []).length,
     1
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [19] BADGE "+N" — um componente, dois vínculos
+ *
+ * O indicador de participante (interna) e o de acompanhante (cliente) são a
+ * MESMA peça: só o tooltip muda. Se um dos dois voltar a ser JSX inline, os
+ * dois divergem no primeiro ajuste visual — foi assim que o verde com ícone
+ * ficou destoando da linha.
+ *
+ * A contagem de acompanhante é a pegadinha: `companion_allocations` tem uma
+ * linha POR DIA. Contar linhas faria o "+N" dizer dias, não pessoas.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[19] Badge +N de participante e acompanhante');
+{
+  const badge = ler('components/ui/PersonCountBadge.tsx');
+  const interna = ler('components/InternalDemands.tsx');
+  const cliente = ler('components/Demands.tsx');
+
+  check('o badge é um componente próprio', badge.includes('const PersonCountBadge'));
+  check(
+    'discreto: +N pequeno, sem ícone, fundo neutro',
+    badge.includes('text-[10px]') && badge.includes('bg-slate-100') &&
+      !/<[A-Z][a-zA-Z]* size=/.test(badge)
+  );
+  check('não renderiza nada quando a contagem é zero', badge.includes('if (!count) return null;'));
+
+  // Quatro usos: listagem e cabeçalho do modal, nas duas telas.
+  eq(
+    'interna usa o componente nos dois lugares',
+    (interna.match(/<PersonCountBadge/g) ?? []).length,
+    2
+  );
+  eq(
+    'cliente idem',
+    (cliente.match(/<PersonCountBadge/g) ?? []).length,
+    2
+  );
+  check(
+    'e o badge verde com ícone saiu da interna',
+    !interna.includes('bg-emerald-600 text-white w-fit')
+  );
+
+  // A contagem de acompanhante é POR PESSOA, não por linha (uma por dia).
+  const memo = cliente.slice(
+    cliente.indexOf('const companionNamesByDemandId'),
+    cliente.indexOf('const allInstructorsByDemandId')
+  );
+  check('achou o memo de acompanhantes da listagem', memo.length > 0);
+  check(
+    'conta instructorId distinto, não linhas de companion_allocations',
+    memo.includes('new Set<string>()') && memo.includes('.add(ca.instructorId)')
+  );
+  check(
+    'e o tooltip nomeia o vínculo (é o que distingue os dois +N da célula)',
+    cliente.includes('title={`Acompanhantes: ') && interna.includes('title={`Participantes: ')
   );
 }
 /* ────────────────────────────────────────────────────────────────────────── */

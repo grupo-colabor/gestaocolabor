@@ -8,7 +8,12 @@ import {
   getDemandCompanyLabel as getDemandCompanyLabelDomain,
   isInternalDemand,
 } from '../domain/demandLabel';
-import { computeMeasurementTotals } from '../domain/measurementTotals';
+import {
+  computeMeasurementTotals,
+  normalizeMeasurementBlocks,
+  blockExpenseBreakdown,
+} from '../domain/measurementTotals';
+import { resolveDemandInstructors } from '../domain/demandInstructors';
 import { usePagination } from '../hooks/usePagination';
 import Pagination from './Pagination';
 import { 
@@ -75,6 +80,7 @@ const CategoryBlock = ({
   icon: Icon,
   colorClass,
   otherId,
+  ownerId,
   obs,
   onObsChange,
   attachments,
@@ -90,13 +96,22 @@ const CategoryBlock = ({
   icon: any,
   colorClass: string,
   otherId?: string,
+  /**
+   * Dono dos itens LANCADOS nesta instancia do bloco (medicao multi-pessoa).
+   *
+   * ⚠️ Nao e criterio de FILTRO: a lista ja chega particionada em `attachments`,
+   * pela particao do dominio (normalizeMeasurementBlocks). Refiltrar aqui seria
+   * uma segunda copia da regra de "item sem dono e do titular", e as duas
+   * divergiriam. Ausente = painel de uma pessoa so, exatamente como hoje.
+   */
+  ownerId?: string,
   obs?: string,
   onObsChange?: (val: string) => void,
   attachments: Attachment[],
-  onUploadFile: (cat: ExpenseCategory, oid?: string) => void,
+  onUploadFile: (cat: ExpenseCategory, oid?: string, instructorId?: string) => void,
   onUpdateValue: (id: string, val: string) => void,
   onRemoveAttachment: (id: string) => void,
-  onAddManualValue: (cat: ExpenseCategory, oid?: string) => void,
+  onAddManualValue: (cat: ExpenseCategory, oid?: string, instructorId?: string) => void,
   /**
    * Interna nao mostra o toggle: TODA despesa de interna e custo Colabor por
    * natureza, entao marcar item a item criaria um conceito duplicado. O custo
@@ -151,13 +166,13 @@ const CategoryBlock = ({
         
         <div className="flex gap-2 mt-2">
           <button 
-            onClick={() => onUploadFile(category, otherId)}
+            onClick={() => onUploadFile(category, otherId, ownerId)}
             className="flex-1 py-2 border-2 border-dashed border-slate-100 rounded-xl flex items-center justify-center gap-2 text-slate-400 hover:text-blue-500 hover:border-blue-200 transition-all text-[9px] font-black uppercase tracking-widest"
           >
             <Upload size={14} /> Anexar Notinha
           </button>
           <button 
-            onClick={() => onAddManualValue(category, otherId)}
+            onClick={() => onAddManualValue(category, otherId, ownerId)}
             className="px-4 py-2 border-2 border-dashed border-slate-100 rounded-xl flex items-center justify-center gap-2 text-slate-400 hover:text-emerald-500 hover:border-emerald-200 transition-all text-[9px] font-black uppercase tracking-widest"
             title="Adicionar valor sem arquivo"
           >
@@ -173,6 +188,7 @@ const MeasurementView: React.FC = () => {
   const {
     measurements, demands, companies, trainings, regions, instructors,
     updateMeasurement, updateDemand,
+    demandParticipants, instructorAllocations,
     notificationTarget, setNotificationTarget,
   } = useApp();
 
@@ -385,13 +401,23 @@ const totals = useMemo(() => {
   const baseTotals = getMeasurementTotals(selectedMeasurement);
 
   // Hora/Aula
+  //
+  // Com blocos por pessoa a parcela é a SOMA dos blocos — por construção, já
+  // que os blocos particionam os mesmos itens e cada um tem seu par
+  // horas × valorHH. Sem blocos, é o classHours × hourRate de sempre.
+  const blocosDaMedicao = (selectedMeasurement.expenses as any)?.participantes ?? [];
   const classHours =
     Number((selectedMeasurement.expenses as any)?.classHours ?? 0) || 0;
 
   const hourRate =
     Number((selectedMeasurement.expenses as any)?.hourRate ?? 0) || 0;
 
-  const hourClass = classHours * hourRate;
+  const hourClass = blocosDaMedicao.length
+    ? blocosDaMedicao.reduce(
+        (acc: number, b: any) => acc + (Number(b?.horas ?? 0) || 0) * (Number(b?.valorHH ?? 0) || 0),
+        0
+      )
+    : classHours * hourRate;
 
   return {
     ...baseTotals,
@@ -412,6 +438,121 @@ const totals = useMemo(() => {
   const _selIsInterna = isInterna(_selDemand);
   const trainingDefaultHours = getDemandDefaultHours(_selDemand);
   const isClassHoursEdited = !!selectedMeasurement && classHours !== trainingDefaultHours;
+
+  /* ───────────────── MEDICAO POR PESSOA (F2) — interna only ─────────────
+   *
+   * A lista de pessoas vem de DUAS fontes: o titular (demands.instructor_id,
+   * com o fallback de instructor_allocations via resolveDemandInstructors) e
+   * os participantes da demanda. Nao vem do JSON da medicao — senao alguem
+   * adicionado depois do primeiro save nunca apareceria.
+   *
+   * ⚠️ ITEM 7 DO ESCOPO: a lista sai VAZIA para demanda de cliente e para
+   * interna sem participante. Tudo o que e novo na tela esta atras de
+   * `temBlocosPorPessoa`, entao esses dois casos renderizam exatamente o que
+   * renderizavam antes — mesma marcacao, mesmos campos, mesmo save.
+   */
+  const pessoasDaMedicao = useMemo(() => {
+    if (!_selDemand || !isInterna(_selDemand)) return [];
+
+    const participantes = demandParticipants.filter(p => p.demandId === _selDemand.id);
+    if (participantes.length === 0) return [];
+
+    const titularId =
+      _selDemand.instructorId ||
+      resolveDemandInstructors(_selDemand.id, _selDemand.instructorId, instructorAllocations)[0]?.instructorId;
+
+    const lista: { instructorId: string; papel: 'TITULAR' | 'PARTICIPANTE' }[] = [];
+    if (titularId) lista.push({ instructorId: titularId, papel: 'TITULAR' });
+    for (const p of participantes) {
+      // Guarda contra dado torto: participante que coincide com o titular nao
+      // pode virar duas secoes (e dois pagamentos).
+      if (p.instructorId && p.instructorId !== titularId) {
+        lista.push({ instructorId: p.instructorId, papel: 'PARTICIPANTE' });
+      }
+    }
+    return lista;
+  }, [_selDemand, demandParticipants, instructorAllocations]);
+
+  /** Gate unico do que e novo na tela. Falso => painel identico ao de hoje. */
+  const temBlocosPorPessoa = pessoasDaMedicao.length > 1;
+
+  /**
+   * As secoes renderizadas: a lista de PESSOAS cruzada com os blocos do JSON.
+   *
+   * A particao dos attachments vem de `normalizeMeasurementBlocks` (dominio),
+   * e nao de um filtro reescrito aqui — e o que garante que a soma das secoes
+   * feche com o total do topo, inclusive para item sem dono ou com dono que
+   * saiu da demanda (os dois caem no titular).
+   */
+  const secoesPorPessoa = useMemo(() => {
+    if (!selectedMeasurement || !temBlocosPorPessoa) return [];
+
+    const titularId = pessoasDaMedicao.find(p => p.papel === 'TITULAR')?.instructorId;
+
+    // Base para a particao: o que ja esta gravado, completado com as pessoas
+    // que ainda nao tem bloco (participante recem-adicionado).
+    const gravados = selectedMeasurement.expenses?.participantes ?? [];
+    const paraNormalizar = {
+      ...selectedMeasurement,
+      expenses: {
+        ...selectedMeasurement.expenses,
+        participantes: pessoasDaMedicao.map(p => {
+          const gravado = gravados.find(g => g.instructorId === p.instructorId);
+          return gravado ?? { instructorId: p.instructorId, papel: p.papel };
+        }),
+      },
+    };
+
+    const blocos = normalizeMeasurementBlocks(paraNormalizar as any, titularId);
+
+    return blocos.map((b, i) => ({
+      ...b,
+      papel: pessoasDaMedicao[i]?.papel ?? b.papel,
+      nome: getInstructorName(b.instructorId),
+      despesas: blockExpenseBreakdown(paraNormalizar as any, b),
+    }));
+  }, [selectedMeasurement, temBlocosPorPessoa, pessoasDaMedicao, instructors]);
+
+  /**
+   * Grava um campo do bloco de UMA pessoa no estado local.
+   *
+   * ⚠️ `horas` so chega aqui quando o usuario DIGITA — o default aparece como
+   * placeholder e nunca e gravado. Se fosse, toda interna com bloco trocaria o
+   * rateio por horas-por-pessoa, e uma demanda de 16h dividida entre dois
+   * instrutores passaria a pagar 32h. Ver domain/measurementOverrides.ts.
+   */
+  const setCampoDoBloco = (
+    instructorId: string,
+    campo: 'horas' | 'valorHH',
+    valor: number | undefined
+  ) => {
+    setSelectedMeasurement(prev => {
+      if (!prev) return prev;
+      const atuais = prev.expenses?.participantes ?? [];
+      const base = pessoasDaMedicao.map(p => {
+        const g = atuais.find(x => x.instructorId === p.instructorId);
+        return g ?? { instructorId: p.instructorId, papel: p.papel };
+      });
+      return {
+        ...prev,
+        expenses: {
+          ...prev.expenses,
+          participantes: base.map(b =>
+            b.instructorId === instructorId
+              ? // `undefined` APAGA a chave (campo limpo volta a "nao informado"),
+                // em vez de virar 0.
+                (() => {
+                  const novo: any = { ...b };
+                  if (valor === undefined) delete novo[campo];
+                  else novo[campo] = valor;
+                  return novo;
+                })()
+              : b
+          ),
+        },
+      } as Measurement;
+    });
+  };
 
 
   const exportSummary = useMemo(() => {
@@ -459,8 +600,36 @@ const totals = useMemo(() => {
 
   const handleSaveMeasurement = () => {
     if (selectedMeasurement) {
+      /**
+       * Blocos por pessoa: gravados APENAS quando a demanda tem mais de uma
+       * pessoa. Numa medicao de cliente ou de interna sem participante a chave
+       * nem aparece no JSON — e o que mantem o dado gravado hoje byte a byte
+       * igual ao de antes da F2.
+       *
+       * ⚠️ `horas` sai daqui como veio do estado: presente so se o usuario
+       * digitou (setCampoDoBloco APAGA a chave quando o campo e limpo). Gravar
+       * o default faria toda interna com bloco trocar o rateio por
+       * horas-por-pessoa — uma demanda de 16h dividida entre dois instrutores
+       * passaria a pagar 32h.
+       */
+      const participantesParaGravar = (() => {
+        if (!temBlocosPorPessoa) return undefined;
+        const atuais = selectedMeasurement.expenses?.participantes ?? [];
+        return pessoasDaMedicao.map(p => {
+          const g = atuais.find(x => x.instructorId === p.instructorId);
+          const bloco: any = { instructorId: p.instructorId, papel: p.papel };
+          if (g && g.horas !== undefined && g.horas !== null) bloco.horas = Number(g.horas);
+          if (g && g.valorHH !== undefined && g.valorHH !== null) bloco.valorHH = Number(g.valorHH);
+          return bloco;
+        });
+      })();
+
       const cleaned = {
         ...selectedMeasurement,
+        expenses: {
+          ...selectedMeasurement.expenses,
+          ...(participantesParaGravar ? { participantes: participantesParaGravar } : {}),
+        },
         attachments: selectedMeasurement.attachments.map(a => ({
           ...a,
           value: typeof a.value === 'string' ? (parseFloat(a.value.replace(',', '.')) || 0) : a.value
@@ -481,6 +650,29 @@ const totals = useMemo(() => {
           _diffParts.push(`Horas: ${_expB.classHours ?? '—'} → ${_expA.classHours ?? '—'}h`);
         if ((_expB.hourRate ?? '') !== (_expA.hourRate ?? ''))
           _diffParts.push(`Valor hora/aula: ${_expB.hourRate ?? '—'} → ${_expA.hourRate ?? '—'}`);
+
+        // Diff POR PESSOA. Sem isto o log ficaria cego justamente na medição
+        // multi-pessoa: classHours/hourRate não mudam quando o que foi editado
+        // é o bloco de alguém. Em medição de uma pessoa só os dois lados são
+        // vazios e nada é acrescentado — o log sai idêntico ao de hoje.
+        {
+          const _blocosB: any[] = _expB.participantes ?? [];
+          const _blocosA: any[] = _expA.participantes ?? [];
+          const _ids = [...new Set([..._blocosB, ..._blocosA].map(b => b?.instructorId).filter(Boolean))];
+          for (const _id of _ids) {
+            const _b = _blocosB.find(x => x?.instructorId === _id);
+            const _a = _blocosA.find(x => x?.instructorId === _id);
+            const _nome = getInstructorName(_id);
+            if (!_b && _a) { _diffParts.push(`Bloco adicionado: ${_nome}`); continue; }
+            if (_b && !_a) { _diffParts.push(`Bloco removido: ${_nome}`); continue; }
+            // '—' e não 0 para o ausente: "não informado" não é "zero horas".
+            const _h = (v: any) => (v === undefined || v === null ? '—' : String(v));
+            if (_h(_b?.horas) !== _h(_a?.horas))
+              _diffParts.push(`${_nome} — horas: ${_h(_b?.horas)} → ${_h(_a?.horas)}`);
+            if (_h(_b?.valorHH) !== _h(_a?.valorHH))
+              _diffParts.push(`${_nome} — valor hora/aula: ${_h(_b?.valorHH)} → ${_h(_a?.valorHH)}`);
+          }
+        }
         if (_totalsBefore && _totalsBefore.hospedagem !== _totalsAfter.hospedagem)
           _diffParts.push(`Hospedagem: ${fmt(_totalsBefore.hospedagem)} → ${fmt(_totalsAfter.hospedagem)}`);
         if (_totalsBefore && _totalsBefore.locomocao !== _totalsAfter.locomocao)
@@ -536,7 +728,7 @@ const sanitizeFileName = (name: string) =>
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-zA-Z0-9.\-_]/g, '_');
 
-const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
+const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructorId?: string) => {
   if (!selectedMeasurement) return;
 
   const input = document.createElement('input');
@@ -600,6 +792,10 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
           category,
           value: '',
           otherId,
+          // Dono do item. `undefined` no painel de uma pessoa so (v1) — e o que
+          // mantem o JSON de cliente e de interna sem participante byte a byte
+          // igual ao de hoje.
+          ...(instructorId ? { instructorId } : {}),
 
           // ✅ campos novos (você pode manter em jsonb sem mexer no schema)
           bucket: BUCKET as any,
@@ -623,7 +819,7 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
 };
 
 
-  const handleAddManualValue = (category: ExpenseCategory, otherId?: string) => {
+  const handleAddManualValue = (category: ExpenseCategory, otherId?: string, instructorId?: string) => {
     if (!selectedMeasurement) return;
     const newAttachment: Attachment = {
       id: `VAL-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
@@ -632,8 +828,10 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
       type: 'text/plain',
       date: new Date().toISOString(),
       category,
-      value: '', 
-      otherId
+      value: '',
+      otherId,
+      // Ver a nota em handleUploadFile: ausente no caminho de uma pessoa so.
+      ...(instructorId ? { instructorId } : {}),
     };
     setSelectedMeasurement(prev => prev ? {
       ...prev,
@@ -790,7 +988,17 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
   const hourClassTotal = classHours * hourRate;
 
   // ✅ total geral considerando Hora/Aula
-  const totalWithHourClass = demandTotals.total + hourClassTotal;
+  //
+  // Com blocos por pessoa a parcela é a soma deles (mesma conta do painel);
+  // sem blocos, o classHours × hourRate de sempre.
+  const _blocosParaTotal = (m.expenses as any)?.participantes ?? [];
+  const horaAulaDoDoc = _blocosParaTotal.length
+    ? _blocosParaTotal.reduce(
+        (acc: number, b: any) => acc + (Number(b?.horas ?? 0) || 0) * (Number(b?.valorHH ?? 0) || 0),
+        0
+      )
+    : hourClassTotal;
+  const totalWithHourClass = demandTotals.total + horaAulaDoDoc;
 
   // Interna: no título entra o nome da empresa quando houver, senão 'Colabor'.
   // (O rótulo da listagem usa 'Colabor (Interna)'; no cabeçalho do Word o
@@ -937,18 +1145,76 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
   }
 
   // ✅ Bloco Hora/Aula no Word (aparece no relatório)
-  children.push(
-    new Paragraph({ text: "💰 HORA/AULA", heading: HeadingLevel.HEADING_3, spacing: { before: 200 } }),
-    new Paragraph({
-      children: [
-        new TextRun({ text: isInternaDoc ? 'Horas da Demanda: ' : 'Horas do Treinamento: ', bold: true }),
-        new TextRun(String(classHours)),
-      ],
-    }),
-    new Paragraph({ children: [new TextRun({ text: "Valor Hora/Aula: ", bold: true }), new TextRun(formatCurrency(hourRate))] }),
-    new Paragraph({ children: [new TextRun({ text: "TOTAL HORA/AULA: ", bold: true }), new TextRun(formatCurrency(hourClassTotal))] }),
-    new Paragraph({ spacing: { after: 200 } })
-  );
+  //
+  // Com blocos por pessoa vira UMA SEÇÃO POR PESSOA — é o recibo que cada uma
+  // assina, e um total agregado não serve para isso. Sem blocos, sai
+  // exatamente o parágrafo de sempre.
+  const blocosDoDoc = (m.expenses as any)?.participantes ?? [];
+
+  if (blocosDoDoc.length > 0) {
+    const blocos = normalizeMeasurementBlocks(m as any, d.instructorId);
+
+    children.push(
+      new Paragraph({ text: "💰 PAGAMENTO POR PESSOA", heading: HeadingLevel.HEADING_3, spacing: { before: 200 } })
+    );
+
+    for (const b of blocos) {
+      const nomePessoa = getInstructorName(b.instructorId);
+      const papel = b.papel === 'TITULAR' ? 'Titular' : b.papel === 'ACOMPANHANTE' ? 'Acompanhante' : 'Participante';
+      const horaAulaPessoa = (b.horas ?? 0) * b.valorHH;
+      const despesasPessoa = blockExpenseBreakdown(m as any, b);
+
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text: `${nomePessoa} — ${papel}`, bold: true, size: 24 })],
+          spacing: { before: 200, after: 60 },
+        }),
+        new Paragraph({
+          children: [
+            new TextRun({ text: "Horas: ", bold: true }),
+            // Ausente é "não informado", não zero — e o recibo tem de dizer
+            // isso, senão alguém assina um zero que o sistema não quis dizer.
+            new TextRun(b.horasInformadas ? String(b.horas) : "não informado"),
+          ],
+        }),
+        new Paragraph({ children: [new TextRun({ text: "Valor Hora/Aula: ", bold: true }), new TextRun(formatCurrency(b.valorHH))] }),
+        new Paragraph({ children: [new TextRun({ text: "Total Hora/Aula: ", bold: true }), new TextRun(formatCurrency(horaAulaPessoa))] }),
+        new Paragraph({
+          children: [
+            new TextRun({ text: "Despesas: ", bold: true }),
+            new TextRun(
+              `Hospedagem ${formatCurrency(despesasPessoa.hospedagem)} | ` +
+              `Locomoção ${formatCurrency(despesasPessoa.locomocao)} | ` +
+              `Alimentação ${formatCurrency(despesasPessoa.alimentacao)} | ` +
+              `Outros ${formatCurrency(despesasPessoa.outros)}`
+            ),
+          ],
+        }),
+        new Paragraph({
+          children: [
+            new TextRun({ text: "TOTAL DA PESSOA: ", bold: true }),
+            new TextRun(formatCurrency(horaAulaPessoa + despesasPessoa.total)),
+          ],
+          spacing: { after: 120 },
+        })
+      );
+    }
+
+    children.push(new Paragraph({ spacing: { after: 200 } }));
+  } else {
+    children.push(
+      new Paragraph({ text: "💰 HORA/AULA", heading: HeadingLevel.HEADING_3, spacing: { before: 200 } }),
+      new Paragraph({
+        children: [
+          new TextRun({ text: isInternaDoc ? 'Horas da Demanda: ' : 'Horas do Treinamento: ', bold: true }),
+          new TextRun(String(classHours)),
+        ],
+      }),
+      new Paragraph({ children: [new TextRun({ text: "Valor Hora/Aula: ", bold: true }), new TextRun(formatCurrency(hourRate))] }),
+      new Paragraph({ children: [new TextRun({ text: "TOTAL HORA/AULA: ", bold: true }), new TextRun(formatCurrency(hourClassTotal))] }),
+      new Paragraph({ spacing: { after: 200 } })
+    );
+  }
 
   if (m.otherExpenses.length > 0) {
     children.push(new Paragraph({ text: "➕ OUTRAS DESPESAS", heading: HeadingLevel.HEADING_3, spacing: { before: 200 } }));
@@ -1150,13 +1416,21 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string) => {
   const handleSendWhatsApp = () => {
     if (!selectedMeasurement) return;
     const d = demands.find(dm => dm.id === selectedMeasurement.demandId);
+    // Uma linha por pessoa com o total dela, quando ha blocos. Sem blocos a
+    // mensagem sai exatamente como sempre saiu — nem uma quebra de linha a mais.
+    const porPessoa = temBlocosPorPessoa
+      ? secoesPorPessoa
+          .map(x => `👤 ${x.nome}: ${formatCurrency(x.despesas.total + (x.horas ?? 0) * x.valorHH)}`)
+          .join('\n') + '\n'
+      : '';
+
     const text = encodeURIComponent(`Olá! Segue resumo da medição #${d?.id}:
     
 🏨 Hospedagem: ${formatCurrency(totals.hospedagem)}
 🚗 Locomoção: ${formatCurrency(totals.locomocao)}
 🍽️ Alimentação: ${formatCurrency(totals.cafe + totals.almoco + totals.jantar)}
 ➕ Outros: ${formatCurrency(totals.outros)}
-
+${porPessoa}
 *TOTAL GERAL: ${formatCurrency(totals.total)}*
 
 Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`);
@@ -1547,7 +1821,13 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                    { label: 'Locomoção', val: totals.locomocao, color: 'text-amber-600', icon: Truck },
                    { label: 'Alimentação', val: totals.cafe + totals.almoco + totals.jantar, color: 'text-blue-600', icon: Tag },
                    { label: 'Outros', val: totals.outros, color: 'text-purple-600', icon: Plus },
-                   { label: 'TOTAL GERAL', val: totals.total, color: 'text-slate-900 bg-slate-200/50', icon: Wallet, span: 'col-span-2' }
+                   {
+                     label: temBlocosPorPessoa ? `TOTAL GERAL (${secoesPorPessoa.length} pessoas)` : 'TOTAL GERAL',
+                     val: totals.total,
+                     color: 'text-slate-900 bg-slate-200/50',
+                     icon: Wallet,
+                     span: 'col-span-2',
+                   }
                  ].map((item, idx) => (
                    /* Casca em components/ui/ExpenseSummaryCard — a mesma que o
                       card "Custo das Demandas Internas" do Dashboard usa. */
@@ -1562,6 +1842,143 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                  ))}
               </div>
 
+              {/* ─────────── SEÇÕES POR PESSOA (medição multi-pessoa) ───────────
+                  Só renderiza quando a interna tem participante. Demanda de
+                  cliente e interna de uma pessoa só caem no bloco de baixo,
+                  idêntico ao de sempre. */}
+              {temBlocosPorPessoa && secoesPorPessoa.map(secao => (
+                <div key={secao.instructorId} className="bg-white rounded-2xl border-2 border-slate-200 shadow-sm overflow-hidden">
+                  <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-bold text-xs uppercase shrink-0">
+                        {secao.nome.charAt(0)}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-black text-slate-800 truncate">{secao.nome}</p>
+                        <span className={`text-[9px] font-black uppercase tracking-widest ${
+                          secao.papel === 'TITULAR' ? 'text-blue-600' : 'text-emerald-600'
+                        }`}>
+                          {secao.papel === 'TITULAR' ? 'Titular' : 'Participante'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Total da pessoa</span>
+                      <span className="text-sm font-black text-slate-900">
+                        {formatCurrency(secao.despesas.total + (secao.horas ?? 0) * secao.valorHH)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-5 space-y-5">
+                    {/* Hora/Aula da pessoa */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Horas</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            className="flex-1 border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                            value={secao.horasInformadas ? String(secao.horas ?? '') : ''}
+                            placeholder={String(trainingDefaultHours)}
+                            onChange={e => {
+                              const raw = e.target.value;
+                              // Campo limpo volta a "não informado" — NÃO vira 0.
+                              setCampoDoBloco(secao.instructorId, 'horas', raw === '' ? undefined : Number(raw));
+                            }}
+                          />
+                          {secao.horasInformadas && (
+                            <button
+                              type="button"
+                              title="Voltar ao padrão da demanda"
+                              onClick={() => setCampoDoBloco(secao.instructorId, 'horas', undefined)}
+                              className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
+                            >
+                              <RotateCcw size={14} />
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-[10px] mt-1">
+                          {secao.horasInformadas
+                            ? <span className="text-amber-500 font-bold">Editado manualmente</span>
+                            : <span className="text-slate-400">Padrão da demanda ({trainingDefaultHours}h)</span>}
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Valor Hora/Aula (manual)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                          value={secao.valorHH || 0}
+                          onChange={e => setCampoDoBloco(secao.instructorId, 'valorHH', Number(e.target.value || 0))}
+                        />
+                      </div>
+
+                      <div className="text-right">
+                        <span className="block text-[10px] font-black text-slate-300 uppercase tracking-widest mb-1.5">Total Hora/Aula</span>
+                        <span className="text-2xl font-black text-slate-900">
+                          {formatCurrency((secao.horas ?? 0) * secao.valorHH)}
+                        </span>
+                        {!secao.horasInformadas && (
+                          <p className="text-[10px] text-slate-400 mt-1">Horas não informadas</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* As 4 categorias da pessoa. `attachments` já vem
+                        PARTICIONADO pelo domínio; `ownerId` só marca o dono dos
+                        itens novos. */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      <CategoryBlock
+                        category="HOSPEDAGEM" label="Hospedagem" icon={Home} colorClass="text-green-500"
+                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
+                        onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
+                        onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                        showReembolsavel={false}
+                      />
+                      <CategoryBlock
+                        category="LOCOMOCAO" label="Locomoção" icon={Truck} colorClass="text-amber-500"
+                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
+                        onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
+                        onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                        showReembolsavel={false}
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <CategoryBlock
+                        category="CAFE" label="Café da Manhã" icon={Tag} colorClass="text-blue-400"
+                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
+                        onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
+                        onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                        showReembolsavel={false}
+                      />
+                      <CategoryBlock
+                        category="ALMOCO" label="Almoço" icon={Tag} colorClass="text-blue-500"
+                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
+                        onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
+                        onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                        showReembolsavel={false}
+                      />
+                      <CategoryBlock
+                        category="JANTAR" label="Jantar" icon={Tag} colorClass="text-blue-600"
+                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
+                        onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
+                        onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
+                        showReembolsavel={false}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {/* Bloco de UMA PESSOA — o painel de sempre. Fica escondido
+                  quando há seções por pessoa, para não existirem dois lugares
+                  editando a mesma coisa. */}
+              {!temBlocosPorPessoa && (
+              <>
               <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
               <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-4">
                 <DollarSign size={14} className="text-emerald-500" /> Hora/Aula
@@ -1697,6 +2114,8 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                   showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
                 />
               </div>
+              </>
+              )}
 
               <div className="bg-white rounded-[2rem] border border-slate-200 p-7 shadow-sm">
                 <div className="flex justify-between items-center mb-6">

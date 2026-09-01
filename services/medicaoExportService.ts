@@ -23,6 +23,8 @@ import { fetchMeasurements } from './measurements';
 import { fetchTrainings } from './trainings';
 import { fetchInstructors } from './instructors';
 import { computeInstructorHoursByDemand } from '../domain/instructorHours';
+import { applyMeasurementOverrides } from '../domain/measurementOverrides';
+import { fetchDemandParticipants } from './demandParticipants';
 import { isNightDemand } from '../domain/demandDays';
 import { getDemandCategoria, isInternalDemand } from '../domain/demandLabel';
 import {
@@ -208,14 +210,19 @@ function mapAllocation(row: any): InstructorAllocation {
  * perto de estourar o corte silencioso de 1000 linhas do PostgREST.
  */
 export async function fetchMedicaoData(dataInicio: string, dataFim: string): Promise<MedicaoInstructorBlock[]> {
-  const [demandRows, allocationRows, measurementRows, trainingRows, instructorRows, companyRows] = await Promise.all([
-    fetchDemands(),
-    fetchInstructorAllocations(),
-    fetchMeasurements(),
-    fetchTrainings(),
-    fetchInstructors(),
-    fetchCompanies(),
-  ]);
+  const [demandRows, allocationRows, measurementRows, trainingRows, instructorRows, companyRows, participantRows] =
+    await Promise.all([
+      fetchDemands(),
+      fetchInstructorAllocations(),
+      fetchMeasurements(),
+      fetchTrainings(),
+      fetchInstructors(),
+      fetchCompanies(),
+      // Participantes de demanda interna: sem eles, a linha inserida pelo bloco
+      // da medição sairia com os dias da demanda inteira mesmo quando a pessoa
+      // participou só de parte.
+      fetchDemandParticipants(),
+    ]);
 
   const demands = (demandRows ?? []).map(mapDemand);
   const instructorAllocations = (allocationRows ?? []).map(mapAllocation);
@@ -228,11 +235,39 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
   // que o período faz é recortar os DIAS — simétrico nas duas bordas, então
   // demanda que começou antes de dataInicio conta só os dias de dataInicio em
   // diante, igual ao que já valia na virada de mês.
-  const hoursRows = computeInstructorHoursByDemand({
+  const hoursRowsDoRateio = computeInstructorHoursByDemand({
     demands,
     instructorAllocations,
     trainings,
     measurements,
+    periodStart: dataInicio,
+    periodEnd: dataFim,
+  });
+
+  /**
+   * Medição multi-pessoa: os blocos são OVERRIDE por pessoa, nunca soma.
+   *
+   * O rateio acima continua sendo a fonte única de horas — cinco leitores
+   * dependem dele além desta planilha. O que muda aqui é só o recorte final:
+   * bloco com `horas` informadas SUBSTITUI a hora daquela pessoa (os dias
+   * seguem do rateio), e bloco de quem não tem linha de rateio — o participante
+   * de interna — ENTRA como linha nova. Sem isso o participante continuaria
+   * valendo zero na planilha, que é justamente o que a F2 resolve.
+   *
+   * Medição sem `participantes` não altera nada: toda demanda de cliente sai
+   * exatamente como saía. Regra e tabela de precedência em
+   * domain/measurementOverrides.ts.
+   */
+  const hoursRows = applyMeasurementOverrides({
+    rows: hoursRowsDoRateio,
+    measurements: measurements.map(m => ({ ...m, demandId: m.demandId })) as any,
+    demands: demands as any,
+    participants: (participantRows ?? []).map(p => ({
+      demandId: p.demand_id,
+      instructorId: p.instructor_id,
+      startDate: p.start_date,
+      endDate: p.end_date,
+    })),
     periodStart: dataInicio,
     periodEnd: dataFim,
   });

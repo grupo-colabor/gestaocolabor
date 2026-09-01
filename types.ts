@@ -324,6 +324,14 @@ export interface Attachment {
    * uma subtracao. Ver domain/measurementTotals.ts.
    */
   reembolsavel?: boolean;
+  /**
+   * Dono do item na medicao multi-pessoa (F2). AUSENTE = item do TITULAR.
+   *
+   * E um INDICE sobre o array plano, nao um aninhamento: os leitores de hoje
+   * percorrem `attachments` direto, e mover os itens para dentro de cada bloco
+   * quebraria todos de uma vez. Ver domain/measurementTotals.ts.
+   */
+  instructorId?: string | null;
   bucket?: string;
   path?: string;
   size?: number;
@@ -333,6 +341,24 @@ export interface OtherExpenseItem {
   id: string;
   description: string;
   value: string; // Valor de referência da linha (opcional)
+}
+
+/** Papel da pessoa no bloco de pagamento da medicao (F2). */
+export type MeasurementRole = 'TITULAR' | 'PARTICIPANTE' | 'ACOMPANHANTE';
+
+/**
+ * Uma pessoa no bloco de pagamento da medicao.
+ *
+ * ⚠️ `horas` e OPCIONAL e a ausencia NAO e zero — e "nao informado", e resolve
+ * diferente conforme a pessoa tenha ou nao linha de rateio em
+ * instructor_allocations. Ver domain/measurementOverrides.ts.
+ */
+export interface MeasurementParticipantBlock {
+  instructorId: string;
+  papel: MeasurementRole;
+  /** Ausente = nao informado. NUNCA gravar o default aqui. */
+  horas?: number;
+  valorHH?: number;
 }
 
 export interface Measurement {
@@ -347,6 +373,11 @@ export interface Measurement {
     others: string;
     classHours?: number;
     hourRate?: number;
+    /**
+     * v2 — ausente/vazio = medicao mono-pessoa (todo o historico ate a F2).
+     * So e gravado quando a demanda tem mais de uma pessoa.
+     */
+    participantes?: MeasurementParticipantBlock[];
   };
   attachments: Attachment[];
   otherExpenses: OtherExpenseItem[]; // Múltiplas despesas 'Outros'

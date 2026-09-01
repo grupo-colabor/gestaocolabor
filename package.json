@@ -14,6 +14,7 @@
     "smoke:ociosidade": "esbuild scripts/smokeOciosidade.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-ociosidade.cjs --log-level=error && node node_modules/.cache/smoke-ociosidade.cjs",
     "smoke:custos": "esbuild scripts/smokeCustos.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-custos.cjs --log-level=error && node node_modules/.cache/smoke-custos.cjs",
     "smoke:local-online": "esbuild scripts/smokeLocalOnline.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-local-online.cjs --log-level=error && node node_modules/.cache/smoke-local-online.cjs",
+    "smoke:medicao-blocos": "esbuild scripts/smokeMedicaoBlocos.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-medicao-blocos.cjs --log-level=error && node node_modules/.cache/smoke-medicao-blocos.cjs",
     "smoke:participantes": "esbuild scripts/smokeParticipantes.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-participantes.cjs --log-level=error && node node_modules/.cache/smoke-participantes.cjs",
     "smoke:datas": "esbuild scripts/smokeDatasDemanda.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-datas.cjs --log-level=error && node node_modules/.cache/smoke-datas.cjs",
     "smoke:ctm": "esbuild scripts/smokeCtm.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-ctm.cjs --log-level=error && node node_modules/.cache/smoke-ctm.cjs"

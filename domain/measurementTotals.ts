@@ -44,13 +44,46 @@ export interface TotalizableAttachment {
   otherId?: string | null;
   /** Ausente = reembolsável. Ver cabeçalho. */
   reembolsavel?: boolean | null;
+  /**
+   * Dono do item (v2 — medição multi-pessoa). AUSENTE = item do TITULAR.
+   *
+   * É um ÍNDICE sobre o array plano, não um aninhamento: todos os leitores de
+   * hoje percorrem `attachments` direto, e mover os itens para dentro de cada
+   * bloco quebraria os sete de uma vez. Como campo opcional, `computeMeasurementTotals`
+   * simplesmente o ignora e continua devolvendo o total da demanda.
+   */
+  instructorId?: string | null;
+}
+
+/** Papel da pessoa dentro da medição. Ver `MeasurementParticipant`. */
+export type MeasurementRole = 'TITULAR' | 'PARTICIPANTE' | 'ACOMPANHANTE';
+
+/**
+ * Uma pessoa no bloco de pagamento da medição (v2).
+ *
+ * ⚠️ `horas` é OPCIONAL e a ausência dele NÃO é zero — é "não informado", e
+ * resolve diferente conforme quem é a pessoa (ver `normalizeMeasurementBlocks`
+ * e o cabeçalho de `applyMeasurementOverrides`). Gravar o default aqui faria
+ * toda interna com bloco trocar rateio por horas-por-pessoa no dia do deploy.
+ */
+export interface MeasurementParticipant {
+  instructorId: string;
+  papel?: MeasurementRole | null;
+  /** Ausente = não informado. NUNCA confundir com 0. */
+  horas?: number | string | null;
+  valorHH?: number | string | null;
 }
 
 /** Só o que a conta lê de uma medição. */
 export interface TotalizableMeasurement {
   attachments?: TotalizableAttachment[] | null;
   otherExpenses?: { id: string }[] | null;
-  expenses?: { classHours?: number | string | null; hourRate?: number | string | null } | null;
+  expenses?: {
+    classHours?: number | string | null;
+    hourRate?: number | string | null;
+    /** v2 — ausente/vazio = medição mono-pessoa (todo o histórico). */
+    participantes?: MeasurementParticipant[] | null;
+  } | null;
 }
 
 /**
@@ -348,4 +381,167 @@ export function aggregatePanelExpenseBreakdown(
 
   acc.total = acc.hospedagem + acc.locomocao + acc.alimentacao + acc.outros;
   return acc;
+}
+
+
+/* ─────────────────────── BLOCOS POR PESSOA (medição v2) ─────────────────────
+ *
+ * Toda medição gravada até aqui é implicitamente MONO-PESSOA: uma linha por
+ * demanda, um par classHours × hourRate. A v2 acrescenta
+ * `expenses.participantes` (um bloco por pessoa) e `attachments[].instructorId`
+ * (o dono do item) — os dois OPCIONAIS, sem migração de dado e sem backfill,
+ * no mesmo espírito do `reembolsavel`.
+ *
+ * ---------------------------------------------------------------------------
+ * Por que ÍNDICE e não ANINHAMENTO
+ * ---------------------------------------------------------------------------
+ * O instinto seria `participantes: [{ ..., attachments: [...] }]`. Não: todo
+ * leitor de hoje percorre o array plano — as duas somas deste arquivo, o
+ * CategoryBlock do painel, o Word, o upload. Com o dono no ITEM, as funções
+ * antigas ignoram um campo que não conhecem e continuam devolvendo o total da
+ * demanda; a fatia por pessoa sai pelo `itemFilter` que já existe, sem
+ * traversal novo. E a soma dos blocos fecha com o total POR CONSTRUÇÃO, porque
+ * os blocos são uma partição dos mesmos itens.
+ *
+ * ---------------------------------------------------------------------------
+ * `horas` ausente ≠ zero
+ * ---------------------------------------------------------------------------
+ * A ausência é preservada aqui de propósito (`horasInformadas: false`) em vez
+ * de virar um número. Quem decide o fallback é quem tem o contexto:
+ *
+ *   • TITULAR sem horas  → mantém o rateio de instructor_allocations;
+ *   • PARTICIPANTE sem horas → `horas_previstas` da demanda.
+ *
+ * São fallbacks DIFERENTES para o mesmo campo vazio, então resolvê-lo aqui com
+ * um `?? 0` (ou com qualquer default único) quebraria um dos dois em silêncio,
+ * em cima de pagamento. Ver `applyMeasurementOverrides`.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/** Um bloco de pagamento já resolvido: a pessoa, o que ela recebe e os itens dela. */
+export interface MeasurementPersonBlock {
+  instructorId: string;
+  papel: MeasurementRole;
+  /** Ausente no JSON = não informado. Ver `horasInformadas`. */
+  horas?: number;
+  /** `false` quando o JSON não trazia `horas` — o chamador decide o fallback. */
+  horasInformadas: boolean;
+  valorHH: number;
+  /** Itens deste bloco: uma partição de `m.attachments`. */
+  attachments: TotalizableAttachment[];
+  /** `true` no bloco que absorve os itens sem `instructorId`. */
+  titular: boolean;
+}
+
+/**
+ * Os blocos de pagamento de uma medição, v1 e v2 pela mesma porta.
+ *
+ * SEM `participantes` (todo o histórico) devolve UM bloco de titular com
+ * `classHours`/`hourRate` e TODOS os attachments — cujo `horas × valorHH` é
+ * exatamente o `classHours × hourRate` que `computeMeasurementTotals` calcula
+ * hoje. É esse o contrato de compatibilidade, e ele é verificável.
+ *
+ * `titularInstructorId` entra por PARÂMETRO, e não por import de `Demand`:
+ * este módulo não tem nenhum import, e é isso que deixa os smokes rodarem sem
+ * montar React nem cliente de banco.
+ */
+export function normalizeMeasurementBlocks(
+  m: TotalizableMeasurement | null | undefined,
+  titularInstructorId?: string | null
+): MeasurementPersonBlock[] {
+  const attachments = m?.attachments ?? [];
+  const participantes = m?.expenses?.participantes ?? [];
+
+  // ---- v1: mono-pessoa ----
+  if (participantes.length === 0) {
+    const classHours = m?.expenses?.classHours;
+    return [
+      {
+        instructorId: titularInstructorId || '',
+        papel: 'TITULAR',
+        horas: naoInformado(classHours) ? undefined : parseExpenseValue(classHours),
+        horasInformadas: !naoInformado(classHours),
+        valorHH: parseExpenseValue(m?.expenses?.hourRate),
+        attachments: [...attachments],
+        titular: true,
+      },
+    ];
+  }
+
+  // ---- v2: um bloco por entrada ----
+  //
+  // O bloco TITULAR é quem absorve os itens sem dono. Se nenhuma entrada for
+  // titular (dado torto, ou uma medição só de acompanhantes na F3), o primeiro
+  // bloco assume o papel — assim nenhum item de despesa evapora da conta, que é
+  // a propriedade que faz "soma dos blocos = total" valer sempre.
+  const idxTitular = (() => {
+    const porPapel = participantes.findIndex(p => p?.papel === 'TITULAR');
+    if (porPapel >= 0) return porPapel;
+    if (titularInstructorId) {
+      const porId = participantes.findIndex(p => p?.instructorId === titularInstructorId);
+      if (porId >= 0) return porId;
+    }
+    return 0;
+  })();
+
+  const donosConhecidos = new Set(
+    participantes.map(p => p?.instructorId).filter((id): id is string => !!id)
+  );
+
+  return participantes.map((p, i) => {
+    const ehTitular = i === idxTitular;
+
+    // Item entra no bloco do dono; sem dono — ou com um dono que não está mais
+    // na lista (participante removido depois do lançamento) — cai no titular.
+    // Órfão nenhum fica de fora: o total tem de continuar fechando.
+    const doBloco = attachments.filter(a => {
+      const dono = a?.instructorId;
+      if (!dono) return ehTitular;
+      if (!donosConhecidos.has(dono)) return ehTitular;
+      return dono === p?.instructorId;
+    });
+
+    return {
+      instructorId: p?.instructorId || '',
+      papel: (p?.papel as MeasurementRole) || (ehTitular ? 'TITULAR' : 'PARTICIPANTE'),
+      horas: naoInformado(p?.horas) ? undefined : parseExpenseValue(p?.horas),
+      horasInformadas: !naoInformado(p?.horas),
+      valorHH: parseExpenseValue(p?.valorHH),
+      attachments: doBloco,
+      titular: ehTitular,
+    };
+  });
+}
+
+/**
+ * Ausente de verdade: `undefined`, `null` ou string vazia.
+ *
+ * `0` NÃO é ausente — alguém pode ter digitado zero de propósito, e tratar isso
+ * como "não informado" faria o fallback sobrescrever uma decisão do usuário.
+ */
+function naoInformado(v: number | string | null | undefined): boolean {
+  return v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+}
+
+/**
+ * A parcela de Hora/Aula de um bloco. Bloco sem `horas` informadas vale 0 AQUI
+ * — o fallback (rateio ou horas_previstas) é de quem tem o contexto da demanda,
+ * e aplicá-lo neste módulo exigiria importar `Demand`.
+ */
+export function blockHoraAula(b: MeasurementPersonBlock): number {
+  return (b.horas ?? 0) * b.valorHH;
+}
+
+/**
+ * As despesas de um bloco, nos quatro buckets do painel.
+ *
+ * Reusa `computePanelExpenseBreakdown` com o `itemFilter` que já existia — sem
+ * percurso novo, e com o mesmo tratamento de órfão de OUTROS. É por isso que a
+ * soma dos blocos fecha com o total da medição.
+ */
+export function blockExpenseBreakdown(
+  m: TotalizableMeasurement | null | undefined,
+  block: MeasurementPersonBlock
+): PanelExpenseBreakdown {
+  const doBloco = new Set(block.attachments);
+  return computePanelExpenseBreakdown(m, { itemFilter: a => doBloco.has(a) });
 }

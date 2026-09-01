@@ -79,7 +79,11 @@ export interface ReschedulePlanInput {
   diasAntigos: string[];
   /** Dias reais da demanda DEPOIS da edição. */
   diasNovos: string[];
-  /** Horário novo da demanda, para reescrever a hora das linhas que ficam. */
+  /**
+   * Horário ATUAL da demanda ('HH:mm'), já com o fallback de quem chama
+   * (08:00 / 18:00 quando a demanda não tem horário). É ele que as linhas de
+   * acompanhante passam a usar — ver a nota de HORÁRIO na passada delas.
+   */
   horaInicio: string;
   horaFim: string;
   allocations: AllocationRowLike[];
@@ -148,14 +152,17 @@ export function planAllocationReschedule(input: ReschedulePlanInput): Reschedule
    * demanda NUNCA pode desvincular alguém. Ele cobre tanto a demanda que foi
    * deslocada inteira quanto a linha corrompida pela reescrita antiga.
    *
-   * HORÁRIO: as duas telas que criam acompanhante gravam convenções diferentes
-   * (o Drawer usa T08:00/T18:00 literais; a Logística usa o horário da
-   * demanda). A convenção de quem já está ali é PRESERVADA — a hora sai da
-   * própria linha da pessoa, e a da demanda é só o fallback de quem não tem
-   * hora utilizável. Nada aqui muda a convenção de nenhuma das telas.
+   * HORÁRIO: toda linha que fica ou nasce assume o horário ATUAL DA DEMANDA —
+   * o mesmo que o branch de "mudou só o horário" já aplicava. A demanda é a
+   * fonte do horário do acompanhamento; se ela passou a ser 13h–19h, ninguém
+   * acompanha das 8h às 18h.
+   *
+   * As duas telas que criam acompanhante gravam convenções diferentes na
+   * CRIAÇÃO (o Drawer usa T08:00/T18:00 literais; a Logística usa o horário da
+   * demanda), e isso continua intocado — nenhuma delas muda. O que esta função
+   * decide é outra coisa: o que acontece com a linha quando a DEMANDA é
+   * reagendada. O fallback 08–18 é de quem chama, para demanda sem horário.
    */
-  const horaDe = (v: string, fallback: string) => (v ?? '').slice(11) || fallback;
-
   const porPessoa = new Map<string, CompanionRowLike[]>();
   for (const c of companions) {
     const lista = porPessoa.get(c.instructorId) ?? [];
@@ -180,8 +187,8 @@ export function planAllocationReschedule(input: ReschedulePlanInput): Reschedule
     }
     const alvoSet = new Set(alvo);
 
-    const hIni = horaDe(linhas[0].startDate, horaInicio);
-    const hFim = horaDe(linhas[0].endDate, horaFim);
+    const hIni = horaInicio;
+    const hFim = horaFim;
 
     const usados = new Set<string>();
     for (const l of linhas) {

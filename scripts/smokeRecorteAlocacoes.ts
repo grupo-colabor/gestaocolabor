@@ -128,7 +128,7 @@ console.log('\n[2] Acompanhante INTEGRAL: acompanha o periodo (cresce)');
   eq('ninguem e removido', p.companions.paraRemover.length, 0);
   eq('e o dia novo e criado para ele', p.companions.paraCriar.map(c => c.startDate.slice(0, 10)), [D3]);
   eq('somando 3 linhas', 2 - p.companions.paraRemover.length + p.companions.paraCriar.length, 3);
-  eq('com o horario da PROPRIA linha dele, nao o da demanda', p.companions.paraCriar[0].startDate, `${D3}T08:00`);
+  eq('com o horario ATUAL da demanda', p.companions.paraCriar[0].startDate, `${D3}T08:00`);
 }
 
 console.log('\n[3] Acompanhante PARCIAL: recorte, e dia novo NAO e inventado');
@@ -176,7 +176,8 @@ console.log('\n[4] Acompanhante cujo recorte ESVAZIA: recriado, nunca removido')
     'e nao acusa "dias removidos" para quem foi recriado (seria mentira)',
     !describeReschedule(p, id => id).some(a => a.includes('foram removidos'))
   );
-  eq('o horario da linha dele e preservado na recriacao', p.companions.paraCriar[0].startDate, '2026-03-16T08:00');
+  eq('e com o horario ATUAL da demanda (09-17), nao o da linha antiga', p.companions.paraCriar[0].startDate, '2026-03-16T09:00');
+  eq('nas duas pontas', p.companions.paraCriar[0].endDate, '2026-03-16T17:00');
 
   /* CONTRAPROVA: o recorte PURO (a versao anterior deste modulo) desvinculava. */
   const recortePuro = [acomp('CA-1', D2)].filter(l =>
@@ -220,24 +221,27 @@ console.log('\n[4c] Acompanhante: linha corrompida de DOIS dias volta a ser de u
   eq('mantendo o dia dela', p.companions.paraAtualizar[0]?.startDate, `${D1}T08:00`);
 }
 
-console.log('\n[4d] Acompanhante: a convencao de horario de cada tela e preservada');
+console.log('\n[4d] Acompanhante: o horario e o da DEMANDA, em qualquer reagendamento');
 {
-  // O Drawer grava T08:00/T18:00 literais; a Logistica grava o horario da
-  // demanda. O recorte nao decide entre as duas — ele reusa a da propria linha.
-  const doDrawer: CompanionRowLike = {
+  // A demanda passou a ser 13h-19h. Toda linha que fica ou nasce vai junto —
+  // e o mesmo que o branch de "mudou so o horario" ja fazia. Ninguem acompanha
+  // das 8h as 18h uma demanda que virou 13h-19h.
+  const antiga: CompanionRowLike = {
     id: 'CA-1', instructorId: 'ANA', startDate: `${D1}T08:00`, endDate: `${D1}T18:00`,
   };
   const p = planAllocationReschedule({
     diasAntigos: [D1],
     diasNovos: [D1, D2],
-    horaInicio: '13:00', horaFim: '19:00',   // demanda com outro horario
+    horaInicio: '13:00', horaFim: '19:00',
     allocations: [], participants: [],
-    companions: [doDrawer],
+    companions: [antiga],
   });
-  eq('a linha existente NAO e retimada para o horario da demanda', p.companions.paraAtualizar.length, 0);
-  eq('e o dia novo nasce com a convencao dela', p.companions.paraCriar[0]?.startDate, `${D2}T08:00`);
+  eq('a linha que fica assume o horario novo', p.companions.paraAtualizar[0]?.startDate, `${D1}T13:00`);
+  eq('nas duas pontas', p.companions.paraAtualizar[0]?.endDate, `${D1}T19:00`);
+  eq('e o dia novo nasce com ele', p.companions.paraCriar[0]?.startDate, `${D2}T13:00`);
 
-  // Quem nao tem hora utilizavel cai no horario da demanda.
+  // Linha sem hora nenhuma cai no mesmo lugar — nao existe caminho que devolva
+  // uma linha sem horario.
   const semHora: CompanionRowLike = {
     id: 'CA-2', instructorId: 'BRUNO', startDate: D1, endDate: D1,
   };
@@ -248,7 +252,26 @@ console.log('\n[4d] Acompanhante: a convencao de horario de cada tela e preserva
     allocations: [], participants: [],
     companions: [semHora],
   });
-  eq('fallback: o horario da demanda', q.companions.paraCriar[0]?.startDate, `${D2}T13:00`);
+  eq('linha sem hora tambem recebe o da demanda', q.companions.paraCriar[0]?.startDate, `${D2}T13:00`);
+
+  // O 08-18 e fallback de QUEM CHAMA (demanda sem horario), nao uma convencao
+  // que este modulo escolhe.
+  const semHorarioNaDemanda = planAllocationReschedule({
+    diasAntigos: [D1],
+    diasNovos: [D1, D2],
+    horaInicio: '08:00', horaFim: '18:00',   // o que a tela passa quando nao ha
+    allocations: [], participants: [],
+    companions: [antiga],
+  });
+  eq('demanda sem horario cai em 08-18', semHorarioNaDemanda.companions.paraCriar[0]?.startDate, `${D2}T08:00`);
+
+  // Guarda de fonte: o fallback vive na tela, e nas duas pontas.
+  const dem = ler('components/Demands.tsx');
+  check(
+    'a tela passa o horario da demanda com fallback 08-18',
+    dem.includes("horaInicio: (sanitizedDemand.startDate ?? '').slice(11) || '08:00'") &&
+      dem.includes("horaFim: (sanitizedDemand.endDate ?? '').slice(11) || '18:00'")
+  );
 }
 
 

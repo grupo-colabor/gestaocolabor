@@ -47,6 +47,15 @@ interface ExportDemandsModalProps {
   variant?: 'cliente' | 'interna';
   /** Só em variant='interna': opções do filtro de categoria. */
   categoriaOptions?: string[];
+  /**
+   * Só em variant='interna': nomes dos participantes por demanda, já
+   * resolvidos pela tela (que tem `demandParticipants` no contexto).
+   *
+   * Vem por prop, e não do `useApp`, porque este modal é compartilhado com a
+   * tela de cliente e recebe TUDO por prop hoje — puxar contexto só aqui
+   * criaria duas formas de o mesmo componente obter dado.
+   */
+  participantNamesByDemandId?: Record<string, string[]>;
 }
 
 /* ========== COMPONENT ========== */
@@ -60,6 +69,7 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
   instructors,
   instructorAllocations,
   variant = 'cliente',
+  participantNamesByDemandId = {},
   categoriaOptions = [],
 }) => {
   const isInterna = variant === 'interna';
@@ -307,6 +317,14 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
       { header: 'Modo Datas',            key: 'modoDatas',        width: 18 },
       { header: 'Dias Específicos',      key: 'diasEspecificos',  width: 40 },
       { header: 'Instrutor Principal',   key: 'instrutor',        width: 25 },
+      // Coluna NOVA em vez de espremer os participantes na de instrutor: as
+      // duas listas vêm de tabelas diferentes e misturá-las faria a planilha
+      // dizer que o participante é instrutor alocado, que é justamente o que
+      // ele não é. Entra só na interna — o export de cliente sai com a mesma
+      // contagem de colunas de antes.
+      ...(isInterna
+        ? [{ header: 'Participantes', key: 'participantes', width: 40 }]
+        : []),
       { header: 'Status',                key: 'status',           width: 16 },
       { header: 'Modalidade',            key: 'modalidade',       width: 16 },
       { header: 'Corredor',              key: 'corredor',         width: 18 },
@@ -355,6 +373,9 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
                            ? d.specificDates.sort((a, b) => a.data.localeCompare(b.data)).map(e => `${e.data} ${e.horarioInicio}-${e.horarioFim}`).join(', ')
                            : '',
         instrutor:       getAllInstructorNames(d).join('\n') || 'Não Alocado',
+        ...(isInterna
+          ? { participantes: (participantNamesByDemandId[d.id] ?? []).join(', ') }
+          : {}),
         status:          getCalculatedStatus(d).replace('_', ' '),
         modalidade:      d.modality || '',
         corredor:        d.corredor || '',

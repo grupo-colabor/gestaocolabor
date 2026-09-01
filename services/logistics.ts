@@ -254,6 +254,52 @@ export async function upsertLogisticBlocks(
   if (error) throw error;
 }
 
+/**
+ * INSERE blocos novos SEM tocar nos existentes.
+ *
+ * Complementa `upsertLogisticBlocks`, que é delete-all + insert e serve ao
+ * save do formulário (onde o estado da tela é a verdade completa). Aqui o caso
+ * é outro: adicionar um participante no modal de VISUALIZAÇÃO precisa criar os
+ * dois blocos dele NA HORA, sem ter — nem querer ter — a lista inteira em mãos.
+ *
+ * Insert puro por dois motivos, nesta ordem:
+ *
+ *   1. CORREÇÃO. Reaproveitar o delete-all exigiria reenviar todos os blocos
+ *      atuais; qualquer bloco que a tela não conhecesse (criado por outra
+ *      sessão, ou perdido num sync) seria apagado sem aviso.
+ *   2. SEGURANÇA. O delete-all carrega o caveat documentado acima: um delete
+ *      bloqueado por RLS é silencioso, e o insert seguinte DUPLICA em vez de
+ *      substituir. Sem delete, essa classe de falha não existe neste caminho.
+ *
+ * O `block_order` vem pronto de quem chama — o save posterior reescreve todos
+ * por índice de array, então aqui ele só precisa não colidir na leitura.
+ */
+export async function insertLogisticBlocks(
+  demandId: string,
+  blocks: Array<Partial<LogisticBlockRow> & { id: string; block_type: string; block_order: number }>
+): Promise<void> {
+  if (blocks.length === 0) return;
+
+  const rows = blocks.map(b => ({
+    ...b,
+    demand_id: demandId,
+    updated_at: new Date().toISOString(),
+  }));
+
+  const { data, error } = await supabase.from('logistic_blocks').insert(rows).select('id');
+  if (error) throw error;
+
+  // Endurecido, ao contrário do delete do upsert: aqui 0 linhas nunca é estado
+  // legítimo — acabamos de mandar N. Sem isto, um INSERT filtrado por RLS
+  // devolveria sucesso e o participante ficaria sem logística em silêncio,
+  // que é exatamente o bug que esta função existe para corrigir.
+  if (!data || data.length !== rows.length) {
+    throw new Error(
+      `Blocos de logística não foram gravados (${data?.length ?? 0} de ${rows.length}) — verifique permissões (RLS).`
+    );
+  }
+}
+
 export async function deleteLogisticBlock(blockId: string): Promise<void> {
   const { data, error } = await supabase
     .from('logistic_blocks')

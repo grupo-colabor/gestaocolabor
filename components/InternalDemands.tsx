@@ -68,6 +68,8 @@ import {
   fetchLogisticByDemandId,
   fetchLogisticBlocksByDemandId,
   upsertLogisticBlocks,
+  insertLogisticBlocks,
+  deleteLogisticBlock,
 } from '../services/logistics';
 import { fetchLocationAssociations, type LocationAssociation } from '../services/locationAssociations';
 
@@ -355,6 +357,22 @@ const InternalDemands: React.FC = () => {
     }
     return map;
   }, [internalDemands, instructorAllocations]);
+
+  /**
+   * Nomes dos participantes por demanda, para o indicador da listagem.
+   *
+   * Deriva do `demandParticipants` que já está no estado global (carregado
+   * uma vez no bootstrap e mantido pelo realtime) — nenhuma busca nova por
+   * linha da tabela. Ordenado por nome para o tooltip sair estável.
+   */
+  const participantNamesByDemandId = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const pt of demandParticipants) {
+      (map[pt.demandId] ||= []).push(getInstructorName(pt.instructorId));
+    }
+    for (const id of Object.keys(map)) map[id].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    return map;
+  }, [demandParticipants, instructors]);
 
   const getStatusOf = (d: Pick<Demand, 'startDate' | 'endDate' | 'instructorId' | 'status' | 'trainingLocal' | 'modality'>) =>
     calculateDemandStatus({
@@ -1185,7 +1203,8 @@ const InternalDemands: React.FC = () => {
   );
 
   /**
-   * Adiciona o participante e JÁ CRIA os blocos de logística dele.
+   * Adiciona o participante e JÁ CRIA os blocos de logística dele — no BANCO,
+   * não só no estado.
    *
    * O par locomoção+hospedagem nasce pré-preenchido com nome e `instructorId`
    * porque a razão de a interna ter participantes é justamente cada um ter
@@ -1193,8 +1212,19 @@ const InternalDemands: React.FC = () => {
    * à mão e redigitar o nome seria repetir o trabalho que a seleção acabou de
    * fazer, e é por digitação livre que o vínculo por nome se perde.
    *
-   * Os blocos entram só no ESTADO do formulário; vão para o banco no save,
-   * pelo mesmo `upsertLogisticBlocks` de sempre.
+   * ⚠️ POR QUE PERSISTIR AQUI, e não deixar para o save do formulário — este
+   * foi o bug encontrado no teste manual da F1:
+   *
+   * O card de Participantes só existe em `modalSubMode === 'VIEW'`, e a VIEW
+   * NÃO TEM botão de salvar (ele é `modalSubMode === 'FORM' && canEditDemand`).
+   * O participante era gravado — o insert vai direto ao banco — mas os dois
+   * blocos ficavam só no estado do formulário e morriam ao fechar o modal.
+   * Pior: reabrir chama `loadLogisticsFor`, que sobrescreve os blocos com o
+   * que está no banco, então sumiam mesmo sem fechar a tela.
+   *
+   * Usa `insertLogisticBlocks` (insert puro), NÃO `upsertLogisticBlocks`
+   * (delete-all + insert): aqui não temos a lista completa de blocos em mãos,
+   * e mandar só os dois novos com o delete-all apagaria todo o resto.
    */
   const handleAddParticipant = useCallback(
     async (payload: { instructorId: string; startDate: string | null; endDate: string | null }) => {
@@ -1212,22 +1242,62 @@ const InternalDemands: React.FC = () => {
       if (!ok) return;
 
       const nome = getInstructorName(payload.instructorId);
+      const locoBlock = { ...emptyLocomocaoBlock(), instructorName: nome, instructorId: payload.instructorId };
+      const hospBlock = { ...emptyHospedagemBlock(), instructorName: nome, instructorId: payload.instructorId };
+
+      // `block_order` segue a posição que o bloco terá no array — mesmo
+      // critério do save, que reescreve todos por índice. Aqui só precisa não
+      // colidir na ordenação da leitura.
+      const locoOrder = (formDemand.logisticasLocomocao || []).length;
+      const hospOrder = (formDemand.logisticasHospedagem || []).length;
+
+      try {
+        await insertLogisticBlocks(formDemand.id, [
+          {
+            id: locoBlock.id,
+            block_type: 'LOCOMOCAO',
+            block_order: locoOrder,
+            instructor_name: nome,
+            instructor_id: payload.instructorId,
+          },
+          {
+            id: hospBlock.id,
+            block_type: 'HOSPEDAGEM',
+            block_order: hospOrder,
+            instructor_name: nome,
+            instructor_id: payload.instructorId,
+          },
+        ] as any);
+      } catch (e: any) {
+        // O participante JÁ está no banco — só a logística falhou. Não desfaz
+        // o participante (é ele que vale para agenda e conflito); avisa para
+        // os blocos serem criados à mão na aba de Logística.
+        console.error('[InternalDemands] erro ao criar blocos do participante:', e);
+        setIsParticipantModalOpen(false);
+        setNotification({
+          message: `${nome} foi adicionado, mas os blocos de logística não foram criados. Crie-os na aba de Logística.`,
+          type: 'error',
+        });
+        return;
+      }
+
       setFormDemand(prev => ({
         ...prev,
-        logisticasLocomocao: [
-          ...(prev.logisticasLocomocao || []),
-          { ...emptyLocomocaoBlock(), instructorName: nome, instructorId: payload.instructorId },
-        ],
-        logisticasHospedagem: [
-          ...(prev.logisticasHospedagem || []),
-          { ...emptyHospedagemBlock(), instructorName: nome, instructorId: payload.instructorId },
-        ],
+        logisticasLocomocao: [...(prev.logisticasLocomocao || []), locoBlock],
+        logisticasHospedagem: [...(prev.logisticasHospedagem || []), hospBlock],
       }));
 
       setIsParticipantModalOpen(false);
       setNotification({ message: `${nome} adicionado como participante.`, type: 'success' });
     },
-    [formDemand.id, addDemandParticipant, instructors, setNotification]
+    [
+      formDemand.id,
+      formDemand.logisticasLocomocao,
+      formDemand.logisticasHospedagem,
+      addDemandParticipant,
+      instructors,
+      setNotification,
+    ]
   );
 
   /**
@@ -1237,6 +1307,11 @@ const InternalDemands: React.FC = () => {
    * hotel, nota fiscal anexada) é trabalho de alguém — deixá-lo para trás,
    * órfão de participante, é menos ruim do que apagar dado sem perguntar. Ele
    * fica visível na seção de logística e pode ser removido à mão.
+   *
+   * Como o bloco agora nasce PERSISTIDO (ver handleAddParticipant), apagá-lo
+   * só do estado deixaria a linha no banco e ela voltaria no próximo
+   * `loadLogisticsFor`. O delete vai por `deleteLogisticBlock`, um id por vez
+   * — nunca por demand_id, que levaria junto os blocos dos outros.
    */
   const handleRemoveParticipant = useCallback(
     async (participantId: string, instructorId: string) => {
@@ -1250,19 +1325,40 @@ const InternalDemands: React.FC = () => {
       const hospVazio = (b: any) =>
         !b.accommodationType && !b.hotelCity && !b.hotelName && !b.hotelCheckIn && !b.hotelReceiptUrls?.length;
 
+      const locoParaApagar = (formDemand.logisticasLocomocao || []).filter(
+        b => b.instructorId === instructorId && locoVazio(b)
+      );
+      const hospParaApagar = (formDemand.logisticasHospedagem || []).filter(
+        b => b.instructorId === instructorId && hospVazio(b)
+      );
+
+      for (const b of [...locoParaApagar, ...hospParaApagar]) {
+        try {
+          await deleteLogisticBlock(b.id);
+        } catch (e) {
+          // Bloco que nunca chegou ao banco (criado à mão na aba e ainda não
+          // salvo) faz o delete endurecido lançar por 0 linhas. Não é motivo
+          // para abortar a remoção — segue, e o bloco sai do estado do mesmo
+          // jeito.
+          console.warn('[InternalDemands] bloco do participante não estava no banco:', b.id, e);
+        }
+      }
+
+      const apagados = new Set([...locoParaApagar, ...hospParaApagar].map(b => b.id));
       setFormDemand(prev => ({
         ...prev,
-        logisticasLocomocao: (prev.logisticasLocomocao || []).filter(
-          b => !(b.instructorId === instructorId && locoVazio(b))
-        ),
-        logisticasHospedagem: (prev.logisticasHospedagem || []).filter(
-          b => !(b.instructorId === instructorId && hospVazio(b))
-        ),
+        logisticasLocomocao: (prev.logisticasLocomocao || []).filter(b => !apagados.has(b.id)),
+        logisticasHospedagem: (prev.logisticasHospedagem || []).filter(b => !apagados.has(b.id)),
       }));
 
       setNotification({ message: 'Participante removido.', type: 'success' });
     },
-    [removeDemandParticipant, setNotification]
+    [
+      removeDemandParticipant,
+      formDemand.logisticasLocomocao,
+      formDemand.logisticasHospedagem,
+      setNotification,
+    ]
   );
 
   const handleCancelDemand = () => {
@@ -1543,6 +1639,7 @@ const InternalDemands: React.FC = () => {
                 {filteredDemands.length > 0 ? paginatedItems.map(demand => {
                   const status = getStatusOf(demand);
                   const ids = allInstructorsByDemandId[demand.id] ?? [];
+                  const participantesDaLinha = participantNamesByDemandId[demand.id] ?? [];
                   return (
                     <tr key={demand.id} className="hover:bg-slate-50/50 transition-colors text-sm text-gray-700">
                       <td className="p-4 font-bold text-blue-600 whitespace-nowrap">{demand.id}</td>
@@ -1561,12 +1658,25 @@ const InternalDemands: React.FC = () => {
                       <td className="p-4">{demand.trainingLocal || '—'}</td>
                       <td className="p-4 whitespace-nowrap">{formatDateTime((demand.startDate || '').split('T')[0])}</td>
                       <td className="p-4 font-medium text-gray-900">
-                        {ids.length === 0 ? 'Não Alocado' : (
+                        {ids.length === 0 && participantesDaLinha.length === 0 ? 'Não Alocado' : (
                           <div className="flex flex-col gap-0.5">
                             {ids.slice(0, 2).map(id => <span key={id}>{getInstructorName(id)}</span>)}
                             {ids.length > 2 && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-600 text-white w-fit">
                                 +{ids.length - 2}
+                              </span>
+                            )}
+                            {ids.length === 0 && <span className="text-slate-400">Não Alocado</span>}
+                            {/* Participantes NÃO entram na contagem de instrutores:
+                                são vínculo de outra tabela e o badge é de outra cor
+                                (esmeralda, como o card do modal) justamente para não
+                                serem lidos como "mais instrutores alocados". */}
+                            {participantesDaLinha.length > 0 && (
+                              <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-600 text-white w-fit"
+                                title={`Participantes: ${participantesDaLinha.join(', ')}`}
+                              >
+                                <Users size={10} /> +{participantesDaLinha.length}
                               </span>
                             )}
                           </div>
@@ -1628,6 +1738,7 @@ const InternalDemands: React.FC = () => {
         companies={companies}
         trainings={[]}
         regions={regions}
+        participantNamesByDemandId={participantNamesByDemandId}
         instructors={instructors}
         instructorAllocations={instructorAllocations}
         variant="interna"
@@ -1658,7 +1769,24 @@ const InternalDemands: React.FC = () => {
                     ? 'Visualização da Demanda Interna'
                     : (modalMode === 'CREATE' ? 'Nova Demanda Interna' : 'Editar Demanda Interna')}
                 </h2>
-                {modalSubMode === 'VIEW' && <p className="text-xs text-slate-400 font-mono mt-1">ID: {formDemand.id}</p>}
+                {modalSubMode === 'VIEW' && (
+                  <div className="flex items-center gap-2 mt-1">
+                    <p className="text-xs text-slate-400 font-mono">ID: {formDemand.id}</p>
+                    {/* Mesmo badge da listagem, mesma cor do card de Participantes.
+                        Só aparece quando há participantes — em demanda sem eles, o
+                        cabeçalho fica exatamente como era. */}
+                    {currentParticipants.length > 0 && (
+                      <span
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600 text-white"
+                        title={`Participantes: ${currentParticipants
+                          .map(pt => getInstructorName(pt.instructorId))
+                          .join(', ')}`}
+                      >
+                        <Users size={10} /> +{currentParticipants.length}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 {modalSubMode === 'VIEW' && (

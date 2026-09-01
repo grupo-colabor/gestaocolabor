@@ -527,6 +527,140 @@ console.log('\n[7] Guarda de fonte — migration 016');
   );
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * [8] BLOCOS DE LOGÍSTICA — persistidos na hora, sem apagar os existentes
+ *
+ * Bug do teste manual da F1: o participante gravava, os blocos não. O card de
+ * Participantes só existe em `modalSubMode === 'VIEW'`, e a VIEW não tem botão
+ * de salvar — então o `setFormDemand` com os dois blocos morria ao fechar o
+ * modal, e `loadLogisticsFor` sobrescrevia o estado ao reabrir.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[8] Blocos de logística do participante');
+{
+  const interna = ler('components/InternalDemands.tsx');
+  const logistics = ler('services/logistics.ts');
+
+  const handler = interna.slice(
+    interna.indexOf('const handleAddParticipant'),
+    interna.indexOf('const handleRemoveParticipant')
+  );
+
+  // O caso pedido: adicionar participante gera EXATAMENTE 2 blocos, os dois
+  // com instructor_id, sem duplicar os que já existem.
+  const inserts = handler.match(/block_type: '(LOCOMOCAO|HOSPEDAGEM)'/g) ?? [];
+  check('exatamente 2 blocos criados por participante', inserts.length === 2);
+  check('um de LOCOMOCAO e um de HOSPEDAGEM', new Set(inserts).size === 2);
+  check(
+    'os dois levam instructor_id (vínculo por id, não por nome)',
+    (handler.match(/instructor_id: payload\.instructorId/g) ?? []).length === 2
+  );
+  check(
+    'os dois levam instructor_name (rótulo de exibição)',
+    (handler.match(/instructor_name: nome/g) ?? []).length === 2
+  );
+
+  // A escolha que impede duplicação/perda: insert puro, nunca delete-all.
+  check('persiste na hora, com insertLogisticBlocks', handler.includes('await insertLogisticBlocks('));
+  check(
+    'NÃO usa upsertLogisticBlocks aqui (delete-all apagaria os blocos dos outros)',
+    !handler.includes('upsertLogisticBlocks')
+  );
+  check(
+    'block_order continua a lista existente em vez de sobrescrever a posição 0',
+    handler.includes('(formDemand.logisticasLocomocao || []).length') &&
+      handler.includes('(formDemand.logisticasHospedagem || []).length')
+  );
+  check(
+    'falha ao criar blocos NÃO desfaz o participante (avisa e segue)',
+    /catch \(e: any\)[\s\S]{0,800}blocos de logística não foram criados/.test(handler) &&
+      !/catch \(e: any\)[\s\S]{0,800}removeDemandParticipant/.test(handler)
+  );
+
+  // insertLogisticBlocks: insert puro e endurecido.
+  const insertFn = logistics.slice(
+    logistics.indexOf('export async function insertLogisticBlocks'),
+    logistics.indexOf('export async function deleteLogisticBlock')
+  );
+  check('insertLogisticBlocks existe', insertFn.length > 0);
+  check('insertLogisticBlocks NÃO apaga nada', !insertFn.includes('.delete()'));
+  check(
+    'insertLogisticBlocks é endurecido (0 linhas por RLS não passa calado)',
+    insertFn.includes('data.length !== rows.length')
+  );
+
+  // Remoção: apaga no banco, um id por vez, e só bloco vazio.
+  const remover = interna.slice(
+    interna.indexOf('const handleRemoveParticipant'),
+    interna.indexOf('const handleCancelDemand')
+  );
+  check('remoção apaga o bloco no banco', remover.includes('await deleteLogisticBlock(b.id)'));
+  check(
+    'remoção NUNCA apaga por demand_id (levaria os blocos dos outros)',
+    !remover.includes('demand_id') && !remover.includes('upsertLogisticBlocks')
+  );
+  check(
+    'remoção continua respeitando "só bloco vazio"',
+    remover.includes('locoVazio(b)') && remover.includes('hospVazio(b)')
+  );
+  check(
+    'bloco ausente do banco não aborta a remoção do participante',
+    /catch \(e\)[\s\S]{0,300}console\.warn/.test(remover)
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [9] INDICADOR DE PARTICIPANTES — listagem, modal e Excel
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[9] Indicador de participantes');
+{
+  const interna = ler('components/InternalDemands.tsx');
+  const exportar = ler('components/ExportDemandsModal.tsx');
+
+  check(
+    'nomes derivam do estado global (sem fetch novo na listagem)',
+    interna.includes('const participantNamesByDemandId = useMemo(') &&
+      /participantNamesByDemandId = useMemo\(\(\) => \{[\s\S]{0,600}for \(const pt of demandParticipants\)/.test(interna)
+  );
+  check(
+    'a listagem NÃO busca participante por demanda (nada de N+1)',
+    !/fetchDemandParticipants/.test(interna)
+  );
+  check('badge +N na coluna do instrutor', interna.includes('<Users size={10} /> +{participantesDaLinha.length}'));
+  check(
+    'tooltip lista os nomes',
+    interna.includes('title={`Participantes: ${participantesDaLinha.join(\', \')}`}')
+  );
+  check(
+    'participante não é contado como instrutor alocado (badge separado, cor própria)',
+    interna.includes('bg-emerald-600 text-white w-fit')
+  );
+  check(
+    'demanda só com participante deixa de aparecer como "Não Alocado" seco',
+    interna.includes("{ids.length === 0 && participantesDaLinha.length === 0 ? 'Não Alocado'")
+  );
+  check('badge também no cabeçalho do modal', interna.includes('+{currentParticipants.length}'));
+
+  // Excel: coluna nova só na interna — o export de cliente não muda.
+  check('coluna Participantes no export', exportar.includes("key: 'participantes'"));
+  check(
+    'a coluna existe SÓ na variante interna',
+    /\.\.\.\(isInterna\s*\r?\n?\s*\? \[\{ header: 'Participantes', key: 'participantes', width: 40 \}\]/.test(exportar)
+  );
+  check(
+    'valores separados por vírgula',
+    exportar.includes("{ participantes: (participantNamesByDemandId[d.id] ?? []).join(', ') }")
+  );
+  check(
+    'os nomes chegam por prop (o modal é compartilhado com a tela de cliente)',
+    exportar.includes('participantNamesByDemandId?: Record<string, string[]>') &&
+      exportar.includes('participantNamesByDemandId = {},')
+  );
+  check(
+    'a tela interna passa a prop',
+    interna.includes('participantNamesByDemandId={participantNamesByDemandId}')
+  );
+}
+
 /* ────────────────────────────────────────────────────────────────────────── */
 console.log(
   falhas === 0 ? '\n✅ SMOKE PARTICIPANTES: OK' : `\n❌ SMOKE PARTICIPANTES: ${falhas} falha(s)`

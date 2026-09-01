@@ -881,6 +881,94 @@ console.log('\n[13] Round-trip do instructor_id no form de cliente');
       (src.match(/instructor_id: b\.instructorId \?\? null/g) ?? []).length === 2);
   }
 }
+/* ────────────────────────────────────────────────────────────────────────────
+ * [14] CARD DA AGENDA — participante é indistinguível do titular
+ *
+ * Participante é titular pleno, então o card dele tem de ser o MESMO do
+ * titular da demanda: fonte maior, segunda linha com o local, ID do cliente e
+ * badges. O card compacto verde é do ACOMPANHANTE, e essa diferença é
+ * intencional — este bloco também prende que ela continua existindo.
+ *
+ * O bug que motivou: a passada 5 herdou o `source` próprio da 1.5, e o
+ * conteúdo do card era escolhido por uma lista literal de fontes
+ * (DEMANDA/ALLOCATION). PARTICIPANT caía no ramo de fallback — o compacto.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[14] Card da agenda');
+{
+  const cal = ler('components/CalendarView.tsx');
+
+  /** Chaves montadas num literal de UnifiedItem, a partir do marcador. */
+  const chavesDoItem = (marcador: string): string[] => {
+    const i = cal.indexOf(marcador);
+    if (i < 0) return [];
+    const corpo = cal.slice(i, cal.indexOf('};', i));
+    return [...corpo.matchAll(/^\s+([a-zA-Z]+):/gm)].map(m => m[1]);
+  };
+
+  const doTitular = chavesDoItem('const allocItem: UnifiedItem = {');
+  const doParticipante = chavesDoItem('const item: UnifiedItem = {');
+
+  check('achou o item do titular (passada 1)', doTitular.length > 0);
+  check('achou o item do participante (passada 5)', doParticipante.length > 0);
+
+  // A asserção central: nada que o titular carrega pode faltar no participante.
+  const faltando = doTitular.filter(k => !doParticipante.includes(k));
+  eq('participante carrega TODOS os campos do titular', faltando.join(',') || '(nenhum)', '(nenhum)');
+
+  // O único extra permitido é a negação explícita de acompanhante.
+  const extras = doParticipante.filter(k => !doTitular.includes(k));
+  eq('e só um campo a mais', extras.join(','), 'isCompanion');
+  check('que é explicitamente falso', cal.includes('isCompanion: false'));
+
+  // O local vem de `description`, como no titular — é a segunda linha do card.
+  check(
+    'os dois levam o local do treinamento',
+    (cal.match(/description: d\.trainingLocal,/g) ?? []).length >= 2
+  );
+
+  // O gate do layout completo passou a ser um predicado nomeado, e inclui
+  // PARTICIPANT. Se voltar a ser lista literal de duas fontes, quebra aqui.
+  check('o layout completo é decidido por rendersAsDemandCard', cal.includes('{rendersAsDemandCard(cellItem.data.source) ? (() => {'));
+  check(
+    'e o predicado inclui participante',
+    /rendersAsDemandCard = \(source\?: string\): boolean =>[\s\S]{0,200}source === 'PARTICIPANT'/.test(cal)
+  );
+  check(
+    'acompanhante continua FORA (o card verde compacto dele é intencional)',
+    !/rendersAsDemandCard = \(source\?: string\): boolean =>[\s\S]{0,200}COMPANION/.test(cal)
+  );
+
+  // Clique: o participante abre a demanda igual ao titular.
+  eq(
+    'clique no card e na célula resolvem a demanda pelo mesmo predicado',
+    (cal.match(/rendersAsDemandCard\((item|existing)\.source\)/g) ?? []).length,
+    2
+  );
+
+  // DRAG continua travado — arrastar move instructor_allocation, e o
+  // participante não vive lá. É a única coisa que o card NÃO herda.
+  check(
+    'drag segue restrito a DEMANDA/ALLOCATION (participante não é arrastável)',
+    cal.includes("if (item.source !== 'DEMANDA' && item.source !== 'ALLOCATION') return;") &&
+      cal.includes("(cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION')")
+  );
+
+  // A resolução do id da demanda no card completo: ALLOCATION e PARTICIPANT
+  // guardam o id da LINHA em `id`, não o da demanda.
+  check(
+    'card completo resolve demandId sem cair no id da linha',
+    cal.includes("cellItem.data.source === 'DEMANDA'") &&
+      cal.includes('? cellItem.data.demandId || cellItem.data.id') &&
+      cal.includes(': cellItem.data.demandId;')
+  );
+
+  // Datas no mesmo formato do titular (datetime, não data seca).
+  check(
+    'participante usa datetime completo, como a passada 1',
+    cal.includes("const participantStart = ensureDateTimeForDisplay(dias[0], 'start');") &&
+      cal.includes("const participantEnd = ensureDateTimeForDisplay(dias[dias.length - 1], 'end');")
+  );
+}
 /* ────────────────────────────────────────────────────────────────────────── */
 console.log(
   falhas === 0 ? '\n✅ SMOKE PARTICIPANTES: OK' : `\n❌ SMOKE PARTICIPANTES: ${falhas} falha(s)`

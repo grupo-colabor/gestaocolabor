@@ -185,6 +185,23 @@ const getDayBoundsForIteration = (startStr: string, endStr: string) => {
 };
 
 // Para exibição: se vier só data (sem hora), assume 08:00 / 18:00
+/**
+ * O card desta fonte representa uma PESSOA TRABALHANDO NUMA DEMANDA e por isso
+ * usa o layout completo: título, local do treinamento, ID do cliente e badges.
+ *
+ * ⚠️ NÃO confundir com "é arrastável". Arrastar move uma `instructor_allocation`
+ * (ou troca `demands.instructor_id`), e PARTICIPANT não é nenhum dos dois — a
+ * trava do drag continua sendo DEMANDA/ALLOCATION, em `handleDragStart` e no
+ * atributo `draggable`. São duas perguntas diferentes sobre a mesma fonte, e
+ * juntá-las num predicado só faria o participante ser movido por arrasto para
+ * uma tabela onde ele não existe.
+ *
+ * ACOMPANHANTE fica de fora de propósito: o card verde compacto dele é
+ * deliberado, e é o que o diferencia de quem é titular na demanda.
+ */
+const rendersAsDemandCard = (source?: string): boolean =>
+  source === 'DEMANDA' || source === 'ALLOCATION' || source === 'PARTICIPANT';
+
 const ensureDateTimeForDisplay = (s: string, kind: 'start' | 'end') => {
   if (!s) return s;
 
@@ -629,15 +646,20 @@ companionAllocations.forEach(ca => {
     const company = companies.find(c => c.id === d.companyId);
     const cStatus = calculateDemandStatus({ ...d, cancelled: false });
 
+    // Período do vínculo em datetime, como a passada 1 faz com a alocação.
+    const participantStart = ensureDateTimeForDisplay(dias[0], 'start');
+    const participantEnd = ensureDateTimeForDisplay(dias[dias.length - 1], 'end');
+
     for (const dayKey of dias) {
       const key = `${pt.instructorId}-${dayKey}`;
       const item: UnifiedItem = {
         id: pt.id,
         instructorId: pt.instructorId,
-        // O card mostra o dia; o horário real vem do label, que já lê
-        // getDayHorarioInicio/Fim da demanda.
-        startDate: dayKey,
-        endDate: dayKey,
+        // Mesmo shape da passada 1: datetime completo cobrindo o período do
+        // vínculo, não a data seca do dia. É o que o filtro de período da
+        // grade (intersectsRange) e o modal esperam receber.
+        startDate: participantStart,
+        endDate: participantEnd,
         type: 'TREINAMENTO',
         title: buildCardLabel(d, dayKey, cardLabelSlots(d, company, training)),
         source: 'PARTICIPANT',
@@ -764,6 +786,11 @@ companionAllocations.forEach(ca => {
       e.preventDefault();
       return;
     }
+    // Deliberadamente MAIS restrito que `rendersAsDemandCard`: o card do
+    // participante é igual ao do titular, mas arrastar move uma
+    // `instructor_allocation` — tabela onde participante não existe. Sem esta
+    // trava, o drop chamaria updateInstructorAllocation com o id da linha de
+    // demand_participants.
     if (item.source !== 'DEMANDA' && item.source !== 'ALLOCATION') return;
     e.dataTransfer.setData('source', item.source);
     e.dataTransfer.setData('itemId', item.id);
@@ -842,10 +869,9 @@ companionAllocations.forEach(ca => {
   // Abre modal VIEW para um item específico de uma célula (usado por cards individuais)
   const handleItemCardClick = (instructor: Instructor, item: UnifiedItem) => {
     if (profile?.role === 'coordenador') return;
-    const linkedDemand =
-      item.source === 'DEMANDA' || item.source === 'ALLOCATION'
-        ? demands.find((d: Demand) => d.id === (item.demandId || item.id))
-        : null;
+    const linkedDemand = rendersAsDemandCard(item.source)
+      ? demands.find((d: Demand) => d.id === (item.demandId || item.id))
+      : null;
     setModalInstructor(instructor);
     setIsMobileContext(false);
     setActiveItem(item);
@@ -867,10 +893,9 @@ companionAllocations.forEach(ca => {
     setIsMobileContext(false);
 
     if (existing) {
-      const linkedDemand =
-        existing.source === 'DEMANDA' || existing.source === 'ALLOCATION'
-          ? demands.find(d => d.id === (existing.demandId || existing.id))
-          : null;
+      const linkedDemand = rendersAsDemandCard(existing.source)
+        ? demands.find(d => d.id === (existing.demandId || existing.id))
+        : null;
 
       setActiveItem(existing);
       setModalObs(linkedDemand?.observations || existing.description || '');
@@ -1922,12 +1947,20 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                         );
                       })()}
 
-                      {/* Card content: structured for DEMANDA/ALLOCATION, fallback for others */}
-                      {(cellItem.data.source === 'DEMANDA' || cellItem.data.source === 'ALLOCATION') ? (() => {
+                      {/* Card content: layout completo para quem trabalha na
+                          demanda (titular por alocação, titular legado e
+                          PARTICIPANTE); fallback compacto para o resto —
+                          acompanhante, agenda manual, evento. */}
+                      {rendersAsDemandCard(cellItem.data.source) ? (() => {
+                        // Só a fonte DEMANDA guarda o id da demanda no próprio
+                        // `id` do item; ALLOCATION e PARTICIPANT carregam o id da
+                        // LINHA (alocação / participante) e a demanda vem em
+                        // `demandId`. Cair no `|| id` nesses dois procuraria uma
+                        // demanda com o id da linha e não acharia nada.
                         const demandId =
-                          cellItem.data.source === 'ALLOCATION'
-                            ? cellItem.data.demandId
-                            : cellItem.data.demandId || cellItem.data.id;
+                          cellItem.data.source === 'DEMANDA'
+                            ? cellItem.data.demandId || cellItem.data.id
+                            : cellItem.data.demandId;
                         const demand = demands.find(d => d.id === demandId);
                         const company = companies.find(c => c.id === demand?.companyId);
                         const training = trainings.find(t => t.id === demand?.trainingId);

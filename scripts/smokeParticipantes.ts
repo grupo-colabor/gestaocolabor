@@ -47,6 +47,7 @@ import {
   isLogisticBlockEmpty,
   hasSecondPerson,
 } from '../domain/logisticBlockOwnership';
+import { normalizeAgendaCell } from '../domain/agendaCellItems';
 import {
   groupInstructorsForCompanion,
   isEligibleForDemand,
@@ -857,7 +858,10 @@ console.log('\n[12] Acompanhante — logística por pessoa');
   // na desestruturação do contexto — comparar índices no arquivo inteiro
   // compararia com a linha errada.
   const trechoLogistica = logisticaTela.slice(logisticaTela.indexOf('const handleRemoveCompanion'));
-  const trechoAgenda = cal.slice(cal.indexOf('title="Remover acompanhante"'));
+  // A conta do "ultimo dia" saiu do onClick inline e virou removeCompanionDay
+  // (um removedor, dois cards de acompanhante: o cheio e o compacto da celula
+  // dividida). A guarda segue a regra ate a casa nova.
+  const trechoAgenda = cal.slice(cal.indexOf('const removeCompanionDay'));
   for (const [nome, src] of [['Logistics', trechoLogistica], ['CalendarView', trechoAgenda]] as const) {
     check(
       `${nome}: conta os dias restantes ANTES da remoção (que é otimista)`,
@@ -1296,6 +1300,153 @@ console.log('\n[17] CompanionPicker');
   check(
     'e o par equivalente na Logistica',
     !/const openCompanionDatesModal\s*=/.test(logistica) && !/const handleSaveCompanionDays\s*=/.test(logistica)
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [18] AGENDA — ACOMPANHANTE DIVIDE A CÉLULA, NÃO SOBRESCREVE
+ *
+ * O bug: DEM-1550 (participante) e DEM-1552 (acompanhante), mesmo instrutor,
+ * mesmo dia — só um dos dois aparecia. A passada de acompanhante escrevia só
+ * em `map` e não alimentava `allocMulti`, ao contrário das passadas de
+ * alocação e de participante. Sem entrada em `allocMulti` a célula nunca
+ * chega a 2 itens, então nunca divide: o último a escrever em `map` ganha.
+ *
+ * A dedupe por DEMANDA (`demandsWithCompanions`) é outra coisa e continua de
+ * pé: ela impede a MESMA demanda de aparecer duas vezes. O que ela nunca
+ * deveria ter feito é sumir com o card de OUTRA demanda no mesmo dia.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[18] Agenda — acompanhante convive na célula dividida');
+{
+  type Cel = { id: string; demandId?: string; isCompanion?: boolean };
+  const trabalho = (id: string, demandId: string): Cel => ({ id, demandId, isCompanion: false });
+  const acomp = (id: string, demandId: string): Cel => ({ id, demandId, isCompanion: true });
+  const ids = (xs: Cel[]) => xs.map(x => x.id).join(',');
+
+  // O caso relatado, na ordem em que as passadas escrevem (alocação, depois
+  // acompanhante): duas demandas diferentes no mesmo dia = dois cards.
+  eq(
+    'allocation em X + acompanhante em Y no mesmo dia = dois itens',
+    ids(normalizeAgendaCell([trabalho('ALOC-1', 'DEM-1550'), acomp('CA-1', 'DEM-1552')])),
+    'ALOC-1,CA-1'
+  );
+
+  // ... e a ordem é DEFINIDA, não a de execução das passadas. A de
+  // acompanhante (1.5) roda ANTES da de participante (1.7): sem ordenação, o
+  // acompanhante ficaria na frente por acidente.
+  eq(
+    'acompanhante vai por último mesmo tendo sido inserido primeiro',
+    ids(normalizeAgendaCell([acomp('CA-1', 'DEM-1552'), trabalho('PT-1', 'DEM-1550')])),
+    'PT-1,CA-1'
+  );
+
+  // CONTRAPROVA da dedupe: mesma demanda não vira dois cards.
+  eq(
+    'titular e acompanhante da MESMA demanda = um card só',
+    ids(normalizeAgendaCell([trabalho('ALOC-1', 'DEM-1552'), acomp('CA-1', 'DEM-1552')])),
+    'ALOC-1'
+  );
+  eq(
+    'e vale com o acompanhante inserido primeiro',
+    ids(normalizeAgendaCell([acomp('CA-1', 'DEM-1552'), trabalho('ALOC-1', 'DEM-1552')])),
+    'ALOC-1'
+  );
+
+  // A dedupe é POR DEMANDA, não por instrutor+dia — é a diferença entre
+  // "não repita a mesma demanda" e o bug "só um card por dia".
+  eq(
+    'participante em X + acompanhante em Y convivem',
+    ids(normalizeAgendaCell([trabalho('PT-1', 'DEM-1550'), acomp('CA-1', 'DEM-1552')])),
+    'PT-1,CA-1'
+  );
+  eq(
+    'acompanhante em duas demandas diferentes no mesmo dia = dois cards',
+    ids(normalizeAgendaCell([acomp('CA-1', 'DEM-1552'), acomp('CA-2', 'DEM-1553')])),
+    'CA-1,CA-2'
+  );
+  eq(
+    'dedupe da demanda X não derruba o acompanhante de Y',
+    ids(normalizeAgendaCell([
+      trabalho('ALOC-1', 'DEM-1552'),
+      acomp('CA-1', 'DEM-1552'),
+      acomp('CA-2', 'DEM-1553'),
+    ])),
+    'ALOC-1,CA-2'
+  );
+
+  // Entre itens de trabalho a ordem de inserção (= a das passadas) se mantém:
+  // o sort é estável e só empurra acompanhante para o fim.
+  eq(
+    'dois treinos no mesmo dia continuam na ordem das passadas',
+    ids(normalizeAgendaCell([trabalho('ALOC-1', 'DEM-A'), trabalho('ALOC-2', 'DEM-B')])),
+    'ALOC-1,ALOC-2'
+  );
+
+  // Acompanhante sozinho: um item só — a célula NÃO divide e o card cheio
+  // verde continua sendo o de hoje.
+  eq(
+    'acompanhante sozinho não divide célula',
+    normalizeAgendaCell([acomp('CA-1', 'DEM-1552')]).length,
+    1
+  );
+
+  /* ---- GUARDA DE FONTE: a passada mora dentro do useMemo do componente ---- */
+  const cal = ler('components/CalendarView.tsx');
+  const passada15 = cal.slice(cal.indexOf('PRIORIDADE 1.5'), cal.indexOf('PRIORIDADE 1.7'));
+
+  check('achou a passada de acompanhante', passada15.length > 0);
+  check(
+    'a passada de acompanhante alimenta allocMulti (era ISTO que faltava)',
+    passada15.includes('allocMulti[companionKey].push(companionItem)')
+  );
+  check(
+    'e continua escrevendo em map (o card cheio de quando está sozinho)',
+    passada15.includes('map[companionKey] = companionItem;')
+  );
+
+  // As três passadas que geram card de demanda alimentam allocMulti.
+  eq(
+    'as três passadas alimentam allocMulti',
+    (cal.match(/allocMulti\[[a-zA-Z]+\]\.push\(/g) ?? []).length,
+    3
+  );
+
+  check(
+    'o fechamento normaliza cada célula antes de devolver',
+    /allocMulti\[key\] = normalizeAgendaCell\(allocMulti\[key\]\);/.test(cal) &&
+      cal.indexOf('normalizeAgendaCell(allocMulti[key])') <
+        cal.indexOf('return { agendaByDay: map, allocByDayMulti: allocMulti };')
+  );
+
+  // A dedupe da passada 2 é POR DEMANDA. Se alguém trocar o Set por
+  // instrutor+dia, o bug volta em outra roupa.
+  check(
+    'demandsWithCompanions continua sendo um conjunto de DEMANDAS',
+    cal.includes('const demandsWithCompanions = new Set(companionAllocations.map(a => a.demandId));')
+  );
+  check(
+    'e continua desligando a passada 2 para a demanda dele',
+    cal.includes('!demandsWithCompanions.has(d.id)')
+  );
+
+  /* ---- o card compacto do acompanhante: cor e remoção intactas ---- */
+  const multi = cal.slice(cal.indexOf('MODO MULTI-CARD'), cal.indexOf('MODO SINGLE-CARD'));
+  check('achou o modo multi-card', multi.length > 0);
+  check('acompanhante mantém o verde na célula dividida', multi.includes('aBg = COMPANION_STYLING.bg;'));
+  check(
+    'o verde vem depois de interna e de "a confirmar" (papel > estado da demanda)',
+    multi.indexOf('A_CONFIRMAR_STYLING.bg') < multi.indexOf('COMPANION_STYLING.bg')
+  );
+  check('o × de remover acompanha o card compacto', multi.includes('removeCompanionDay(allocItem)'));
+  eq(
+    'um removedor só, dois cards',
+    (cal.match(/removeCompanionDay\(/g) ?? []).length,
+    2 // as duas chamadas: card cheio e card compacto (a definição está em removeCompanionDay)
+  );
+  eq(
+    'e o verde é definido uma vez só',
+    (cal.match(/bg-emerald-600/g) ?? []).length,
+    1
   );
 }
 /* ────────────────────────────────────────────────────────────────────────── */

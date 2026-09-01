@@ -25,6 +25,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { isDemandDay, buildCardLabel, getDemandDays } from '../domain/demandDays';
 import { assignmentDays } from '../domain/personScheduleConflict';
 import { isInternalDemand, getDemandTitle, getDemandCompanyLabel } from '../domain/demandLabel';
+import { normalizeAgendaCell } from '../domain/agendaCellItems';
 
 /**
  * Slots do label do card da agenda.
@@ -201,6 +202,30 @@ const getDayBoundsForIteration = (startStr: string, endStr: string) => {
  */
 const rendersAsDemandCard = (source?: string): boolean =>
   source === 'DEMANDA' || source === 'ALLOCATION' || source === 'PARTICIPANT';
+
+/**
+ * Verde do acompanhante. Vive aqui porque agora tem DOIS chamadores: o card
+ * cheio (celula so dele) e o compacto (celula dividida com outra demanda no
+ * mesmo dia). A cor e a mesma nos dois — o que muda e o tamanho, igual a
+ * qualquer card de celula dividida.
+ */
+const COMPANION_STYLING = {
+  bg: 'bg-emerald-600',
+  text: 'text-white',
+  border: 'border-emerald-700',
+};
+
+/**
+ * Item de acompanhante. As quatro formas alternativas sao defensivas e vem de
+ * antes; ficaram como estavam, so deixaram de estar copiadas em cada bloco de
+ * render.
+ */
+const isCompanionItem = (item: any): boolean =>
+  !!item?.isCompanion ||
+  item?.role === 'COMPANION' ||
+  item?.kind === 'COMPANION' ||
+  item?.allocationType === 'COMPANION' ||
+  item?.source === 'COMPANION';
 
 const ensureDateTimeForDisplay = (s: string, kind: 'start' | 'end') => {
   if (!s) return s;
@@ -622,7 +647,8 @@ companionAllocations.forEach(ca => {
     // ✅ DIAS ESPECÍFICOS: pula dias que não fazem parte da demanda
     if (isDemandDay(d, cursor)) {
       const dayKey = formatDateKey(cursor);
-      map[`${ca.instructorId}-${dayKey}`] = {
+      const companionKey = `${ca.instructorId}-${dayKey}`;
+      const companionItem: UnifiedItem = {
         id: ca.id,
         instructorId: ca.instructorId,
         startDate: displayStart,
@@ -636,6 +662,21 @@ companionAllocations.forEach(ca => {
         isCompanion: true,
         companionAllocationId: ca.id
       };
+      map[companionKey] = companionItem;
+
+      // ALIMENTA `allocMulti`, como as passadas 1 (alocacao) e 1.7
+      // (participante). Escrevendo so em `map`, o acompanhante SOBRESCREVIA o
+      // card que ja estava na celula: o titular — ou o participante — de OUTRA
+      // demanda no mesmo dia sumia, e qual dos dois sumia era so ordem de
+      // passada. Alimentando aqui, a celula divide e os dois aparecem.
+      //
+      // Ordem e dedupe por demanda NAO ficam aqui: sao o fechamento das
+      // passadas, logo antes do return. Nesta altura ainda nao da para saber o
+      // que a passada 1.7 vai escrever nesta mesma celula.
+      if (!allocMulti[companionKey]) allocMulti[companionKey] = [];
+      if (!allocMulti[companionKey].some(x => x.id === companionItem.id)) {
+        allocMulti[companionKey].push(companionItem);
+      }
     }
     cursor.setDate(cursor.getDate() + 1);
   }
@@ -745,6 +786,13 @@ companionAllocations.forEach(ca => {
           cursor.setDate(cursor.getDate() + 1);
         }
       });
+
+    // Fechamento das passadas: ordem e dedupe por demanda de cada celula
+    // dividida. A regra vive em domain/agendaCellItems.ts — ver o cabecalho de
+    // la para o porque de a dedupe ser por DEMANDA e nao por instrutor+dia.
+    for (const key of Object.keys(allocMulti)) {
+      allocMulti[key] = normalizeAgendaCell(allocMulti[key]);
+    }
 
     return { agendaByDay: map, allocByDayMulti: allocMulti };
   }, [agendaItems, instructorAllocations, companionAllocations, demandParticipants, demands, trainings, companies]);
@@ -1173,6 +1221,43 @@ const handleSaveManual = async () => {
 const removeCompanionsForDemandIfAny = (demandId: string) => {
   const comps = companionAllocations.filter(ca => ca.demandId === demandId);
   comps.forEach(ca => removeCompanionAllocation(ca.id));
+};
+
+/**
+ * Remove UM DIA de acompanhante — a linha, nao a pessoa.
+ *
+ * Extraida do onClick do x porque agora existem DOIS cards de acompanhante: o
+ * cheio (celula so dele) e o compacto (celula dividida com outra demanda no
+ * mesmo dia). Uma funcao, dois chamadores — se a regra do "ultimo dia" mudar,
+ * ela muda nos dois de uma vez.
+ */
+const removeCompanionDay = (anyData: any) => {
+  // precisa ser o ID da companionAllocation
+  const companionAllocationId = anyData?.id || anyData?.allocationId;
+  if (!companionAllocationId) return;
+
+  // Uma linha POR DIA: o x remove um dia, nao a pessoa. Os blocos de logistica
+  // dela so sao liberados quando cai o ultimo dia — a conta vai ANTES da
+  // remocao, porque ela e otimista e o estado ja teria mudado depois.
+  const removidoInstructorId = anyData?.instructorId;
+  const removidoDemandId = anyData?.demandId;
+  const eraUltimoDaPessoa =
+    !!removidoInstructorId &&
+    !!removidoDemandId &&
+    companionAllocations.filter(
+      ca =>
+        ca.demandId === removidoDemandId &&
+        ca.instructorId === removidoInstructorId &&
+        ca.id !== companionAllocationId
+    ).length === 0;
+
+  removeCompanionAllocation(companionAllocationId);
+
+  if (eraUltimoDaPessoa) {
+    void releaseLogisticBlocksForPerson(removidoDemandId, removidoInstructorId);
+  }
+
+  setNotification?.({ type: 'success', message: 'Acompanhante removido da agenda.' });
 };
 
   const handleRemoveAction = () => {
@@ -1865,14 +1950,46 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                           aBorder = INTERNAL_DEMAND_STYLING.border;
                         }
                         if (aIsAConfirmar) { aBg = A_CONFIRMAR_STYLING.bg; aText = A_CONFIRMAR_STYLING.text; aBorder = A_CONFIRMAR_STYLING.border; }
+                        // Acompanhante continua VERDE também aqui. Por último
+                        // de propósito: 'a confirmar' e interna são estado da
+                        // DEMANDA, e o card verde diz o papel de quem está na
+                        // célula — é o que o diferencia de quem é titular.
+                        // Muda o tamanho (metade da célula, como qualquer card
+                        // de célula dividida), não a identidade visual.
+                        const aIsCompanion = isCompanionItem(allocItem);
+                        if (aIsCompanion) {
+                          aBg = COMPANION_STYLING.bg;
+                          aText = COMPANION_STYLING.text;
+                          aBorder = COMPANION_STYLING.border;
+                        }
                         return (
                           <div
                             key={allocItem.id}
                             draggable={!isCoordinator}
                             onDragStart={!isCoordinator ? (e: React.DragEvent) => handleDragStart(e, allocItem) : undefined}
                             onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleItemCardClick(instructor, allocItem); }}
-                            className={`flex-1 min-h-0 w-full rounded-md border shadow-sm px-1 flex items-center justify-center text-center overflow-hidden transition-all active:scale-95 cursor-pointer ${aBg} ${aText} ${aBorder}`}
+                            className={`relative flex-1 min-h-0 w-full rounded-md border shadow-sm px-1 flex items-center justify-center text-center overflow-hidden transition-all active:scale-95 cursor-pointer ${aBg} ${aText} ${aBorder}`}
                           >
+                            {/* O × é a ÚNICA via de remover um dia de
+                                acompanhante pela agenda (o "remover registro"
+                                do modal não trata COMPANION). Some aqui, e o
+                                acompanhante que divide célula viraria
+                                irremovível — por isso ele acompanha o card
+                                compacto, menor mas com o mesmo handler. */}
+                            {aIsCompanion && allocItem.id && (
+                              <button
+                                type="button"
+                                title="Remover acompanhante"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  removeCompanionDay(allocItem);
+                                }}
+                                className="absolute top-0.5 right-0.5 w-4 h-4 rounded bg-black/20 hover:bg-black/35 text-white flex items-center justify-center text-[11px] font-black leading-none"
+                              >
+                                ×
+                              </button>
+                            )}
                             <span className="text-[10px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-1" title={allocItem.title}>
                               {allocItem.title}
                             </span>
@@ -1894,12 +2011,7 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                       className={(() => {
                         const anyData = cellItem.data as any;
 
-                        const isCompanion =
-                          !!anyData?.isCompanion ||
-                          anyData?.role === 'COMPANION' ||
-                          anyData?.kind === 'COMPANION' ||
-                          anyData?.allocationType === 'COMPANION' ||
-                          anyData?.source === 'COMPANION';
+                        const isCompanion = isCompanionItem(anyData);
 
                         // ✅ Verifica confirmationStatus da demanda vinculada
                         const linkedDemandId = anyData?.demandId || anyData?.id;
@@ -1930,10 +2042,12 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                           baseBorder = A_CONFIRMAR_STYLING.border;
                         }
 
-                        // ✅ Companion: força VERDE
-                        const companionBg = 'bg-emerald-600';
-                        const companionText = 'text-white';
-                        const companionBorder = 'border-emerald-700';
+                        // ✅ Companion: força VERDE (mesma constante do card
+                        // compacto da célula dividida — o verde é definido uma
+                        // vez só)
+                        const companionBg = COMPANION_STYLING.bg;
+                        const companionText = COMPANION_STYLING.text;
+                        const companionBorder = COMPANION_STYLING.border;
 
                         return `w-full h-full rounded-lg border shadow-sm p-1 flex flex-col items-center justify-center text-center overflow-hidden transition-all active:scale-95 relative ${
                           isCompanion ? companionBg : baseBg
@@ -1943,71 +2057,25 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                       })()}
                     >
                       {/* ✅ BOTÃO REMOVER (somente acompanhante) */}
-                      {(() => {
-                        const anyData = cellItem.data as any;
-
-                        const isCompanion =
-                          !!anyData?.isCompanion ||
-                          anyData?.role === 'COMPANION' ||
-                          anyData?.kind === 'COMPANION' ||
-                          anyData?.allocationType === 'COMPANION' ||
-                          anyData?.source === 'COMPANION';
-
-                        if (!isCompanion) return null;
-
-                        // precisa ser o ID da companionAllocation
-                        const companionAllocationId = anyData?.id || anyData?.allocationId;
-                        if (!companionAllocationId) return null;
-
-                        return (
-                          <button
-                            type="button"
-                            title="Remover acompanhante"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              e.preventDefault();
-
-                              // Uma linha POR DIA: o × remove um dia, não a
-                              // pessoa. Os blocos de logística dela só são
-                              // liberados quando cai o último dia — a conta vai
-                              // ANTES da remoção, porque ela é otimista e o
-                              // estado já teria mudado depois.
-                              const removidoInstructorId = anyData?.instructorId;
-                              const removidoDemandId = anyData?.demandId;
-                              const eraUltimoDaPessoa =
-                                !!removidoInstructorId &&
-                                !!removidoDemandId &&
-                                companionAllocations.filter(
-                                  ca =>
-                                    ca.demandId === removidoDemandId &&
-                                    ca.instructorId === removidoInstructorId &&
-                                    ca.id !== companionAllocationId
-                                ).length === 0;
-
-                              removeCompanionAllocation(companionAllocationId);
-
-                              if (eraUltimoDaPessoa) {
-                                void releaseLogisticBlocksForPerson(removidoDemandId, removidoInstructorId);
-                              }
-
-                              setNotification?.({ type: 'success', message: 'Acompanhante removido da agenda.' });
-                            }}
-                            className="absolute top-1 right-1 w-5 h-5 rounded-md bg-black/20 hover:bg-black/35 text-white flex items-center justify-center text-[12px] font-black leading-none"
-                          >
-                            ×
-                          </button>
-                        );
-                      })()}
+                      {isCompanionItem(cellItem.data) && (cellItem.data as any)?.id && (
+                        <button
+                          type="button"
+                          title="Remover acompanhante"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            removeCompanionDay(cellItem.data);
+                          }}
+                          className="absolute top-1 right-1 w-5 h-5 rounded-md bg-black/20 hover:bg-black/35 text-white flex items-center justify-center text-[12px] font-black leading-none"
+                        >
+                          ×
+                        </button>
+                      )}
 
                       {(() => {
                         const anyData = cellItem.data as any;
 
-                        const isCompanion =
-                          !!anyData?.isCompanion ||
-                          anyData?.role === 'COMPANION' ||
-                          anyData?.kind === 'COMPANION' ||
-                          anyData?.allocationType === 'COMPANION' ||
-                          anyData?.source === 'COMPANION';
+                        const isCompanion = isCompanionItem(anyData);
 
                         if (!isCompanion) return null;
 

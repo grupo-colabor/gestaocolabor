@@ -2079,9 +2079,15 @@ const removeCompanionDay = (anyData: any) => {
 
                         if (!isCompanion) return null;
 
+                        // Proporções: a informação da DEMANDA é a informação do
+                        // card — quem lê a grade procura a demanda, não o papel.
+                        // A tag diz o papel em 9px e sai da frente; o verde já
+                        // faz o trabalho de identificar o acompanhante à
+                        // distância. Antes era o contrário: a tag grande e a
+                        // demanda ilegível.
                         return (
-                          <div className="w-full mb-1 flex justify-center">
-                            <span className="px-2 py-[2px] rounded-md text-[10px] font-black uppercase tracking-widest bg-white/20 text-white border border-white/25">
+                          <div className="w-full flex justify-center leading-none">
+                            <span className="px-1.5 rounded text-[9px] font-black uppercase tracking-widest bg-white/20 text-white border border-white/25">
                               ACOMPANHANTE
                             </span>
                           </div>
@@ -2150,7 +2156,16 @@ const removeCompanionDay = (anyData: any) => {
                           </>
                         );
                       })() : (
-                        <span className="text-[9px] font-black uppercase tracking-tighter w-full leading-tight line-clamp-2" title={cellItem.data.title}>
+                        // Acompanhante usa o MESMO corpo da linha 1 do card de
+                        // titular (text-[11px]): é a mesma informação —
+                        // DEM-XXX • empresa • treinamento — e não há motivo para
+                        // ela ser menor só porque a pessoa acompanha. Agenda
+                        // manual e evento continuam em 9px: o título deles é
+                        // texto livre, e costuma ser longo.
+                        <span
+                          className={`${isCompanionItem(cellItem.data) ? 'text-[11px]' : 'text-[9px]'} font-black uppercase tracking-tighter w-full leading-tight line-clamp-2`}
+                          title={cellItem.data.title}
+                        >
                           {cellItem.data.title}
                         </span>
                       )}

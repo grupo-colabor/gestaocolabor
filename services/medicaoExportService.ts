@@ -22,9 +22,10 @@ import { fetchInstructorAllocations } from './instructorAllocations';
 import { fetchMeasurements } from './measurements';
 import { fetchTrainings } from './trainings';
 import { fetchInstructors } from './instructors';
-import { computeInstructorHoursByDemand } from '../domain/instructorHours';
+import { computeInstructorHoursByDemand, effectiveDemandHours } from '../domain/instructorHours';
 import { applyMeasurementOverrides } from '../domain/measurementOverrides';
 import { fetchDemandParticipants } from './demandParticipants';
+import { fetchCompanionAllocations } from './companionAllocations';
 import { isNightDemand } from '../domain/demandDays';
 import { getDemandCategoria, isInternalDemand } from '../domain/demandLabel';
 import {
@@ -210,7 +211,10 @@ function mapAllocation(row: any): InstructorAllocation {
  * perto de estourar o corte silencioso de 1000 linhas do PostgREST.
  */
 export async function fetchMedicaoData(dataInicio: string, dataFim: string): Promise<MedicaoInstructorBlock[]> {
-  const [demandRows, allocationRows, measurementRows, trainingRows, instructorRows, companyRows, participantRows] =
+  const [
+    demandRows, allocationRows, measurementRows, trainingRows, instructorRows,
+    companyRows, participantRows, companionRows,
+  ] =
     await Promise.all([
       fetchDemands(),
       fetchInstructorAllocations(),
@@ -222,6 +226,9 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
       // da medição sairia com os dias da demanda inteira mesmo quando a pessoa
       // participou só de parte.
       fetchDemandParticipants(),
+      // Acompanhantes de demanda de cliente (F3). Uma linha POR DIA: são elas
+      // que dão os dias dele e, com isso, a proporção de horas.
+      fetchCompanionAllocations(),
     ]);
 
   const demands = (demandRows ?? []).map(mapDemand);
@@ -243,6 +250,12 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
     periodStart: dataInicio,
     periodEnd: dataFim,
   });
+
+  // Índices usados dos dois lados do override (a carga da demanda) e da
+  // montagem das linhas — declarados aqui em cima porque o override vem antes.
+  const demandsById = new Map(demands.map(d => [d.id, d]));
+  const trainingsById = buildTrainingsById(trainings);
+  const measurementByDemandId = new Map(measurements.map(m => [m.demandId, m]));
 
   /**
    * Medição multi-pessoa: os blocos são OVERRIDE por pessoa, nunca soma.
@@ -268,12 +281,22 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
       startDate: p.start_date,
       endDate: p.end_date,
     })),
+    companions: (companionRows ?? []).map(c => ({
+      demandId: c.demand_id,
+      instructorId: c.instructor_id,
+      startDate: c.start_date,
+    })),
+    // A carga da demanda para o default proporcional do acompanhante sai da
+    // MESMA função que o rateio usa (classHours > horasPrevistas > prática >
+    // treinamento). Recalcular a carga aqui criaria a segunda definição dela.
+    demandHours: (demandId: string) => {
+      const d = demandsById.get(demandId);
+      return d ? effectiveDemandHours(d, trainingsById, measurementByDemandId) : 0;
+    },
     periodStart: dataInicio,
     periodEnd: dataFim,
   });
 
-  const demandsById = new Map(demands.map(d => [d.id, d]));
-  const trainingsById = buildTrainingsById(trainings);
   const trainingNameById = new Map(trainings.map(t => [String(t.id), t.name]));
   const instructorsById = new Map(instructors.map(i => [i.id, i]));
 
@@ -334,6 +357,10 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
       // mesma que marca (N) na agenda; nunca reimplementar aqui.
       tipo: isInternalDemand(demand) ? 'Interna' : 'Treinamento',
       noturno: isNightDemand(demand),
+      // 5ª chave (D4): só ACOMPANHANTE se separa. Linha sem papel — todas as
+      // do rateio — é 'Titular', que é o que mantém a planilha de hoje
+      // batendo com a aba Tarifas de hoje.
+      papel: row.papel === 'ACOMPANHANTE' ? 'Acompanhante' : 'Titular',
       dias: row.dias,
       local: local || '—',
       modalidade: getModalityLabel(resolveDemandModality(demand, trainingsById)),

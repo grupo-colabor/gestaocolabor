@@ -55,6 +55,16 @@ export interface MedicaoDetailRow {
    * (isNightDemand): fim >= 19:00 ou o turno vira o dia.
    */
   noturno: boolean;
+  /**
+   * CHAVE DE TARIFA (F3, decisão D4). Acompanhante não ministra: a hora dele
+   * vale outra coisa, e sem este eixo a mesma pessoa na mesma empresa teria de
+   * ter uma tarifa só para os dois papéis.
+   *
+   * OBRIGATÓRIO de propósito, e não opcional com default: chave de SUMIFS que
+   * pode sair vazia zera o valor em silêncio — é a mesma classe do 'Não'
+   * literal da coluna Noturno, que já custou uma rodada de medição.
+   */
+  papel: TarifaPapel;
 }
 
 export interface MedicaoInstructorBlock {
@@ -182,6 +192,7 @@ const DETAIL_FIRST_DATA_ROW = 2;
 const DETAIL_COL_EMPRESA = 'B';
 const DETAIL_COL_TIPO = 'I';
 const DETAIL_COL_NOTURNO = 'K';
+const DETAIL_COL_PAPEL = 'L';
 /** Colunas calculadas da aba de detalhe. */
 const DETAIL_COL_HORAS = 'G';
 const DETAIL_COL_VALOR = 'H';
@@ -196,15 +207,22 @@ const TARIFA_COL_INSTRUTOR = 'A';
 const TARIFA_COL_EMPRESA = 'B';
 const TARIFA_COL_TIPO = 'C';
 const TARIFA_COL_NOTURNO = 'D';
-const TARIFA_COL_VALOR = 'E';
+const TARIFA_COL_PAPEL = 'E';
+const TARIFA_COL_VALOR = 'F';
 /** Índice 1-based da coluna digitável, para markAsInput. */
-const TARIFA_VALOR_IDX = 5;
+const TARIFA_VALOR_IDX = 6;
 
 /**
  * Rótulos que aparecem NA PLANILHA e são comparados literalmente pelo SUMIFS —
  * mudar qualquer um destes quebra o casamento entre detalhe e Tarifas.
  */
 export type TarifaTipo = 'Treinamento' | 'Interna';
+/**
+ * Rótulos do papel na planilha. Só ACOMPANHANTE se separa: participante de
+ * interna ministra a demanda (a F1 o definiu como titular pleno) e entra como
+ * 'Titular', o que mantém a tarifa das internas exatamente onde estava.
+ */
+export type TarifaPapel = 'Titular' | 'Acompanhante';
 const NOTURNO_SIM = 'Sim';
 /**
  * Diurno é 'Não' LITERAL, nunca célula vazia.
@@ -324,6 +342,7 @@ interface TarifaRow {
   empresa: string;
   tipo: TarifaTipo;
   noturno: boolean;
+  papel: TarifaPapel;
 }
 
 /**
@@ -340,13 +359,14 @@ function buildTarifaRows(blocks: MedicaoInstructorBlock[]): TarifaRow[] {
   for (const block of blocks) {
     const vistas = new Map<string, TarifaRow>();
     for (const linha of block.linhas) {
-      const chave = [linha.empresa, linha.tipo, linha.noturno ? '1' : '0'].join('\u0000');
+      const chave = [linha.empresa, linha.tipo, linha.noturno ? '1' : '0', linha.papel].join('\u0000');
       if (!vistas.has(chave)) {
         vistas.set(chave, {
           instrutor: block.nome,
           empresa: linha.empresa,
           tipo: linha.tipo,
           noturno: linha.noturno,
+          papel: linha.papel,
         });
       }
     }
@@ -355,7 +375,8 @@ function buildTarifaRows(blocks: MedicaoInstructorBlock[]): TarifaRow[] {
         (a, b) =>
           a.empresa.localeCompare(b.empresa, 'pt-BR') ||
           a.tipo.localeCompare(b.tipo, 'pt-BR') ||
-          Number(a.noturno) - Number(b.noturno)
+          Number(a.noturno) - Number(b.noturno) ||
+          a.papel.localeCompare(b.papel, 'pt-BR')
       )
     );
   }
@@ -445,26 +466,30 @@ export async function buildMedicaoWorkbook(
     { width: 38 }, // B Empresa
     { width: 16 }, // C Tipo      <- chave
     { width: 12 }, // D Noturno   <- chave
-    { width: 20 }, // E Hora/Aula <- input
+    { width: 16 }, // E Papel     <- chave
+    { width: 20 }, // F Hora/Aula <- input
   ];
-  const tarifasHeader = tarifas.addRow(['Instrutor', 'Empresa', 'Tipo', 'Noturno', 'Hora/Aula (R$)']);
+  const tarifasHeader = tarifas.addRow(['Instrutor', 'Empresa', 'Tipo', 'Noturno', 'Papel', 'Hora/Aula (R$)']);
   styleHeaderRow(tarifasHeader, TARIFA_VALOR_IDX);
 
   tarifasHeader.getCell(TARIFA_VALOR_IDX).note =
     'PREENCHA AQUI.\n\n' +
     'Esta é a única coluna a preencher em toda a planilha: o valor da hora/aula ' +
     'de cada linha, nas células amarelas abaixo.\n\n' +
-    'Cada linha é uma combinação de instrutor + empresa + tipo + noturno, porque ' +
-    'a tarifa muda nos três eixos: por cliente, entre treinamento e demanda ' +
-    'interna, e entre hora diurna e noturna. O mesmo instrutor na mesma empresa ' +
-    'pode aparecer em mais de uma linha — preencha todas.\n\n' +
+    'Cada linha é uma combinação de instrutor + empresa + tipo + noturno + papel, ' +
+    'porque a tarifa muda nos quatro eixos: por cliente, entre treinamento e ' +
+    'demanda interna, entre hora diurna e noturna, e entre quem ministra e quem ' +
+    'acompanha. O mesmo instrutor na mesma empresa pode aparecer em mais de uma ' +
+    'linha — preencha todas.\n\n' +
     'Tipo: "Treinamento" ou "Interna". Noturno: "Sim" quando o turno termina ' +
-    '19:00 ou mais tarde (ou vira o dia); "Não" quando é diurno.\n\n' +
+    '19:00 ou mais tarde (ou vira o dia); "Não" quando é diurno. Papel: ' +
+    '"Titular" para quem ministra (inclusive o participante de demanda interna) ' +
+    'e "Acompanhante" para quem acompanha sem ministrar.\n\n' +
     'Ao preencher, o Excel recalcula sozinho a coluna Valor da aba do instrutor, ' +
     'o Total (R$) e o TOTAL GERAL do Resumo.';
 
-  for (const { instrutor, empresa, tipo, noturno } of tarifaRows) {
-    const row = tarifas.addRow([instrutor, empresa, tipo, noturnoLabel(noturno), null]);
+  for (const { instrutor, empresa, tipo, noturno, papel } of tarifaRows) {
+    const row = tarifas.addRow([instrutor, empresa, tipo, noturnoLabel(noturno), papel, null]);
     const tarifaCell = row.getCell(TARIFA_VALOR_IDX);
     markAsInput(tarifaCell);
     tarifaCell.numFmt = FMT_MOEDA;
@@ -559,6 +584,7 @@ export async function buildMedicaoWorkbook(
       { width: 16 }, // I Tipo        <- chave de tarifa
       { width: 22 }, // J Categoria   (informativa)
       { width: 12 }, // K Noturno     <- chave de tarifa
+      { width: 16 }, // L Papel       <- chave de tarifa
     ];
     // ⚠️ As colunas novas entram no FIM, depois de Valor. Empresa (B), Horas (G)
     // e Valor (H) NÃO podem mudar de letra: a fórmula de valor referencia
@@ -568,9 +594,9 @@ export async function buildMedicaoWorkbook(
     // duas com a aba Tarifas. J (Categoria) é só informativa.
     const detailHeader = ws.addRow([
       'Código', 'Empresa', 'Treinamento', 'Data', 'Local', 'Modalidade', 'Horas',
-      'Valor (R$) — automático', 'Tipo', 'Categoria', 'Noturno',
+      'Valor (R$) — automático', 'Tipo', 'Categoria', 'Noturno', 'Papel',
     ]);
-    styleHeaderRow(detailHeader, 11);
+    styleHeaderRow(detailHeader, 12);
 
     // Foi exatamente aqui que o valor da hora foi digitado por cima da fórmula
     // na primeira rodada real — daí a nota, além da proteção da aba.
@@ -578,7 +604,8 @@ export async function buildMedicaoWorkbook(
       'NÃO PREENCHA AQUI.\n\n' +
       'Esta coluna é calculada: horas × a tarifa desta linha.\n\n' +
       'A tarifa se preenche na aba Tarifas, na linha que cruza este instrutor ' +
-      'com a empresa da coluna B, o tipo da coluna I e o noturno da coluna K.';
+      'com a empresa da coluna B, o tipo da coluna I, o noturno da coluna K e o ' +
+      'papel da coluna L.';
 
     const nomeCriterio = criteriaText(block.nome);
 
@@ -596,6 +623,7 @@ export async function buildMedicaoWorkbook(
         linha.tipo,
         linha.categoria || null,
         noturnoLabel(linha.noturno),
+        linha.papel,
       ]);
       row.getCell(7).numFmt = FMT_HORAS;
 
@@ -611,13 +639,14 @@ export async function buildMedicaoWorkbook(
           `${TARIFAS_SHEET}!$${TARIFA_COL_INSTRUTOR}:$${TARIFA_COL_INSTRUTOR},${nomeCriterio},` +
           `${TARIFAS_SHEET}!$${TARIFA_COL_EMPRESA}:$${TARIFA_COL_EMPRESA},${DETAIL_COL_EMPRESA}${rowIdx},` +
           `${TARIFAS_SHEET}!$${TARIFA_COL_TIPO}:$${TARIFA_COL_TIPO},${DETAIL_COL_TIPO}${rowIdx},` +
-          `${TARIFAS_SHEET}!$${TARIFA_COL_NOTURNO}:$${TARIFA_COL_NOTURNO},${DETAIL_COL_NOTURNO}${rowIdx})`,
+          `${TARIFAS_SHEET}!$${TARIFA_COL_NOTURNO}:$${TARIFA_COL_NOTURNO},${DETAIL_COL_NOTURNO}${rowIdx},` +
+          `${TARIFAS_SHEET}!$${TARIFA_COL_PAPEL}:$${TARIFA_COL_PAPEL},${DETAIL_COL_PAPEL}${rowIdx})`,
       };
       valorCell.numFmt = FMT_MOEDA;
     });
 
     const lastDetailRow = DETAIL_FIRST_DATA_ROW + block.linhas.length - 1;
-    const totalRow = ws.addRow(['', '', '', '', '', 'Total:', null, null, '', '', '']);
+    const totalRow = ws.addRow(['', '', '', '', '', 'Total:', null, null, '', '', '', '']);
     totalRow.getCell(6).font = { bold: true };
     totalRow.getCell(6).alignment = { horizontal: 'right' };
     totalRow.getCell(7).value = {

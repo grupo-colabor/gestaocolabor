@@ -33,7 +33,8 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Bord
 import * as pdfjsLib from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
 import { calculateDemandStatus } from '../domain/demandStatus';
-import { demandIntersectsRange, isNightDemand } from '../domain/demandDays';
+import { demandIntersectsRange, isNightDemand, getDemandDays } from '../domain/demandDays';
+import { companionDaysFromRows, companionDefaultHours } from '../domain/measurementOverrides';
 import { supabase } from '../lib/supabase';
 import { logAction } from '../services/auditLog';
 
@@ -188,7 +189,7 @@ const MeasurementView: React.FC = () => {
   const {
     measurements, demands, companies, trainings, regions, instructors,
     updateMeasurement, updateDemand,
-    demandParticipants, instructorAllocations,
+    demandParticipants, instructorAllocations, companionAllocations,
     notificationTarget, setNotificationTarget,
   } = useApp();
 
@@ -439,39 +440,104 @@ const totals = useMemo(() => {
   const trainingDefaultHours = getDemandDefaultHours(_selDemand);
   const isClassHoursEdited = !!selectedMeasurement && classHours !== trainingDefaultHours;
 
-  /* ───────────────── MEDICAO POR PESSOA (F2) — interna only ─────────────
+  /* ───────────────── MEDICAO POR PESSOA (F2 interna, F3 cliente) ─────────
    *
-   * A lista de pessoas vem de DUAS fontes: o titular (demands.instructor_id,
-   * com o fallback de instructor_allocations via resolveDemandInstructors) e
-   * os participantes da demanda. Nao vem do JSON da medicao — senao alguem
-   * adicionado depois do primeiro save nunca apareceria.
+   * A lista de pessoas vem do CADASTRO, nunca do JSON da medicao — senao
+   * alguem adicionado depois do primeiro save nunca apareceria:
    *
-   * ⚠️ ITEM 7 DO ESCOPO: a lista sai VAZIA para demanda de cliente e para
-   * interna sem participante. Tudo o que e novo na tela esta atras de
-   * `temBlocosPorPessoa`, entao esses dois casos renderizam exatamente o que
-   * renderizavam antes — mesma marcacao, mesmos campos, mesmo save.
+   *   • interna  → titular + participantes (`demand_participants`);
+   *   • cliente  → titulares (resolveDemandInstructors, que pode devolver mais
+   *                de um quando a demanda foi dividida por dias) + os
+   *                acompanhantes distintos de `companion_allocations`.
+   *
+   * ⚠️ ITEM 7 DO ESCOPO: a lista sai VAZIA quando nao ha uma SEGUNDA CATEGORIA
+   * de pessoa — interna sem participante, cliente sem acompanhante. Tudo o que
+   * e novo na tela esta atras de `temBlocosPorPessoa`, entao esses casos
+   * renderizam exatamente o que renderizavam antes.
+   *
+   * O corte e por acompanhante/participante, e nao por `length > 1`, de
+   * proposito: demanda de cliente dividida entre dois titulares JA EXISTE aos
+   * montes e continua abrindo o painel de sempre. Trocar o painel dela seria
+   * mudar medicao de cliente sem acompanhante — exatamente o que o item 7
+   * proibe.
    */
   const pessoasDaMedicao = useMemo(() => {
-    if (!_selDemand || !isInterna(_selDemand)) return [];
+    if (!_selDemand) return [];
 
-    const participantes = demandParticipants.filter(p => p.demandId === _selDemand.id);
-    if (participantes.length === 0) return [];
+    const titulares = resolveDemandInstructors(
+      _selDemand.id,
+      _selDemand.instructorId,
+      instructorAllocations
+    )
+      .map(t => t.instructorId)
+      .filter(Boolean);
 
-    const titularId =
-      _selDemand.instructorId ||
-      resolveDemandInstructors(_selDemand.id, _selDemand.instructorId, instructorAllocations)[0]?.instructorId;
+    if (isInterna(_selDemand)) {
+      const participantes = demandParticipants.filter(p => p.demandId === _selDemand.id);
+      if (participantes.length === 0) return [];
 
-    const lista: { instructorId: string; papel: 'TITULAR' | 'PARTICIPANTE' }[] = [];
-    if (titularId) lista.push({ instructorId: titularId, papel: 'TITULAR' });
-    for (const p of participantes) {
-      // Guarda contra dado torto: participante que coincide com o titular nao
-      // pode virar duas secoes (e dois pagamentos).
-      if (p.instructorId && p.instructorId !== titularId) {
-        lista.push({ instructorId: p.instructorId, papel: 'PARTICIPANTE' });
+      // Interna continua com UM titular: ela nao tem split de dias.
+      const titularId = _selDemand.instructorId || titulares[0];
+
+      const lista: { instructorId: string; papel: 'TITULAR' | 'PARTICIPANTE' | 'ACOMPANHANTE' }[] = [];
+      if (titularId) lista.push({ instructorId: titularId, papel: 'TITULAR' });
+      for (const p of participantes) {
+        // Guarda contra dado torto: participante que coincide com o titular nao
+        // pode virar duas secoes (e dois pagamentos).
+        if (p.instructorId && p.instructorId !== titularId) {
+          lista.push({ instructorId: p.instructorId, papel: 'PARTICIPANTE' });
+        }
       }
+      return lista;
     }
+
+    // --- cliente (F3) ---
+    // Uma linha POR DIA em companion_allocations: a lista e de pessoas
+    // distintas, senao um acompanhante de 3 dias viraria 3 secoes.
+    const acompanhantes: string[] = [];
+    const vistos = new Set<string>(titulares);
+    for (const ca of companionAllocations || []) {
+      if (ca.demandId !== _selDemand.id || !ca.instructorId) continue;
+      // Quem ja e titular na demanda nao vira uma segunda secao (e um segundo
+      // pagamento) por tambem ter linha de acompanhante.
+      if (vistos.has(ca.instructorId)) continue;
+      vistos.add(ca.instructorId);
+      acompanhantes.push(ca.instructorId);
+    }
+    if (acompanhantes.length === 0) return [];
+
+    const lista: { instructorId: string; papel: 'TITULAR' | 'PARTICIPANTE' | 'ACOMPANHANTE' }[] = [];
+    for (const id of titulares) lista.push({ instructorId: id, papel: 'TITULAR' });
+    for (const id of acompanhantes) lista.push({ instructorId: id, papel: 'ACOMPANHANTE' });
     return lista;
-  }, [_selDemand, demandParticipants, instructorAllocations]);
+  }, [_selDemand, demandParticipants, instructorAllocations, companionAllocations]);
+
+  /**
+   * O default de horas de CADA pessoa — o placeholder do campo, nunca gravado.
+   *
+   * Titular e participante: a carga da demanda, como sempre. Acompanhante:
+   * proporcional aos dias que ele acompanha, pela regra pura de
+   * domain/measurementOverrides — a MESMA que o Excel aplica. Se as duas
+   * divergirem, o número que o painel mostra deixa de ser o que a planilha paga.
+   *
+   * A carga usada como base segue a precedência do rateio (`effectiveDemandHours`):
+   * `classHours` da medição quando informado, senão o padrão da demanda. A
+   * divergência conhecida continua sendo a de sempre — em demanda HÍBRIDA o
+   * `classHours` aberto com as horas cheias do treinamento passa na frente das
+   * horas práticas; é anterior à F3 e vale para o titular do mesmo jeito.
+   */
+  const horasPadraoDaPessoa = (instructorId: string, papel: string): number => {
+    const cargaDaDemanda = classHours || trainingDefaultHours;
+    if (papel !== 'ACOMPANHANTE' || !_selDemand) return trainingDefaultHours;
+    const diasDaDemanda = getDemandDays(_selDemand as any);
+    const dias = companionDaysFromRows(
+      (companionAllocations || [])
+        .filter(ca => ca.demandId === _selDemand.id && ca.instructorId === instructorId)
+        .map(ca => ({ demandId: ca.demandId, instructorId: ca.instructorId, startDate: ca.startDate })),
+      diasDaDemanda
+    );
+    return companionDefaultHours(cargaDaDemanda, diasDaDemanda.length, dias.length);
+  };
 
   /** Gate unico do que e novo na tela. Falso => painel identico ao de hoje. */
   const temBlocosPorPessoa = pessoasDaMedicao.length > 1;
@@ -505,13 +571,18 @@ const totals = useMemo(() => {
 
     const blocos = normalizeMeasurementBlocks(paraNormalizar as any, titularId);
 
-    return blocos.map((b, i) => ({
-      ...b,
-      papel: pessoasDaMedicao[i]?.papel ?? b.papel,
-      nome: getInstructorName(b.instructorId),
-      despesas: blockExpenseBreakdown(paraNormalizar as any, b),
-    }));
-  }, [selectedMeasurement, temBlocosPorPessoa, pessoasDaMedicao, instructors]);
+    return blocos.map((b, i) => {
+      const papel = pessoasDaMedicao[i]?.papel ?? b.papel;
+      return {
+        ...b,
+        papel,
+        nome: getInstructorName(b.instructorId),
+        despesas: blockExpenseBreakdown(paraNormalizar as any, b),
+        // Placeholder DESTA pessoa: acompanhante tem carga proporcional.
+        horasPadrao: horasPadraoDaPessoa(b.instructorId, papel),
+      };
+    });
+  }, [selectedMeasurement, temBlocosPorPessoa, pessoasDaMedicao, instructors, companionAllocations, trainingDefaultHours, classHours]);
 
   /**
    * Grava um campo do bloco de UMA pessoa no estado local.
@@ -1856,9 +1927,17 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                       <div className="min-w-0">
                         <p className="text-sm font-black text-slate-800 truncate">{secao.nome}</p>
                         <span className={`text-[9px] font-black uppercase tracking-widest ${
-                          secao.papel === 'TITULAR' ? 'text-blue-600' : 'text-emerald-600'
+                          secao.papel === 'TITULAR'
+                            ? 'text-blue-600'
+                            : secao.papel === 'ACOMPANHANTE'
+                              ? 'text-teal-600'
+                              : 'text-emerald-600'
                         }`}>
-                          {secao.papel === 'TITULAR' ? 'Titular' : 'Participante'}
+                          {secao.papel === 'TITULAR'
+                            ? 'Titular'
+                            : secao.papel === 'ACOMPANHANTE'
+                              ? 'Acompanhante'
+                              : 'Participante'}
                         </span>
                       </div>
                     </div>
@@ -1882,7 +1961,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                             step="0.5"
                             className="flex-1 border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                             value={secao.horasInformadas ? String(secao.horas ?? '') : ''}
-                            placeholder={String(trainingDefaultHours)}
+                            placeholder={String(secao.horasPadrao)}
                             onChange={e => {
                               const raw = e.target.value;
                               // Campo limpo volta a "não informado" — NÃO vira 0.
@@ -1903,7 +1982,12 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                         <p className="text-[10px] mt-1">
                           {secao.horasInformadas
                             ? <span className="text-amber-500 font-bold">Editado manualmente</span>
-                            : <span className="text-slate-400">Padrão da demanda ({trainingDefaultHours}h)</span>}
+                            : secao.papel === 'ACOMPANHANTE'
+                              // O acompanhante quase nunca acompanha a demanda
+                              // inteira: dizer só "padrão da demanda" esconderia
+                              // de onde saiu o número.
+                              ? <span className="text-slate-400">Proporcional aos dias acompanhados ({secao.horasPadrao}h)</span>
+                              : <span className="text-slate-400">Padrão da demanda ({secao.horasPadrao}h)</span>}
                         </p>
                       </div>
 
@@ -1938,14 +2022,14 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                         attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
                         onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                         onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                        showReembolsavel={false}
+                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
                       />
                       <CategoryBlock
                         category="LOCOMOCAO" label="Locomoção" icon={Truck} colorClass="text-amber-500"
                         attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
                         onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                         onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                        showReembolsavel={false}
+                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
                       />
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1954,21 +2038,21 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                         attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
                         onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                         onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                        showReembolsavel={false}
+                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
                       />
                       <CategoryBlock
                         category="ALMOCO" label="Almoço" icon={Tag} colorClass="text-blue-500"
                         attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
                         onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                         onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                        showReembolsavel={false}
+                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
                       />
                       <CategoryBlock
                         category="JANTAR" label="Jantar" icon={Tag} colorClass="text-blue-600"
                         attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
                         onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                         onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                        showReembolsavel={false}
+                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
                       />
                     </div>
                   </div>

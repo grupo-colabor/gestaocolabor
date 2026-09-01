@@ -34,7 +34,12 @@ import {
   computePanelExpenseBreakdown,
   type TotalizableMeasurement,
 } from '../domain/measurementTotals';
-import { applyMeasurementOverrides, type HoursRowLike } from '../domain/measurementOverrides';
+import {
+  applyMeasurementOverrides,
+  companionDefaultHours,
+  companionDaysFromRows,
+  type HoursRowLike,
+} from '../domain/measurementOverrides';
 import fs from 'fs';
 import path from 'path';
 
@@ -445,13 +450,25 @@ console.log('\n[6] Painel: o novo fica atrás do gate');
     'o gate é a contagem de pessoas, não o tipo da demanda',
     painel.includes('const temBlocosPorPessoa = pessoasDaMedicao.length > 1;')
   );
+  // A F3 abriu o painel para CLIENTE COM ACOMPANHANTE. O corte deixou de ser
+  // "cliente nunca" e passou a ser "sem uma SEGUNDA CATEGORIA de pessoa" —
+  // interna sem participante e cliente sem acompanhante continuam do lado de
+  // fora, e é isso que mantém a medição de cliente de hoje intacta.
   check(
-    'e a lista de pessoas sai vazia para demanda de cliente',
-    /pessoasDaMedicao = useMemo\(\(\) => \{[\s\S]{0,200}if \(!_selDemand \|\| !isInterna\(_selDemand\)\) return \[\];/.test(painel)
+    'interna sem participante sai vazia',
+    /const participantes = demandParticipants\.filter[\s\S]{0,120}if \(participantes\.length === 0\) return \[\];/.test(painel)
   );
   check(
-    'e para interna sem participante',
-    /const participantes = demandParticipants\.filter[\s\S]{0,120}if \(participantes\.length === 0\) return \[\];/.test(painel)
+    'cliente sem acompanhante sai vazia',
+    /if \(acompanhantes\.length === 0\) return \[\];/.test(painel)
+  );
+  // O caso que NÃO pode mudar: cliente dividido entre dois titulares e sem
+  // acompanhante nenhum. Ele tem 2 pessoas e passaria no `length > 1` — o que o
+  // segura é a lista sair vazia antes disso.
+  check(
+    'e o corte vem ANTES de montar a lista de titulares do cliente',
+    painel.indexOf('if (acompanhantes.length === 0) return [];') <
+      painel.indexOf("for (const id of titulares) lista.push({ instructorId: id, papel: 'TITULAR' });")
   );
 
   // As seções por pessoa e o bloco de uma pessoa são MUTUAMENTE exclusivos —
@@ -475,14 +492,26 @@ console.log('\n[6] Painel: o novo fica atrás do gate');
   // adicionado depois do primeiro save nunca apareceria.
   check(
     'titular vem de demands.instructor_id com fallback de allocations',
-    painel.includes('resolveDemandInstructors(_selDemand.id, _selDemand.instructorId, instructorAllocations)')
+    /resolveDemandInstructors\(\s*_selDemand\.id,\s*_selDemand\.instructorId,\s*instructorAllocations\s*\)/.test(painel)
+  );
+  check(
+    'e os acompanhantes, de companionAllocations (uma linha POR DIA, deduplicada)',
+    painel.includes('for (const ca of companionAllocations || []) {') &&
+      painel.includes('if (vistos.has(ca.instructorId)) continue;')
   );
   check('e os participantes, de demandParticipants', painel.includes('demandParticipants.filter(p => p.demandId === _selDemand.id)'));
 
   // O default de horas é PLACEHOLDER, nunca valor.
   check(
     'o campo de horas usa placeholder para o default',
-    painel.includes('placeholder={String(trainingDefaultHours)}')
+    painel.includes('placeholder={String(secao.horasPadrao)}')
+  );
+  check(
+    'e o default é POR PESSOA (acompanhante tem carga proporcional)',
+    painel.includes('horasPadrao: horasPadraoDaPessoa(b.instructorId, papel)') &&
+      painel.includes('companionDefaultHours(cargaDaDemanda, diasDaDemanda.length, dias.length)') &&
+      // A base é a mesma precedência do rateio: classHours informado manda.
+      painel.includes('const cargaDaDemanda = classHours || trainingDefaultHours;')
   );
   check(
     'campo limpo volta a NÃO INFORMADO, não a zero',
@@ -551,11 +580,303 @@ console.log('\n[7] Fio do export de medição');
   );
   check('o período do export é repassado ao override', svc.includes('periodStart: dataInicio,') && svc.includes('periodEnd: dataFim,'));
 
-  // D5: a aba Tarifas continua manual nesta fase — valorHH do bloco NÃO
-  // alimenta a planilha.
+  check(
+    'os acompanhantes também (é deles que saem os dias e a proporção)',
+    svc.includes('fetchCompanionAllocations()') && svc.includes('companions: (companionRows ?? []).map')
+  );
+  check(
+    'a carga da demanda vem da MESMA função do rateio',
+    svc.includes('effectiveDemandHours(d, trainingsById, measurementByDemandId)')
+  );
+
+  // D4: a chave de tarifa GANHOU o papel — é a única mudança de chave da F3.
   const workbook = ler('services/medicaoWorkbook.ts');
-  check('a chave de tarifa não mudou', workbook.includes("const chave = [linha.empresa, linha.tipo, linha.noturno ? '1' : '0'].join('\\u0000');"));
+  check(
+    'a chave de tarifa ganhou o papel (D4)',
+    workbook.includes("const chave = [linha.empresa, linha.tipo, linha.noturno ? '1' : '0', linha.papel].join('\\u0000');")
+  );
+  check(
+    'e o SUMIFS cruza a coluna nova',
+    workbook.includes('${TARIFA_COL_PAPEL}:$${TARIFA_COL_PAPEL},${DETAIL_COL_PAPEL}${rowIdx})')
+  );
+  check(
+    'papel é obrigatório na linha de detalhe (chave vazia zera o valor em silêncio)',
+    /papel: TarifaPapel;/.test(workbook) && !/papel\?: TarifaPapel/.test(workbook)
+  );
+
+  // D5: a aba Tarifas continua MANUAL — valorHH do bloco NÃO alimenta a planilha.
   check('e o valorHH do bloco não vaza para o workbook', !workbook.includes('valorHH') && !svc.includes('valorHH'));
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [8] F3 — ACOMPANHANTE DE CLIENTE NA MEDIÇÃO
+ *
+ * Acompanhante não está em `instructor_allocations` (de propósito: aquela
+ * tabela modela DIVISÃO de dias e o rateio dividiria a carga entre quem
+ * trabalha nos mesmos dias). Consequência: hoje ele vale ZERO na planilha.
+ *
+ * A F3 o insere pela mesma porta do participante, com UMA diferença que é a
+ * regra inteira: o default de horas é PROPORCIONAL aos dias que ele acompanha
+ * (1 dia numa demanda de 2 dias e 8h = 4h), porque acompanhante quase nunca
+ * acompanha a demanda inteira.
+ *
+ * As duas direções do erro estão cobertas: pagar a carga cheia por um dia
+ * (caro) e pagar zero (o de hoje).
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[8] F3 — acompanhante de cliente');
+{
+  const DEMANDA_CLIENTE: any = {
+    id: 'DEM-C',
+    tipo: 'cliente',
+    dateMode: 'CONTINUO',
+    startDate: '2026-07-06T08:00',
+    endDate: '2026-07-07T18:00',
+    instructorId: 'TITULAR',
+  };
+  const D1 = '2026-07-06';
+  const D2 = '2026-07-07';
+
+  /** Demanda de 2 dias e 8h — o exemplo do enunciado. */
+  const CARGA = () => 8;
+
+  const medicao = (participantes: any[]) => ({
+    demandId: 'DEM-C',
+    attachments: [],
+    expenses: { classHours: 8, hourRate: 100, participantes },
+  });
+
+  const rateioTitular: HoursRowLike[] = [
+    { instructorId: 'TITULAR', demandId: 'DEM-C', horas: 8, dias: [D1, D2], dividida: false },
+  ];
+
+  /* ---- a regra pura ---- */
+  eq('1 dia de 2, demanda de 8h -> 4h', companionDefaultHours(8, 2, 1), 4);
+  eq('os 2 dias de 2 -> a carga cheia', companionDefaultHours(8, 2, 2), 8);
+  eq('1 dia de 3, demanda de 10h -> 3.33 (2 casas)', companionDefaultHours(10, 3, 1), 3.33);
+  // Nenhuma das bordas vira um número inventado: sem carga, sem dias de
+  // demanda ou sem dias acompanhados, não há proporção — e 0 aqui significa
+  // "não sei", que a inserção trata como "não insere linha".
+  eq('sem carga conhecida não inventa horas', companionDefaultHours(0, 2, 1), 0);
+  eq('sem dia acompanhado idem', companionDefaultHours(8, 2, 0), 0);
+  // Dado torto não faz a conta passar de 100%.
+  eq('mais dias que a demanda não paga mais que a carga', companionDefaultHours(8, 2, 5), 8);
+
+  /* ---- os dias vêm das linhas dele (uma por dia) ---- */
+  eq(
+    'acompanhante de 1 dia tem 1 dia',
+    companionDaysFromRows([{ demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D1 + 'T08:00' }], [D1, D2]).join(','),
+    D1
+  );
+  eq(
+    'linha fora dos dias da demanda não conta (dado histórico)',
+    companionDaysFromRows([{ demandId: 'DEM-C', instructorId: 'ACOMP', startDate: '2026-07-20T08:00' }], [D1, D2]).length,
+    0
+  );
+  eq(
+    'e dois registros do mesmo dia contam UM dia',
+    companionDaysFromRows(
+      [{ demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D1 + 'T08:00' },
+       { demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D1 + 'T13:00' }],
+      [D1, D2]
+    ).length,
+    1
+  );
+
+  /* ---- ponta a ponta: 1 dia de 2 vira 4h ---- */
+  {
+    const rows = applyMeasurementOverrides({
+      rows: rateioTitular,
+      measurements: [medicao([
+        { instructorId: 'TITULAR', papel: 'TITULAR' },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE' },
+      ])] as any,
+      demands: [DEMANDA_CLIENTE],
+      companions: [{ demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D1 + 'T08:00' }],
+      demandHours: CARGA,
+    });
+
+    const titular = rows.find(r => r.instructorId === 'TITULAR');
+    const acomp = rows.find(r => r.instructorId === 'ACOMP');
+
+    eq('o titular continua com o rateio intacto', titular?.horas, 8);
+    eq('e continua com os dias do rateio', titular?.dias.join(','), [D1, D2].join(','));
+    eq('o acompanhante entra com 4h (8h x 1/2)', acomp?.horas, 4);
+    eq('e só com o dia dele', acomp?.dias.join(','), D1);
+    eq('marcado como ACOMPANHANTE (a 5a chave de tarifa)', acomp?.papel, 'ACOMPANHANTE');
+
+    // CONTRAPROVA do estado de hoje: sem a F3 o acompanhante não existe na
+    // planilha. É o bug que esta fase resolve.
+    const semF3 = applyMeasurementOverrides({
+      rows: rateioTitular,
+      measurements: [medicao([
+        { instructorId: 'TITULAR', papel: 'TITULAR' },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE' },
+      ])] as any,
+      demands: [DEMANDA_CLIENTE],
+      // sem `companions`: nenhuma linha, logo nenhum dia, logo nada a pagar
+      demandHours: CARGA,
+    });
+    eq(
+      '(contraprova) sem as linhas de acompanhante ele não entra',
+      semF3.filter(r => r.instructorId === 'ACOMP').length,
+      0
+    );
+
+    // CONTRAPROVA da direção CARA: pagar a carga cheia por um dia.
+    check('e 4h não é a carga cheia (o erro caro)', acomp!.horas !== 8);
+  }
+
+  /* ---- override manual manda ---- */
+  {
+    const rows = applyMeasurementOverrides({
+      rows: rateioTitular,
+      measurements: [medicao([
+        { instructorId: 'TITULAR', papel: 'TITULAR' },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', horas: 6 },
+      ])] as any,
+      demands: [DEMANDA_CLIENTE],
+      companions: [{ demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D1 + 'T08:00' }],
+      demandHours: CARGA,
+    });
+    eq('horas digitadas vencem o proporcional', rows.find(r => r.instructorId === 'ACOMP')?.horas, 6);
+
+    // E o zero digitado é um zero de verdade: some da planilha em vez de
+    // reviver o default (mesma regra do participante).
+    const comZero = applyMeasurementOverrides({
+      rows: rateioTitular,
+      measurements: [medicao([
+        { instructorId: 'TITULAR', papel: 'TITULAR' },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', horas: 0 },
+      ])] as any,
+      demands: [DEMANDA_CLIENTE],
+      companions: [{ demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D1 + 'T08:00' }],
+      demandHours: CARGA,
+    });
+    eq('zero digitado é decisão, não ausência', comZero.filter(r => r.instructorId === 'ACOMP').length, 0);
+  }
+
+  /* ---- ITEM 7: cliente SEM acompanhante não muda nada ---- */
+  {
+    const rows = applyMeasurementOverrides({
+      rows: rateioTitular,
+      measurements: [{
+        demandId: 'DEM-C',
+        attachments: [],
+        expenses: { classHours: 8, hourRate: 100 },   // v1: sem `participantes`
+      }] as any,
+      demands: [DEMANDA_CLIENTE],
+      demandHours: CARGA,
+    });
+    eq('cliente sem acompanhante: uma linha só', rows.length, 1);
+    eq('com as horas do rateio', rows[0].horas, 8);
+    eq('e sem papel (a chave de tarifa continua a de sempre)', rows[0].papel, undefined);
+
+    const blocos = normalizeMeasurementBlocks(
+      { attachments: [], expenses: { classHours: 8, hourRate: 100 } } as any, 'TITULAR'
+    );
+    eq('e o painel dela continua com UM bloco', blocos.length, 1);
+    eq('que é o classHours x hourRate de sempre', blockHoraAula(blocos[0]), 800);
+  }
+
+  /* ---- dois titulares por split + um acompanhante ---- */
+  {
+    // Demanda de 16h dividida por dias: cada titular 8h. A soma dos titulares
+    // TEM de continuar sendo a carga — é a propriedade que o rateio garante e
+    // que a inserção do acompanhante não pode contaminar.
+    const rateioSplit: HoursRowLike[] = [
+      { instructorId: 'T1', demandId: 'DEM-C', horas: 8, dias: [D1], dividida: true },
+      { instructorId: 'T2', demandId: 'DEM-C', horas: 8, dias: [D2], dividida: true },
+    ];
+
+    const rows = applyMeasurementOverrides({
+      rows: rateioSplit,
+      measurements: [medicao([
+        { instructorId: 'T1', papel: 'TITULAR' },
+        { instructorId: 'T2', papel: 'TITULAR' },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE' },
+      ])] as any,
+      demands: [DEMANDA_CLIENTE],
+      companions: [{ demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D2 + 'T08:00' }],
+      demandHours: () => 16,
+    });
+
+    const dosTitulares = rows.filter(r => r.instructorId.startsWith('T'));
+    eq('os dois titulares continuam na planilha', dosTitulares.length, 2);
+    eq(
+      'e a soma deles continua sendo a carga (16h, não 32h)',
+      dosTitulares.reduce((acc, r) => acc + r.horas, 0),
+      16
+    );
+    const acomp = rows.find(r => r.instructorId === 'ACOMP');
+    eq('o acompanhante entra À PARTE, com 1 dia de 2 de uma demanda de 16h', acomp?.horas, 8);
+    eq('e no dia dele', acomp?.dias.join(','), D2);
+    eq('total de linhas: 2 titulares + 1 acompanhante', rows.length, 3);
+  }
+
+  /* ---- D4: a mesma pessoa em dois papéis vira duas linhas distintas ---- */
+  {
+    const OUTRA: any = { ...DEMANDA_CLIENTE, id: 'DEM-D' };
+    const rows = applyMeasurementOverrides({
+      rows: [
+        { instructorId: 'P', demandId: 'DEM-C', horas: 8, dias: [D1, D2], dividida: false },
+        { instructorId: 'OUTRO', demandId: 'DEM-D', horas: 8, dias: [D1, D2], dividida: false },
+      ],
+      measurements: [
+        medicao([{ instructorId: 'P', papel: 'TITULAR' }]),
+        {
+          demandId: 'DEM-D',
+          attachments: [],
+          expenses: {
+            classHours: 8, hourRate: 100,
+            participantes: [{ instructorId: 'OUTRO', papel: 'TITULAR' }, { instructorId: 'P', papel: 'ACOMPANHANTE' }],
+          },
+        },
+      ] as any,
+      demands: [DEMANDA_CLIENTE, OUTRA],
+      companions: [{ demandId: 'DEM-D', instructorId: 'P', startDate: D1 + 'T08:00' }],
+      demandHours: CARGA,
+    });
+
+    const daPessoa = rows.filter(r => r.instructorId === 'P');
+    eq('a mesma pessoa aparece nas duas demandas', daPessoa.length, 2);
+    eq(
+      'com papéis diferentes — é o que separa as duas tarifas (D4)',
+      daPessoa.map(r => r.papel ?? 'TITULAR').sort().join('|'),
+      'ACOMPANHANTE|TITULAR'
+    );
+    eq(
+      'e ministrando ela mantém a carga cheia',
+      daPessoa.find(r => r.demandId === 'DEM-C')?.horas,
+      8
+    );
+    eq(
+      'acompanhando, o proporcional',
+      daPessoa.find(r => r.demandId === 'DEM-D')?.horas,
+      4
+    );
+  }
+
+  /* ---- recorte de período: o acompanhante é cortado como o titular ---- */
+  {
+    const rows = applyMeasurementOverrides({
+      rows: rateioTitular,
+      measurements: [medicao([
+        { instructorId: 'TITULAR', papel: 'TITULAR' },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE' },
+      ])] as any,
+      demands: [DEMANDA_CLIENTE],
+      companions: [
+        { demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D1 + 'T08:00' },
+        { demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D2 + 'T08:00' },
+      ],
+      demandHours: CARGA,
+      periodStart: D2,
+      periodEnd: D2,
+    });
+    const acomp = rows.find(r => r.instructorId === 'ACOMP');
+    eq('fora do período sobra 1 dia', acomp?.dias.join(','), D2);
+    eq('e as horas acompanham o recorte', acomp?.horas, 4);
+  }
 }
 /* ────────────────────────────────────────────────────────────────────────── */
 console.log(

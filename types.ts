@@ -154,6 +154,22 @@ export interface CompanionAllocation {
   endDate: string;
 }
 
+/**
+ * Participante de demanda INTERNA — titular pleno, no mesmo nível do instrutor
+ * principal. Vive em `demand_participants`, NUNCA em `instructor_allocations`
+ * (aquela modela divisão destrutiva de dias; ver services/demandParticipants.ts).
+ *
+ * `startDate`/`endDate` são 'YYYY-MM-DD' (dia inteiro) e TUDO-OU-NADA:
+ * ambos ausentes = participa do período inteiro da demanda.
+ */
+export interface DemandParticipant {
+  id: string;
+  demandId: string;
+  instructorId: string;
+  startDate?: string | null;
+  endDate?: string | null;
+}
+
 export interface LogisticAllocation {
   id: string;
   demandId: string;
@@ -165,6 +181,8 @@ export interface LogisticAllocation {
 export interface LogisticaLocomocao {
   id: string;
   instructorName?: string;
+  /** Participante dono do bloco (migration 016). Ausente = bloco avulso/legado. */
+  instructorId?: string | null;
   transportType?: TransportType;
   rentalCompany?: RentalCompany;
   rentalOtherCompany?: string;
@@ -181,6 +199,8 @@ export interface LogisticaLocomocao {
 export interface LogisticaHospedagem {
   id: string;
   instructorName?: string;
+  /** Participante dono do bloco (migration 016). Ausente = bloco avulso/legado. */
+  instructorId?: string | null;
   accommodationType?: AccommodationType;
   hotelCity?: string;
   hotelName?: string;

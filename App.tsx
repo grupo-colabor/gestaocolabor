@@ -44,6 +44,7 @@ import type {
   LogisticAllocation,
   EvidenceData,
   CompanionAllocation,
+  DemandParticipant,
   Segment,
   Status,
   LogisticsType,
@@ -75,6 +76,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { isDemandDay, getDemandDays } from './domain/demandDays';
 import { isEAD, requiresLogistics } from './domain/modalityRules';
 import { hasResourceOverlap } from './domain/resourceConflict';
+import { hasPersonScheduleConflict } from './domain/personScheduleConflict';
 import { fetchInstructors, fetchInstructorTrainings, deleteInstructorById } from './services/instructors';
 import { fetchMeasurements, upsertMeasurementByDemandId } from './services/measurements';
 import { fetchEvidences, upsertEvidenceByDemandId } from './services/evidences';
@@ -116,6 +118,12 @@ import {
   insertCompanionAllocation,
   deleteCompanionAllocationById
 } from './services/companionAllocations';
+
+import {
+  fetchDemandParticipants,
+  insertDemandParticipant,
+  deleteDemandParticipantById
+} from './services/demandParticipants';
 
 import {
   fetchLogisticAllocations,
@@ -165,6 +173,16 @@ interface AppState {
   companionAllocations: CompanionAllocation[];
   addCompanionAllocation: (a: CompanionAllocation) => void;
   removeCompanionAllocation: (id: string) => void;
+
+  /**
+   * Participantes de demanda INTERNA (titulares plenos). Tabela própria —
+   * nunca `instructor_allocations`, cujo split destrutivo apagaria uns aos
+   * outros. Ver services/demandParticipants.ts.
+   */
+  demandParticipants: DemandParticipant[];
+  /** Resolve para `false` quando a gravação falha (a notificação já saiu). */
+  addDemandParticipant: (p: Omit<DemandParticipant, 'id'>) => Promise<boolean>;
+  removeDemandParticipant: (id: string) => Promise<boolean>;
 
   // ✅ Evidências (GLOBAL)
   evidenceStore: Record<string, EvidenceData>;
@@ -416,7 +434,84 @@ const removeCompanionAllocation = useCallback((id: string) => {
     }
   })();
 }, [AUTH_MODE, user, setNotification]);
-  
+
+  // ====================================================================
+  // PARTICIPANTES DE DEMANDA INTERNA
+  //
+  // Diferente do acompanhante logo acima, que é otimista (entra no estado
+  // antes de o banco confirmar), aqui a gravação vem PRIMEIRO e o estado só
+  // recebe a linha real. Motivo: o insert tem três formas de ser recusado
+  // pelo banco (unique, FK composta de tipo='interna', CHECK do período), e
+  // com otimismo o participante apareceria na lista, no card de logística e
+  // na agenda antes de sumir no rollback. Como é uma ação pontual de
+  // formulário — não um arrastar na grade —, esperar o banco não custa
+  // percepção nenhuma.
+  // ====================================================================
+  const [demandParticipants, setDemandParticipants] = useState<DemandParticipant[]>([]);
+
+  const addDemandParticipant = useCallback(async (p: Omit<DemandParticipant, 'id'>): Promise<boolean> => {
+    if (AUTH_MODE !== 'supabase') {
+      setDemandParticipants(prev => [...prev, { ...p, id: `DP-LOCAL-${prev.length + 1}` }]);
+      return true;
+    }
+
+    if (!user) {
+      setNotification({ message: 'Aguarde a sessão carregar para salvar o participante.', type: 'info' });
+      return false;
+    }
+
+    try {
+      const created = await insertDemandParticipant({
+        demand_id: p.demandId,
+        instructor_id: p.instructorId,
+        start_date: p.startDate ?? null,
+        end_date: p.endDate ?? null,
+      });
+
+      setDemandParticipants(prev => [
+        ...prev.filter(x => x.id !== created.id),
+        {
+          id: created.id,
+          demandId: created.demand_id,
+          instructorId: created.instructor_id,
+          startDate: created.start_date,
+          endDate: created.end_date,
+        },
+      ]);
+      return true;
+    } catch (e: any) {
+      console.error('[DemandParticipants] insert error', e);
+      // A mensagem já vem traduzida do service (unique / FK / CHECK).
+      setNotification({ message: e?.message || 'Erro ao salvar participante.', type: 'error' });
+      return false;
+    }
+  }, [AUTH_MODE, user, setNotification]);
+
+  const removeDemandParticipant = useCallback(async (id: string): Promise<boolean> => {
+    if (AUTH_MODE !== 'supabase') {
+      setDemandParticipants(prev => prev.filter(x => x.id !== id));
+      return true;
+    }
+
+    if (!user) {
+      setNotification({ message: 'Aguarde a sessão carregar para remover o participante.', type: 'info' });
+      return false;
+    }
+
+    // Remove do banco ANTES do estado: o delete é endurecido (lança se 0
+    // linhas), então um bloqueio de RLS vira erro na tela em vez de um
+    // participante que some e reaparece no reload seguinte.
+    try {
+      await deleteDemandParticipantById(id);
+      setDemandParticipants(prev => prev.filter(x => x.id !== id));
+      return true;
+    } catch (e: any) {
+      console.error('[DemandParticipants] delete error', e);
+      setNotification({ message: e?.message || 'Erro ao remover participante.', type: 'error' });
+      return false;
+    }
+  }, [AUTH_MODE, user, setNotification]);
+
 const [operationalBases, setOperationalBases] = useState<OperationalBases>({
   aprovadores: [],
   analistas: [],
@@ -876,6 +971,47 @@ const syncCompanionAllocationsFromDb = useCallback(async () => {
   }
 }, [AUTH_MODE, demands, mapCompanionAllocationFromDb]);
 
+const mapDemandParticipantFromDb = useCallback((row: any): DemandParticipant => {
+  return {
+    id: row.id,
+    demandId: row.demand_id,
+    instructorId: row.instructor_id,
+    startDate: row.start_date ?? null,
+    endDate: row.end_date ?? null,
+  } as DemandParticipant;
+}, []);
+
+const syncDemandParticipantsFromDb = useCallback(async () => {
+  if (AUTH_MODE !== 'supabase') return;
+
+  try {
+    const rows = await fetchDemandParticipants();
+
+    // Demandas ainda não carregaram: só mapeia, sem tentar detectar órfão.
+    if (demands.length === 0) {
+      setDemandParticipants((rows || []).map(mapDemandParticipantFromDb));
+      return;
+    }
+
+    // Órfão aqui é sintoma, não rotina: a FK composta é ON DELETE CASCADE
+    // (migration 016), então demanda apagada leva os participantes junto. Se
+    // aparecer um, o dataset de demandas é que está incompleto — filtra para
+    // não renderizar card fantasma na agenda, mas AVISA no console em vez de
+    // apagar do banco (o CTM faz limpeza automática; aqui seria destrutivo
+    // por um diagnóstico errado).
+    const demandIds = new Set(demands.map(d => d.id));
+    const valid = (rows || []).filter(r => demandIds.has(r.demand_id));
+    const orphans = (rows || []).length - valid.length;
+    if (orphans > 0) {
+      console.warn(`[DemandParticipants] ${orphans} participante(s) sem demanda correspondente no estado — não removidos do banco.`);
+    }
+
+    setDemandParticipants(valid.map(mapDemandParticipantFromDb));
+  } catch (e) {
+    console.error('[DemandParticipants] sync error', e);
+  }
+}, [AUTH_MODE, demands, mapDemandParticipantFromDb]);
+
 
   // ======================================================
   // ✅ DEMANDAS (SUPABASE) — mappers + sync
@@ -1240,6 +1376,16 @@ useEffect(() => {
     syncCompanionAllocationsFromDb();
   }, [AUTH_MODE, user, loading, demands.length, syncCompanionAllocationsFromDb]);
 
+  useEffect(() => {
+    if (AUTH_MODE !== 'supabase') return;
+    if (loading) return;
+    if (!user) return;
+
+    if (demands.length === 0) return;
+
+    syncDemandParticipantsFromDb();
+  }, [AUTH_MODE, user, loading, demands.length, syncDemandParticipantsFromDb]);
+
   // ✅ Carregar Medições do Supabase (fonte da verdade)
   useEffect(() => {
   if (AUTH_MODE !== 'supabase') return;
@@ -1314,6 +1460,14 @@ useEffect(() => {
   useRealtimeSync({
     table: 'companion_allocations',
     onSync: syncCompanionAllocationsFromDb,
+    enabled: realtimeEnabled && demands.length > 0,
+    debounceMs: 500
+  });
+
+  // Participantes de demanda interna
+  useRealtimeSync({
+    table: 'demand_participants',
+    onSync: syncDemandParticipantsFromDb,
     enabled: realtimeEnabled && demands.length > 0,
     debounceMs: 500
   });
@@ -1659,6 +1813,8 @@ const addDemand = useCallback(
       setAgendaItems(prev => prev.filter(item => item.relatedDemandId !== id));
       setInstructorAllocations(prev => prev.filter(a => a.demandId !== id));
       setResourceAllocations(prev => prev.filter(a => a.demandId !== id));
+      setCompanionAllocations(prev => prev.filter(a => a.demandId !== id));
+      setDemandParticipants(prev => prev.filter(a => a.demandId !== id));
 
       setEvidenceStore(prev => {
         const next = { ...prev };
@@ -1686,10 +1842,19 @@ const addDemand = useCallback(
     });
 
     // também limpa “dependências” localmente já
+    //
+    // `companionAllocations` faltava aqui: o acompanhante de uma demanda
+    // apagada continuava no estado até o próximo reload, e a agenda seguia
+    // renderizando o card dele (a passada COMPANION do CalendarView só ignora
+    // demanda CANCELADA, não demanda inexistente). No banco a linha já ia
+    // embora por ON DELETE CASCADE — era só o estado que ficava para trás.
+    // `demandParticipants` entra pelo mesmo motivo, com o mesmo CASCADE.
     setMeasurements(prev => prev.filter(m => m.demandId !== id));
     setAgendaItems(prev => prev.filter(item => item.relatedDemandId !== id));
     setInstructorAllocations(prev => prev.filter(a => a.demandId !== id));
     setResourceAllocations(prev => prev.filter(a => a.demandId !== id));
+    setCompanionAllocations(prev => prev.filter(a => a.demandId !== id));
+    setDemandParticipants(prev => prev.filter(a => a.demandId !== id));
     setEvidenceStore(prev => {
       const next = { ...prev };
       delete next[id];
@@ -2771,9 +2936,50 @@ const hasScheduleConflict = useCallback(
       return overlapsByDay(reqStart, reqEnd, item.startDate, item.endDate);
     });
 
-    return agendaConflict;
+    if (agendaConflict) return true;
+
+    // 4) e 5) Conflito com PARTICIPANTE de interna e ACOMPANHANTE de cliente
+    //
+    // As duas âncoras são a MESMA regra sobre listas diferentes, e por isso
+    // moram em domain/personScheduleConflict.ts — pura, comparando conjuntos
+    // de dias ('YYYY-MM-DD' via getDemandDays) em vez de intervalos de Date.
+    // Isso dispensa o ramo separado de DIAS_ESPECIFICOS que as âncoras 1 e 2
+    // precisam ter, e é o que `smoke:participantes` exercita sem montar React.
+    //
+    // A âncora 5 fecha um buraco antigo: acompanhar NÃO tornava o instrutor
+    // ocupado, então ele podia ser alocado como titular em outra demanda no
+    // mesmo dia sem nenhum aviso. A partir daqui passa a avisar — o que
+    // significa que combinações que antes passavam caladas agora aparecem
+    // como conflito. É correção, não regressão.
+    const participantConflict = hasPersonScheduleConflict({
+      instructorId,
+      startDate: reqStart,
+      endDate: reqEnd,
+      assignments: demandParticipants,
+      demands,
+      excludeDemandId,
+    });
+
+    if (participantConflict) return true;
+
+    return hasPersonScheduleConflict({
+      instructorId,
+      startDate: reqStart,
+      endDate: reqEnd,
+      assignments: companionAllocations,
+      demands,
+      excludeDemandId,
+    });
   },
-  [demands, instructorAllocations, agendaItems, getEffectiveDemandRange, allocationsLoaded]
+  [
+    demands,
+    instructorAllocations,
+    agendaItems,
+    demandParticipants,
+    companionAllocations,
+    getEffectiveDemandRange,
+    allocationsLoaded,
+  ]
 );
 
 
@@ -3058,6 +3264,9 @@ const hasScheduleConflict = useCallback(
       setNextDemandNumber,
       addCompanionAllocation,
       removeCompanionAllocation,
+      demandParticipants,
+      addDemandParticipant,
+      removeDemandParticipant,
       setNotification,
       setHybridPracticePeriod,
       companionAllocations,
@@ -3154,6 +3363,9 @@ const hasScheduleConflict = useCallback(
       setHybridPracticePeriod,
       updateEvidence,
       companionAllocations,
+      demandParticipants,
+      addDemandParticipant,
+      removeDemandParticipant,
       operationalBases,
       setOperationalBases,
       currentView,

@@ -159,6 +159,14 @@ export type LogisticBlockRow = {
   block_type: string; // 'LOCOMOCAO' | 'HOSPEDAGEM'
   block_order: number;
   instructor_name: string | null;
+  /**
+   * Dono do bloco por ID (migration 016). Preenchido quando o bloco nasce de
+   * um PARTICIPANTE escolhido no cadastro. `instructor_name` continua sendo o
+   * rótulo exibido e o único vínculo das linhas legadas — nulo aqui é o estado
+   * normal delas, não erro. FK com ON DELETE SET NULL: excluir o instrutor
+   * degrada o vínculo, nunca apaga o bloco.
+   */
+  instructor_id?: string | null;
 
   // Locomoção
   transport_mode: string | null;

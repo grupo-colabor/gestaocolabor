@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 
-type TableName = 'demands' | 'agenda_items' | 'instructor_allocations' | 'resource_allocations' | 'companion_allocations' | 'logistic_allocations';
+type TableName = 'demands' | 'agenda_items' | 'instructor_allocations' | 'resource_allocations' | 'companion_allocations' | 'demand_participants' | 'logistic_allocations';
 
 interface UseRealtimeSyncOptions {
   /** Nome da tabela para monitorar */

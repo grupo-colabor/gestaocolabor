@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useApp } from '../App';
@@ -18,6 +18,7 @@ import {
 
 import {
   Search,
+  Info,
   Plus,
   X,
   FileText,
@@ -92,6 +93,7 @@ import {
 } from '../domain/demandDateTime';
 // Alocação de CTM: MESMO hook e MESMO modal do formulário de cliente.
 import ResourceAllocationModal from './ResourceAllocationModal';
+import ParticipantSelectionModal from './ParticipantSelectionModal';
 import { useResourceAllocation } from '../hooks/useResourceAllocation';
 import {
   FilterPanelShell,
@@ -226,6 +228,10 @@ const InternalDemands: React.FC = () => {
     addResourceAllocation,
     removeResourceAllocation,
     hasResourceConflict,
+    hasScheduleConflict,
+    demandParticipants,
+    addDemandParticipant,
+    removeDemandParticipant,
     notificationTarget,
     setNotificationTarget,
     addDemand,
@@ -571,6 +577,7 @@ const InternalDemands: React.FC = () => {
           locoBlocks.push({
             id: b.id,
             instructorName: b.instructor_name ?? '',
+            instructorId: b.instructor_id ?? null,
             transportType: dbTransportToUI(b.transport_mode),
             rentalCompany: b.rental_company ?? 'Localiza',
             rentalAgencyLocation: b.rental_agency_location ?? '',
@@ -585,6 +592,7 @@ const InternalDemands: React.FC = () => {
           hospBlocks.push({
             id: b.id,
             instructorName: b.instructor_name ?? '',
+            instructorId: b.instructor_id ?? null,
             accommodationType: dbLodgingToUI(b.lodging_mode),
             hotelCity: b.hotel_city ?? '',
             hotelName: b.hotel_name ?? '',
@@ -886,6 +894,7 @@ const InternalDemands: React.FC = () => {
             block_type: 'LOCOMOCAO',
             block_order: i,
             instructor_name: b.instructorName ?? null,
+            instructor_id: b.instructorId ?? null,
             transport_mode: uiTransportToDb(b.transportType),
             rental_company: isAlugado ? (b.rentalCompany || 'Localiza') : null,
             rental_agency_location: isAlugado ? (b.rentalAgencyLocation || null) : null,
@@ -911,6 +920,7 @@ const InternalDemands: React.FC = () => {
             block_type: 'HOSPEDAGEM',
             block_order: i,
             instructor_name: b.instructorName ?? null,
+            instructor_id: b.instructorId ?? null,
             transport_mode: null,
             rental_company: null,
             rental_agency_location: null,
@@ -1124,6 +1134,136 @@ const InternalDemands: React.FC = () => {
     setError: setResourceError,
     canAllocate: canAllocateResource,
   });
+
+  /* ─────────────────────── PARTICIPANTES (F1) ────────────────────────────
+   *
+   * Card irmão do de Instrutores, e não uma substituição dele: o titular
+   * continua vindo de `demands.instructor_id`/`instructor_allocations`, e
+   * aquele bloco segue somente leitura. Aqui é a lista de titulares PLENOS
+   * adicionais, que moram em `demand_participants`.
+   *
+   * ⚠️ Nada neste fluxo toca `instructor_allocations` — é o que impede o
+   * split destrutivo de apagar um participante ao adicionar o próximo, e o
+   * rateio de horas de multiplicar a carga. `smoke:participantes` prende isso
+   * com guarda de fonte.
+   */
+  const [isParticipantModalOpen, setIsParticipantModalOpen] = useState(false);
+  const [removingParticipantId, setRemovingParticipantId] = useState<string | null>(null);
+
+  const currentParticipants = useMemo(() => {
+    if (!formDemand.id) return [];
+    return demandParticipants
+      .filter(pt => pt.demandId === formDemand.id)
+      .sort((a, b) =>
+        getInstructorName(a.instructorId).localeCompare(getInstructorName(b.instructorId), 'pt-BR')
+      );
+  }, [demandParticipants, formDemand.id, instructors]);
+
+  /**
+   * Candidatos do modal: ativos, menos quem já é participante e menos o
+   * instrutor principal da demanda (que já aparece no card de Instrutores —
+   * listá-lo aqui convidaria a contar a mesma pessoa duas vezes na medição).
+   */
+  const participantCandidates = useMemo(() => {
+    const jaParticipa = new Set(currentParticipants.map(pt => pt.instructorId));
+    return instructors.filter(
+      i => i.status === 'ATIVO' && !jaParticipa.has(i.id) && i.id !== formDemand.instructorId
+    );
+  }, [instructors, currentParticipants, formDemand.instructorId]);
+
+  /**
+   * Aviso de conflito no modal. Consulta o período INTEIRO da demanda e
+   * exclui a própria demanda — sem isso, quem já tem qualquer vínculo com ela
+   * apareceria marcado em vermelho por conflito consigo mesmo.
+   */
+  const participantHasConflict = useCallback(
+    (instructorId: string) => {
+      if (!formDemand.startDate || !formDemand.endDate) return false;
+      return hasScheduleConflict(instructorId, formDemand.startDate, formDemand.endDate, formDemand.id);
+    },
+    [hasScheduleConflict, formDemand.startDate, formDemand.endDate, formDemand.id]
+  );
+
+  /**
+   * Adiciona o participante e JÁ CRIA os blocos de logística dele.
+   *
+   * O par locomoção+hospedagem nasce pré-preenchido com nome e `instructorId`
+   * porque a razão de a interna ter participantes é justamente cada um ter
+   * deslocamento e hospedagem próprios — obrigar o usuário a criar os blocos
+   * à mão e redigitar o nome seria repetir o trabalho que a seleção acabou de
+   * fazer, e é por digitação livre que o vínculo por nome se perde.
+   *
+   * Os blocos entram só no ESTADO do formulário; vão para o banco no save,
+   * pelo mesmo `upsertLogisticBlocks` de sempre.
+   */
+  const handleAddParticipant = useCallback(
+    async (payload: { instructorId: string; startDate: string | null; endDate: string | null }) => {
+      if (!formDemand.id) return;
+
+      const ok = await addDemandParticipant({
+        demandId: formDemand.id,
+        instructorId: payload.instructorId,
+        startDate: payload.startDate,
+        endDate: payload.endDate,
+      });
+
+      // Falhou (unique / FK / CHECK / RLS): a notificação já saiu do App e o
+      // modal continua aberto para o usuário corrigir. Nada de bloco órfão.
+      if (!ok) return;
+
+      const nome = getInstructorName(payload.instructorId);
+      setFormDemand(prev => ({
+        ...prev,
+        logisticasLocomocao: [
+          ...(prev.logisticasLocomocao || []),
+          { ...emptyLocomocaoBlock(), instructorName: nome, instructorId: payload.instructorId },
+        ],
+        logisticasHospedagem: [
+          ...(prev.logisticasHospedagem || []),
+          { ...emptyHospedagemBlock(), instructorName: nome, instructorId: payload.instructorId },
+        ],
+      }));
+
+      setIsParticipantModalOpen(false);
+      setNotification({ message: `${nome} adicionado como participante.`, type: 'success' });
+    },
+    [formDemand.id, addDemandParticipant, instructors, setNotification]
+  );
+
+  /**
+   * Remove o participante e os blocos de logística que pertenciam a ele.
+   *
+   * Só remove bloco AINDA VAZIO. Um bloco já preenchido (locadora, localizador,
+   * hotel, nota fiscal anexada) é trabalho de alguém — deixá-lo para trás,
+   * órfão de participante, é menos ruim do que apagar dado sem perguntar. Ele
+   * fica visível na seção de logística e pode ser removido à mão.
+   */
+  const handleRemoveParticipant = useCallback(
+    async (participantId: string, instructorId: string) => {
+      setRemovingParticipantId(participantId);
+      const ok = await removeDemandParticipant(participantId);
+      setRemovingParticipantId(null);
+      if (!ok) return;
+
+      const locoVazio = (b: any) =>
+        !b.transportType && !b.rentalAgencyLocation && !b.rentalLocator && !b.rentalCheckIn && !b.receiptUrls?.length;
+      const hospVazio = (b: any) =>
+        !b.accommodationType && !b.hotelCity && !b.hotelName && !b.hotelCheckIn && !b.hotelReceiptUrls?.length;
+
+      setFormDemand(prev => ({
+        ...prev,
+        logisticasLocomocao: (prev.logisticasLocomocao || []).filter(
+          b => !(b.instructorId === instructorId && locoVazio(b))
+        ),
+        logisticasHospedagem: (prev.logisticasHospedagem || []).filter(
+          b => !(b.instructorId === instructorId && hospVazio(b))
+        ),
+      }));
+
+      setNotification({ message: 'Participante removido.', type: 'success' });
+    },
+    [removeDemandParticipant, setNotification]
+  );
 
   const handleCancelDemand = () => {
     if (!formDemand?.id || !selectedCancelReason) return;
@@ -2013,6 +2153,94 @@ const InternalDemands: React.FC = () => {
                       )}
                     </div>
                   </div>
+
+                  {/* PARTICIPANTES — card irmão do de Instrutores, este SIM
+                      com escrita. Grava em `demand_participants` (tabela
+                      própria, migration 016), nunca em instructor_allocations.
+                      Ocupa a linha inteira do grid porque a lista cresce com o
+                      tamanho da equipe, ao contrário dos dois de cima. */}
+                  <div className="md:col-span-2 bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                    <div className="w-full px-6 py-4 flex items-center justify-between bg-white">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-emerald-50 rounded-lg text-emerald-600"><Users size={20} /></div>
+                        <div>
+                          <h3 className="font-bold text-slate-800 uppercase text-sm">Participantes</h3>
+                          <p className="text-[10px] font-medium text-slate-400">
+                            Titulares plenos, no mesmo nível do instrutor principal
+                          </p>
+                        </div>
+                      </div>
+                      {currentStatus !== 'CANCELADA' && canEditDemand && !!formDemand.id && (
+                        <button
+                          onClick={() => setIsParticipantModalOpen(true)}
+                          className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition font-black text-[10px] uppercase tracking-wider shadow-sm"
+                        >
+                          <Plus size={14} /> Adicionar
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="px-6 py-4 border-t border-slate-100 bg-white">
+                      {currentParticipants.length > 0 ? (
+                        <div className="space-y-3">
+                          {currentParticipants.map(pt => (
+                            <div
+                              key={pt.id}
+                              className="flex items-center justify-between gap-4 p-3 bg-emerald-50/50 rounded-xl border border-emerald-100 group"
+                            >
+                              <div className="flex items-center gap-4 min-w-0">
+                                <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700 font-bold text-xs uppercase shrink-0">
+                                  {getInstructorName(pt.instructorId).charAt(0)}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-bold text-slate-800 truncate">
+                                    {getInstructorName(pt.instructorId)}
+                                  </p>
+                                  {pt.startDate && pt.endDate ? (
+                                    <p className="text-[10px] font-medium text-slate-500 flex items-center gap-2">
+                                      <Calendar size={10} /> {formatDateOnlySafe(pt.startDate)} até {formatDateOnlySafe(pt.endDate)}
+                                    </p>
+                                  ) : (
+                                    <p className="text-[10px] font-medium text-slate-400">
+                                      Todo o período da demanda
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                              {currentStatus !== 'CANCELADA' && canEditDemand && (
+                                <button
+                                  onClick={() => handleRemoveParticipant(pt.id, pt.instructorId)}
+                                  disabled={removingParticipantId === pt.id}
+                                  className="p-2 text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-40"
+                                  title="Remover participante"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-400 italic py-2">
+                          {formDemand.id
+                            ? 'Nenhum participante adicionado.'
+                            : 'Salve a demanda para poder adicionar participantes.'}
+                        </p>
+                      )}
+
+                      {/* A F1 entrega vínculo, agenda e conflito — pagamento é
+                          a F2. Sem este aviso a tela parece completa e não é:
+                          alguém adicionaria três participantes e esperaria vê-los
+                          na medição do mês. */}
+                      <div className="mt-4 flex items-start gap-2 text-[10px] text-slate-400 leading-snug">
+                        <Info size={12} className="shrink-0 mt-0.5" />
+                        <span>
+                          Participantes já aparecem na agenda e entram na checagem de conflito.
+                          <strong className="text-slate-500"> Ainda não geram pagamento na medição</strong> (em desenvolvimento).
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -2267,6 +2495,18 @@ const InternalDemands: React.FC = () => {
           fluxo do modal de cliente (components/ResourceAllocationModal.tsx +
           hooks/useResourceAllocation.ts). */}
       <ResourceAllocationModal {...ctmAllocation.modalProps} />
+
+      {/* Seleção de participante. Fecha só quando a gravação dá certo — ver
+          handleAddParticipant. */}
+      <ParticipantSelectionModal
+        open={isParticipantModalOpen}
+        instructors={participantCandidates}
+        demandStartDate={formDemand.startDate || ''}
+        demandEndDate={formDemand.endDate || ''}
+        hasConflict={participantHasConflict}
+        onCancel={() => setIsParticipantModalOpen(false)}
+        onConfirm={handleAddParticipant}
+      />
     </>
   );
 };

@@ -22,7 +22,8 @@ import {
 import { AgendaItem, AgendaType, Demand, Instructor } from '../types';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { useAuth } from '../contexts/AuthContext';
-import { isDemandDay, buildCardLabel } from '../domain/demandDays';
+import { isDemandDay, buildCardLabel, getDemandDays } from '../domain/demandDays';
+import { assignmentDays } from '../domain/personScheduleConflict';
 import { isInternalDemand, getDemandTitle, getDemandCompanyLabel } from '../domain/demandLabel';
 
 /**
@@ -136,7 +137,7 @@ interface UnifiedItem {
   endDate: string;
   type: AgendaType;
   title: string;
-  source: 'MANUAL' | 'DEMANDA' | 'EVENT' | 'ALLOCATION' | 'COMPANION';
+  source: 'MANUAL' | 'DEMANDA' | 'EVENT' | 'ALLOCATION' | 'COMPANION' | 'PARTICIPANT';
   description?: string;
   calculatedStatus?: string;
   demandId?: string;
@@ -221,6 +222,7 @@ const CalendarView: React.FC = () => {
     trainings,
     instructorAllocations,
     companionAllocations,
+    demandParticipants,
     resourceAllocations,
     companies,
     addAgendaItem,
@@ -454,6 +456,7 @@ const getDemandFromItem = (item: any): Demand | null => {
     const allocMulti: Record<string, UnifiedItem[]> = {};
     const demandsWithExplicitAllocations = new Set(instructorAllocations.map(a => a.demandId));
     const demandsWithCompanions = new Set(companionAllocations.map(a => a.demandId));
+    const demandsWithParticipants = new Set(demandParticipants.map(a => a.demandId));
 
     agendaItems.forEach(item => {
       const { start, end } = getDayBoundsForIteration(item.startDate, item.endDate);
@@ -596,9 +599,67 @@ companionAllocations.forEach(ca => {
 });
 
 
+  // PRIORIDADE 1.7: PARTICIPANTES de demanda interna
+  //
+  // Diferença que importa em relação à passada 1.5 (acompanhante): esta
+  // ALIMENTA `allocMulti`. Dois participantes no mesmo dia é O caso de uso da
+  // feature — a equipe criou 5 demandas clonadas justamente porque não
+  // conseguia botar todo mundo na mesma. Escrevendo só em `map`, cada
+  // participante sobrescreveria o anterior e a grade mostraria um card só,
+  // reproduzindo o problema que a feature existe para resolver.
+  //
+  // A COR sai de graça: `isCompanion` fica false e `demandId` vai preenchido,
+  // então o card cai no ramo `isInternalDemand(linkedDemand)` da montagem de
+  // classes e herda o âmbar de interna (INTERNAL_DEMAND_STYLING). Nenhuma
+  // linha de estilo nova — e é de propósito: participante NÃO é acompanhante,
+  // não deve puxar o verde nem o botão × de remover acompanhante.
+  demandParticipants.forEach(pt => {
+    const d = demands.find(dm => dm.id === pt.demandId);
+    if (!d || d.status === 'CANCELADA') return;
+
+    // Período NULL = todos os dias reais da demanda; período próprio recorta.
+    // Uma regra só, compartilhada com a checagem de conflito
+    // (domain/personScheduleConflict.ts) — se as duas divergirem, o card
+    // aparece num dia em que o sistema não vê conflito, ou o contrário.
+    const dias = assignmentDays(pt, d as any);
+    if (dias.length === 0) return;
+
+    const training = trainings.find(t => t.id === d.trainingId);
+    const company = companies.find(c => c.id === d.companyId);
+    const cStatus = calculateDemandStatus({ ...d, cancelled: false });
+
+    for (const dayKey of dias) {
+      const key = `${pt.instructorId}-${dayKey}`;
+      const item: UnifiedItem = {
+        id: pt.id,
+        instructorId: pt.instructorId,
+        // O card mostra o dia; o horário real vem do label, que já lê
+        // getDayHorarioInicio/Fim da demanda.
+        startDate: dayKey,
+        endDate: dayKey,
+        type: 'TREINAMENTO',
+        title: buildCardLabel(d, dayKey, cardLabelSlots(d, company, training)),
+        source: 'PARTICIPANT',
+        description: d.trainingLocal,
+        calculatedStatus: cStatus,
+        demandId: d.id,
+        isCompanion: false,
+      };
+
+      // Não sobrescreve card já ocupado por alocação explícita do mesmo dia:
+      // o titular continua sendo o dono da célula principal.
+      if (!map[key]) map[key] = item;
+
+      if (!allocMulti[key]) allocMulti[key] = [];
+      if (!allocMulti[key].some(x => x.id === item.id)) {
+        allocMulti[key].push(item);
+      }
+    }
+  });
+
     // PRIORIDADE 2: Demandas sem Allocation (Instrutor único / Legado)
     demands
-      .filter( d => d.status !== 'CANCELADA' && !!d.instructorId && !demandsWithExplicitAllocations.has(d.id) && !demandsWithCompanions.has(d.id))
+      .filter( d => d.status !== 'CANCELADA' && !!d.instructorId && !demandsWithExplicitAllocations.has(d.id) && !demandsWithCompanions.has(d.id) && !demandsWithParticipants.has(d.id))
       .forEach(d => {
         // 🔥 Se for HÍBRIDO e existir prática definida, a agenda deve mostrar APENAS a prática
         const effectiveStart =
@@ -638,7 +699,7 @@ companionAllocations.forEach(ca => {
       });
 
     return { agendaByDay: map, allocByDayMulti: allocMulti };
-  }, [agendaItems, instructorAllocations, companionAllocations, demands, trainings, companies]);
+  }, [agendaItems, instructorAllocations, companionAllocations, demandParticipants, demands, trainings, companies]);
 
   const trainingCountInRange = useMemo(() => {
     // conta DEMANDAS únicas no range, respeitando filtroTrainingId/local

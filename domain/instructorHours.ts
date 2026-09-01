@@ -113,7 +113,7 @@ function clipToPeriod(days: string[], periodStart?: string, periodEnd?: string):
  *  4. `training.hours` — carga nominal (demais modalidades, ou híbrido
  *     sem `practicalHours` cadastrado).
  */
-export function effectiveDemandHours(
+function effectiveDemandHours(
   demand: Demand,
   trainingsById: Map<string, Training>,
   measurementByDemandId: Map<string, Measurement>

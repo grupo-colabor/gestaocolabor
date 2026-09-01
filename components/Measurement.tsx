@@ -13,6 +13,7 @@ import {
   normalizeMeasurementBlocks,
   blockExpenseBreakdown,
 } from '../domain/measurementTotals';
+import { blockPanelHours, blockHoraAula } from '../domain/measurementTotals';
 import { resolveDemandInstructors } from '../domain/demandInstructors';
 import { usePagination } from '../hooks/usePagination';
 import Pagination from './Pagination';
@@ -413,9 +414,19 @@ const totals = useMemo(() => {
   const hourRate =
     Number((selectedMeasurement.expenses as any)?.hourRate ?? 0) || 0;
 
+  // ⚠️ O total do topo tem de resolver o ausente do MESMO jeito que as seções,
+  // senão a soma das pessoas não fecha com o TOTAL GERAL logo acima delas.
+  //
+  // A soma crua de `horas × valorHH` sobre o JSON (o que estava aqui) dava zero
+  // para o titular, porque as horas dele NUNCA são gravadas enquanto não forem
+  // editadas — e não ser gravado é o que protege o Excel do split por dias. Quem
+  // sabe converter ausente em número é o domínio, por papel.
+  const demandaDaMedicao = demands.find(d => d.id === selectedMeasurement.demandId);
+  const cargaPadrao = classHours || getDemandDefaultHours(demandaDaMedicao);
+
   const hourClass = blocosDaMedicao.length
-    ? blocosDaMedicao.reduce(
-        (acc: number, b: any) => acc + (Number(b?.horas ?? 0) || 0) * (Number(b?.valorHH ?? 0) || 0),
+    ? normalizeMeasurementBlocks(selectedMeasurement as any, demandaDaMedicao?.instructorId).reduce(
+        (acc: number, b) => acc + blockHoraAula(b, { demandDefaultHours: cargaPadrao }),
         0
       )
     : classHours * hourRate;
@@ -425,7 +436,7 @@ const totals = useMemo(() => {
     hourClass,
     total: baseTotals.total + hourClass
   };
-}, [selectedMeasurement]);
+}, [selectedMeasurement, demands, trainings]);
 
   // ✅ Valores para a UI do bloco Hora/Aula (não dão erro de escopo)
   const classHours = Number((selectedMeasurement?.expenses as any)?.classHours ?? 0) || 0;
@@ -573,13 +584,20 @@ const totals = useMemo(() => {
 
     return blocos.map((b, i) => {
       const papel = pessoasDaMedicao[i]?.papel ?? b.papel;
+      // O papel da LISTA manda (o JSON pode ter sido gravado antes de a pessoa
+      // mudar de papel), então a resolução de horas usa o bloco já corrigido.
+      const comPapel = { ...b, papel };
       return {
-        ...b,
-        papel,
+        ...comPapel,
         nome: getInstructorName(b.instructorId),
         despesas: blockExpenseBreakdown(paraNormalizar as any, b),
-        // Placeholder DESTA pessoa: acompanhante tem carga proporcional.
+        // Sugestão DESTA pessoa: acompanhante tem a proporcional aos dias.
         horasPadrao: horasPadraoDaPessoa(b.instructorId, papel),
+        // O que o painel CONTA: titular e participante valem o padrão da
+        // demanda sem ninguém digitar; acompanhante vale 0 até digitarem.
+        horasContadas: blockPanelHours(comPapel, {
+          demandDefaultHours: classHours || trainingDefaultHours,
+        }),
       };
     });
   }, [selectedMeasurement, temBlocosPorPessoa, pessoasDaMedicao, instructors, companionAllocations, trainingDefaultHours, classHours]);
@@ -652,6 +670,20 @@ const totals = useMemo(() => {
   const next: Measurement = {
   ...m,
   expenses: {
+    // ⚠️ ESTE SPREAD É A CORREÇÃO DO "VALOR HH NÃO SALVA".
+    //
+    // Este objeto era uma LISTA BRANCA: só os campos citados abaixo sobreviviam
+    // à reabertura. `participantes` (horas e valorHH de cada pessoa) ficava de
+    // fora e sumia do estado — o painel reabria com todo mundo zerado, e o save
+    // seguinte reconstruía os blocos a partir de uma lista vazia e APAGAVA no
+    // banco o que estava gravado certo. O dado nunca deixou de ser escrito; ele
+    // era descartado na volta.
+    //
+    // Lista branca não escala: todo campo novo do jsonb nasce quebrado aqui. O
+    // spread inverte o default — o que existe sobrevive, e as linhas abaixo
+    // continuam garantindo os obrigatórios.
+    ...(m.expenses ?? {}),
+
     // ✅ garante os campos obrigatórios SEMPRE
     breakfast: m.expenses?.breakfast ?? '',
     lunch: m.expenses?.lunch ?? '',
@@ -785,6 +817,34 @@ const totals = useMemo(() => {
       if (demand) {
         // A regra de negócio aqui permanece: salvando a medição, a demanda é considerada concluída
         updateDemand({ ...demand, status: 'CONCLUIDA' });
+      }
+
+      /**
+       * AVISAR, NÃO BLOQUEAR — o padrão da casa.
+       *
+       * Acompanhante com valor hora/aula preenchido e horas em branco é quase
+       * sempre esquecimento: alguém digitou quanto vale a hora dele e não disse
+       * quantas foram. Como o Excel se recusa a inventar horas, essa pessoa
+       * simplesmente não sai na planilha — sem nenhum sinal, se não for este.
+       *
+       * Não bloqueia porque "ainda não sei as horas" é um estado legítimo de
+       * uma medição em conferência. O save já aconteceu quando este aviso
+       * aparece.
+       */
+      const acompanhantesSemHoras = temBlocosPorPessoa
+        ? secoesPorPessoa.filter(
+            x => x.papel === 'ACOMPANHANTE' && !x.horasInformadas && x.valorHH > 0
+          )
+        : [];
+
+      if (acompanhantesSemHoras.length > 0) {
+        const nomes = acompanhantesSemHoras.map(x => x.nome).join(', ');
+        alert(
+          `Medição salva.\n\nAtenção: ${nomes} ${acompanhantesSemHoras.length > 1 ? 'estão' : 'está'} ` +
+          `como acompanhante com valor hora/aula preenchido, mas sem horas informadas — ` +
+          `e acompanhante sem horas NÃO entra na planilha de pagamento.\n\n` +
+          `Se for para pagar, reabra a medição e informe as horas.`
+        );
       }
 
       setIsModalOpen(false);
@@ -1063,9 +1123,13 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
   // Com blocos por pessoa a parcela é a soma deles (mesma conta do painel);
   // sem blocos, o classHours × hourRate de sempre.
   const _blocosParaTotal = (m.expenses as any)?.participantes ?? [];
+  // Mesma resolução do painel — este documento é o recibo que a pessoa assina,
+  // e ele não pode dizer R$ 0,00 onde a tela disse outra coisa.
+  const cargaDoDoc = classHours || getDemandDefaultHours(d);
+  const ctxDoc = { demandDefaultHours: cargaDoDoc };
   const horaAulaDoDoc = _blocosParaTotal.length
-    ? _blocosParaTotal.reduce(
-        (acc: number, b: any) => acc + (Number(b?.horas ?? 0) || 0) * (Number(b?.valorHH ?? 0) || 0),
+    ? normalizeMeasurementBlocks(m as any, d.instructorId).reduce(
+        (acc: number, b) => acc + blockHoraAula(b, ctxDoc),
         0
       )
     : hourClassTotal;
@@ -1232,7 +1296,8 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
     for (const b of blocos) {
       const nomePessoa = getInstructorName(b.instructorId);
       const papel = b.papel === 'TITULAR' ? 'Titular' : b.papel === 'ACOMPANHANTE' ? 'Acompanhante' : 'Participante';
-      const horaAulaPessoa = (b.horas ?? 0) * b.valorHH;
+      const horasDaPessoa = blockPanelHours(b, ctxDoc);
+      const horaAulaPessoa = horasDaPessoa * b.valorHH;
       const despesasPessoa = blockExpenseBreakdown(m as any, b);
 
       children.push(
@@ -1243,9 +1308,17 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
         new Paragraph({
           children: [
             new TextRun({ text: "Horas: ", bold: true }),
-            // Ausente é "não informado", não zero — e o recibo tem de dizer
-            // isso, senão alguém assina um zero que o sistema não quis dizer.
-            new TextRun(b.horasInformadas ? String(b.horas) : "não informado"),
+            // Ausente NÃO é zero — mas resolve diferente por papel. Titular e
+            // participante valem o padrão da demanda (e o recibo diz de onde
+            // veio); acompanhante é manual, e aí "não informado" é a verdade:
+            // ele não entra na planilha de pagamento até alguém preencher.
+            new TextRun(
+              b.horasInformadas
+                ? String(b.horas)
+                : b.papel === 'ACOMPANHANTE'
+                  ? 'não informado'
+                  : `${horasDaPessoa} (padrão da demanda)`
+            ),
           ],
         }),
         new Paragraph({ children: [new TextRun({ text: "Valor Hora/Aula: ", bold: true }), new TextRun(formatCurrency(b.valorHH))] }),
@@ -1491,7 +1564,7 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
     // mensagem sai exatamente como sempre saiu — nem uma quebra de linha a mais.
     const porPessoa = temBlocosPorPessoa
       ? secoesPorPessoa
-          .map(x => `👤 ${x.nome}: ${formatCurrency(x.despesas.total + (x.horas ?? 0) * x.valorHH)}`)
+          .map(x => `👤 ${x.nome}: ${formatCurrency(x.despesas.total + x.horasContadas * x.valorHH)}`)
           .join('\n') + '\n'
       : '';
 
@@ -1944,7 +2017,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                     <div className="text-right shrink-0">
                       <span className="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Total da pessoa</span>
                       <span className="text-sm font-black text-slate-900">
-                        {formatCurrency(secao.despesas.total + (secao.horas ?? 0) * secao.valorHH)}
+                        {formatCurrency(secao.despesas.total + secao.horasContadas * secao.valorHH)}
                       </span>
                     </div>
                   </div>
@@ -1961,7 +2034,10 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                             step="0.5"
                             className="flex-1 border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                             value={secao.horasInformadas ? String(secao.horas ?? '') : ''}
-                            placeholder={String(secao.horasPadrao)}
+                            // Acompanhante abre VAZIO de propósito: a sugestão
+                            // fica na legenda, como texto, para ninguém salvar
+                            // um número proporcional sem ter olhado.
+                            placeholder={secao.papel === 'ACOMPANHANTE' ? '' : String(secao.horasPadrao)}
                             onChange={e => {
                               const raw = e.target.value;
                               // Campo limpo volta a "não informado" — NÃO vira 0.
@@ -1983,32 +2059,52 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                           {secao.horasInformadas
                             ? <span className="text-amber-500 font-bold">Editado manualmente</span>
                             : secao.papel === 'ACOMPANHANTE'
-                              // O acompanhante quase nunca acompanha a demanda
-                              // inteira: dizer só "padrão da demanda" esconderia
-                              // de onde saiu o número.
-                              ? <span className="text-slate-400">Proporcional aos dias acompanhados ({secao.horasPadrao}h)</span>
+                              // Acompanhante é MANUAL: ninguém sabe quantas horas
+                              // ele fez, só quantos dias acompanhou. A proporção
+                              // é sugestão para quem vai digitar, não conta.
+                              ? <span className="text-amber-600 font-bold">
+                                  {secao.horasPadrao > 0
+                                    ? 'Informe as horas (sugestão: ' + secao.horasPadrao + 'h, proporcional aos dias acompanhados)'
+                                    : 'Informe as horas'}
+                                </span>
                               : <span className="text-slate-400">Padrão da demanda ({secao.horasPadrao}h)</span>}
                         </p>
                       </div>
 
                       <div>
                         <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Valor Hora/Aula (manual)</label>
+                        {/* `value={secao.valorHH || 0}` renderizava um "0"
+                            literal no campo vazio: digitar 100 em cima dele
+                            mostrava "0100" na tela. O número gravado até estava
+                            certo (Number('0100') === 100), mas quem digita não
+                            confia num campo que responde assim — e com razão.
+                            Campo sem valor agora fica VAZIO. */}
                         <input
                           type="number"
                           step="0.01"
+                          min="0"
+                          placeholder="0,00"
                           className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
-                          value={secao.valorHH || 0}
-                          onChange={e => setCampoDoBloco(secao.instructorId, 'valorHH', Number(e.target.value || 0))}
+                          value={secao.valorHH ? String(secao.valorHH) : ''}
+                          onChange={e => {
+                            const raw = e.target.value;
+                            setCampoDoBloco(secao.instructorId, 'valorHH', raw === '' ? undefined : Number(raw));
+                          }}
                         />
                       </div>
 
                       <div className="text-right">
                         <span className="block text-[10px] font-black text-slate-300 uppercase tracking-widest mb-1.5">Total Hora/Aula</span>
                         <span className="text-2xl font-black text-slate-900">
-                          {formatCurrency((secao.horas ?? 0) * secao.valorHH)}
+                          {formatCurrency(secao.horasContadas * secao.valorHH)}
                         </span>
-                        {!secao.horasInformadas && (
-                          <p className="text-[10px] text-slate-400 mt-1">Horas não informadas</p>
+                        {/* "Não informadas" só faz sentido para quem é manual.
+                            Titular sem horas digitadas vale o padrão da demanda
+                            — é o equivalente ao classHours × hourRate da v1, e
+                            dizer "R$ 0,00 / não informadas" ali era a v1
+                            quebrada. */}
+                        {!secao.horasInformadas && secao.papel === 'ACOMPANHANTE' && (
+                          <p className="text-[10px] text-amber-600 font-bold mt-1">Horas não informadas</p>
                         )}
                       </div>
                     </div>

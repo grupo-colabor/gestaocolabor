@@ -29,6 +29,7 @@
 import {
   normalizeMeasurementBlocks,
   blockHoraAula,
+  blockPanelHours,
   blockExpenseBreakdown,
   computeMeasurementTotals,
   computePanelExpenseBreakdown,
@@ -126,9 +127,10 @@ console.log('\n[1] Partição: a soma dos blocos fecha com o total');
     (V2.attachments ?? []).length
   );
 
-  const horaAulaMedicao = soma(blocos.map(blockHoraAula));
+  const SEM_DEFAULT = { demandDefaultHours: 0 };   // aqui o que se mede e so o informado
+  const horaAulaMedicao = soma(blocos.map(b => blockHoraAula(b, SEM_DEFAULT)));
   eq('Σ hora/aula dos blocos', horaAulaMedicao, 16 * 100 + 8 * 90);
-  check('o bloco sem horas não inventa valor', blockHoraAula(blocos[2]) === 0);
+  check('o bloco sem horas não inventa valor', blockHoraAula(blocos[2], SEM_DEFAULT) === 0);
 
   // --- item com dono DESCONHECIDO (participante removido depois do lançamento)
   const comOrfaoDeDono: TotalizableMeasurement = {
@@ -175,7 +177,7 @@ console.log('\n[2] Medição v1 lê idêntico ao comportamento de hoje');
 
   // A implementação ANTIGA da parcela de hora/aula, reproduzida.
   const horaAulaV1Antiga = Number(V1.expenses?.classHours) * Number(V1.expenses?.hourRate);
-  eq('hora/aula do bloco = classHours × hourRate', blockHoraAula(blocos[0]), horaAulaV1Antiga);
+  eq('hora/aula do bloco = classHours × hourRate', blockHoraAula(blocos[0], { demandDefaultHours: 0 }), horaAulaV1Antiga);
   eq('e bate com computeMeasurementTotals', computeMeasurementTotals(V1).horaAula, horaAulaV1Antiga);
 
   // computeMeasurementTotals NÃO pode ter mudado de resultado.
@@ -502,9 +504,15 @@ console.log('\n[6] Painel: o novo fica atrás do gate');
   check('e os participantes, de demandParticipants', painel.includes('demandParticipants.filter(p => p.demandId === _selDemand.id)'));
 
   // O default de horas é PLACEHOLDER, nunca valor.
+  // O placeholder passou a depender do PAPEL: titular e participante veem o
+  // padrão da demanda; acompanhante abre vazio, com a sugestão na legenda.
   check(
-    'o campo de horas usa placeholder para o default',
-    painel.includes('placeholder={String(secao.horasPadrao)}')
+    'o campo de horas usa placeholder para o default de quem tem default',
+    painel.includes("placeholder={secao.papel === 'ACOMPANHANTE' ? '' : String(secao.horasPadrao)}")
+  );
+  check(
+    'e a sugestão do acompanhante é TEXTO, não valor do campo',
+    painel.includes("'Informe as horas (sugestão: ' + secao.horasPadrao + 'h, proporcional aos dias acompanhados)'")
   );
   check(
     'e o default é POR PESSOA (acompanhante tem carga proporcional)',
@@ -551,9 +559,17 @@ console.log('\n[6] Painel: o novo fica atrás do gate');
 
   // Word e WhatsApp.
   check('Word ganha uma seção por pessoa', painel.includes('💰 PAGAMENTO POR PESSOA'));
+  // O recibo passou a seguir a resolução por papel do painel: titular e
+  // participante saem com o padrão da demanda (dizendo de onde veio);
+  // acompanhante, que é manual, continua saindo como "não informado" — e ali
+  // isso é a verdade: ele não entra na planilha até alguém preencher.
   check(
-    'e o recibo diz "não informado" em vez de imprimir zero',
-    painel.includes('b.horasInformadas ? String(b.horas) : "não informado"')
+    'o recibo imprime o padrão para quem tem padrão',
+    painel.includes('(padrão da demanda)') && painel.includes('blockPanelHours(b, ctxDoc)')
+  );
+  check(
+    'e diz "não informado" para o acompanhante, em vez de imprimir zero',
+    painel.includes("b.papel === 'ACOMPANHANTE'") && painel.includes("? 'não informado'")
   );
   check('Word sem blocos mantém o parágrafo de sempre', painel.includes('💰 HORA/AULA'));
   check('WhatsApp ganha uma linha por pessoa', painel.includes('const porPessoa = temBlocosPorPessoa'));
@@ -584,9 +600,12 @@ console.log('\n[7] Fio do export de medição');
     'os acompanhantes também (é deles que saem os dias e a proporção)',
     svc.includes('fetchCompanionAllocations()') && svc.includes('companions: (companionRows ?? []).map')
   );
+  // O injetor de carga saiu: acompanhante sem horas não gera linha, então não
+  // existe mais fallback para calcular no Excel. Se ele voltar, é sinal de que
+  // alguém reintroduziu o "inventa horas" pela porta dos fundos.
   check(
-    'a carga da demanda vem da MESMA função do rateio',
-    svc.includes('effectiveDemandHours(d, trainingsById, measurementByDemandId)')
+    'o Excel não tem mais de onde inventar horas de acompanhante',
+    !svc.includes('demandHours:') && !svc.includes('effectiveDemandHours')
   );
 
   // D4: a chave de tarifa GANHOU o papel — é a única mudança de chave da F3.
@@ -613,15 +632,12 @@ console.log('\n[7] Fio do export de medição');
  *
  * Acompanhante não está em `instructor_allocations` (de propósito: aquela
  * tabela modela DIVISÃO de dias e o rateio dividiria a carga entre quem
- * trabalha nos mesmos dias). Consequência: hoje ele vale ZERO na planilha.
+ * trabalha nos mesmos dias). Ele só existe na planilha pelo bloco da medição.
  *
- * A F3 o insere pela mesma porta do participante, com UMA diferença que é a
- * regra inteira: o default de horas é PROPORCIONAL aos dias que ele acompanha
- * (1 dia numa demanda de 2 dias e 8h = 4h), porque acompanhante quase nunca
- * acompanha a demanda inteira.
- *
- * As duas direções do erro estão cobertas: pagar a carga cheia por um dia
- * (caro) e pagar zero (o de hoje).
+ * E a regra dele é MANUAL OBRIGATÓRIO: ninguém sabe quantas HORAS ele fez, só
+ * quantos DIAS acompanhou. Sem horas digitadas, o Excel NÃO GERA LINHA — não
+ * gera com a proporção (erro caro) nem com zero (erro barato). A proporção é
+ * sugestão de tela, e o painel avisa quem esqueceu.
  * ────────────────────────────────────────────────────────────────────────── */
 console.log('\n[8] F3 — acompanhante de cliente');
 {
@@ -636,9 +652,6 @@ console.log('\n[8] F3 — acompanhante de cliente');
   const D1 = '2026-07-06';
   const D2 = '2026-07-07';
 
-  /** Demanda de 2 dias e 8h — o exemplo do enunciado. */
-  const CARGA = () => 8;
-
   const medicao = (participantes: any[]) => ({
     demandId: 'DEM-C',
     attachments: [],
@@ -649,22 +662,20 @@ console.log('\n[8] F3 — acompanhante de cliente');
     { instructorId: 'TITULAR', demandId: 'DEM-C', horas: 8, dias: [D1, D2], dividida: false },
   ];
 
-  /* ---- a regra pura ---- */
-  eq('1 dia de 2, demanda de 8h -> 4h', companionDefaultHours(8, 2, 1), 4);
-  eq('os 2 dias de 2 -> a carga cheia', companionDefaultHours(8, 2, 2), 8);
+  const linhasDoAcomp = [{ demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D1 + 'T08:00' }];
+
+  /* ---- a SUGESTÃO (texto de tela, nunca pagamento) ---- */
+  eq('1 dia de 2, demanda de 8h -> sugere 4h', companionDefaultHours(8, 2, 1), 4);
+  eq('os 2 dias de 2 -> sugere a carga cheia', companionDefaultHours(8, 2, 2), 8);
   eq('1 dia de 3, demanda de 10h -> 3.33 (2 casas)', companionDefaultHours(10, 3, 1), 3.33);
-  // Nenhuma das bordas vira um número inventado: sem carga, sem dias de
-  // demanda ou sem dias acompanhados, não há proporção — e 0 aqui significa
-  // "não sei", que a inserção trata como "não insere linha".
-  eq('sem carga conhecida não inventa horas', companionDefaultHours(0, 2, 1), 0);
+  eq('sem carga conhecida não sugere nada', companionDefaultHours(0, 2, 1), 0);
   eq('sem dia acompanhado idem', companionDefaultHours(8, 2, 0), 0);
-  // Dado torto não faz a conta passar de 100%.
-  eq('mais dias que a demanda não paga mais que a carga', companionDefaultHours(8, 2, 5), 8);
+  eq('mais dias que a demanda não sugere mais que a carga', companionDefaultHours(8, 2, 5), 8);
 
   /* ---- os dias vêm das linhas dele (uma por dia) ---- */
   eq(
     'acompanhante de 1 dia tem 1 dia',
-    companionDaysFromRows([{ demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D1 + 'T08:00' }], [D1, D2]).join(','),
+    companionDaysFromRows(linhasDoAcomp, [D1, D2]).join(','),
     D1
   );
   eq(
@@ -682,7 +693,7 @@ console.log('\n[8] F3 — acompanhante de cliente');
     1
   );
 
-  /* ---- ponta a ponta: 1 dia de 2 vira 4h ---- */
+  /* ---- SEM horas digitadas: nenhuma linha ---- */
   {
     const rows = applyMeasurementOverrides({
       rows: rateioTitular,
@@ -691,57 +702,58 @@ console.log('\n[8] F3 — acompanhante de cliente');
         { instructorId: 'ACOMP', papel: 'ACOMPANHANTE' },
       ])] as any,
       demands: [DEMANDA_CLIENTE],
-      companions: [{ demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D1 + 'T08:00' }],
-      demandHours: CARGA,
+      companions: linhasDoAcomp,
     });
 
-    const titular = rows.find(r => r.instructorId === 'TITULAR');
-    const acomp = rows.find(r => r.instructorId === 'ACOMP');
+    eq('o titular continua com o rateio intacto', rows.find(r => r.instructorId === 'TITULAR')?.horas, 8);
+    eq('e continua com os dias do rateio', rows.find(r => r.instructorId === 'TITULAR')?.dias.join(','), [D1, D2].join(','));
+    eq('acompanhante SEM horas não vira linha', rows.filter(r => r.instructorId === 'ACOMP').length, 0);
+    eq('e a planilha fica só com o titular', rows.length, 1);
 
-    eq('o titular continua com o rateio intacto', titular?.horas, 8);
-    eq('e continua com os dias do rateio', titular?.dias.join(','), [D1, D2].join(','));
-    eq('o acompanhante entra com 4h (8h x 1/2)', acomp?.horas, 4);
-    eq('e só com o dia dele', acomp?.dias.join(','), D1);
-    eq('marcado como ACOMPANHANTE (a 5a chave de tarifa)', acomp?.papel, 'ACOMPANHANTE');
-
-    // CONTRAPROVA do estado de hoje: sem a F3 o acompanhante não existe na
-    // planilha. É o bug que esta fase resolve.
-    const semF3 = applyMeasurementOverrides({
-      rows: rateioTitular,
-      measurements: [medicao([
-        { instructorId: 'TITULAR', papel: 'TITULAR' },
-        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE' },
-      ])] as any,
-      demands: [DEMANDA_CLIENTE],
-      // sem `companions`: nenhuma linha, logo nenhum dia, logo nada a pagar
-      demandHours: CARGA,
-    });
-    eq(
-      '(contraprova) sem as linhas de acompanhante ele não entra',
-      semF3.filter(r => r.instructorId === 'ACOMP').length,
-      0
+    // As duas versões erradas, lado a lado — nenhuma delas pode estar aqui:
+    const proporcional = companionDefaultHours(8, 2, 1);
+    check('(contraprova) a proporção existe...', proporcional === 4);
+    check(
+      '...mas NÃO virou linha de pagamento',
+      !rows.some(r => r.instructorId === 'ACOMP' && r.horas === proporcional)
     );
-
-    // CONTRAPROVA da direção CARA: pagar a carga cheia por um dia.
-    check('e 4h não é a carga cheia (o erro caro)', acomp!.horas !== 8);
+    check(
+      '...e nem uma linha de 0h entrou no lugar',
+      !rows.some(r => r.instructorId === 'ACOMP' && r.horas === 0)
+    );
   }
 
-  /* ---- override manual manda ---- */
+  /* ---- COM horas digitadas: entra com o que foi digitado ---- */
   {
     const rows = applyMeasurementOverrides({
+      rows: rateioTitular,
+      measurements: [medicao([
+        { instructorId: 'TITULAR', papel: 'TITULAR' },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', horas: 4 },
+      ])] as any,
+      demands: [DEMANDA_CLIENTE],
+      companions: linhasDoAcomp,
+    });
+
+    const acomp = rows.find(r => r.instructorId === 'ACOMP');
+    eq('acompanhante COM horas entra na planilha', acomp?.horas, 4);
+    eq('e só com o dia dele', acomp?.dias.join(','), D1);
+    eq('marcado como ACOMPANHANTE (a 5a chave de tarifa)', acomp?.papel, 'ACOMPANHANTE');
+    eq('o titular segue intacto ao lado', rows.find(r => r.instructorId === 'TITULAR')?.horas, 8);
+
+    // Horas digitadas diferentes da sugestão continuam mandando.
+    const outro = applyMeasurementOverrides({
       rows: rateioTitular,
       measurements: [medicao([
         { instructorId: 'TITULAR', papel: 'TITULAR' },
         { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', horas: 6 },
       ])] as any,
       demands: [DEMANDA_CLIENTE],
-      companions: [{ demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D1 + 'T08:00' }],
-      demandHours: CARGA,
+      companions: linhasDoAcomp,
     });
-    eq('horas digitadas vencem o proporcional', rows.find(r => r.instructorId === 'ACOMP')?.horas, 6);
+    eq('o que foi digitado manda, não a sugestão', outro.find(r => r.instructorId === 'ACOMP')?.horas, 6);
 
-    // E o zero digitado é um zero de verdade: some da planilha em vez de
-    // reviver o default (mesma regra do participante).
+    // Zero digitado é decisão de alguém: some da planilha, e não revive default.
     const comZero = applyMeasurementOverrides({
       rows: rateioTitular,
       measurements: [medicao([
@@ -749,8 +761,7 @@ console.log('\n[8] F3 — acompanhante de cliente');
         { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', horas: 0 },
       ])] as any,
       demands: [DEMANDA_CLIENTE],
-      companions: [{ demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D1 + 'T08:00' }],
-      demandHours: CARGA,
+      companions: linhasDoAcomp,
     });
     eq('zero digitado é decisão, não ausência', comZero.filter(r => r.instructorId === 'ACOMP').length, 0);
   }
@@ -765,7 +776,6 @@ console.log('\n[8] F3 — acompanhante de cliente');
         expenses: { classHours: 8, hourRate: 100 },   // v1: sem `participantes`
       }] as any,
       demands: [DEMANDA_CLIENTE],
-      demandHours: CARGA,
     });
     eq('cliente sem acompanhante: uma linha só', rows.length, 1);
     eq('com as horas do rateio', rows[0].horas, 8);
@@ -775,7 +785,7 @@ console.log('\n[8] F3 — acompanhante de cliente');
       { attachments: [], expenses: { classHours: 8, hourRate: 100 } } as any, 'TITULAR'
     );
     eq('e o painel dela continua com UM bloco', blocos.length, 1);
-    eq('que é o classHours x hourRate de sempre', blockHoraAula(blocos[0]), 800);
+    eq('que é o classHours x hourRate de sempre', blockHoraAula(blocos[0], { demandDefaultHours: 0 }), 800);
   }
 
   /* ---- dois titulares por split + um acompanhante ---- */
@@ -793,11 +803,10 @@ console.log('\n[8] F3 — acompanhante de cliente');
       measurements: [medicao([
         { instructorId: 'T1', papel: 'TITULAR' },
         { instructorId: 'T2', papel: 'TITULAR' },
-        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE' },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', horas: 5 },
       ])] as any,
       demands: [DEMANDA_CLIENTE],
       companions: [{ demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D2 + 'T08:00' }],
-      demandHours: () => 16,
     });
 
     const dosTitulares = rows.filter(r => r.instructorId.startsWith('T'));
@@ -808,9 +817,23 @@ console.log('\n[8] F3 — acompanhante de cliente');
       16
     );
     const acomp = rows.find(r => r.instructorId === 'ACOMP');
-    eq('o acompanhante entra À PARTE, com 1 dia de 2 de uma demanda de 16h', acomp?.horas, 8);
+    eq('o acompanhante entra À PARTE, com as horas dele', acomp?.horas, 5);
     eq('e no dia dele', acomp?.dias.join(','), D2);
     eq('total de linhas: 2 titulares + 1 acompanhante', rows.length, 3);
+
+    // Sem as horas dele, os titulares continuam iguais e ele não entra.
+    const semHoras = applyMeasurementOverrides({
+      rows: rateioSplit,
+      measurements: [medicao([
+        { instructorId: 'T1', papel: 'TITULAR' },
+        { instructorId: 'T2', papel: 'TITULAR' },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE' },
+      ])] as any,
+      demands: [DEMANDA_CLIENTE],
+      companions: [{ demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D2 + 'T08:00' }],
+    });
+    eq('sem horas dele sobram os 2 titulares', semHoras.length, 2);
+    eq('ainda somando a carga', semHoras.reduce((acc, r) => acc + r.horas, 0), 16);
   }
 
   /* ---- D4: a mesma pessoa em dois papéis vira duas linhas distintas ---- */
@@ -828,13 +851,12 @@ console.log('\n[8] F3 — acompanhante de cliente');
           attachments: [],
           expenses: {
             classHours: 8, hourRate: 100,
-            participantes: [{ instructorId: 'OUTRO', papel: 'TITULAR' }, { instructorId: 'P', papel: 'ACOMPANHANTE' }],
+            participantes: [{ instructorId: 'OUTRO', papel: 'TITULAR' }, { instructorId: 'P', papel: 'ACOMPANHANTE', horas: 4 }],
           },
         },
       ] as any,
       demands: [DEMANDA_CLIENTE, OUTRA],
       companions: [{ demandId: 'DEM-D', instructorId: 'P', startDate: D1 + 'T08:00' }],
-      demandHours: CARGA,
     });
 
     const daPessoa = rows.filter(r => r.instructorId === 'P');
@@ -844,41 +866,318 @@ console.log('\n[8] F3 — acompanhante de cliente');
       daPessoa.map(r => r.papel ?? 'TITULAR').sort().join('|'),
       'ACOMPANHANTE|TITULAR'
     );
-    eq(
-      'e ministrando ela mantém a carga cheia',
-      daPessoa.find(r => r.demandId === 'DEM-C')?.horas,
-      8
-    );
-    eq(
-      'acompanhando, o proporcional',
-      daPessoa.find(r => r.demandId === 'DEM-D')?.horas,
-      4
-    );
+    eq('e ministrando ela mantém a carga cheia', daPessoa.find(r => r.demandId === 'DEM-C')?.horas, 8);
+    eq('acompanhando, o que foi digitado', daPessoa.find(r => r.demandId === 'DEM-D')?.horas, 4);
   }
 
-  /* ---- recorte de período: o acompanhante é cortado como o titular ---- */
+  /* ---- recorte de período vale para o acompanhante também ---- */
   {
     const rows = applyMeasurementOverrides({
       rows: rateioTitular,
       measurements: [medicao([
         { instructorId: 'TITULAR', papel: 'TITULAR' },
-        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE' },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', horas: 4 },
       ])] as any,
       demands: [DEMANDA_CLIENTE],
       companions: [
         { demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D1 + 'T08:00' },
         { demandId: 'DEM-C', instructorId: 'ACOMP', startDate: D2 + 'T08:00' },
       ],
-      demandHours: CARGA,
       periodStart: D2,
       periodEnd: D2,
     });
-    const acomp = rows.find(r => r.instructorId === 'ACOMP');
-    eq('fora do período sobra 1 dia', acomp?.dias.join(','), D2);
-    eq('e as horas acompanham o recorte', acomp?.horas, 4);
+    eq('fora do período sobra 1 dia', rows.find(r => r.instructorId === 'ACOMP')?.dias.join(','), D2);
+    // As horas digitadas NÃO são rateadas pelo período: são o que a pessoa
+    // informou para a demanda, igual ao override do titular.
+    eq('e as horas digitadas não são recortadas', rows.find(r => r.instructorId === 'ACOMP')?.horas, 4);
+  }
+
+  /* ---- fora do período o acompanhante não aparece ---- */
+  {
+    const rows = applyMeasurementOverrides({
+      rows: [],
+      measurements: [medicao([
+        { instructorId: 'TITULAR', papel: 'TITULAR' },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', horas: 4 },
+      ])] as any,
+      demands: [DEMANDA_CLIENTE],
+      companions: linhasDoAcomp,
+      periodStart: '2026-08-01',
+      periodEnd: '2026-08-31',
+    });
+    eq('acompanhante de outro mês não entra no export', rows.length, 0);
   }
 }
-/* ────────────────────────────────────────────────────────────────────────── */
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [9] PAINEL vs EXCEL — o MESMO ausente, duas resoluções
+ *
+ * É a correção do relato da DEM-1552: o titular sem horas digitadas aparecia
+ * com "Horas não informadas" e R$ 0,00, quando na v1 ele sempre valeu
+ * `classHours × hourRate` — e classHours abre preenchido com a carga da demanda.
+ *
+ * O que NÃO podia acontecer para consertar isso é o Excel passar a usar o mesmo
+ * default: a demanda dividida por dias tem rateio de 8h + 8h numa carga de 16h,
+ * e resolver o ausente para a carga faria cada um valer 16h — 32h numa demanda
+ * de 16h, o estrago que a F2 inteira existe para evitar.
+ *
+ * Por isso os dois lados são medidos NO MESMO TESTE, sobre o MESMO JSON.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[9] Painel resolve para o default; Excel resolve para o rateio');
+{
+  const DEMANDA: any = {
+    id: 'DEM-1552',
+    tipo: 'interna',
+    dateMode: 'CONTINUO',
+    startDate: '2026-07-06T08:00',
+    endDate: '2026-07-07T18:00',
+    instructorId: 'TITULAR',
+    horasPrevistas: 16,
+  };
+  const CARGA = 16;
+  const PAINEL = { demandDefaultHours: CARGA };
+
+  // O JSON como o save grava: papel e valorHH, SEM horas (ninguém digitou).
+  const medicaoSemHoras: any = {
+    demandId: 'DEM-1552',
+    attachments: [],
+    expenses: {
+      classHours: CARGA,
+      hourRate: 100,
+      participantes: [
+        { instructorId: 'TITULAR', papel: 'TITULAR', valorHH: 100 },
+        { instructorId: 'PART', papel: 'PARTICIPANTE', valorHH: 80 },
+      ],
+    },
+  };
+
+  const blocos = normalizeMeasurementBlocks(medicaoSemHoras, 'TITULAR');
+
+  /* --- lado PAINEL --- */
+  eq('titular sem horas conta o padrão da demanda', blockPanelHours(blocos[0], PAINEL), CARGA);
+  eq('e o total dele é default x valorHH (não R$ 0,00)', blockHoraAula(blocos[0], PAINEL), 1600);
+  eq('participante segue a MESMA regra (titular pleno)', blockPanelHours(blocos[1], PAINEL), CARGA);
+  eq('com o valorHH dele', blockHoraAula(blocos[1], PAINEL), 1280);
+  // Equivalência com a v1: era exatamente classHours × hourRate.
+  eq(
+    'o titular vale o mesmo que valia na v1 (classHours x hourRate)',
+    blockHoraAula(blocos[0], PAINEL),
+    CARGA * 100
+  );
+  check('e nada disso foi gravado no JSON', blocos.every(b => !b.horasInformadas));
+
+  /* --- lado EXCEL, MESMO JSON --- */
+  {
+    // Rateio da demanda dividida por dias: 8h + 8h = a carga de 16h.
+    const rows = applyMeasurementOverrides({
+      rows: [
+        { instructorId: 'TITULAR', demandId: 'DEM-1552', horas: 8, dias: ['2026-07-06'], dividida: true },
+        { instructorId: 'OUTRO', demandId: 'DEM-1552', horas: 8, dias: ['2026-07-07'], dividida: true },
+      ],
+      measurements: [medicaoSemHoras],
+      demands: [DEMANDA],
+    });
+
+    const titular = rows.find(r => r.instructorId === 'TITULAR');
+    eq('o Excel NÃO usa o default do painel: mantém o rateio', titular?.horas, 8);
+    eq(
+      'e a soma continua sendo a carga (16h, não 32h)',
+      rows.filter(r => r.demandId === 'DEM-1552' && r.instructorId !== 'PART')
+        .reduce((acc, r) => acc + r.horas, 0),
+      16
+    );
+    // A versão ERRADA reproduzida: se o Excel resolvesse ausente -> default.
+    const erradoSeUsasseODefault = 2 * CARGA;
+    check('(contraprova) usar o default no Excel daria 32h', erradoSeUsasseODefault === 32);
+  }
+
+  /* --- acompanhante: o inverso do titular nos dois lados --- */
+  {
+    const comAcomp: any = {
+      demandId: 'DEM-C2',
+      attachments: [{ category: 'HOSPEDAGEM', value: 300, instructorId: 'ACOMP' }],
+      expenses: {
+        classHours: 8,
+        hourRate: 100,
+        participantes: [
+          { instructorId: 'TITULAR', papel: 'TITULAR', valorHH: 100 },
+          { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', valorHH: 90 },
+        ],
+      },
+    };
+    const bs = normalizeMeasurementBlocks(comAcomp, 'TITULAR');
+    const acomp = bs.find(b => b.papel === 'ACOMPANHANTE')!;
+
+    eq('acompanhante sem horas NÃO conta o default', blockPanelHours(acomp, { demandDefaultHours: 8 }), 0);
+    eq('logo o hora/aula dele é zero...', blockHoraAula(acomp, { demandDefaultHours: 8 }), 0);
+    // ...e o total da pessoa é SÓ despesas — que é o que o painel mostra.
+    const despesasDele = blockExpenseBreakdown(comAcomp, acomp);
+    eq('...e o total da pessoa é só as despesas dele', despesasDele.total + blockHoraAula(acomp, { demandDefaultHours: 8 }), 300);
+
+    // O mesmo bloco no Excel: nenhuma linha.
+    const rows = applyMeasurementOverrides({
+      rows: [{ instructorId: 'TITULAR', demandId: 'DEM-C2', horas: 8, dias: ['2026-07-06'], dividida: false }],
+      measurements: [comAcomp],
+      demands: [{ ...DEMANDA, id: 'DEM-C2', tipo: 'cliente' }],
+      companions: [{ demandId: 'DEM-C2', instructorId: 'ACOMP', startDate: '2026-07-06T08:00' }],
+    });
+    eq('e no Excel ele não gera linha', rows.filter(r => r.instructorId === 'ACOMP').length, 0);
+  }
+
+  /* --- horas digitadas vencem os dois lados --- */
+  {
+    const digitado: any = {
+      ...medicaoSemHoras,
+      expenses: {
+        ...medicaoSemHoras.expenses,
+        participantes: [
+          { instructorId: 'TITULAR', papel: 'TITULAR', valorHH: 100, horas: 10 },
+          { instructorId: 'PART', papel: 'PARTICIPANTE', valorHH: 80 },
+        ],
+      },
+    };
+    const bs = normalizeMeasurementBlocks(digitado, 'TITULAR');
+    eq('painel: horas digitadas vencem o default', blockPanelHours(bs[0], PAINEL), 10);
+
+    const rows = applyMeasurementOverrides({
+      rows: [{ instructorId: 'TITULAR', demandId: 'DEM-1552', horas: 8, dias: ['2026-07-06'], dividida: true }],
+      measurements: [digitado],
+      demands: [DEMANDA],
+    });
+    eq('excel: horas digitadas SUBSTITUEM o rateio', rows.find(r => r.instructorId === 'TITULAR')?.horas, 10);
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [10] ROUND-TRIP — gravar, reabrir, achar o mesmo
+ *
+ * O bug: o valorHH digitado não voltava. `handleOpenDetail` remontava
+ * `expenses` como LISTA BRANCA e `participantes` não estava nela — o painel
+ * reabria zerado e o save seguinte, reconstruindo os blocos a partir de uma
+ * lista vazia, APAGAVA no banco o que estava gravado certo.
+ *
+ * A reabertura é reproduzida aqui nas duas versões, e a errada TEM de perder o
+ * dado — senão este bloco passaria a ser verde sobre qualquer coisa.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[10] Round-trip de valorHH e horas por bloco');
+{
+  const gravado: any = {
+    demandId: 'DEM-1552',
+    attachments: [],
+    expenses: {
+      breakfast: '', lunch: '', dinner: '', transport: '', others: '',
+      classHours: 16,
+      hourRate: 0,
+      participantes: [
+        { instructorId: 'TITULAR', papel: 'TITULAR', valorHH: 100 },
+        { instructorId: 'PART', papel: 'PARTICIPANTE', valorHH: 80, horas: 12 },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', valorHH: 90, horas: 4 },
+      ],
+    },
+  };
+
+  /** A reabertura ANTIGA: lista branca. É o bug. */
+  const reabrirListaBranca = (m: any) => ({
+    ...m,
+    expenses: {
+      breakfast: m.expenses?.breakfast ?? '',
+      lunch: m.expenses?.lunch ?? '',
+      dinner: m.expenses?.dinner ?? '',
+      transport: m.expenses?.transport ?? '',
+      others: m.expenses?.others ?? '',
+      classHours: m.expenses?.classHours ?? 16,
+      hourRate: m.expenses?.hourRate ?? undefined,
+    },
+  });
+
+  /** A reabertura CORRIGIDA: o que existe sobrevive. */
+  const reabrir = (m: any) => ({
+    ...m,
+    expenses: {
+      ...(m.expenses ?? {}),
+      breakfast: m.expenses?.breakfast ?? '',
+      lunch: m.expenses?.lunch ?? '',
+      dinner: m.expenses?.dinner ?? '',
+      transport: m.expenses?.transport ?? '',
+      others: m.expenses?.others ?? '',
+      classHours: m.expenses?.classHours ?? 16,
+      hourRate: m.expenses?.hourRate ?? undefined,
+    },
+  });
+
+  // CONTRAPROVA: a versão antiga perde os blocos inteiros.
+  eq(
+    '(contraprova) a lista branca PERDE os blocos ao reabrir',
+    reabrirListaBranca(gravado).expenses.participantes,
+    undefined
+  );
+  eq(
+    '(contraprova) e o painel reabriria com todo mundo zerado',
+    normalizeMeasurementBlocks(reabrirListaBranca(gravado), 'TITULAR').length,
+    1
+  );
+
+  // A versão corrigida devolve tudo, bloco a bloco.
+  const relido = reabrir(gravado);
+  const blocos = normalizeMeasurementBlocks(relido, 'TITULAR');
+
+  eq('reabrir preserva os três blocos', blocos.length, 3);
+  eq('valorHH do titular volta', blocos[0].valorHH, 100);
+  eq('valorHH do participante volta', blocos[1].valorHH, 80);
+  eq('valorHH do acompanhante volta', blocos[2].valorHH, 90);
+  eq('horas manuais do participante voltam', blocos[1].horas, 12);
+  check('e continuam marcadas como informadas', blocos[1].horasInformadas);
+  eq('horas manuais do acompanhante voltam', blocos[2].horas, 4);
+  check(
+    'o titular continua SEM horas (é o que protege o rateio no Excel)',
+    !blocos[0].horasInformadas
+  );
+
+  // Segundo ciclo: reabrir de novo não degrada nada (era aqui que o save
+  // seguinte apagava o que estava gravado).
+  const duasVoltas = normalizeMeasurementBlocks(reabrir(relido), 'TITULAR');
+  eq(
+    'reabrir duas vezes não perde nada',
+    duasVoltas.map(b => [b.instructorId, b.valorHH, b.horas ?? '-'].join(':')).join('|'),
+    'TITULAR:100:-|PART:80:12|ACOMP:90:4'
+  );
+
+  /* ---- guarda de fonte: a correção está mesmo na tela ---- */
+  const painel = ler('components/Measurement.tsx');
+  const abertura = painel.slice(
+    painel.indexOf('const handleOpenDetail'),
+    painel.indexOf('const handleSaveMeasurement')
+  );
+  check('handleOpenDetail existe', abertura.length > 0);
+  check(
+    'e preserva o expenses gravado em vez de remontá-lo por lista branca',
+    abertura.includes('...(m.expenses ?? {}),')
+  );
+  check(
+    'o campo de valor hora/aula não renderiza um zero literal ("0100")',
+    painel.includes("value={secao.valorHH ? String(secao.valorHH) : ''}")
+  );
+  check(
+    'e campo limpo volta a NÃO INFORMADO, não a zero',
+    painel.includes("setCampoDoBloco(secao.instructorId, 'valorHH', raw === '' ? undefined : Number(raw))")
+  );
+
+  // O painel conta pelo domínio, não por uma soma crua do JSON (que dava zero
+  // para o titular).
+  check(
+    'o total do painel resolve o ausente pelo domínio',
+    painel.includes('blockHoraAula(b, { demandDefaultHours: cargaPadrao })')
+  );
+  check(
+    'e as seções também',
+    painel.includes('horasContadas: blockPanelHours(comPapel, {')
+  );
+  check(
+    'aviso (não bloqueio) para acompanhante com valor e sem horas',
+    painel.includes('acompanhantesSemHoras') && !/return;[\s\S]{0,80}acompanhantesSemHoras/.test(painel)
+  );
+}
+
 console.log(
   falhas === 0 ? '\n✅ SMOKE MEDICAO BLOCOS: OK' : `\n❌ SMOKE MEDICAO BLOCOS: ${falhas} falha(s)`
 );

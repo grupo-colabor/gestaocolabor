@@ -137,20 +137,21 @@ export function companionDaysFromRows(
 }
 
 /**
- * O default de horas do ACOMPANHANTE: proporcional aos dias que ele acompanha.
+ * A SUGESTÃO de horas do acompanhante: proporcional aos dias que ele acompanha.
+ * 1 dia numa demanda de 2 dias e 8h = 4h.
  *
- * 1 dia numa demanda de 2 dias e 8h = 4h. É a regra que o Bernardo definiu, e a
- * razão de ela existir é que acompanhante quase nunca acompanha a demanda
- * inteira — pagar a carga cheia por um dia de acompanhamento seria o erro na
- * direção cara, e pagar zero (o que acontece hoje) é o erro na direção barata.
+ * ⚠️ É SÓ SUGESTÃO — texto na tela, ao lado do campo. NÃO é fallback de nada:
+ * acompanhante sem horas digitadas não gera linha na planilha (ver a inserção
+ * em `applyMeasurementOverrides`), e não vale nem a proporção nem zero: vale
+ * "ninguém informou ainda".
  *
- * Como todo default desta família, é PLACEHOLDER: aparece no painel, não é
- * gravado, e some assim que alguém digita um valor. Ver o cabeçalho deste
- * arquivo — `horas` ausente nunca é zero.
+ * A razão é que ninguém sabe quantas HORAS o acompanhante fez — só quantos DIAS
+ * ele acompanhou. A proporção é um palpite razoável para quem for digitar, e um
+ * palpite razoável ainda é um palpite: transformá-lo em pagamento automático
+ * erraria na direção cara, sem ninguém ter olhado.
  *
- * Devolve 0 quando não dá para calcular (demanda sem carga conhecida, ou nenhum
- * dia): 0 aqui significa "não sei", e quem chama trata isso como "não insere
- * linha" / "campo sem placeholder" — nunca como "não pagar".
+ * Devolve 0 quando não dá para calcular (sem carga conhecida, sem dias): 0 aqui
+ * é "não sei sugerir", e quem chama esconde a sugestão em vez de exibir "0h".
  */
 export function companionDefaultHours(
   horasDaDemanda: number,
@@ -169,20 +170,8 @@ export interface ApplyOverridesInput {
   demands: OverrideDemandLike[];
   /** Participantes de interna, para os dias da linha inserida. */
   participants?: OverrideParticipantLike[];
-  /** Linhas de acompanhante (uma por dia), para os dias e a proporção de horas. */
+  /** Linhas de acompanhante (uma por dia), para os dias da linha inserida. */
   companions?: OverrideCompanionRowLike[];
-  /**
-   * Carga horária da demanda, para o default proporcional do acompanhante.
-   *
-   * Entra por INJEÇÃO e não por leitura de campo porque a regra de "horas da
-   * demanda" não é um campo: é classHours da medição > horasPrevistas (interna)
-   * > horas práticas (híbrido) > horas do treinamento, e ela já existe em
-   * domain/instructorHours. Reimplementá-la aqui criaria a segunda definição da
-   * carga — e as duas divergiriam no primeiro ajuste, em cima de pagamento.
-   *
-   * Sem o resolvedor, o fallback é `horasPrevistas` (o que a interna já usava).
-   */
-  demandHours?: (demandId: string) => number;
   /** Recorte do período do export, igual ao do rateio ('YYYY-MM-DD'). */
   periodStart?: string;
   periodEnd?: string;
@@ -211,7 +200,6 @@ export function applyMeasurementOverrides({
   demands,
   participants = [],
   companions = [],
-  demandHours,
   periodStart,
   periodEnd,
 }: ApplyOverridesInput): HoursRowLike[] {
@@ -320,21 +308,19 @@ export function applyMeasurementOverrides({
       if (diasNoPeriodo.length === 0) continue; // fora da janela do export
 
       // ⚠️ AQUI mora a metade do "ausente ≠ zero" que vale para quem não tem
-      // rateio. O fallback é DIFERENTE por papel, e nenhum dos dois é 0:
+      // rateio — e ela é DIFERENTE por papel:
       //
       //   • participante de interna → `horas_previstas` (carga cheia: ele
       //     ministra a demanda inteira, como o titular);
-      //   • acompanhante de cliente → proporcional aos dias que acompanha.
-      //
-      // Os dias usados na proporção são os do PERÍODO, os mesmos que a planilha
-      // imprime: um export de meio mês recorta o acompanhante do mesmo jeito que
-      // já recortava o titular pelo rateio.
-      const horas = (() => {
-        if (bloco.horasInformadas && bloco.horas !== undefined) return bloco.horas;
-        if (!ehAcompanhante) return num(demand.horasPrevistas);
-        const carga = demandHours ? demandHours(demandId) : num(demand.horasPrevistas);
-        return companionDefaultHours(carga, diasDaDemanda.length, diasNoPeriodo.length);
-      })();
+      //   • acompanhante de cliente → NÃO GERA LINHA. Ninguém sabe quantas horas
+      //     ele fez, só quantos dias acompanhou; a planilha não inventa isso.
+      //     A sugestão proporcional (`companionDefaultHours`) é texto de tela,
+      //     e o painel avisa quem esqueceu de preencher.
+      if (ehAcompanhante && !(bloco.horasInformadas && bloco.horas !== undefined)) continue;
+
+      const horas = bloco.horasInformadas && bloco.horas !== undefined
+        ? bloco.horas
+        : num(demand.horasPrevistas);
 
       if (horas <= 0) continue; // nada a pagar e nada a imprimir
 

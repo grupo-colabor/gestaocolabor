@@ -22,7 +22,7 @@ import { fetchInstructorAllocations } from './instructorAllocations';
 import { fetchMeasurements } from './measurements';
 import { fetchTrainings } from './trainings';
 import { fetchInstructors } from './instructors';
-import { computeInstructorHoursByDemand, effectiveDemandHours } from '../domain/instructorHours';
+import { computeInstructorHoursByDemand } from '../domain/instructorHours';
 import { applyMeasurementOverrides } from '../domain/measurementOverrides';
 import { fetchDemandParticipants } from './demandParticipants';
 import { fetchCompanionAllocations } from './companionAllocations';
@@ -251,11 +251,8 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
     periodEnd: dataFim,
   });
 
-  // Índices usados dos dois lados do override (a carga da demanda) e da
-  // montagem das linhas — declarados aqui em cima porque o override vem antes.
   const demandsById = new Map(demands.map(d => [d.id, d]));
   const trainingsById = buildTrainingsById(trainings);
-  const measurementByDemandId = new Map(measurements.map(m => [m.demandId, m]));
 
   /**
    * Medição multi-pessoa: os blocos são OVERRIDE por pessoa, nunca soma.
@@ -286,13 +283,6 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
       instructorId: c.instructor_id,
       startDate: c.start_date,
     })),
-    // A carga da demanda para o default proporcional do acompanhante sai da
-    // MESMA função que o rateio usa (classHours > horasPrevistas > prática >
-    // treinamento). Recalcular a carga aqui criaria a segunda definição dela.
-    demandHours: (demandId: string) => {
-      const d = demandsById.get(demandId);
-      return d ? effectiveDemandHours(d, trainingsById, measurementByDemandId) : 0;
-    },
     periodStart: dataInicio,
     periodEnd: dataFim,
   });

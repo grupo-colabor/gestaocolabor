@@ -415,6 +415,35 @@ export function aggregatePanelExpenseBreakdown(
  * São fallbacks DIFERENTES para o mesmo campo vazio, então resolvê-lo aqui com
  * um `?? 0` (ou com qualquer default único) quebraria um dos dois em silêncio,
  * em cima de pagamento. Ver `applyMeasurementOverrides`.
+ *
+ * ---------------------------------------------------------------------------
+ * DUAS resoluções do mesmo ausente: PAINEL e EXCEL
+ * ---------------------------------------------------------------------------
+ * Não são a mesma conta, e a diferença é deliberada:
+ *
+ *   | papel        | PAINEL (esta função)        | EXCEL (applyMeasurementOverrides) |
+ *   |--------------|-----------------------------|-----------------------------------|
+ *   | TITULAR      | carga padrão da demanda     | mantém o rateio da alocação       |
+ *   | PARTICIPANTE | carga padrão da demanda     | `horas_previstas` (carga cheia)   |
+ *   | ACOMPANHANTE | ZERO (manual obrigatório)   | não gera linha nenhuma            |
+ *
+ * O painel PRECISA mostrar um número: uma medição de titular sem horas digitadas
+ * exibindo "R$ 0,00" é a v1 quebrada — lá o valor sempre foi
+ * `classHours × hourRate`, e classHours abre preenchido com a carga da demanda.
+ *
+ * O Excel NÃO pode usar esse mesmo default: a demanda dividida por dias tem
+ * rateio de 8h + 8h numa carga de 16h, e resolver o ausente para a carga faria
+ * cada um valer 16h — 32h numa demanda de 16h. Por isso lá o ausente do titular
+ * é "mantenha o rateio", que é o único lugar que conhece a divisão.
+ *
+ * E o ACOMPANHANTE é o oposto dos dois: ninguém sabe quantas horas ele fez, só
+ * quantos dias acompanhou. Inventar horas para ele erra na direção cara, então
+ * o painel mostra a sugestão proporcional como TEXTO e o Excel se recusa a
+ * gerar linha até alguém digitar.
+ *
+ * A carga entra por INJEÇÃO (`PanelHoursContext`) e não por leitura de campo:
+ * este módulo não tem nenhum import, e é isso que deixa os smokes rodarem sem
+ * montar React nem cliente de banco.
  * ────────────────────────────────────────────────────────────────────────── */
 
 /** Um bloco de pagamento já resolvido: a pessoa, o que ela recebe e os itens dela. */
@@ -522,13 +551,40 @@ function naoInformado(v: number | string | null | undefined): boolean {
   return v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
 }
 
+/** O que o painel precisa injetar para resolver um bloco sem `horas`. */
+export interface PanelHoursContext {
+  /**
+   * Carga padrão da demanda — o que o titular vale sem ninguém digitar.
+   * Cliente: horas do treinamento (ou o `classHours` já informado na medição).
+   * Interna: `horas_previstas`.
+   */
+  demandDefaultHours: number;
+}
+
 /**
- * A parcela de Hora/Aula de um bloco. Bloco sem `horas` informadas vale 0 AQUI
- * — o fallback (rateio ou horas_previstas) é de quem tem o contexto da demanda,
- * e aplicá-lo neste módulo exigiria importar `Demand`.
+ * As horas que o PAINEL conta para um bloco. Ver a tabela no cabeçalho da
+ * seção: o Excel resolve o mesmo ausente de outro jeito, e de propósito.
+ *
+ * Horas informadas sempre vencem — inclusive um 0 digitado, que é decisão de
+ * alguém e não ausência.
  */
-export function blockHoraAula(b: MeasurementPersonBlock): number {
-  return (b.horas ?? 0) * b.valorHH;
+export function blockPanelHours(b: MeasurementPersonBlock, ctx: PanelHoursContext): number {
+  if (b.horasInformadas && b.horas !== undefined) return b.horas;
+  // Acompanhante é manual obrigatório: a sugestão proporcional é texto na tela,
+  // nunca um número que entra na conta sem alguém ter olhado.
+  if (b.papel === 'ACOMPANHANTE') return 0;
+  return ctx.demandDefaultHours;
+}
+
+/**
+ * A parcela de Hora/Aula de um bloco NO PAINEL.
+ *
+ * O contexto é OBRIGATÓRIO — e um objeto, não um número solto, justamente para
+ * que `blocos.map(blockHoraAula)` não compile: o índice do `map` entraria como
+ * carga da demanda e o erro seria silencioso, em cima de pagamento.
+ */
+export function blockHoraAula(b: MeasurementPersonBlock, ctx: PanelHoursContext): number {
+  return blockPanelHours(b, ctx) * b.valorHH;
 }
 
 /**

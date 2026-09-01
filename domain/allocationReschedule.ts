@@ -21,16 +21,27 @@
  *   3. PARTICIPANTE. O período próprio (`start_date`/`end_date` em
  *      `demand_participants`) ficava apontando para fora da demanda.
  *
- * A regra única é RECORTE, NUNCA CÓPIA: o que continua dentro do período novo
- * fica, o que saiu é removido, e dia novo NUNCA é inventado para ninguém.
+ * A regra base é RECORTE, NUNCA CÓPIA: o que continua dentro do período novo
+ * fica, o que saiu é removido. Sobre ela vale um princípio mais forte:
  *
- * A única exceção — e ela é deliberada — é a alocação ÚNICA que cobria o
- * período antigo inteiro. Aí "a demanda mudou de dia" e "o instrutor foi junto"
- * são a mesma coisa, é o caso comum da tela, e recortar deixaria a demanda sem
- * instrutor sem motivo. Havendo split (dois instrutores, ou cobertura parcial),
- * expandir é o que dobra o pagamento — então só recorta, e os dias novos ficam
- * descobertos COM AVISO, para a equipe alocar pela agenda em vez de descobrir
- * o buraco no fechamento.
+ *   MUDAR DATA NÃO DESVINCULA NINGUÉM.
+ *
+ * Quem estava na demanda continua na demanda; o que muda são os DIAS. Por isso
+ * três vínculos "acompanham" o período novo em vez de serem recortados até
+ * sumir:
+ *
+ *   • a alocação de instrutor ÚNICA que cobria o período antigo inteiro — aí
+ *     "a demanda mudou de dia" e "o instrutor foi junto" são a mesma coisa;
+ *   • o ACOMPANHANTE que cobria o período inteiro — mesma leitura, e ele é uma
+ *     linha por dia, então acompanhar significa criar/apagar linhas;
+ *   • o PARTICIPANTE cujo período próprio ficou fora — volta a NULL, que já
+ *     significa "a demanda inteira".
+ *
+ * A exceção à exceção é o SPLIT de instrutores. Ali expandir é o que dobra o
+ * pagamento (duas alocações cobrindo todos os dias fazem o rateio pagar a carga
+ * cheia a cada um), então split só recorta e os dias novos ficam descobertos
+ * COM AVISO — a equipe aloca pela agenda em vez de descobrir o buraco no
+ * fechamento. Acompanhante não tem esse risco: ele não entra no rateio.
  *
  * Função pura: nenhuma escrita, nenhum import de serviço. Ela devolve o PLANO,
  * e quem chama aplica e monta o aviso.
@@ -88,10 +99,15 @@ export interface ReschedulePlan {
     diasSemInstrutor: string[];
   };
   companions: {
-    /** Ficam; a data é a MESMA, só o horário segue o da demanda. */
+    /** Ficam. Normalizadas para UM dia — linha que a reescrita antiga deixou
+     *  cobrindo dois dias volta a ser de um só. */
     paraAtualizar: { id: string; instructorId: string; startDate: string; endDate: string }[];
     /** Dia saiu do período (ou é duplicata do mesmo dia da mesma pessoa). */
     paraRemover: { id: string; instructorId: string; dia: string }[];
+    /** Dias novos de quem acompanhava a demanda inteira (ou foi recriado). */
+    paraCriar: { instructorId: string; startDate: string; endDate: string }[];
+    /** Recriado porque o recorte esvaziou: alguém tem de conferir os dias. */
+    paraRevisar: { instructorId: string }[];
   };
   participants: {
     /** Período próprio recortado ao novo. */
@@ -113,37 +129,90 @@ export function planAllocationReschedule(input: ReschedulePlanInput): Reschedule
 
   const plan: ReschedulePlan = {
     allocations: { paraPeriodoCheio: [], paraRecortar: [], paraRemover: [], diasSemInstrutor: [] },
-    companions: { paraAtualizar: [], paraRemover: [] },
+    companions: { paraAtualizar: [], paraRemover: [], paraCriar: [], paraRevisar: [] },
     participants: { paraRecortar: [], paraLimparPeriodo: [] },
   };
 
   /* ───────────────────────── ACOMPANHANTE ─────────────────────────
-   * Uma linha por dia: a decisão é FICA ou SAI, nunca "vira outro dia".
-   * A dedupe por (pessoa, dia) é rede de segurança para o dado que a reescrita
-   * antiga já corrompeu — sem ela, as três linhas do mesmo dia continuariam
-   * rendendo três cards depois da correção. */
-  const vistos = new Set<string>();
+   *
+   * Uma linha por dia, então "acompanhar o período" aqui é criar e apagar
+   * linhas — não existe uma linha só para esticar. A decisão é POR PESSOA:
+   *
+   *   • cobria a demanda inteira  → passa a cobrir o período novo inteiro
+   *                                 (cresce e encolhe junto com a demanda);
+   *   • cobria só alguns dias     → recorte; dia novo NÃO é inventado;
+   *   • o recorte esvaziou        → NÃO remove. Recria cobrindo o período novo
+   *                                 e pede revisão dos dias.
+   *
+   * O último caso é o que impede o pior resultado possível: mudar a data de uma
+   * demanda NUNCA pode desvincular alguém. Ele cobre tanto a demanda que foi
+   * deslocada inteira quanto a linha corrompida pela reescrita antiga.
+   *
+   * HORÁRIO: as duas telas que criam acompanhante gravam convenções diferentes
+   * (o Drawer usa T08:00/T18:00 literais; a Logística usa o horário da
+   * demanda). A convenção de quem já está ali é PRESERVADA — a hora sai da
+   * própria linha da pessoa, e a da demanda é só o fallback de quem não tem
+   * hora utilizável. Nada aqui muda a convenção de nenhuma das telas.
+   */
+  const horaDe = (v: string, fallback: string) => (v ?? '').slice(11) || fallback;
+
+  const porPessoa = new Map<string, CompanionRowLike[]>();
   for (const c of companions) {
-    const d = dia(c.startDate);
-    const chave = `${c.instructorId} ${d}`;
+    const lista = porPessoa.get(c.instructorId) ?? [];
+    lista.push(c);
+    porPessoa.set(c.instructorId, lista);
+  }
 
-    if (!novos.has(d) || vistos.has(chave)) {
-      plan.companions.paraRemover.push({ id: c.id, instructorId: c.instructorId, dia: d });
-      continue;
+  const diasNovosOrdenados = [...diasNovos].sort();
+
+  for (const [instructorId, linhasDaPessoa] of porPessoa) {
+    const linhas = [...linhasDaPessoa].sort((a, b) => a.startDate.localeCompare(b.startDate));
+    const diasDela = [...new Set(linhas.map(l => dia(l.startDate)))].sort();
+
+    const cobriaTudo =
+      diasAntigos.length > 0 && diasAntigos.every(d => diasDela.includes(d));
+
+    let alvo = cobriaTudo ? diasNovosOrdenados : diasDela.filter(d => novos.has(d));
+    let recriado = false;
+    if (alvo.length === 0) {
+      alvo = diasNovosOrdenados;
+      recriado = true;
     }
-    vistos.add(chave);
+    const alvoSet = new Set(alvo);
 
-    const novoStart = `${d}T${horaInicio}`;
-    const novoFim = `${d}T${horaFim}`;
-    // Só entra na lista quem realmente muda — nada de UPDATE à toa.
-    if (c.startDate !== novoStart || c.endDate !== novoFim) {
-      plan.companions.paraAtualizar.push({
-        id: c.id,
-        instructorId: c.instructorId,
-        startDate: novoStart,
-        endDate: novoFim,
+    const hIni = horaDe(linhas[0].startDate, horaInicio);
+    const hFim = horaDe(linhas[0].endDate, horaFim);
+
+    const usados = new Set<string>();
+    for (const l of linhas) {
+      const d = dia(l.startDate);
+      // Fora do alvo, ou segunda linha do mesmo dia (a dedupe é rede de
+      // segurança para o dado que a reescrita antiga já corrompeu).
+      if (!alvoSet.has(d) || usados.has(d)) {
+        plan.companions.paraRemover.push({ id: l.id, instructorId, dia: d });
+        continue;
+      }
+      usados.add(d);
+
+      const novoStart = `${d}T${hIni}`;
+      const novoFim = `${d}T${hFim}`;
+      // Normaliza para UM dia: a reescrita antiga deixou linhas cobrindo o
+      // período inteiro, e uma linha de dois dias vira card em dois dias.
+      if (l.startDate !== novoStart || l.endDate !== novoFim) {
+        plan.companions.paraAtualizar.push({ id: l.id, instructorId, startDate: novoStart, endDate: novoFim });
+      }
+    }
+
+    for (const d of alvo) {
+      if (usados.has(d)) continue;
+      plan.companions.paraCriar.push({
+        instructorId,
+        startDate: `${d}T${hIni}`,
+        endDate: `${d}T${hFim}`,
       });
     }
+
+    if (recriado) plan.companions.paraRevisar.push({ instructorId });
   }
 
   /* ───────────────────────── PARTICIPANTE ─────────────────────────
@@ -248,11 +317,25 @@ export function describeReschedule(
   const avisos: string[] = [];
   const nomes = (ids: string[]) => [...new Set(ids.map(nomeDe))].join(', ');
 
-  if (plan.companions.paraRemover.length > 0) {
-    const dias = plan.companions.paraRemover.map(c => c.dia).filter(Boolean);
+  // Os avisos de acompanhante são por EFEITO, não por pessoa: quem acompanhava
+  // a demanda inteira some daqui (ele apenas seguiu o período, que é o
+  // esperado), e quem precisa de conferência aparece com o motivo.
+  const soRemovidos = plan.companions.paraRemover.filter(
+    c => !plan.companions.paraRevisar.some(r => r.instructorId === c.instructorId) &&
+         !plan.companions.paraCriar.some(n => n.instructorId === c.instructorId)
+  );
+  if (soRemovidos.length > 0) {
+    const dias = soRemovidos.map(c => c.dia).filter(Boolean);
     avisos.push(
-      `Acompanhante: ${plan.companions.paraRemover.length} dia(s) fora do novo período foram removidos ` +
-      `(${nomes(plan.companions.paraRemover.map(c => c.instructorId))}${dias.length ? ` — ${[...new Set(dias)].join(', ')}` : ''}).`
+      `Acompanhante: ${soRemovidos.length} dia(s) fora do novo período foram removidos ` +
+      `(${nomes(soRemovidos.map(c => c.instructorId))}${dias.length ? ` — ${[...new Set(dias)].join(', ')}` : ''}).`
+    );
+  }
+
+  if (plan.companions.paraRevisar.length > 0) {
+    avisos.push(
+      `Acompanhante: nenhum dia de ${nomes(plan.companions.paraRevisar.map(c => c.instructorId))} ` +
+      `sobreviveu ao novo período — ele foi mantido na demanda cobrindo todos os dias. Revise os dias.`
     );
   }
 

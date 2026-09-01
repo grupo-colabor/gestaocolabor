@@ -162,7 +162,7 @@ const Demands: React.FC = () => {
   const {
     demands: allDemands, companies, trainings, regions, instructors, operationalBases,
     measurements, agendaItems, instructorAllocations, resourceAllocations,companionAllocations,
-    demandParticipants, removeCompanionAllocation,
+    demandParticipants, removeCompanionAllocation, addCompanionAllocation,
     updateDemand, addDemand, deleteDemand, deallocateInstructor, recommendInstructors,
     updateMeasurement, removeAgendaItem, hasResourceConflict,
     addInstructorAllocation, removeInstructorAllocation, updateInstructorAllocation, addResourceAllocation, removeResourceAllocation, hasScheduleConflict, setNotification,
@@ -1641,7 +1641,13 @@ const handleSave = async () => {
         }
         for (const a of plano.allocations.paraRemover) removeInstructorAllocation(a.id);
 
-        // --- acompanhante: o dia NÃO muda; sai quem não tem mais dia ---
+        // --- acompanhante ---
+        //
+        // Mudar data NÃO desvincula ninguém: quem acompanhava a demanda inteira
+        // ganha os dias novos, e quem ficaria sem nenhum dia é RECRIADO cobrindo
+        // o período (com aviso), em vez de sumir da demanda. A ordem importa:
+        // remove primeiro, cria depois, para o UNIQUE de (demanda, pessoa, dia)
+        // que a dedupe protege não esbarrar numa linha que ainda vai sair.
         for (const ca of plano.companions.paraRemover) removeCompanionAllocation(ca.id);
         for (const ca of plano.companions.paraAtualizar) {
           try {
@@ -1649,6 +1655,15 @@ const handleSave = async () => {
           } catch (e) {
             console.error('Erro ao sincronizar horário do acompanhante:', e);
           }
+        }
+        for (const ca of plano.companions.paraCriar) {
+          addCompanionAllocation({
+            id: `CA-${Date.now()}-${ca.startDate.slice(0, 10)}-${ca.instructorId.slice(0, 6)}`,
+            demandId: sanitizedDemand.id,
+            instructorId: ca.instructorId,
+            startDate: ca.startDate,
+            endDate: ca.endDate,
+          });
         }
 
         // --- participante ---

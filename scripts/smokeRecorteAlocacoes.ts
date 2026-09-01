@@ -11,9 +11,13 @@
  *
  * As três contraprovas que este arquivo existe para prender:
  *
- *   [A] RECORTE, NUNCA CÓPIA. Dia que saiu do período é REMOVIDO; dia novo
- *       NUNCA é inventado para ninguém. A reescrita antiga está reproduzida
- *       aqui e o smoke exige que ela produza a duplicata.
+ *   [A] RECORTE, NUNCA CÓPIA — mas MUDAR DATA NÃO DESVINCULA NINGUÉM. Dia que
+ *       saiu é removido; dia novo não é inventado para quem acompanhava só
+ *       parte. Quem acompanhava a demanda INTEIRA acompanha o período novo, e
+ *       quem ficaria com zero dias é RECRIADO com aviso em vez de sumir da
+ *       demanda. A reescrita antiga (que duplicava) e o recorte puro (que
+ *       desvinculava) estão os dois reproduzidos aqui, e o smoke exige que os
+ *       dois errem.
  *
  *   [B] O RATEIO NÃO DOBRA. Split de 2 instrutores numa demanda de 16h continua
  *       somando 16h depois da mudança de datas. A versão antiga (expandir as
@@ -71,16 +75,16 @@ const acomp = (id: string, dia: string, instructorId = 'ACOMP'): CompanionRowLik
 /* ────────────────────────────────────────────────────────────────────────────
  * [1] ACOMPANHANTE — o caso da DEM-1552
  * ────────────────────────────────────────────────────────────────────────── */
-console.log('\n[1] Acompanhante: 3 dias viram 2');
+console.log('\n[1] Acompanhante INTEGRAL: acompanha o periodo (encolhe)');
 {
+  // Cobria os 3 dias da demanda. A demanda virou 2 dias.
   const linhas = [acomp('CA-1', D1), acomp('CA-2', D2), acomp('CA-3', D3)];
   const p = plano({ companions: linhas });
 
-  eq('a linha do dia que saiu é REMOVIDA', p.companions.paraRemover.map(c => c.id), ['CA-3']);
-  eq('e o dia removido é reportado', p.companions.paraRemover[0].dia, D3);
-  eq('as duas que ficam não mudam de dia', p.companions.paraAtualizar.length, 0);
+  eq('a linha do dia que saiu e REMOVIDA', p.companions.paraRemover.map(c => c.id), ['CA-3']);
+  eq('e o dia removido e reportado', p.companions.paraRemover[0].dia, D3);
+  eq('nenhum dia novo e criado (a demanda so encolheu)', p.companions.paraCriar.length, 0);
 
-  // O que sobra: 2 linhas, uma por dia, sem duplicata.
   const sobraram = linhas.filter(l => !p.companions.paraRemover.some(r => r.id === l.id));
   eq('sobram 2 linhas', sobraram.length, 2);
   eq(
@@ -88,6 +92,7 @@ console.log('\n[1] Acompanhante: 3 dias viram 2');
     sobraram.map(l => l.startDate.slice(0, 10)).sort().join(','),
     [D1, D2].join(',')
   );
+  eq('e ele NAO foi desvinculado', sobraram.length > 0, true);
 
   /* CONTRAPROVA: a reescrita antiga, reproduzida. */
   const reescritaAntiga = linhas.map(l => ({
@@ -97,18 +102,19 @@ console.log('\n[1] Acompanhante: 3 dias viram 2');
   }));
   const diasDepoisDaReescrita = reescritaAntiga.map(l => l.startDate.slice(0, 10));
   eq(
-    '(contraprova) a reescrita antiga põe as 3 linhas no MESMO dia',
+    '(contraprova) a reescrita antiga poe as 3 linhas no MESMO dia',
     new Set(diasDepoisDaReescrita).size,
     1
   );
   check(
-    '...e é isso que virava 3 cards na segunda-feira',
+    '...e e isso que virava 3 cards na segunda-feira',
     diasDepoisDaReescrita.filter(d => d === D1).length === 3
   );
 }
 
-console.log('\n[2] Acompanhante: 2 dias viram 3 — nada é inventado');
+console.log('\n[2] Acompanhante INTEGRAL: acompanha o periodo (cresce)');
 {
+  // Cobria os 2 dias da demanda; a demanda ganhou um terceiro.
   const p = planAllocationReschedule({
     diasAntigos: [D1, D2],
     diasNovos: [D1, D2, D3],
@@ -119,41 +125,132 @@ console.log('\n[2] Acompanhante: 2 dias viram 3 — nada é inventado');
     participants: [],
   });
 
-  eq('ninguém é removido', p.companions.paraRemover.length, 0);
-  eq('e nenhuma linha nova aparece', p.companions.paraAtualizar.length, 0);
-  // O dia novo fica SEM acompanhante — quem decide isso é a pessoa, na tela.
+  eq('ninguem e removido', p.companions.paraRemover.length, 0);
+  eq('e o dia novo e criado para ele', p.companions.paraCriar.map(c => c.startDate.slice(0, 10)), [D3]);
+  eq('somando 3 linhas', 2 - p.companions.paraRemover.length + p.companions.paraCriar.length, 3);
+  eq('com o horario da PROPRIA linha dele, nao o da demanda', p.companions.paraCriar[0].startDate, `${D3}T08:00`);
 }
 
-console.log('\n[3] Acompanhante: horário da demanda muda, o dia não');
+console.log('\n[3] Acompanhante PARCIAL: recorte, e dia novo NAO e inventado');
 {
-  const p = plano({
+  // So acompanhava 1 dos 3 dias — e esse dia continua no periodo novo.
+  const p = plano({ diasNovos: [D1, D2], companions: [acomp('CA-1', D2)] });
+  eq('o dia dele fica', p.companions.paraRemover.length, 0);
+  eq('e nenhum dia novo e inventado', p.companions.paraCriar.length, 0);
+
+  // A demanda cresce: quem era parcial continua parcial.
+  const q = planAllocationReschedule({
+    diasAntigos: [D1, D2],
     diasNovos: [D1, D2, D3],
-    horaInicio: '13:00',
-    horaFim: '19:00',
-    companions: [acomp('CA-1', D2)],
+    horaInicio: '08:00', horaFim: '18:00',
+    allocations: [], participants: [],
+    companions: [acomp('CA-1', D1)],
   });
-  eq('a linha fica', p.companions.paraRemover.length, 0);
-  eq('com o dia dela', p.companions.paraAtualizar[0]?.startDate, `${D2}T13:00`);
-  eq('e o horário novo', p.companions.paraAtualizar[0]?.endDate, `${D2}T19:00`);
+  eq('parcial nao ganha o dia novo da demanda', q.companions.paraCriar.length, 0);
+  eq('nem perde o que tinha', q.companions.paraRemover.length, 0);
 }
 
-console.log('\n[4] Acompanhante: dedupe é rede de segurança do dado já corrompido');
+console.log('\n[4] Acompanhante cujo recorte ESVAZIA: recriado, nunca removido');
 {
-  // Exatamente o estado que a reescrita antiga deixou no banco: três linhas da
-  // mesma pessoa no mesmo dia. Sem a dedupe, a correção não conserta a DEM-1552.
+  // A demanda foi deslocada inteira: nenhum dia dele sobrevive.
+  const p = planAllocationReschedule({
+    diasAntigos: [D1, D2, D3],
+    diasNovos: ['2026-03-16', '2026-03-17'],
+    horaInicio: '09:00', horaFim: '17:00',
+    allocations: [], participants: [],
+    companions: [acomp('CA-1', D2)],   // parcial: so o dia do meio
+  });
+
+  eq('a linha antiga sai', p.companions.paraRemover.map(c => c.id), ['CA-1']);
+  eq('mas ele e RECRIADO no periodo novo inteiro', p.companions.paraCriar.map(c => c.startDate.slice(0, 10)), ['2026-03-16', '2026-03-17']);
+  eq('e marcado para revisao', p.companions.paraRevisar.map(c => c.instructorId), ['ACOMP']);
+  check(
+    'NUNCA fica com zero linhas — mudar data nao desvincula ninguem',
+    p.companions.paraCriar.length > 0
+  );
+  check(
+    'o aviso pede revisao dos dias',
+    describeReschedule(p, id => id).some(a => a.includes('Revise os dias'))
+  );
+  check(
+    'e nao acusa "dias removidos" para quem foi recriado (seria mentira)',
+    !describeReschedule(p, id => id).some(a => a.includes('foram removidos'))
+  );
+  eq('o horario da linha dele e preservado na recriacao', p.companions.paraCriar[0].startDate, '2026-03-16T08:00');
+
+  /* CONTRAPROVA: o recorte PURO (a versao anterior deste modulo) desvinculava. */
+  const recortePuro = [acomp('CA-1', D2)].filter(l =>
+    ['2026-03-16', '2026-03-17'].includes(l.startDate.slice(0, 10))
+  );
+  eq('(contraprova) o recorte puro deixaria ZERO linhas', recortePuro.length, 0);
+  check(
+    '...que e exatamente o acompanhante sumindo da demanda',
+    recortePuro.length === 0 && p.companions.paraCriar.length === 2
+  );
+}
+
+console.log('\n[4b] Acompanhante: dedupe e rede de seguranca do dado ja corrompido');
+{
+  // Exatamente o estado que a reescrita antiga deixou no banco: tres linhas da
+  // mesma pessoa no mesmo dia. Sem a dedupe, a correcao nao conserta a DEM-1552.
   const p = plano({
     diasNovos: [D1, D2],
     companions: [acomp('CA-1', D1), acomp('CA-2', D1), acomp('CA-3', D1)],
   });
-  eq('duas das três saem', p.companions.paraRemover.map(c => c.id), ['CA-2', 'CA-3']);
+  eq('duas das tres saem', p.companions.paraRemover.map(c => c.id), ['CA-2', 'CA-3']);
+  eq('e sobra uma linha, no dia dela', p.companions.paraCriar.length, 0);
 
-  // Pessoas DIFERENTES no mesmo dia continuam sendo duas linhas legítimas.
+  // Pessoas DIFERENTES no mesmo dia continuam sendo duas linhas legitimas.
   const q = plano({
     diasNovos: [D1, D2],
     companions: [acomp('CA-1', D1, 'ANA'), acomp('CA-2', D1, 'BRUNO')],
   });
   eq('mas duas pessoas no mesmo dia ficam', q.companions.paraRemover.length, 0);
 }
+
+console.log('\n[4c] Acompanhante: linha corrompida de DOIS dias volta a ser de um');
+{
+  // A reescrita antiga gravava start=D1 e end=D2 na MESMA linha — e a agenda
+  // itera do inicio ao fim, entao uma linha rendia card em dois dias.
+  const corrompida: CompanionRowLike = {
+    id: 'CA-X', instructorId: 'ACOMP', startDate: `${D1}T08:00`, endDate: `${D2}T18:00`,
+  };
+  const p = plano({ diasNovos: [D1, D2], companions: [corrompida] });
+  eq('a linha e normalizada para um dia so', p.companions.paraAtualizar[0]?.endDate, `${D1}T18:00`);
+  eq('mantendo o dia dela', p.companions.paraAtualizar[0]?.startDate, `${D1}T08:00`);
+}
+
+console.log('\n[4d] Acompanhante: a convencao de horario de cada tela e preservada');
+{
+  // O Drawer grava T08:00/T18:00 literais; a Logistica grava o horario da
+  // demanda. O recorte nao decide entre as duas — ele reusa a da propria linha.
+  const doDrawer: CompanionRowLike = {
+    id: 'CA-1', instructorId: 'ANA', startDate: `${D1}T08:00`, endDate: `${D1}T18:00`,
+  };
+  const p = planAllocationReschedule({
+    diasAntigos: [D1],
+    diasNovos: [D1, D2],
+    horaInicio: '13:00', horaFim: '19:00',   // demanda com outro horario
+    allocations: [], participants: [],
+    companions: [doDrawer],
+  });
+  eq('a linha existente NAO e retimada para o horario da demanda', p.companions.paraAtualizar.length, 0);
+  eq('e o dia novo nasce com a convencao dela', p.companions.paraCriar[0]?.startDate, `${D2}T08:00`);
+
+  // Quem nao tem hora utilizavel cai no horario da demanda.
+  const semHora: CompanionRowLike = {
+    id: 'CA-2', instructorId: 'BRUNO', startDate: D1, endDate: D1,
+  };
+  const q = planAllocationReschedule({
+    diasAntigos: [D1],
+    diasNovos: [D1, D2],
+    horaInicio: '13:00', horaFim: '19:00',
+    allocations: [], participants: [],
+    companions: [semHora],
+  });
+  eq('fallback: o horario da demanda', q.companions.paraCriar[0]?.startDate, `${D2}T13:00`);
+}
+
 
 /* ────────────────────────────────────────────────────────────────────────────
  * [5] INSTRUTOR — o caso comum acompanha; o split só recorta
@@ -323,6 +420,14 @@ console.log('\n[10] Guarda de fonte');
   check(
     'e as remoções passam pelas funções de estado (não por SQL solto)',
     dem.includes('removeCompanionAllocation(ca.id)') && dem.includes('removeInstructorAllocation(a.id)')
+  );
+  check(
+    'os dias de acompanhante que o plano manda criar são criados',
+    /for \(const ca of plano\.companions\.paraCriar\)[\s\S]{0,200}addCompanionAllocation\(\{/.test(dem)
+  );
+  check(
+    'e a criação vem DEPOIS da remoção (para não colidir com linha que ainda vai sair)',
+    dem.indexOf('plano.companions.paraRemover') < dem.indexOf('plano.companions.paraCriar')
   );
 
   check('a interna aplica o MESMO plano', interna.includes('planAllocationReschedule({'));

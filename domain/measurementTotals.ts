@@ -109,7 +109,18 @@ export interface MeasurementTotals {
   outros: number;
   /** Soma das despesas (sem Hora/Aula) — o que o `total` antigo devolvia. */
   total: number;
-  /** classHours × hourRate. */
+  /**
+   * A parcela de Hora/Aula da medição.
+   *
+   * v1: `classHours × hourRate`, como sempre foi.
+   * v2 (com `participantes`): a SOMA dos blocos, cada um com o seu par
+   * horas × valorHH e o ausente resolvido por papel (`blockHoraAula`).
+   *
+   * Não é detalhe de exibição: quem lê isto é o card "Custo das Internas" do
+   * Dashboard. Enquanto a conta era só `classHours × hourRate`, TODA medição
+   * multi-pessoa entrava no Dashboard valendo zero de hora/aula — o valor dela
+   * mora em `participantes[].valorHH`, e `hourRate` fica em branco.
+   */
   horaAula: number;
   /** despesas + Hora/Aula: o custo cheio da medição. */
   totalComHoraAula: number;
@@ -132,7 +143,10 @@ const zeroPorCategoria = (): Record<ExpenseCategoryKey, number> =>
  * attachments cujo `otherId` bate com uma linha existente em `otherExpenses`
  * (um anexo órfão, apontando para linha apagada, continua fora da conta).
  */
-export function computeMeasurementTotals(m: TotalizableMeasurement | null | undefined): MeasurementTotals {
+export function computeMeasurementTotals(
+  m: TotalizableMeasurement | null | undefined,
+  ctx?: PanelHoursContext
+): MeasurementTotals {
   const attachments = m?.attachments ?? [];
   const outrosIds = new Set((m?.otherExpenses ?? []).map(o => o.id));
 
@@ -150,8 +164,25 @@ export function computeMeasurementTotals(m: TotalizableMeasurement | null | unde
 
   const total = hospedagem + locomocao + cafe + almoco + jantar + outros;
 
-  const horaAula =
-    parseExpenseValue(m?.expenses?.classHours as any) * parseExpenseValue(m?.expenses?.hourRate as any);
+  // Hora/Aula: v1 pela fórmula de sempre, v2 pela soma dos blocos.
+  //
+  // A carga padrão (para o titular sem horas digitadas) sai do `classHours` da
+  // própria medição quando o chamador não injeta uma — e não é um chute: o
+  // painel grava `classHours` com a carga da demanda em toda abertura, então é
+  // o MESMO número que ele usa para resolver o bloco na tela. `ctx` existe para
+  // quem tiver a demanda em mãos e quiser ser explícito.
+  const horaAula = (() => {
+    const temBlocos = (m?.expenses?.participantes ?? []).length > 0;
+    if (!temBlocos) {
+      return parseExpenseValue(m?.expenses?.classHours as any) * parseExpenseValue(m?.expenses?.hourRate as any);
+    }
+    const demandDefaultHours =
+      ctx?.demandDefaultHours ?? parseExpenseValue(m?.expenses?.classHours as any);
+    return normalizeMeasurementBlocks(m).reduce(
+      (acc, b) => acc + blockHoraAula(b, { demandDefaultHours }),
+      0
+    );
+  })();
 
   // Recorte do não reembolsável. Percorre os MESMOS itens que entraram acima:
   // um anexo de OUTROS órfão não conta aqui também, senão o recorte poderia
@@ -198,7 +229,10 @@ export interface MeasurementsAggregate {
 }
 
 /** Agrega várias medições. Usado pelos dois cards do Dashboard. */
-export function aggregateMeasurements(ms: (TotalizableMeasurement | null | undefined)[]): MeasurementsAggregate {
+export function aggregateMeasurements(
+  ms: (TotalizableMeasurement | null | undefined)[],
+  ctx?: PanelHoursContext
+): MeasurementsAggregate {
   const acc: MeasurementsAggregate = {
     medicoes: 0, despesas: 0, horaAula: 0, total: 0,
     naoReembolsavel: 0, itensNaoReembolsaveis: 0, medicoesComNaoReembolsavel: 0,
@@ -207,7 +241,7 @@ export function aggregateMeasurements(ms: (TotalizableMeasurement | null | undef
 
   for (const m of ms ?? []) {
     if (!m) continue;
-    const t = computeMeasurementTotals(m);
+    const t = computeMeasurementTotals(m, ctx);
     acc.medicoes += 1;
     acc.despesas += t.total;
     acc.horaAula += t.horaAula;

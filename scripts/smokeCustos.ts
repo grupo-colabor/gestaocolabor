@@ -27,6 +27,8 @@ import {
   isNaoReembolsavel,
   parseExpenseValue,
 } from '../domain/measurementTotals';
+import fsCustos from 'fs';
+import pathCustos from 'path';
 
 let falhas = 0;
 function check(nome: string, condicao: boolean, detalhe = '') {
@@ -568,6 +570,117 @@ console.log('\n— Predicado nao vaza: card das INTERNAS segue somando tudo');
   checkEq('alimentacao cheia', cheio.alimentacao, 80);
   checkEq('1 medicao contribuiu', cheio.medicoes, 1);
   checkEq('opcoes vazias equivalem a sem opcoes', aggregatePanelExpenseBreakdown([interna] as any, {}).total, 80);
+}
+
+console.log('\n— Dashboard: hora/aula de medicao MULTI-PESSOA (v2)');
+{
+  /*
+   * O bug: o card "Custo das Demandas Internas" mostrava hora/aula ZERO para
+   * toda medicao v2. A conta era `classHours x hourRate`, e numa medicao por
+   * pessoa o valor mora em `participantes[].valorHH` — `hourRate` fica em
+   * branco. A medicao aparecia salva na tela com R$ 40.500 e o Dashboard dizia
+   * que a demanda nao custou nada de hora/aula.
+   *
+   * A correcao NAO e uma formula nova: e o Dashboard passar a consumir a mesma
+   * resolucao do dominio que o painel usa (normalizeMeasurementBlocks +
+   * blockHoraAula), atraves de computeMeasurementTotals.
+   */
+
+  // 16h de carga; o titular NAO tem horas gravadas (e o que protege o rateio
+  // no Excel) e o participante digitou 10h.
+  const v2: any = {
+    demandId: 'DEM-1552',
+    otherExpenses: [],
+    attachments: [att({ id: 'x1', cat: 'ALMOCO', v: 100 })],
+    expenses: {
+      classHours: 16,
+      hourRate: 0,
+      participantes: [
+        { instructorId: 'TITULAR', papel: 'TITULAR', valorHH: 100 },
+        { instructorId: 'PART', papel: 'PARTICIPANTE', valorHH: 80, horas: 10 },
+      ],
+    },
+  };
+
+  const t = computeMeasurementTotals(v2);
+  // titular: 16h (padrao da demanda) x 100 = 1600; participante: 10 x 80 = 800
+  checkEq('hora/aula da v2 e a soma dos blocos', t.horaAula, 2400);
+  checkEq('despesas nao mudam', t.total, 100);
+  checkEq('e o total cheio soma os dois', t.totalComHoraAula, 2500);
+
+  // CONTRAPROVA: a formula legada reproduzida aqui PERDE o titular inteiro.
+  const legadoErrado =
+    (Number(v2.expenses.classHours) || 0) * (Number(v2.expenses.hourRate) || 0);
+  checkEq('(contraprova) a formula antiga daria zero', legadoErrado, 0);
+  check('logo ela perdia os R$ 1.600 do titular', t.horaAula - legadoErrado === 2400);
+
+  // O agregado do card e a soma das medicoes, com a mesma resolucao.
+  const card = aggregateMeasurements([v2] as any);
+  checkEq('o card das internas ve a hora/aula da v2', card.horaAula, 2400);
+  checkEq('e o total dele fecha', card.total, 2500);
+
+  /* --- ACOMPANHANTE: manual obrigatorio tambem aqui --- */
+  const comAcomp: any = {
+    demandId: 'DEM-C',
+    otherExpenses: [],
+    attachments: [],
+    expenses: {
+      classHours: 8,
+      hourRate: 0,
+      participantes: [
+        { instructorId: 'TITULAR', papel: 'TITULAR', valorHH: 100 },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', valorHH: 90 },
+      ],
+    },
+  };
+  checkEq(
+    'acompanhante sem horas nao entra na hora/aula do Dashboard',
+    computeMeasurementTotals(comAcomp).horaAula,
+    800
+  );
+  checkEq(
+    'e entra quando alguem informa as horas',
+    computeMeasurementTotals({
+      ...comAcomp,
+      expenses: {
+        ...comAcomp.expenses,
+        participantes: [
+          { instructorId: 'TITULAR', papel: 'TITULAR', valorHH: 100 },
+          { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', valorHH: 90, horas: 4 },
+        ],
+      },
+    } as any).horaAula,
+    800 + 360
+  );
+
+  /* --- v1 continua identica a hoje --- */
+  const v1: any = {
+    demandId: 'DEM-900',
+    otherExpenses: [],
+    attachments: [att({ id: 'y1', cat: 'CAFE', v: 20 })],
+    expenses: { classHours: 6, hourRate: 50 },
+  };
+  const t1 = computeMeasurementTotals(v1);
+  checkEq('v1: hora/aula continua classHours x hourRate', t1.horaAula, 300);
+  checkEq('v1: total cheio inalterado', t1.totalComHoraAula, 320);
+  // `participantes` vazio tambem e v1 — a chave existir nao basta.
+  checkEq(
+    'lista de participantes VAZIA continua sendo v1',
+    computeMeasurementTotals({ ...v1, expenses: { ...v1.expenses, participantes: [] } } as any).horaAula,
+    300
+  );
+
+  /* --- guarda de fonte: nada de formula inline no Dashboard --- */
+  const dash = fsCustos.readFileSync(pathCustos.join(process.cwd(), 'components/Dashboard.tsx'), 'utf8');
+  check(
+    'o Dashboard nao recalcula hora/aula na mao',
+    !/classHours[\s\S]{0,40}\*[\s\S]{0,40}hourRate/.test(dash)
+  );
+  check(
+    'ele le o agregado do dominio',
+    dash.includes('aggregateMeasurements(medicoesInternas as any)') &&
+      dash.includes('custoInterna.horaAula')
+  );
 }
 console.log('');
 if (falhas > 0) { console.log(`❌ ${falhas} check(s) falharam.`); process.exit(1); }

@@ -2176,7 +2176,11 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                       min="0"
                       step="0.5"
                       className="flex-1 border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
-                      value={classHours}
+                      // Campo vazio começa VAZIO. `classHours` é number, então
+                      // um 0 renderizava "0" literal e digitar 8 em cima virava
+                      // "08" na tela. Mesma correção do bloco por pessoa.
+                      placeholder={String(trainingDefaultHours || 0)}
+                      value={classHours || ''}
                       onChange={(e) => {
                         const val = Number(e.target.value || 0);
                         setSelectedMeasurement({
@@ -2222,7 +2226,10 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                     type="number"
                     step="0.01"
                     className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
-                    value={hourRate}
+                    // Idem: sem valor, campo vazio — nada de "0100" ao digitar
+                    // 100 por cima de um zero renderizado.
+                    placeholder="0,00"
+                    value={hourRate || ''}
                     onChange={(e) => {
                       const val = Number(e.target.value || 0);
                       setSelectedMeasurement({

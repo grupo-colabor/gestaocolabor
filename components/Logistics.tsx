@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../App';
 import { logAction } from '../services/auditLog';
+import CompanionPicker from './CompanionPicker';
 import { requiresScheduling, requiresLogistics } from '../domain/modalityRules';
 import { getDemandTitle, getDemandCompanyLabel, isInternalDemand } from '../domain/demandLabel';
 import { Demand, Instructor, LogisticAllocation } from '../types';
@@ -137,38 +138,63 @@ const Logistics: React.FC = () => {
   return companionAllocations.filter((a: any) => a.demandId === selectedDemandId);
 }, [companionAllocations, selectedDemandId]);
 
-const handleAddCompanion = (companionInstructorId: string) => {
-  if (!selectedDemand) return;
+/**
+ * Grava o acompanhante nos dias escolhidos no CompanionPicker.
+ *
+ * ⚠️ A CONVENCAO DE GRAVACAO NAO MUDOU: uma linha por dia, com o horario da
+ * demanda e 08/18 de fallback — exatamente o que o fluxo anterior desta tela
+ * fazia. O que mudou foi so COMO os dias sao escolhidos.
+ *
+ * O bloco de logistica sai UMA VEZ por pessoa, fora do laco (regra da F1):
+ * N dias geram N linhas de acompanhante e 2 blocos, nao 2N.
+ */
+const handleConfirmCompanion = (instructorId: string, dias: string[]) => {
+  if (!selectedDemand || dias.length === 0) return;
 
-  // evita duplicar
-  const already = companionsForSelectedDemand.some((a: any) => a.instructorId === companionInstructorId);
+  const already = companionsForSelectedDemand.some((a: any) => a.instructorId === instructorId);
   if (already) {
-    setNotification({ type: 'error', message: 'Este instrutor já está como acompanhante nesta demanda.' });
+    setNotification({ type: 'error', message: 'Este instrutor ja esta como acompanhante nesta demanda.' });
     return;
   }
 
-  // Conflito de agenda do acompanhante no período da demanda
-  if (hasScheduleConflict(companionInstructorId, selectedDemand.startDate, selectedDemand.endDate, selectedDemand.id)) {
-    setNotification({ type: 'error', message: 'Não é possível alocar: o acompanhante já possui conflito na agenda.' });
-    return;
-  }
+  // horarios padrao (usa o que existir na demanda; senao 08/18)
+  const demandStart = splitDateTime(selectedDemand.startDate);
+  const demandEnd = splitDateTime(selectedDemand.endDate);
+  const startTime = demandStart.time || '08:00';
+  const endTime = demandEnd.time || '18:00';
 
-  addCompanionAllocation({
-    id: `CA-${Date.now()}`,
-    demandId: selectedDemand.id,
-    instructorId: companionInstructorId,
-    startDate: selectedDemand.startDate,
-    endDate: selectedDemand.endDate
+  dias.forEach(day => {
+    addCompanionAllocation({
+      id: `CA-${Date.now()}-${day}`,
+      demandId: selectedDemand.id,
+      instructorId,
+      startDate: buildDateTime(day, startTime, '08:00'),
+      endDate: buildDateTime(day, endTime, '18:00'),
+    });
   });
 
-  // Logística POR PESSOA: cria os dois blocos do acompanhante (se ele ainda
-  // não tiver) e identifica o bloco anônimo do titular, que deixa de ser
-  // "o único" agora que existe uma segunda pessoa na demanda.
-  void ensureLogisticBlocksForPerson(selectedDemand.id, companionInstructorId);
+  void ensureLogisticBlocksForPerson(selectedDemand.id, instructorId);
 
-  setNotification({ type: 'success', message: 'Acompanhante alocado com sucesso.' });
+  logAction({
+    modulo: 'Programação',
+    acao: 'Confirmar',
+    descricao: [
+      `Acompanhante adicionado`,
+      selectedDemand ? `Empresa: ${demandCompanyOf(selectedDemand)}` : null,
+      selectedDemand ? `Treinamento: ${demandTitleOf(selectedDemand)}` : null,
+      `Instrutor: ${instructors.find((i: any) => i.id === instructorId)?.name || instructorId}`,
+      `Dias: ${dias.join(', ')}`,
+    ].filter(Boolean).join(' | '),
+    dadosDepois: { demandId: selectedDemand?.id, instructorId, days: dias },
+  });
+
   setIsCompanionPickerOpen(false);
+  setNotification({ type: 'success', message: `Acompanhante alocado em ${dias.length} dia(s).` });
 };
+// handleAddCompanion (demanda inteira) e o par openCompanionDatesModal /
+// handleSaveCompanionDays sairam: os dois caminhos viraram UM, o
+// handleConfirmCompanion acima, que recebe do CompanionPicker o instrutor e os
+// dias ja escolhidos. A convencao de gravacao nao mudou.
 
 const handleRemoveCompanion = (allocationId: string) => {
   // Acompanhante e uma linha POR DIA: remover uma linha nao significa que a
@@ -200,101 +226,6 @@ const handleRemoveCompanion = (allocationId: string) => {
     dadosDepois: { demandId: selectedDemand?.id },
   });
   setNotification({ type: 'success', message: 'Acompanhante removido.' });
-};
-
-const openCompanionDatesModal = (instructorId: string) => {
-  if (!selectedDemand) return;
-
-  setPendingCompanionInstructorId(instructorId);
-  setCompanionSelectedDays([]); // começa vazio (dias avulsos)
-  setCompanionDayInput('');
-  setIsCompanionDatesOpen(true);
-};
-
-const closeCompanionDatesModal = () => {
-  setIsCompanionDatesOpen(false);
-  setPendingCompanionInstructorId(null);
-  setCompanionSelectedDays([]);
-  setCompanionDayInput('');
-};
-
-const addCompanionDay = (day: string) => {
-  if (!day) return;
-  setCompanionSelectedDays(prev => (prev.includes(day) ? prev : [...prev, day].sort()));
-  setCompanionDayInput('');
-};
-
-const removeCompanionDay = (day: string) => {
-  setCompanionSelectedDays(prev => prev.filter(d => d !== day));
-};
-
-const handleSaveCompanionDays = () => {
-  if (!selectedDemand) return;
-  if (!pendingCompanionInstructorId) return;
-
-  // evita duplicar instrutor acompanhante (regra atual)
-  const already = companionsForSelectedDemand.some((a: any) => a.instructorId === pendingCompanionInstructorId);
-  if (already) {
-    setNotification({ type: 'error', message: 'Este instrutor já está como acompanhante nesta demanda.' });
-    return;
-  }
-
-  if (companionSelectedDays.length === 0) {
-    setNotification({ type: 'error', message: 'Selecione pelo menos 1 dia para o acompanhante.' });
-    return;
-  }
-
-  // horários padrão (usa o que existir na demanda; senão 08/18)
-  const demandStart = splitDateTime(selectedDemand.startDate);
-  const demandEnd = splitDateTime(selectedDemand.endDate);
-  const startTime = demandStart.time || '08:00';
-  const endTime = demandEnd.time || '18:00';
-
-  // valida conflito dia a dia e cria 1 allocation por dia
-  for (const day of companionSelectedDays) {
-    const startDateTime = buildDateTime(day, startTime, '08:00');
-    const endDateTime = buildDateTime(day, endTime, '18:00');
-
-    if (hasScheduleConflict(pendingCompanionInstructorId, startDateTime, endDateTime, selectedDemand.id)) {
-      setNotification({
-        type: 'error',
-        message: `Conflito na agenda do acompanhante no dia ${formatDateBR(day)}.`
-      });
-      return;
-    }
-  }
-
-  companionSelectedDays.forEach(day => {
-    const startDateTime = buildDateTime(day, startTime, '08:00');
-    const endDateTime = buildDateTime(day, endTime, '18:00');
-
-    addCompanionAllocation({
-      id: `CA-${Date.now()}-${day}`,
-      demandId: selectedDemand.id,
-      instructorId: pendingCompanionInstructorId,
-      startDate: startDateTime,
-      endDate: endDateTime
-    });
-  });
-
-  // Uma vez por PESSOA, fora do laço de dias: são N linhas de acompanhante
-  // mas UM par de blocos de logística.
-  void ensureLogisticBlocksForPerson(selectedDemand.id, pendingCompanionInstructorId);
-
-  logAction({
-    modulo: 'Programação',
-    acao: 'Confirmar',
-    descricao: [
-      `Acompanhante adicionado`,
-      selectedDemand ? `Empresa: ${demandCompanyOf(selectedDemand)}` : null,
-      selectedDemand ? `Treinamento: ${demandTitleOf(selectedDemand)}` : null,
-      `Instrutor: ${instructors.find((i: any) => i.id === pendingCompanionInstructorId)?.name || pendingCompanionInstructorId}`,
-      `Dias: ${companionSelectedDays.join(', ')}`,
-    ].filter(Boolean).join(' | '),
-    dadosDepois: { demandId: selectedDemand?.id, instructorId: pendingCompanionInstructorId, days: companionSelectedDays },
-  });
-  setNotification({ type: 'success', message: 'Dias do acompanhante salvos com sucesso.' });
-  closeCompanionDatesModal();
 };
 
 
@@ -931,115 +862,9 @@ const handleSaveCompanionDays = () => {
                       </h3>
                     </div>
 
-                    {/* ✅ PICKER SIMPLES (modal leve) */}
-                    {isCompanionDatesOpen && selectedDemand && pendingCompanionInstructorId && createPortal(
-                  <div className="fixed inset-0 z-[130] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
-                      <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-black text-slate-800 uppercase">Datas do acompanhante</p>
-                          <p className="text-[11px] font-semibold text-slate-500">
-                            Selecione dias avulsos (ex: 21, 23 e 25)
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={closeCompanionDatesModal}
-                          className="px-3 py-2 rounded-xl text-[11px] font-black uppercase border border-slate-200 hover:bg-slate-50"
-                        >
-                          Fechar
-                        </button>
-                      </div>
-
-                      <div className="p-4 space-y-4">
-                        {/* adicionar dia */}
-                        <div className="flex gap-2 items-end">
-                          <div className="flex-1">
-                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
-                              Adicionar dia
-                            </label>
-                            <input
-                              type="date"
-                              className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                              value={companionDayInput}
-                              min={selectedDemand.startDate.split('T')[0]}
-                              max={selectedDemand.endDate.split('T')[0]}
-                              onChange={(e) => setCompanionDayInput(e.target.value)}
-                            />
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => addCompanionDay(companionDayInput)}
-                            className="px-4 py-2.5 rounded-xl text-[11px] font-black uppercase border border-slate-200 hover:bg-slate-50"
-                            disabled={!companionDayInput}
-                          >
-                            + Adicionar
-                          </button>
-                        </div>
-
-                        {/* lista de dias */}
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                          {companionSelectedDays.length === 0 ? (
-                            <div className="text-[11px] font-semibold text-slate-400">
-                              Nenhum dia selecionado.
-                            </div>
-                          ) : (
-                            <div className="flex flex-wrap gap-2">
-                              {companionSelectedDays.map(day => (
-                                <div
-                                  key={day}
-                                  className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200"
-                                >
-                                  <span className="text-[11px] font-black text-slate-700 uppercase">
-                                    {formatDateBR(day)}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => removeCompanionDay(day)}
-                                    className="text-red-600 font-black text-[12px] leading-none"
-                                    title="Remover"
-                                  >
-                                    ×
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 flex items-start gap-2">
-                          <Info size={14} className="text-blue-500 shrink-0 mt-0.5" />
-                          <p className="text-[10px] font-bold text-blue-700 leading-tight">
-                            Os horários serão iguais aos horários da demanda (ou 08:00 às 18:00 se não houver).
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-3">
-                        <button
-                          type="button"
-                          onClick={closeCompanionDatesModal}
-                          className="flex-1 py-3 bg-white border border-slate-200 rounded-xl font-black text-[10px] uppercase tracking-widest text-slate-500"
-                        >
-                          Cancelar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleSaveCompanionDays}
-                          disabled={companionSelectedDays.length === 0}
-                          className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest ${
-                            companionSelectedDays.length === 0
-                              ? 'bg-slate-200 text-slate-400'
-                              : 'bg-slate-900 text-white hover:bg-blue-600 shadow-lg'
-                          }`}
-                        >
-                          Salvar dias
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                , document.body)}
+                    {/* O modal "Datas do acompanhante" saiu daqui: a escolha
+                        de dias virou parte do CompanionPicker, junto com a
+                        selecao do instrutor. */}
                     <div className="grid grid-cols-1 gap-3">
                       {recommendation.suggested.length > 0 ? recommendation.suggested.map((instructor) => (
                         <div key={instructor.id} className="p-4 rounded-xl border border-slate-200 bg-white hover:border-blue-300 transition-all flex items-center justify-between group">
@@ -1227,65 +1052,25 @@ const handleSaveCompanionDays = () => {
                         )}
                       </div>
                     </div>
-                  {/* ✅ PICKER DE ACOMPANHANTE (seleciona instrutor) */}
-                  {isCompanionPickerOpen && selectedDemand && createPortal(
-                    <div className="fixed inset-0 z-[120] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
-                      <div className="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
-                        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-black text-slate-800 uppercase">Selecionar acompanhante</p>
-                            <p className="text-[11px] font-semibold text-slate-500">Escolha um instrutor para acompanhar</p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setIsCompanionPickerOpen(false)}
-                            className="px-3 py-2 rounded-xl text-[11px] font-black uppercase border border-slate-200 hover:bg-slate-50"
-                          >
-                            Fechar
-                          </button>
-                        </div>
-
-                        <div className="p-4 max-h-[60vh] overflow-auto space-y-2">
-                          {instructors
-                            .filter((i: any) => i.status === 'ATIVO')
-                            .map((i: any) => {
-                              const isAlready = companionsForSelectedDemand.some((a: any) => a.instructorId === i.id);
-                              const isMain = selectedDemand.instructorId === i.id;
-
-                              return (
-                                <button
-                                  key={i.id}
-                                  type="button"
-                                  disabled={isAlready || isMain}
-                                  onClick={() => {
-                                    setIsCompanionPickerOpen(false);
-                                    openCompanionDatesModal(i.id);
-                                  }}
-                                  className={`w-full text-left p-3 rounded-xl border transition ${
-                                    isAlready || isMain
-                                      ? 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed'
-                                      : 'bg-white border-slate-200 hover:bg-slate-50'
-                                  }`}
-                                >
-                                  <div className="flex items-center justify-between gap-3">
-                                    <div className="min-w-0">
-                                      <p className="text-[12px] font-black truncate" title={i.name}>{i.name}</p>
-                                      {isMain && (
-                                        <p className="text-[10px] font-black uppercase tracking-widest">INSTRUTOR PRINCIPAL</p>
-                                      )}
-                                      {isAlready && (
-                                        <p className="text-[10px] font-black uppercase tracking-widest">JÁ É ACOMPANHANTE</p>
-                                      )}
-                                    </div>
-                                    <span className="text-[11px] font-black uppercase">Selecionar</span>
-                                  </div>
-                                </button>
-                              );
-                            })}
-                        </div>
-                      </div>
-                    </div>
-                  , document.body)}
+                  {/* Selecao de acompanhante: MESMO componente do
+                      AllocationDrawer (instrutor + dias, com a classificacao e
+                      o card da lista principal de alocacao). A lista plana
+                      "nome + SELECIONAR" que existia aqui saiu. */}
+                  {selectedDemand && (
+                    <CompanionPicker
+                      open={isCompanionPickerOpen}
+                      demand={selectedDemand}
+                      instructors={instructors}
+                      alreadyCompanionIds={[
+                        ...companionsForSelectedDemand.map((a: any) => a.instructorId),
+                        // O titular nao acompanha a propria demanda.
+                        selectedDemand.instructorId,
+                      ].filter(Boolean) as string[]}
+                      hasScheduleConflict={hasScheduleConflict}
+                      onCancel={() => setIsCompanionPickerOpen(false)}
+                      onConfirm={handleConfirmCompanion}
+                    />
+                  )}
 
                 </section>
               </div>

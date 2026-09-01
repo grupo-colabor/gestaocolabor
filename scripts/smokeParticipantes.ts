@@ -47,6 +47,12 @@ import {
   isLogisticBlockEmpty,
   hasSecondPerson,
 } from '../domain/logisticBlockOwnership';
+import {
+  groupInstructorsForCompanion,
+  isEligibleForDemand,
+  hasGeoAnchor,
+  isSameDemandState,
+} from '../domain/instructorRecommendation';
 
 let falhas = 0;
 
@@ -775,10 +781,15 @@ console.log('\n[12] Acompanhante — logística por pessoa');
 
   // Os QUATRO caminhos de criação chamam a rotina — e nenhum deles a chama
   // dentro do laço de dias.
+  // Depois da unificacao do fluxo de acompanhante, cada tela tem UM caminho de
+  // criacao: o CompanionPicker devolve instrutor + dias e cada tela grava uma
+  // vez. Antes eram dois por tela (modo direto e selecao de dias no drawer;
+  // demanda inteira e dias selecionados na Logistica) — quatro implementacoes
+  // da mesma coisa.
   const chamadasDrawer = (drawer.match(/ensureLogisticBlocksForPerson\(/g) ?? []).length;
   const chamadasLogistica = (logisticaTela.match(/ensureLogisticBlocksForPerson\(/g) ?? []).length;
-  eq('AllocationDrawer: 2 caminhos (modo direto + seleção de dias)', chamadasDrawer, 2);
-  eq('Logistics: 2 caminhos (demanda inteira + dias selecionados)', chamadasLogistica, 2);
+  eq('AllocationDrawer: um caminho de criacao de acompanhante', chamadasDrawer, 1);
+  eq('Logistics: um caminho de criacao de acompanhante', chamadasLogistica, 1);
 
   /**
    * A chamada precisa ficar FORA do laço que grava uma linha por dia. A prova:
@@ -1089,6 +1100,202 @@ console.log('\n[15] Remoção de participante pela agenda');
   check(
     'o modal não tem caminho de EDIT sobre item existente (só VIEW e CREATE)',
     !cal.includes("setModalMode('EDIT')")
+  );
+}
+/* ────────────────────────────────────────────────────────────────────────────
+ * [16] SELEÇÃO DE ACOMPANHANTE — classificação, ordem e dias
+ *
+ * A lista plana "nome + SELECIONAR" virou a MESMA linha da lista principal de
+ * alocação, agrupada pela MESMA classificação. O que este bloco prende é a
+ * ordem (é ela que faz a tela ser útil) e a regra dos dias: N dias escolhidos
+ * geram N linhas de acompanhante e 2 blocos de logística — não 2N.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[16] Seleção de acompanhante');
+{
+  // requiresLogistics de mentira: PRESENCIAL exige, ONLINE não. Mantém o smoke
+  // sem depender de modalityRules, como o domínio foi desenhado.
+  const requiresLogistics = (m?: string | null) => m === 'PRESENCIAL';
+
+  const DEMANDA_CLIENTE = {
+    id: 'DEM-100',
+    tipo: 'cliente',
+    trainingId: 'TR-1',
+    trainingLocal: 'Vitoria',
+    demandState: 'ES',
+    modality: 'PRESENCIAL',
+  };
+
+  const ins = (id: string, name: string, over: any = {}) => ({
+    id, name, status: 'ATIVO', skills: [], residenceLocation: 'ES', ...over,
+  });
+
+  const COM_SKILL = [{ trainingId: 'TR-1', level: 3 }];
+
+  const elenco = [
+    ins('Q-2', 'Bruno', { skills: COM_SKILL }),                       // qualificado, sem conflito
+    ins('Q-1', 'Ana', { skills: COM_SKILL }),                         // qualificado, sem conflito
+    ins('Q-C', 'Carlos', { skills: COM_SKILL }),                      // qualificado, COM conflito
+    ins('E-1', 'Daniela', { skills: COM_SKILL, residenceLocation: 'MG' }), // excecao
+    ins('D-1', 'Eduardo'),                                            // demais (sem skill)
+    ins('X-1', 'Inativo', { status: 'INATIVO', skills: COM_SKILL }),  // fora
+  ];
+
+  const grupos = groupInstructorsForCompanion({
+    instructors: elenco,
+    demand: DEMANDA_CLIENTE,
+    hasConflict: id => id === 'Q-C',
+    requiresLogistics,
+  });
+
+  // --- os três grupos, na ordem da tela ---
+  eq('qualificados', grupos.qualificados.map(g => g.instructor.id).join(','), 'Q-1,Q-2,Q-C');
+  eq('exceção (fora do estado da demanda)', grupos.excecoes.map(g => g.instructor.id).join(','), 'E-1');
+  eq('demais ativos (sem habilitação)', grupos.demais.map(g => g.instructor.id).join(','), 'D-1');
+  check('instrutor INATIVO fica fora de todos', 
+    ![...grupos.qualificados, ...grupos.excecoes, ...grupos.demais].some(g => g.instructor.id === 'X-1'));
+
+  // --- dentro do grupo: sem conflito ANTES de com conflito ---
+  const qualificados = grupos.qualificados;
+  const idxComConflito = qualificados.findIndex(g => g.hasConflict);
+  check(
+    'sem conflito vem antes de com conflito',
+    idxComConflito === qualificados.length - 1 && qualificados.slice(0, idxComConflito).every(g => !g.hasConflict)
+  );
+  eq('e alfabético como desempate', qualificados.slice(0, 2).map(g => g.instructor.name).join(','), 'Ana,Bruno');
+
+  // CONTRAPROVA: conflito NUNCA remove ninguém — o padrão da tela é avisar.
+  check('quem tem conflito continua na lista', qualificados.some(g => g.instructor.id === 'Q-C'));
+
+  // --- score ordena antes do nome, dentro do mesmo estado de conflito ---
+  const porScore = groupInstructorsForCompanion({
+    instructors: [
+      ins('S-1', 'Zeca', { skills: [{ trainingId: 'TR-1', level: 4 }] }),
+      ins('S-2', 'Ana', { skills: [{ trainingId: 'TR-1', level: 1 }] }),
+    ],
+    demand: DEMANDA_CLIENTE,
+    hasConflict: () => false,
+    requiresLogistics,
+  });
+  eq('score maior primeiro, mesmo com nome depois no alfabeto',
+    porScore.qualificados.map(g => g.instructor.name).join(','), 'Zeca,Ana');
+
+  // --- busca filtra DENTRO dos grupos ---
+  const buscando = groupInstructorsForCompanion({
+    instructors: elenco, demand: DEMANDA_CLIENTE, hasConflict: () => false, requiresLogistics,
+    search: 'an',
+  });
+  eq('busca acha Ana (qualificada) e Daniela (exceção)',
+    [...buscando.qualificados, ...buscando.excecoes, ...buscando.demais].map(g => g.instructor.name).join(','),
+    'Ana,Daniela');
+
+  // --- quem já acompanha sai da lista ---
+  const semOsJa = groupInstructorsForCompanion({
+    instructors: elenco, demand: DEMANDA_CLIENTE, hasConflict: () => false, requiresLogistics,
+    excludeInstructorIds: ['Q-1', 'E-1'],
+  });
+  check('acompanhante existente não reaparece',
+    !semOsJa.qualificados.some(g => g.instructor.id === 'Q-1') && semOsJa.excecoes.length === 0);
+
+  // --- INTERNA: não tem treinamento, então todo ativo é qualificado ---
+  const INTERNA = { id: 'DEM-900', tipo: 'interna', trainingId: '', trainingLocal: 'Vitoria', demandState: 'ES', modality: 'PRESENCIAL' };
+  const naInterna = groupInstructorsForCompanion({
+    instructors: elenco, demand: INTERNA, hasConflict: () => false, requiresLogistics,
+  });
+  eq('interna não tem grupo "demais" (todo ativo é elegível)', naInterna.demais.length, 0);
+  check('e quem mora fora ainda é exceção', naInterna.excecoes.some(g => g.instructor.id === 'E-1'));
+
+  // --- sem âncora geográfica, ninguém é exceção ---
+  const semAncora = groupInstructorsForCompanion({
+    instructors: elenco,
+    demand: { ...DEMANDA_CLIENTE, modality: 'ONLINE' },
+    hasConflict: () => false,
+    requiresLogistics,
+  });
+  eq('demanda sem âncora geográfica não separa por UF', semAncora.excecoes.length, 0);
+  check('e o de outro estado vira qualificado', semAncora.qualificados.some(g => g.instructor.id === 'E-1'));
+  check('local N/A também tira a âncora',
+    !hasGeoAnchor({ ...DEMANDA_CLIENTE, trainingLocal: 'N/A' }, requiresLogistics));
+  check('sem UF na demanda, idem', !hasGeoAnchor({ ...DEMANDA_CLIENTE, demandState: '' }, requiresLogistics));
+
+  // --- os predicados são os MESMOS que a lista principal usa ---
+  const app = ler('App.tsx');
+  check('App importa a classificação do domínio', app.includes("from './domain/instructorRecommendation'"));
+  check('e usa isEligibleForDemand na lista principal', app.includes('isEligibleForDemand(i as any, demand as any)'));
+  check('e scoreForDemand', app.includes('scoreForDemand(i as any, demand as any)'));
+  check('e hasGeoAnchor / isSameDemandState', app.includes('hasGeoAnchor(demand as any, requiresLogistics)') && app.includes('isSameDemandState(i as any, demand as any)'));
+  check('sem reimplementar a regra de skill no App',
+    !/const isEligible = \(i: Instructor\) =>\s*\r?\n?\s*i\.status === 'ATIVO'/.test(app));
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [17] PICKER — reuso do card, dias da demanda e N linhas / 2 blocos
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[17] CompanionPicker');
+{
+  const picker = ler('components/CompanionPicker.tsx');
+  const drawer = ler('components/AllocationDrawer.tsx');
+  const logistica = ler('components/Logistics.tsx');
+  const card = ler('components/InstructorCard.tsx');
+
+  // 1) Reusa o componente da lista principal — não copia JSX.
+  check('o picker usa o InstructorCard', picker.includes("import InstructorCard from './InstructorCard'"));
+  check('que é o MESMO da lista principal', drawer.includes("import InstructorCard from './InstructorCard'"));
+  check('e o card foi EXTRAÍDO, não duplicado', !drawer.includes('const InstructorCard: React.FC<{'));
+  check('o card mostra a região (informação que a lista plana não tinha)', card.includes('{instructor.residenceLocation}'));
+
+  // 2) Conflito: avisa, não bloqueia — e é dos DIAS ESCOLHIDOS.
+  check('o aviso de conflito vira "Já alocado neste dia"', card.includes("'Já alocado neste dia'"));
+  check('com "Alocar mesmo assim"', card.includes("hasConflict ? 'Alocar mesmo assim' : actionLabel"));
+  check('e o botão NUNCA fica desabilitado por conflito', !/disabled=\{[^}]*hasConflict/.test(card));
+  check('o conflito é calculado sobre os dias selecionados', picker.includes('const alvo = diasSelecionados.length > 0 ? diasSelecionados : diasDaDemanda;'));
+  check('e o detalhe do conflito vira tooltip', picker.includes('conflictTitle={conflitoDe(instructor.id).detalhe}'));
+
+  // 3) Dias: só os da demanda, com atalhos.
+  check('os dias vêm de getDemandDays', picker.includes('getDemandDays(demand)'));
+  check('atalho de todos os dias', picker.includes('setDiasSelecionados([...diasDaDemanda])'));
+  check('atalho de limpar', picker.includes('setDiasSelecionados([]); setErro(null);'));
+  check(
+    'o intervalo MARCA dias da demanda, não cria dias novos',
+    picker.includes('const noIntervalo = diasDaDemanda.filter(d => d >= de && d <= ate);')
+  );
+  check(
+    'não há caminho para escolher dia fora da demanda',
+    !picker.includes('companionDayInput') && picker.includes('Acompanhante')
+  );
+
+  // 4) A REGRA DOS BLOCOS: N dias -> N linhas, 2 blocos (não 2N).
+  for (const [nome, src, laco] of [
+    ['AllocationDrawer', drawer, 'dias.forEach(day => {'],
+    ['Logistics', logistica, 'dias.forEach(day => {'],
+  ] as const) {
+    const h = src.slice(src.indexOf('const handleConfirmCompanion'), src.indexOf('const handleConfirmCompanion') + 2000);
+    check(`${nome}: uma linha de acompanhante POR DIA`, h.includes(laco) && h.includes('addCompanionAllocation({'));
+    check(
+      `${nome}: o bloco de logística sai UMA VEZ, fora do laço`,
+      h.includes('ensureLogisticBlocksForPerson(') &&
+        h.indexOf('});') < h.indexOf('ensureLogisticBlocksForPerson(')
+    );
+    check(
+      `${nome}: e só uma chamada (N dias não viram 2N blocos)`,
+      (h.match(/ensureLogisticBlocksForPerson\(/g) ?? []).length === 1
+    );
+  }
+
+  // 5) A convenção de gravação NÃO mudou em nenhuma das duas telas.
+  check('drawer mantém T08:00/T18:00 literais', drawer.includes("startDate: `${day}T08:00`,"));
+  check('logística mantém horário da demanda com fallback 08/18', logistica.includes("buildDateTime(day, startTime, '08:00')"));
+
+  // 6) As duas telas consomem o MESMO picker.
+  check('drawer usa o picker', drawer.includes('<CompanionPicker'));
+  check('logística usa o picker', logistica.includes('<CompanionPicker'));
+  check('e a lista plana antiga saiu', !logistica.includes('Escolha um instrutor para acompanhar'));
+  check(
+    'assim como o seletor de um-dia-por-vez',
+    !/const addCompanionDay\s*=/.test(drawer) && !/const handleSaveCompanionDays\s*=/.test(drawer)
+  );
+  check(
+    'e o par equivalente na Logistica',
+    !/const openCompanionDatesModal\s*=/.test(logistica) && !/const handleSaveCompanionDays\s*=/.test(logistica)
   );
 }
 /* ────────────────────────────────────────────────────────────────────────── */

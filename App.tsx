@@ -78,6 +78,12 @@ import { isEAD, requiresLogistics } from './domain/modalityRules';
 import { hasResourceOverlap } from './domain/resourceConflict';
 import { hasPersonScheduleConflict } from './domain/personScheduleConflict';
 import { hasBlocksFor, planTitularFills, isLogisticBlockEmpty } from './domain/logisticBlockOwnership';
+import {
+  isEligibleForDemand,
+  scoreForDemand,
+  hasGeoAnchor,
+  isSameDemandState,
+} from './domain/instructorRecommendation';
 import { resolveDemandInstructors } from './domain/demandInstructors';
 import { fetchInstructors, fetchInstructorTrainings, deleteInstructorById } from './services/instructors';
 import { fetchMeasurements, upsertMeasurementByDemandId } from './services/measurements';
@@ -3323,28 +3329,19 @@ const hasScheduleConflict = useCallback(
         return hasScheduleConflict(instructorId, effective.start, effective.end, demand.id);
       };
 
-      // ⚠️ Elegibilidade depende do tipo da demanda.
+      // ⚠️ Elegibilidade e score vivem em domain/instructorRecommendation.ts.
       //
       // Cliente: instrutor precisa ter a skill do treinamento, e o nível da
-      // skill é o score que ordena a lista.
+      // skill é o score que ordena a lista. Interna: não existe treinamento
+      // (training_id é null), então a mesma regra reprovava TODO mundo —
+      // `skills.some(s => s.trainingId === '')` é sempre falso — e a tela dizia
+      // "nenhum instrutor disponível" para qualquer interna.
       //
-      // Interna: não existe treinamento (training_id é null), então a mesma
-      // regra reprovava TODO mundo — `skills.some(s => s.trainingId === '')` é
-      // sempre falso — e a tela dizia "nenhum instrutor disponível" para
-      // qualquer interna. Interna não exige qualificação: todo instrutor ATIVO
-      // é elegível. Sem skill não há score, então a ordenação passa a ser por
-      // nome (alfabética) em vez de aleatória.
-      const isInterna = demand.tipo === 'interna';
-
-      const isEligible = (i: Instructor) =>
-        i.status === 'ATIVO' &&
-        (isInterna || !!i.skills?.some(s => s.trainingId === demand.trainingId));
-
-      const withScore = (i: Instructor) => {
-        if (isInterna) return { ...i, score: 0 };
-        const skill = i.skills?.find(s => s.trainingId === demand.trainingId);
-        return { ...i, score: skill?.level ?? 0 };
-      };
+      // Os predicados saíram daqui para o domínio porque a SELEÇÃO DE
+      // ACOMPANHANTE precisa da mesma classificação, e duas cópias divergiriam
+      // no primeiro ajuste. Comportamento desta lista: inalterado.
+      const isEligible = (i: Instructor) => isEligibleForDemand(i as any, demand as any);
+      const withScore = (i: Instructor) => ({ ...i, score: scoreForDemand(i as any, demand as any) });
 
       const byScoreThenName = (
         a: Instructor & { score: number },
@@ -3367,32 +3364,22 @@ const hasScheduleConflict = useCallback(
         .map(withScore)
         .sort(byScoreThenName);
 
-      const demandState = (demand.demandState || '').trim().toUpperCase();
-      const isSameState = (i: { residenceLocation?: string }) =>
-        !!demandState && (i.residenceLocation || '').trim().toUpperCase() === demandState;
-
       // Demanda sem âncora geográfica não filtra instrutor por UF de residência.
       // Antes bastava o local 'N/A', porque o form gravava N/A em toda modalidade
       // sem logística. Agora essas modalidades aceitam local real (de referência,
       // não de deslocamento), então o marcador passa a ser a própria modalidade.
       // Usa requiresLogistics, e NÃO isEAD: TUTORIA é EAD mas exige logística —
       // com isEAD aqui, tutoria com local real perderia o filtro por UF.
-      const semAncoraGeografica =
-        demand.trainingLocal === 'N/A' || !requiresLogistics(demand.modality);
+      //
+      // Mesma nota do bloco de elegibilidade: os dois predicados moram no
+      // domínio para a seleção de acompanhante usar a MESMA regra.
+      const comAncoraGeografica = hasGeoAnchor(demand as any, requiresLogistics);
+      const isSameState = (i: { residenceLocation?: string }) =>
+        isSameDemandState(i as any, demand as any);
 
       return {
-        suggested: activeCapableInstructors.filter(
-          i =>
-            !demandState ||
-            semAncoraGeografica ||
-            isSameState(i)
-        ),
-        exceptions: activeCapableInstructors.filter(
-          i =>
-            !!demandState &&
-            !semAncoraGeografica &&
-            !isSameState(i)
-        ),
+        suggested: activeCapableInstructors.filter(i => !comAncoraGeografica || isSameState(i)),
+        exceptions: activeCapableInstructors.filter(i => comAncoraGeografica && !isSameState(i)),
         alreadyAllocated,
       };
     },

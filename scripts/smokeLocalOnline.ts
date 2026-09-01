@@ -298,9 +298,19 @@ console.log('\n— GUARDAS DE FONTE (as reproduções acima ainda batem com o c�
     'Demands: validação segue exigindo local só onde há logística',
     demands.includes('const needsLocal = requiresLogistics(formDemand.modality);')
   );
+  // A regra do bypass geografico saiu do corpo de recommendInstructors para
+  // domain/instructorRecommendation.ts (hasGeoAnchor), para a selecao de
+  // ACOMPANHANTE usar a mesma classificacao da lista principal. A guarda
+  // segue a regra ate a casa nova, e checa que o App consome de la — se
+  // alguem reimplementar o bypass inline, as duas metades falham.
   check(
-    'App: bypass geográfico cobre online',
-    app.includes("demand.trainingLocal === 'N/A' || !requiresLogistics(demand.modality)")
+    'bypass geográfico (local N/A ou modalidade sem logística) mora no domínio',
+    ler('domain/instructorRecommendation.ts').includes("if (demand.trainingLocal === 'N/A') return false;") &&
+      ler('domain/instructorRecommendation.ts').includes('return requiresLogistics(demand.modality);')
+  );
+  check(
+    'App: bypass geográfico cobre online (via hasGeoAnchor)',
+    app.includes('hasGeoAnchor(demand as any, requiresLogistics)')
   );
   check(
     'App: leitura do banco ainda cai em N/A quando a coluna é nula',

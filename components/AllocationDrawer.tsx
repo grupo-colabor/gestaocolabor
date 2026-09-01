@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../App';
+import InstructorCard from './InstructorCard';
+import CompanionPicker from './CompanionPicker';
 import { useAuth } from '../contexts/AuthContext';
 import { getDemandDays, isNightDemand } from '../domain/demandDays';
 import { requiresInstructor, requiresLogistics } from '../domain/modalityRules';
@@ -113,6 +115,7 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
   const [companionDayInput, setCompanionDayInput] = useState('');
   const [companionSelectedDays, setCompanionSelectedDays] = useState<string[]>([]);
   const [pendingCompanionInstructorId, setPendingCompanionInstructorId] = useState<string | null>(null);
+  const [isCompanionPickerOpen, setIsCompanionPickerOpen] = useState(false);
 
   // Hybrid practice form
   const [hybridForm, setHybridForm] = useState({ practiceStartDate: '', practiceEndDate: '' });
@@ -209,6 +212,39 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
     if (!selectedDemandId) return [];
     return companionAllocations.filter(a => a.demandId === selectedDemandId);
   }, [companionAllocations, selectedDemandId]);
+
+  /**
+   * Grava o acompanhante nos dias escolhidos no picker.
+   *
+   * ⚠️ A CONVENÇÃO DE GRAVAÇÃO NÃO MUDOU: uma linha por dia em
+   * companion_allocations, com T08:00/T18:00 literais — exatamente o que o
+   * seletor antigo fazia. O que mudou foi só COMO os dias são escolhidos.
+   *
+   * O bloco de logística sai UMA VEZ por pessoa, fora do laço (regra da F1):
+   * N dias geram N linhas de acompanhante e 2 blocos, não 2N.
+   */
+  const handleConfirmCompanion = useCallback((instructorId: string, dias: string[]) => {
+    if (!selectedDemand || dias.length === 0) return;
+
+    dias.forEach(day => {
+      addCompanionAllocation({
+        id: `CA-${Date.now()}-${day}`,
+        demandId: selectedDemand.id,
+        instructorId,
+        startDate: `${day}T08:00`,
+        endDate: `${day}T18:00`,
+      });
+    });
+
+    void ensureLogisticBlocksForPerson(selectedDemand.id, instructorId);
+
+    const nome = instructors.find(i => i.id === instructorId)?.name || instructorId;
+    setIsCompanionPickerOpen(false);
+    setNotification({
+      type: 'success',
+      message: `Acompanhante ${nome} alocado em ${dias.length} dia(s).`,
+    });
+  }, [selectedDemand, addCompanionAllocation, ensureLogisticBlocksForPerson, instructors, setNotification]);
 
   const filterOptions = useMemo(() => {
     const pending = demands.filter(d =>
@@ -324,32 +360,15 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
       return;
     }
 
-    if (companionMode) {
-      const days = getDemandDays(selectedDemand);
-      days.forEach(day => {
-        addCompanionAllocation({
-          id: `CA-${Date.now()}-${day}`,
-          demandId: selectedDemand.id,
-          instructorId: instructor.id,
-          startDate: `${day}T08:00`,
-          endDate: `${day}T18:00`,
-        });
-      });
-      // Logística POR PESSOA, uma vez só — e não por dia. O acompanhante é
-      // gravado uma linha por dia; chamar isto dentro do forEach criaria N
-      // vezes o mesmo par de blocos (a função é idempotente, mas seriam N
-      // idas ao banco à toa). Aqui também é onde o bloco anônimo do titular
-      // passa a ser identificado como dele.
-      void ensureLogisticBlocksForPerson(selectedDemand.id, instructor.id);
-      setNotification({ type: 'success', message: `Acompanhante ${instructor.name} alocado.` });
-    } else {
-      const success = allocateInstructor(selectedDemand.id, instructor.id);
-      if (success) {
-        setNotification({ type: 'success', message: `Instrutor ${instructor.name} alocado com sucesso.` });
-        setPreviewItems(prev => prev.filter(p => p.demandId !== selectedDemand.id));
-      }
+    // O "modo acompanhante" da lista principal deixou de existir: a seleção
+    // inteira (instrutor + dias) passou para o CompanionPicker, que grava por
+    // handleConfirmCompanion. Este botão volta a ser só alocação de titular.
+    const success = allocateInstructor(selectedDemand.id, instructor.id);
+    if (success) {
+      setNotification({ type: 'success', message: `Instrutor ${instructor.name} alocado com sucesso.` });
+      setPreviewItems(prev => prev.filter(p => p.demandId !== selectedDemand.id));
     }
-  }, [selectedDemand, companionMode, allocateInstructor, addCompanionAllocation, ensureLogisticBlocksForPerson, setNotification, setPreviewItems]);
+  }, [selectedDemand, allocateInstructor, setNotification, setPreviewItems]);
 
   const handleAllocateAnyway = useCallback((instructor: Instructor & { score: number }) => {
     setPendingForceAlloc(instructor);
@@ -408,39 +427,11 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
   };
 
   // Companion day picker
-  const addCompanionDay = (day: string) => {
-    if (!day) return;
-    setCompanionSelectedDays(prev => prev.includes(day) ? prev : [...prev, day].sort());
-    setCompanionDayInput('');
-  };
-
-  const removeCompanionDay = (day: string) => {
-    setCompanionSelectedDays(prev => prev.filter(d => d !== day));
-  };
-
-  const handleSaveCompanionDays = () => {
-    if (!selectedDemand || !pendingCompanionInstructorId || companionSelectedDays.length === 0) return;
-    for (const day of companionSelectedDays) {
-      if (hasScheduleConflict(pendingCompanionInstructorId, `${day}T08:00`, `${day}T18:00`, selectedDemand.id)) {
-        setNotification({ type: 'error', message: `Conflito no dia ${formatDateBR(day)}.` });
-        return;
-      }
-    }
-    companionSelectedDays.forEach(day => {
-      addCompanionAllocation({
-        id: `CA-${Date.now()}-${day}`,
-        demandId: selectedDemand.id,
-        instructorId: pendingCompanionInstructorId,
-        startDate: `${day}T08:00`,
-        endDate: `${day}T18:00`,
-      });
-    });
-    // Ver a nota do modo direto: uma vez por PESSOA, fora do laço de dias.
-    void ensureLogisticBlocksForPerson(selectedDemand.id, pendingCompanionInstructorId);
-    setNotification({ type: 'success', message: 'Acompanhante salvo.' });
-    setPendingCompanionInstructorId(null);
-    setCompanionSelectedDays([]);
-  };
+  // O seletor de um-dia-por-vez (addCompanionDay / removeCompanionDay /
+  // handleSaveCompanionDays) saiu daqui: a escolha de dias virou lista de
+  // marcacao no CompanionPicker, com "todos os dias" e intervalo. A gravacao
+  // continua em handleConfirmCompanion, com a mesma convencao de uma linha
+  // por dia.
 
   const handleClose = () => {
     setDrawerState('closed');
@@ -741,12 +732,10 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
               {selectedDemand.instructorId && (
                 <div className="mt-2 flex items-center gap-2">
                   <button
-                    onClick={() => { setCompanionMode(!companionMode); setPendingCompanionInstructorId(null); setCompanionSelectedDays([]); }}
-                    className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border transition ${
-                      companionMode ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
-                    }`}>
+                    onClick={() => setIsCompanionPickerOpen(true)}
+                    className="px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border transition bg-white text-slate-500 border-slate-200 hover:bg-slate-50">
                     <Users size={10} className="inline mr-1" />
-                    {companionMode ? 'MODO ACOMP. ATIVO' : 'ADD ACOMPANHANTE'}
+                    ADD ACOMPANHANTE
                   </button>
                   {companionsForDemand.length > 0 && (
                     <span className="text-[9px] font-bold text-emerald-600">{companionsForDemand.length} acomp.</span>
@@ -755,35 +744,19 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
               )}
             </div>
 
-            {/* Companion day picker */}
-            {pendingCompanionInstructorId && selectedDemand && (
-              <div className="p-3 bg-blue-50 border-b border-blue-200 space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-black text-slate-800 uppercase">Dias do acompanhante</p>
-                  <button onClick={() => { setPendingCompanionInstructorId(null); setCompanionSelectedDays([]); }} className="text-slate-400 hover:text-slate-600"><X size={14} /></button>
-                </div>
-                <div className="flex gap-2 items-end">
-                  <input type="date" className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                    value={companionDayInput} min={selectedDemand.startDate.split('T')[0]} max={selectedDemand.endDate.split('T')[0]}
-                    onChange={e => setCompanionDayInput(e.target.value)} />
-                  <button onClick={() => addCompanionDay(companionDayInput)} disabled={!companionDayInput}
-                    className="px-2 py-1.5 rounded-lg text-[9px] font-black uppercase border border-slate-200 hover:bg-white disabled:opacity-40">+ Dia</button>
-                </div>
-                {companionSelectedDays.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {companionSelectedDays.map(day => (
-                      <div key={day} className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white border border-slate-200">
-                        <span className="text-[9px] font-bold">{formatDateBR(day)}</span>
-                        <button onClick={() => removeCompanionDay(day)} className="text-red-500 font-black text-[10px]">×</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <button onClick={handleSaveCompanionDays} disabled={companionSelectedDays.length === 0}
-                  className={`w-full py-2 rounded-lg font-black text-[9px] uppercase tracking-widest transition ${
-                    companionSelectedDays.length === 0 ? 'bg-slate-200 text-slate-400' : 'bg-slate-900 text-white hover:bg-blue-600 shadow-lg'
-                  }`}>Salvar dias</button>
-              </div>
+            {/* A seleção de acompanhante (instrutor + dias) mora no
+                CompanionPicker, compartilhado com a tela de Logística. */}
+            {selectedDemand && (
+              <CompanionPicker
+                open={isCompanionPickerOpen}
+                demand={selectedDemand}
+                instructors={instructors}
+                alreadyCompanionIds={companionsForDemand.map((a: any) => a.instructorId)}
+                hasScheduleConflict={hasScheduleConflict}
+                getConflictDetails={id => getConflictDetails(id, selectedDemand)}
+                onCancel={() => setIsCompanionPickerOpen(false)}
+                onConfirm={handleConfirmCompanion}
+              />
             )}
 
             {/* Instructor list */}
@@ -899,97 +872,6 @@ const AllocationDrawer: React.FC<AllocationDrawerProps> = ({
       {createPortal(panelJSX, document.body)}
       {modalJSX && createPortal(modalJSX, document.body)}
     </>
-  );
-};
-
-/* ======================================================
-   INSTRUCTOR CARD
-====================================================== */
-
-const InstructorCard: React.FC<{
-  instructor: Instructor & { score: number };
-  isException: boolean;
-  isAlreadyAllocated?: boolean;
-  selectedDemand: Demand;
-  companionMode: boolean;
-  previewItems: AllocationPreview[];
-  onPreview: () => void;
-  onAllocate: () => void;
-  onCompanionDays: () => void;
-  hasScheduleConflict: (id: string, s: string, e: string, ex?: string) => boolean;
-}> = ({ instructor, isException, isAlreadyAllocated, selectedDemand, companionMode, previewItems, onPreview, onAllocate, onCompanionDays, hasScheduleConflict }) => {
-  const hasPreview = previewItems.some(p => p.instructorId === instructor.id && p.demandId === selectedDemand.id);
-  const hasConflict = hasScheduleConflict(instructor.id, selectedDemand.startDate, selectedDemand.endDate, selectedDemand.id);
-
-  return (
-    <div className={`p-2.5 rounded-xl border transition-all flex items-center justify-between gap-2 mb-1.5 ${
-      isAlreadyAllocated ? 'border-amber-300 bg-amber-50/40 hover:border-amber-400' :
-      hasConflict ? 'border-red-200 bg-red-50/30' :
-      isException ? 'border-amber-200 bg-amber-50/30 hover:border-amber-300' :
-      'border-slate-200 bg-white hover:border-blue-300'
-    }`}>
-      <div className="flex items-center gap-2.5 min-w-0">
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs border shadow-sm shrink-0 ${
-          isAlreadyAllocated ? 'bg-amber-100 text-amber-700 border-amber-300' :
-          hasConflict ? 'bg-red-100 text-red-600 border-red-200' :
-          isException ? 'bg-amber-50 text-amber-600 border-amber-200' :
-          'bg-blue-100 text-blue-600 border-blue-200'
-        }`}>
-          {instructor.name.charAt(0)}
-        </div>
-        <div className="min-w-0">
-          <p className="text-[11px] font-bold text-slate-800 truncate" title={instructor.name}>{instructor.name}</p>
-          <div className="flex items-center gap-1 mt-0.5">
-            {isAlreadyAllocated ? (
-              <span className="text-[8px] font-black uppercase px-1 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200 flex items-center gap-0.5">
-                <AlertTriangle size={7} /> Já alocado neste dia
-              </span>
-            ) : (
-              <>
-                <span className={`text-[8px] font-black uppercase px-1 py-0.5 rounded border ${
-                  isException ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-blue-50 text-blue-700 border-blue-100'
-                }`}>Score: {instructor.score}</span>
-                {hasConflict && (
-                  <span className="text-[8px] font-black text-red-600 flex items-center gap-0.5">
-                    <AlertTriangle size={8} /> Conflito
-                  </span>
-                )}
-                {isException && !hasConflict && (
-                  <span className="text-[8px] font-bold text-amber-600">Exceção</span>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-1 shrink-0">
-        {companionMode ? (
-          <button onClick={onCompanionDays}
-            className="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[8px] uppercase rounded-lg transition shadow-sm flex items-center gap-1">
-            <Users size={10} /> Dias
-          </button>
-        ) : isAlreadyAllocated ? (
-          <button onClick={onAllocate}
-            className="px-2 py-1.5 font-black text-[8px] uppercase rounded-lg transition shadow-sm flex items-center gap-1 bg-white border border-amber-400 text-amber-700 hover:bg-amber-50">
-            <UserCheck size={10} /> Alocar mesmo assim
-          </button>
-        ) : (
-          <>
-            <button onClick={onPreview} disabled={hasPreview}
-              className={`px-2 py-1.5 font-black text-[8px] uppercase rounded-lg transition shadow-sm flex items-center gap-1 ${
-                hasPreview ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                : 'bg-white border border-slate-200 text-slate-600 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600'
-              }`}><Eye size={10} /> Preview</button>
-            <button onClick={onAllocate}
-              className={`px-2 py-1.5 font-black text-[8px] uppercase rounded-lg transition shadow-sm flex items-center gap-1 ${
-                isException ? 'bg-white border border-amber-200 text-amber-700 hover:bg-amber-50'
-                : 'bg-slate-900 hover:bg-blue-600 text-white'
-              }`}><UserCheck size={10} /> Alocar</button>
-          </>
-        )}
-      </div>
-    </div>
   );
 };
 

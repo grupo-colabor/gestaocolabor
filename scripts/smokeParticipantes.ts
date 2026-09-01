@@ -583,23 +583,25 @@ console.log('\n[8] Blocos de logística do participante');
     insertFn.includes('data.length !== rows.length')
   );
 
-  // Remoção: apaga no banco, um id por vez, e só bloco vazio.
+  // Remocao pelo form: quem apaga bloco no BANCO e o App (ver [15]); aqui a
+  // tela so reflete. Ter as duas coisas no form foi o que deixou a remocao
+  // pela AGENDA sem limpeza nenhuma.
   const remover = interna.slice(
     interna.indexOf('const handleRemoveParticipant'),
     interna.indexOf('const handleCancelDemand')
   );
-  check('remoção apaga o bloco no banco', remover.includes('await deleteLogisticBlock(b.id)'));
+  check('remocao delega ao App', remover.includes('await removeDemandParticipant(participantId)'));
   check(
-    'remoção NUNCA apaga por demand_id (levaria os blocos dos outros)',
+    'e NAO reimplementa a limpeza de bloco',
+    !remover.includes('deleteLogisticBlock') && !remover.includes('locoVazio(')
+  );
+  check(
+    'a tela recarrega do banco depois de remover',
+    remover.includes('await loadLogisticsFor(formDemand.id)')
+  );
+  check(
+    'remocao NUNCA apaga por demand_id (levaria os blocos dos outros)',
     !remover.includes('demand_id') && !remover.includes('upsertLogisticBlocks')
-  );
-  check(
-    'remoção continua respeitando "só bloco vazio"',
-    remover.includes('locoVazio(b)') && remover.includes('hospVazio(b)')
-  );
-  check(
-    'bloco ausente do banco não aborta a remoção do participante',
-    /catch \(e\)[\s\S]{0,300}console\.warn/.test(remover)
   );
 }
 
@@ -818,7 +820,7 @@ console.log('\n[12] Acompanhante — logística por pessoa');
   check('allocateInstructor preenche o bloco do titular', app.includes('void fillTitularLogisticBlocks(demandId, instructorId);'));
   const fill = app.slice(
     app.indexOf('const fillTitularLogisticBlocks'),
-    app.indexOf('const releaseLogisticBlocksForPerson')
+    app.indexOf('const [operationalBases')
   );
   check(
     'com UMA pessoa só, o bloco continua anônimo (metade da regra que evita pedir nome de quem não precisa)',
@@ -826,9 +828,12 @@ console.log('\n[12] Acompanhante — logística por pessoa');
   );
 
   // Remoção: só bloco vazio, um id por vez, e só no ÚLTIMO vínculo da pessoa.
+  // `releaseLogisticBlocksForPerson` fica ANTES de `removeDemandParticipant`,
+  // que é quem o chama — um useCallback não pode citar nas deps algo declarado
+  // depois dele (TDZ na hora do render).
   const release = app.slice(
     app.indexOf('const releaseLogisticBlocksForPerson'),
-    app.indexOf('const [operationalBases')
+    app.indexOf('const removeDemandParticipant')
   );
   check('release só apaga bloco vazio', release.includes('isLogisticBlockEmpty(b)'));
   check('release filtra pela pessoa que saiu (nunca toca o titular)', release.includes('b.instructor_id === instructorId'));
@@ -967,6 +972,123 @@ console.log('\n[14] Card da agenda');
     'participante usa datetime completo, como a passada 1',
     cal.includes("const participantStart = ensureDateTimeForDisplay(dias[0], 'start');") &&
       cal.includes("const participantEnd = ensureDateTimeForDisplay(dias[dias.length - 1], 'end');")
+  );
+}
+/* ────────────────────────────────────────────────────────────────────────────
+ * [15] REMOÇÃO PELA AGENDA — roteamento por source
+ *
+ * O bug: o modal de registro terminava num `else` que chama removeAgendaItem.
+ * PARTICIPANT caía ali e o delete ia para agenda_items com um id de
+ * demand_participants — daí o "Erro ao excluir registro da agenda". Mesma
+ * classe do que já estava travado no drag; só o caminho de remoção ficou
+ * aberto.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[15] Remoção de participante pela agenda');
+{
+  const cal = ler('components/CalendarView.tsx');
+  const app = ler('App.tsx');
+  const interna = ler('components/InternalDemands.tsx');
+
+  const remover = cal.slice(
+    cal.indexOf('const handleRemoveAction'),
+    cal.indexOf('const handleRemoveMobileEvent')
+  );
+  check('achou o handler de remoção do modal', remover.length > 0);
+
+  // A asserção central: PARTICIPANT roteia para o service certo...
+  check(
+    'PARTICIPANT roteia para removeDemandParticipant',
+    /activeItem\.source === 'PARTICIPANT'[\s\S]{0,1500}removeDemandParticipant\(activeItem\.id\)/.test(remover)
+  );
+
+  // ...e nunca alcança o delete de agenda_items. O ramo de PARTICIPANT tem de
+  // terminar em `return` ANTES do bloco que chama removeAgendaItem.
+  // Recorte do RAMO, não do handler inteiro: o roteamento de DEMANDA/ALLOCATION
+  // vem logo depois e cita removeInstructorAllocation legitimamente.
+  const ramo = remover.slice(
+    remover.indexOf("activeItem.source === 'PARTICIPANT'"),
+    remover.indexOf('// ✅ Se for uma demanda')
+  );
+  check('o ramo de PARTICIPANT existe antes do delete de agenda', ramo.length > 0);
+  check('e sai com return antes dele', /setIsModalOpen\(false\);\s*\r?\n\s*return;/.test(ramo));
+  check(
+    'o ramo de PARTICIPANT não chama removeAgendaItem nem removeInstructorAllocation',
+    !ramo.includes('removeAgendaItem(') && !ramo.includes('removeInstructorAllocation(')
+  );
+
+  // CONTRAPROVA: agenda_items de verdade (férias, folga) continuam no caminho
+  // antigo. Se o roteamento novo tivesse engolido o else, isto quebraria.
+  check(
+    'MANUAL (férias/folga) continua indo para removeAgendaItem',
+    remover.includes('removeAgendaItem(activeItem.id); // MANUAL')
+  );
+  check(
+    'DEMANDA continua em deallocateInstructor',
+    /activeItem\.source === 'DEMANDA'\) \{\s*\r?\n\s*deallocateInstructor\(activeItem\.id\);/.test(remover)
+  );
+  check(
+    'ALLOCATION continua em removeInstructorAllocation',
+    /activeItem\.source === 'ALLOCATION'\) \{\s*\r?\n\s*removeInstructorAllocation\(activeItem\.id\);/.test(remover)
+  );
+
+  // Confirmação e permissão.
+  check('pede confirmação antes de remover', ramo.includes('window.confirm('));
+  check(
+    'a confirmação diz o que vai acontecer com a logística',
+    ramo.includes('blocos de logística vazios dele serão removidos')
+  );
+  check('respeita a matriz de editar interna (admin + analista)', ramo.includes('podeRemoverParticipante'));
+  check(
+    'e a matriz é a mesma do form interno',
+    /podeRemoverParticipante = profile\?\.role === 'admin' \|\| profile\?\.role === 'analista'/.test(cal)
+  );
+
+  // A liberação dos blocos mora no App, para valer nos DOIS caminhos de
+  // remoção (card do form e card da agenda) — não no chamador.
+  const removeApp = app.slice(
+    app.indexOf('const removeDemandParticipant'),
+    app.indexOf('const [operationalBases')
+  );
+  check(
+    'removeDemandParticipant libera os blocos vazios',
+    removeApp.includes('await releaseLogisticBlocksForPerson(alvo.demandId, alvo.instructorId)')
+  );
+  check(
+    'e guarda a linha ANTES do delete (depois ela já saiu do estado)',
+    removeApp.indexOf('const alvo = demandParticipants.find') < removeApp.indexOf('deleteDemandParticipantById')
+  );
+  check(
+    'o form interno deixou de duplicar a limpeza',
+    !interna.includes('deleteLogisticBlock')
+  );
+
+  // Modal: participante enxerga a demanda igual ao titular.
+  check(
+    'resolveLinkedDemand inclui PARTICIPANT (Local/Estado/Corredor deixam de ser "Não informado")',
+    /function resolveLinkedDemand[\s\S]{0,700}item\.source !== 'PARTICIPANT'/.test(cal)
+  );
+  check(
+    'o bloco da demanda no modal usa o mesmo predicado do card',
+    cal.includes('const linkedDemand = rendersAsDemandCard(activeItem.source)')
+  );
+  check('a ORIGEM aparece legível', cal.includes("? 'PARTICIPANTE'"));
+
+  // Nenhum outro caminho de escrita do modal atinge agenda_items para
+  // PARTICIPANT: salvar observação vai para demands.observations (igual ao
+  // titular) e o modo EDIT nunca é acionado sobre um item existente.
+  const obs = cal.slice(
+    cal.indexOf('const handleUpdateObservation'),
+    cal.indexOf('const removeCTMForDemandIfAny')
+  );
+  check(
+    'salvar observação só toca agenda_items no ramo MANUAL',
+    /activeItem\.source === 'MANUAL'[\s\S]{0,300}updateAgendaItem/.test(obs) &&
+      obs.slice(obs.indexOf('} else {')).includes('updateDemand(') &&
+      !obs.slice(obs.indexOf('} else {')).includes('updateAgendaItem(')
+  );
+  check(
+    'o modal não tem caminho de EDIT sobre item existente (só VIEW e CREATE)',
+    !cal.includes("setModalMode('EDIT')")
   );
 }
 /* ────────────────────────────────────────────────────────────────────────── */

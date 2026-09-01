@@ -225,9 +225,26 @@ const ensureDateTimeForDisplay = (s: string, kind: 'start' | 'end') => {
 };
 
 
+/**
+ * A demanda por trás do item, para o modal preencher Local / Estado / Corredor.
+ *
+ * PARTICIPANT entrou aqui junto com a feature: sem ele, o card do participante
+ * abria com "Não informado" nos três campos — pior até que o do acompanhante,
+ * que já resolvia. Participante é titular pleno; vê o mesmo que o titular.
+ */
 function resolveLinkedDemand(item: UnifiedItem | null, demands: Demand[]): Demand | null {
   if (!item) return null;
-  if (item.source !== 'DEMANDA' && item.source !== 'ALLOCATION' && item.source !== 'COMPANION') return null;
+  if (
+    item.source !== 'DEMANDA' &&
+    item.source !== 'ALLOCATION' &&
+    item.source !== 'COMPANION' &&
+    item.source !== 'PARTICIPANT'
+  ) {
+    return null;
+  }
+  // DEMANDA guarda o id da demanda no próprio `id`; as outras três carregam o
+  // id da LINHA (alocação, acompanhante, participante) e a demanda vem em
+  // `demandId`.
   return demands.find(d => d.id === (item.demandId || item.id)) || null;
 }
 
@@ -251,6 +268,7 @@ const CalendarView: React.FC = () => {
     removeInstructorAllocation,
     removeCompanionAllocation,
     releaseLogisticBlocksForPerson,
+    removeDemandParticipant,
     addInstructorAllocation,
     updateInstructorAllocation, 
     removeResourceAllocation,
@@ -264,6 +282,13 @@ const CalendarView: React.FC = () => {
 
   const { profile } = useAuth();
   const isCoordinator = profile?.role === 'coordenador';
+
+  /**
+   * Remover participante pela agenda segue a MESMA matriz de editar demanda
+   * interna (admin + analista) — o card da agenda nao pode ser uma porta mais
+   * larga que o card do formulario para a mesma acao.
+   */
+  const podeRemoverParticipante = profile?.role === 'admin' || profile?.role === 'analista';
 
   const [activeMobileEvent, setActiveMobileEvent] = useState<MobileResourceEvent | null>(null);
   const [isMobileContext, setIsMobileContext] = useState(false);
@@ -1105,6 +1130,10 @@ const handleSaveManual = async () => {
       const original = agendaItems.find(i => i.id === activeItem.id);
       if (original) updateAgendaItem({ ...original, description: modalObs });
     } else {
+      // PARTICIPANT cai aqui junto com DEMANDA/ALLOCATION/COMPANION, e está
+      // certo: a observação do modal é a da DEMANDA, não do vínculo. Editá-la
+      // pelo card do participante faz o mesmo que pelo card do titular —
+      // nenhuma escrita em agenda_items acontece neste ramo.
       const dId = activeItem.demandId || activeItem.id;
       const demand = demands.find(d => d.id === dId);
       if (demand) updateDemand({ ...demand, observations: modalObs });
@@ -1148,6 +1177,50 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
 
   const handleRemoveAction = () => {
   if (!activeItem) return;
+
+  // ⛔ PARTICIPANTE tem tabela própria (demand_participants) e NÃO pode cair no
+  // fluxo de baixo: o `else` final chama removeAgendaItem com o id de uma
+  // linha que não é de agenda_items — era o "Erro ao excluir registro da
+  // agenda" do relato. Mesma classe do que já estava travado no drag; só o
+  // caminho de remoção tinha ficado aberto.
+  if (activeItem.source === 'PARTICIPANT') {
+    if (!podeRemoverParticipante) {
+      setNotification({
+        message: 'Seu perfil não pode remover participantes de demanda interna.',
+        type: 'error',
+      });
+      return;
+    }
+
+    const nome =
+      instructors.find(i => i.id === activeItem.instructorId)?.name || 'Este instrutor';
+
+    const confirmado = window.confirm(
+      `Remover ${nome} desta demanda interna? Ele deixará de aparecer na agenda e os blocos de logística vazios dele serão removidos.`
+    );
+    if (!confirmado) return;
+
+    // `removeDemandParticipant` já libera os blocos vazios
+    // (releaseLogisticBlocksForPerson) — a regra vale igual aqui e no card do
+    // formulário de demanda interna.
+    void removeDemandParticipant(activeItem.id).then(ok => {
+      if (!ok) return;
+      logAction({
+        modulo: 'Agendamento',
+        acao: 'Cancelar',
+        descricao: [
+          `Participante removido da demanda interna`,
+          `Instrutor: ${nome}`,
+          activeItem.demandId ? `Demanda: ${activeItem.demandId}` : null,
+        ].filter(Boolean).join(' | '),
+        dadosAntes: activeItem,
+      });
+      setNotification({ message: `${nome} removido da demanda.`, type: 'success' });
+    });
+
+    setIsModalOpen(false);
+    return;
+  }
 
   // ✅ Se for uma demanda (ou allocation) e existir CTM / acompanhantes ligados, remove junto
   if (activeItem.source === 'DEMANDA' || activeItem.source === 'ALLOCATION') {
@@ -2234,10 +2307,12 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
               {modalMode === 'VIEW' && activeItem ? (
                 <>
               {(() => {
-                const linkedDemand =
-                  activeItem.source === 'DEMANDA' || activeItem.source === 'ALLOCATION'
-                    ? demands.find(d => d.id === (activeItem.demandId || activeItem.id))
-                    : null;
+                // Mesmo predicado do card na grade: quem trabalha na demanda vê
+                // o bloco da demanda e o seletor de status. Acompanhante segue
+                // de fora, como antes.
+                const linkedDemand = rendersAsDemandCard(activeItem.source)
+                  ? demands.find(d => d.id === (activeItem.demandId || activeItem.id))
+                  : null;
 
                 if (!linkedDemand) return null;
 
@@ -2326,7 +2401,11 @@ const removeCompanionsForDemandIfAny = (demandId: string) => {
                   </div>
 
                   <span className="text-xs font-black text-slate-700">
-                    {activeItem.source === 'ALLOCATION' ? 'ALOCAÇÃO' : activeItem.source}
+                    {activeItem.source === 'ALLOCATION'
+                      ? 'ALOCAÇÃO'
+                      : activeItem.source === 'PARTICIPANT'
+                      ? 'PARTICIPANTE'
+                      : activeItem.source}
                   </span>
                 </div>
 

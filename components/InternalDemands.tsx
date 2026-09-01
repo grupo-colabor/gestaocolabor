@@ -68,8 +68,6 @@ import {
   fetchLogisticByDemandId,
   fetchLogisticBlocksByDemandId,
   upsertLogisticBlocks,
-  insertLogisticBlocks,
-  deleteLogisticBlock,
 } from '../services/logistics';
 import { fetchLocationAssociations, type LocationAssociation } from '../services/locationAssociations';
 
@@ -1269,57 +1267,32 @@ const InternalDemands: React.FC = () => {
    * órfão de participante, é menos ruim do que apagar dado sem perguntar. Ele
    * fica visível na seção de logística e pode ser removido à mão.
    *
-   * Como o bloco agora nasce PERSISTIDO (ver handleAddParticipant), apagá-lo
-   * só do estado deixaria a linha no banco e ela voltaria no próximo
-   * `loadLogisticsFor`. O delete vai por `deleteLogisticBlock`, um id por vez
-   * — nunca por demand_id, que levaria junto os blocos dos outros.
+   * Quem apaga os blocos no BANCO é o `removeDemandParticipant` do App —
+   * assim a regra vale igual pelo card do formulário e pelo card da agenda,
+   * em vez de existir aqui e faltar lá (foi o que deixou o botão REMOVER
+   * REGISTRO da agenda cair no delete de agenda_items). Aqui só recarregamos
+   * o estado da tela a partir do banco, o mesmo caminho de leitura do
+   * `handleAddParticipant`.
    */
   const handleRemoveParticipant = useCallback(
-    async (participantId: string, instructorId: string) => {
+    async (participantId: string, _instructorId: string) => {
+      if (!formDemand.id) return;
+
       setRemovingParticipantId(participantId);
       const ok = await removeDemandParticipant(participantId);
       setRemovingParticipantId(null);
       if (!ok) return;
 
-      const locoVazio = (b: any) =>
-        !b.transportType && !b.rentalAgencyLocation && !b.rentalLocator && !b.rentalCheckIn && !b.receiptUrls?.length;
-      const hospVazio = (b: any) =>
-        !b.accommodationType && !b.hotelCity && !b.hotelName && !b.hotelCheckIn && !b.hotelReceiptUrls?.length;
-
-      const locoParaApagar = (formDemand.logisticasLocomocao || []).filter(
-        b => b.instructorId === instructorId && locoVazio(b)
-      );
-      const hospParaApagar = (formDemand.logisticasHospedagem || []).filter(
-        b => b.instructorId === instructorId && hospVazio(b)
-      );
-
-      for (const b of [...locoParaApagar, ...hospParaApagar]) {
-        try {
-          await deleteLogisticBlock(b.id);
-        } catch (e) {
-          // Bloco que nunca chegou ao banco (criado à mão na aba e ainda não
-          // salvo) faz o delete endurecido lançar por 0 linhas. Não é motivo
-          // para abortar a remoção — segue, e o bloco sai do estado do mesmo
-          // jeito.
-          console.warn('[InternalDemands] bloco do participante não estava no banco:', b.id, e);
-        }
-      }
-
-      const apagados = new Set([...locoParaApagar, ...hospParaApagar].map(b => b.id));
+      const logistics = await loadLogisticsFor(formDemand.id);
       setFormDemand(prev => ({
         ...prev,
-        logisticasLocomocao: (prev.logisticasLocomocao || []).filter(b => !apagados.has(b.id)),
-        logisticasHospedagem: (prev.logisticasHospedagem || []).filter(b => !apagados.has(b.id)),
+        logisticasLocomocao: logistics.locoBlocks,
+        logisticasHospedagem: logistics.hospBlocks,
       }));
 
       setNotification({ message: 'Participante removido.', type: 'success' });
     },
-    [
-      removeDemandParticipant,
-      formDemand.logisticasLocomocao,
-      formDemand.logisticasHospedagem,
-      setNotification,
-    ]
+    [formDemand.id, removeDemandParticipant, setNotification]
   );
 
   const handleCancelDemand = () => {

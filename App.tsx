@@ -513,7 +513,52 @@ const removeCompanionAllocation = useCallback((id: string) => {
     }
   }, [AUTH_MODE, user, setNotification]);
 
+  /**
+   * Libera os blocos de uma pessoa que saiu da demanda — SO OS VAZIOS.
+   *
+   * Chamada quando a pessoa perde o ULTIMO vinculo com a demanda. Quem decide
+   * isso e quem chama, e nao esta funcao: acompanhante e gravado uma linha por
+   * dia, entao remover um dia nao significa que ele saiu — e o estado local do
+   * chamador que sabe quantas linhas sobraram (aqui o estado do App estaria
+   * defasado, por causa da remocao otimista que acabou de acontecer).
+   *
+   * O bloco do TITULAR nunca entra aqui: o filtro e por instructor_id da pessoa
+   * que saiu. Se sobrar so o titular, o bloco dele mantem o nome — desfazer a
+   * identificacao seria voltar a um anonimo que ninguem pediu.
+   */
+  const releaseLogisticBlocksForPerson = useCallback(
+    async (demandId: string, instructorId: string): Promise<void> => {
+      if (AUTH_MODE !== 'supabase' || !user) return;
+      if (!demandId || !instructorId) return;
+
+      try {
+        const blocks = await fetchLogisticBlocksByDemandId(demandId);
+        const alvos = blocks.filter(
+          b => b.instructor_id === instructorId && isLogisticBlockEmpty(b)
+        );
+
+        // Um id por vez, nunca por demand_id: apagar por demanda levaria junto
+        // os blocos do titular e dos outros acompanhantes.
+        for (const b of alvos) {
+          try {
+            await deleteLogisticBlock(b.id);
+          } catch (e) {
+            console.warn('[LogisticaPorPessoa] bloco nao removido', b.id, e);
+          }
+        }
+      } catch (e) {
+        console.error('[LogisticaPorPessoa] falha ao liberar blocos', { demandId, instructorId }, e);
+      }
+    },
+    [AUTH_MODE, user]
+  );
+
   const removeDemandParticipant = useCallback(async (id: string): Promise<boolean> => {
+    // Guardado ANTES do delete: precisamos de demandId + instructorId para
+    // liberar os blocos de logística, e depois da remoção a linha já saiu do
+    // estado.
+    const alvo = demandParticipants.find(x => x.id === id);
+
     if (AUTH_MODE !== 'supabase') {
       setDemandParticipants(prev => prev.filter(x => x.id !== id));
       return true;
@@ -530,13 +575,20 @@ const removeCompanionAllocation = useCallback((id: string) => {
     try {
       await deleteDemandParticipantById(id);
       setDemandParticipants(prev => prev.filter(x => x.id !== id));
+
+      // A logística vazia dele sai junto — aqui, e não no chamador, para valer
+      // em TODOS os caminhos de remoção (card do form interno e card da
+      // agenda). Bloco com dado nunca é apagado; ver isLogisticBlockEmpty.
+      if (alvo) {
+        await releaseLogisticBlocksForPerson(alvo.demandId, alvo.instructorId);
+      }
       return true;
     } catch (e: any) {
       console.error('[DemandParticipants] delete error', e);
       setNotification({ message: e?.message || 'Erro ao remover participante.', type: 'error' });
       return false;
     }
-  }, [AUTH_MODE, user, setNotification]);
+  }, [AUTH_MODE, user, demandParticipants, releaseLogisticBlocksForPerson, setNotification]);
 
   // ====================================================================
   // LOGISTICA POR PESSOA — regra unificada interna / cliente
@@ -683,46 +735,6 @@ const removeCompanionAllocation = useCallback((id: string) => {
       }
     },
     [AUTH_MODE, user, aplicarDonoDoTitular]
-  );
-
-  /**
-   * Libera os blocos de uma pessoa que saiu da demanda — SO OS VAZIOS.
-   *
-   * Chamada quando a pessoa perde o ULTIMO vinculo com a demanda. Quem decide
-   * isso e quem chama, e nao esta funcao: acompanhante e gravado uma linha por
-   * dia, entao remover um dia nao significa que ele saiu — e o estado local do
-   * chamador que sabe quantas linhas sobraram (aqui o estado do App estaria
-   * defasado, por causa da remocao otimista que acabou de acontecer).
-   *
-   * O bloco do TITULAR nunca entra aqui: o filtro e por instructor_id da pessoa
-   * que saiu. Se sobrar so o titular, o bloco dele mantem o nome — desfazer a
-   * identificacao seria voltar a um anonimo que ninguem pediu.
-   */
-  const releaseLogisticBlocksForPerson = useCallback(
-    async (demandId: string, instructorId: string): Promise<void> => {
-      if (AUTH_MODE !== 'supabase' || !user) return;
-      if (!demandId || !instructorId) return;
-
-      try {
-        const blocks = await fetchLogisticBlocksByDemandId(demandId);
-        const alvos = blocks.filter(
-          b => b.instructor_id === instructorId && isLogisticBlockEmpty(b)
-        );
-
-        // Um id por vez, nunca por demand_id: apagar por demanda levaria junto
-        // os blocos do titular e dos outros acompanhantes.
-        for (const b of alvos) {
-          try {
-            await deleteLogisticBlock(b.id);
-          } catch (e) {
-            console.warn('[LogisticaPorPessoa] bloco nao removido', b.id, e);
-          }
-        }
-      } catch (e) {
-        console.error('[LogisticaPorPessoa] falha ao liberar blocos', { demandId, instructorId }, e);
-      }
-    },
-    [AUTH_MODE, user]
   );
 
 const [operationalBases, setOperationalBases] = useState<OperationalBases>({

@@ -40,6 +40,12 @@ import {
   type ParticipantRowLike,
 } from '../domain/allocationReschedule';
 import { computeInstructorHoursByDemand } from '../domain/instructorHours';
+import { getDemandDays } from '../domain/demandDays';
+import {
+  classifyAllocationAgainstDemand,
+  resolveDemandInstructors,
+  routeInstructorRemoval,
+} from '../domain/demandInstructors';
 
 const ler = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8');
 
@@ -492,6 +498,158 @@ console.log('\n[11] Card do acompanhante na agenda');
   // O que NÃO pode mudar: cor e remoção.
   check('o verde continua o mesmo', cal.includes("bg: 'bg-emerald-600'"));
   check('e o × de remover continua no card', cal.includes('removeCompanionDay(cellItem.data)'));
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [12] INTERNA — a DEM-1551: alocação-fantasma
+ *
+ * Interna com alocação de instrutor criada pela agenda (04–08/09). As datas da
+ * demanda foram alteradas pelo form interno para 09–10/09 — e o save interno
+ * passava `allocations: []` ao plano. A linha ficou em 04–08/09: invisível na
+ * agenda (o card só renderiza na interseção com os dias da demanda), mas
+ * bloqueando conflito nos dias antigos, e exibida no modal com as datas velhas.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[12] Interna (DEM-1551): mudar a data leva a alocacao unica junto');
+{
+  const demandaAntes = { dateMode: 'CONTINUO', startDate: '2026-09-04T08:00', endDate: '2026-09-08T18:00' };
+  const demandaDepois = { dateMode: 'CONTINUO', startDate: '2026-09-09T08:00', endDate: '2026-09-10T18:00' };
+  const diasAntigos = getDemandDays(demandaAntes as any);
+  const diasNovos = getDemandDays(demandaDepois as any);
+
+  const criadaPelaAgenda: AllocationRowLike = {
+    id: 'AL-1551', instructorId: 'ANA', startDate: '2026-09-04T08:00', endDate: '2026-09-08T18:00',
+  };
+
+  // O save NOVO: a interna passa as alocações reais ao plano.
+  const p = planAllocationReschedule({
+    diasAntigos, diasNovos, horaInicio: '08:00', horaFim: '18:00',
+    allocations: [criadaPelaAgenda], companions: [], participants: [],
+  });
+  eq('a alocacao unica acompanha o periodo novo', p.allocations.paraPeriodoCheio.map(a => a.id), ['AL-1551']);
+  eq('do primeiro dia novo', p.allocations.paraPeriodoCheio[0].startDate, '2026-09-09T08:00');
+  eq('ao ultimo', p.allocations.paraPeriodoCheio[0].endDate, '2026-09-10T18:00');
+  eq('nada removido', p.allocations.paraRemover.length, 0);
+  eq('e nenhum dia sem instrutor', p.allocations.diasSemInstrutor.length, 0);
+
+  const aplicada = { ...criadaPelaAgenda, ...p.allocations.paraPeriodoCheio[0] };
+  const depoisDoPlano = classifyAllocationAgainstDemand(aplicada, diasNovos);
+  eq('depois do plano a alocacao cai INTEIRA nos dias da demanda', depoisDoPlano.cobertura, 'DENTRO');
+  eq('sem nenhum dia fora', depoisDoPlano.diasFora.length, 0);
+
+  /* CONTRAPROVA: o save ANTIGO da interna (allocations: [] no plano). */
+  const semPlano = planAllocationReschedule({
+    diasAntigos, diasNovos, horaInicio: '08:00', horaFim: '18:00',
+    allocations: [], companions: [], participants: [],
+  });
+  eq('(contraprova) o plano sem as alocacoes nao toca em nada', semPlano.allocations.paraPeriodoCheio.length, 0);
+  const fantasma = classifyAllocationAgainstDemand(criadaPelaAgenda, diasNovos);
+  eq('...e a linha fica INTEIRA fora dos dias da demanda: fantasma detectado', fantasma.cobertura, 'FORA');
+  eq('com zero dias visiveis na agenda', fantasma.diasDentro.length, 0);
+  eq('e cinco dias bloqueando conflito no escuro', fantasma.diasFora.length, 5);
+
+  // Parcial tambem e marcado (sobrou um dia dentro, o resto ficou de fora).
+  const parcial = classifyAllocationAgainstDemand(
+    { startDate: '2026-09-04T08:00', endDate: '2026-09-09T18:00' }, diasNovos
+  );
+  eq('alocacao que so encosta no periodo novo e PARCIAL', parcial.cobertura, 'PARCIAL');
+  eq('e o que esta dentro nao e tocado', parcial.diasDentro, ['2026-09-09']);
+
+  // Guarda de fonte: o save interno passa pelo plano, sem reescrita inline.
+  const interna = ler('components/InternalDemands.tsx');
+  check(
+    'o save interno entrega as alocacoes REAIS ao plano (nao mais [])',
+    interna.includes('allocations: instructorAllocations.filter(a => a.demandId === sanitized.id)')
+  );
+  check(
+    'e as linhas de acompanhante tambem',
+    interna.includes('companions: companionAllocations.filter(ca => ca.demandId === sanitized.id)')
+  );
+  check('a interna nao passa mais allocations: [] ao plano', !interna.includes('allocations: [],'));
+  check(
+    'aplica periodo cheio e recorte pelo caminho do App',
+    /paraRecortar\]\)\s*\{[\s\S]{0,300}updateInstructorAllocation\(\{ \.\.\.original, startDate: a\.startDate, endDate: a\.endDate \}\)/.test(interna)
+  );
+  check('remove o que ficou fora pelo caminho do App', interna.includes('for (const a of plano.allocations.paraRemover) removeInstructorAllocation(a.id);'));
+  check(
+    'acompanhante: remove, atualiza e cria pelo plano',
+    interna.includes('for (const ca of plano.companions.paraRemover) removeCompanionAllocation(ca.id);') &&
+      interna.includes('await updateCompanionAllocationDates(ca.id, ca.startDate, ca.endDate)') &&
+      /for \(const ca of plano\.companions\.paraCriar\)[\s\S]{0,200}addCompanionAllocation\(\{/.test(interna)
+  );
+  check(
+    'sem reescrita inline para o periodo da demanda',
+    !/updateInstructorAllocation\(\{[\s\S]{0,120}startDate: sanitized\.startDate/.test(interna)
+  );
+  check('sem SQL solto em instructor_allocations', !interna.includes(".from('instructor_allocations')"));
+  check('e o aviso agregado e o mesmo do dominio', interna.includes('describeReschedule(plano, getInstructorName)'));
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [13] LIXEIRA DO BLOCO INSTRUTORES (interna): rota por origem, nunca cruzada
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[13] Lixeira do bloco Instrutores da interna');
+{
+  // Linha vinda de instructor_allocations → delete da allocation.
+  const daTabela = resolveDemandInstructors('DEM-1551', 'ANA', [
+    { id: 'AL-1551', demandId: 'DEM-1551', instructorId: 'ANA', startDate: '2026-09-04T08:00', endDate: '2026-09-08T18:00' },
+  ]);
+  eq('linha da tabela e reconhecida como allocation', daTabela.map(e => e.source), ['allocation']);
+  const rotaTabela = routeInstructorRemoval(daTabela[0]);
+  eq('allocation → DELETE_ALLOCATION', rotaTabela.kind, 'DELETE_ALLOCATION');
+  eq('apontando para a linha certa', rotaTabela.kind === 'DELETE_ALLOCATION' ? rotaTabela.allocationId : null, 'AL-1551');
+
+  // Linha do fallback demands.instructor_id → update do campo.
+  const doFallback = resolveDemandInstructors('DEM-1551', 'ANA', []);
+  eq('sem linha na tabela, o principal vem do fallback', doFallback.map(e => e.source), ['principal']);
+  const rotaFallback = routeInstructorRemoval(doFallback[0]);
+  eq('principal → CLEAR_PRINCIPAL', rotaFallback.kind, 'CLEAR_PRINCIPAL');
+  eq('para a pessoa certa', rotaFallback.instructorId, 'ANA');
+
+  // Nunca cruzado.
+  check('allocation NUNCA vira CLEAR_PRINCIPAL', rotaTabela.kind !== 'CLEAR_PRINCIPAL');
+  check('principal NUNCA vira DELETE_ALLOCATION', rotaFallback.kind !== 'DELETE_ALLOCATION');
+  check(
+    'allocation sem id (dado quebrado) nao tenta apagar linha que nao existe',
+    routeInstructorRemoval({ instructorId: 'ANA', source: 'allocation' } as any).kind === 'CLEAR_PRINCIPAL'
+  );
+
+  // Guarda de fonte: a tela executa a rota, cada ramo pelo seu caminho.
+  const interna = ler('components/InternalDemands.tsx');
+  const handler = interna.slice(
+    interna.indexOf('const handleConfirmRemoveInstructor'),
+    interna.indexOf('const currentResourceAllocations')
+  );
+  check('o handler da lixeira existe', handler.length > 0);
+  check('e decide pela rota pura do dominio', handler.includes('routeInstructorRemoval(entry)'));
+
+  const ramoAllocation = handler.slice(
+    handler.indexOf("rota.kind === 'DELETE_ALLOCATION'"),
+    handler.indexOf('} else {')
+  );
+  const ramoPrincipal = handler.slice(handler.indexOf('} else {'), handler.indexOf('const participa'));
+  check('ramo allocation chama removeInstructorAllocation (caminho existente do App)', ramoAllocation.includes('removeInstructorAllocation(rota.allocationId)'));
+  check('ramo allocation NAO limpa instructor_id via updateDemand', !ramoAllocation.includes('updateDemand('));
+  check('ramo principal limpa o campo', ramoPrincipal.includes('instructorId: undefined') && ramoPrincipal.includes('updateDemand(limpa)'));
+  check('ramo principal NAO apaga alocacao', !ramoPrincipal.includes('removeInstructorAllocation('));
+  check('nenhum delete solto de allocation na tela', !interna.includes('deleteInstructorAllocationsByDemandId') && !interna.includes("services/instructorAllocations'"));
+
+  // Logistica por pessoa: blocos vazios liberados pela rotina do App, nunca daqui.
+  check('libera blocos vazios pela rotina compartilhada', handler.includes('await releaseLogisticBlocksForPerson(demandId, entry.instructorId)'));
+  check('so quando a pessoa perdeu o ultimo vinculo', handler.includes('if (!aindaVinculado && !participa)'));
+  check('e nao apaga bloco direto', !interna.includes('deleteLogisticBlock'));
+
+  // Confirmacao com nome e periodo, distinta por origem; permissao da interna.
+  check('confirma com nome e periodo para allocation', interna.includes('Remover alocação?') && interna.includes('formatDateOnlySafe(confirmRemoveInstructor.startDate)'));
+  check('confirmacao distinta para o principal', interna.includes('Remover instrutor principal?'));
+  check(
+    'a lixeira respeita a matriz de edicao da interna (admin + analista)',
+    /canEditDemand && \(\s*<button\s*onClick=\{\(\) => setConfirmRemoveInstructor\(entry\)\}/.test(interna.replace(/\r/g, ''))
+  );
+
+  // O fantasma nao fica invisivel: alerta ambar no bloco.
+  check('alocacao fora do periodo sai marcada em ambar', interna.includes("'bg-amber-50 border-amber-300'"));
+  check('com o texto do alerta', interna.includes("'Fora do período da demanda'") && interna.includes("'Parcialmente fora do período da demanda'"));
+  check('classificada pela funcao pura', interna.includes('classifyAllocationAgainstDemand(entry, diasDemanda)'));
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */

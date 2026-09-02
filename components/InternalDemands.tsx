@@ -48,7 +48,13 @@ import {
 
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { canPerformDemandAction } from '../domain/demandPermissions';
-import { resolveDemandInstructors, resolveDemandInstructorIds } from '../domain/demandInstructors';
+import {
+  resolveDemandInstructors,
+  resolveDemandInstructorIds,
+  classifyAllocationAgainstDemand,
+  routeInstructorRemoval,
+  type ResolvedInstructorEntry,
+} from '../domain/demandInstructors';
 import { getDemandCompanyLabel } from '../domain/demandLabel';
 import {
   buildDemandTextContent,
@@ -107,6 +113,7 @@ import ExportDemandsModal from './ExportDemandsModal';
 import PersonCountBadge from './ui/PersonCountBadge';
 import { planAllocationReschedule, describeReschedule } from '../domain/allocationReschedule';
 import { updateDemandParticipantPeriod } from '../services/demandParticipants';
+import { updateCompanionAllocationDates } from '../services/companionAllocations';
 import { getDemandDays } from '../domain/demandDays';
 import type { DemandFormState } from './demand-form/types';
 
@@ -228,6 +235,11 @@ const InternalDemands: React.FC = () => {
     instructors,
     operationalBases,
     instructorAllocations,
+    updateInstructorAllocation,
+    removeInstructorAllocation,
+    companionAllocations,
+    addCompanionAllocation,
+    removeCompanionAllocation,
     resourceAllocations,
     addResourceAllocation,
     removeResourceAllocation,
@@ -237,6 +249,7 @@ const InternalDemands: React.FC = () => {
     addDemandParticipant,
     removeDemandParticipant,
     ensureLogisticBlocksForPerson,
+    releaseLogisticBlocksForPerson,
     notificationTarget,
     setNotificationTarget,
     addDemand,
@@ -863,14 +876,18 @@ const InternalDemands: React.FC = () => {
           dadosDepois: sanitized,
         });
 
-        // O MESMO recorte da tela de cliente (domain/allocationReschedule).
+        // O MESMO recorte da tela de cliente (domain/allocationReschedule),
+        // nos MESMOS três alvos.
         //
-        // A interna não tem o bloco que reescrevia alocações — ela nunca teve
-        // sync de datas — mas TEM participantes com período próprio, e mudar o
-        // período da demanda deixava esse período apontando para fora dela.
-        // Acompanhante e alocação entram vazios aqui de propósito: o que a
-        // interna tem é participante; se um dia ela ganhar os outros dois, a
-        // regra já está aplicada.
+        // ⚠️ A interna não tem botão de alocar instrutor, mas TEM alocação: a
+        // agenda (AllocationDrawer / Programação) grava `instructor_allocations`
+        // para ela como para qualquer demanda. Enquanto este bloco passava
+        // `allocations: []`, mudar a data da interna deixava a linha da alocação
+        // parada no período antigo — a DEM-1551 foi de 04–08/09 para 09–10/09 e
+        // a alocação ficou em 04–08/09: invisível na agenda (o card só aparece
+        // na interseção com os dias da demanda), mas bloqueando conflito nos
+        // dias velhos. Uma ALOCAÇÃO-FANTASMA. O plano é a mesma função pura do
+        // form de cliente; aqui só se aplica o que ele devolve.
         const diaDaData = (v?: string | null) => (v ?? '').slice(0, 10);
         if (
           before &&
@@ -882,11 +899,41 @@ const InternalDemands: React.FC = () => {
             diasNovos: getDemandDays(sanitized as any),
             horaInicio: (sanitized.startDate ?? '').slice(11) || '08:00',
             horaFim: (sanitized.endDate ?? '').slice(11) || '18:00',
-            allocations: [],
-            companions: [],
+            allocations: instructorAllocations.filter(a => a.demandId === sanitized.id),
+            companions: companionAllocations.filter(ca => ca.demandId === sanitized.id),
             participants: demandParticipants.filter(pt => pt.demandId === sanitized.id),
           });
 
+          // --- instrutor: única cobrindo tudo acompanha; split só recorta ---
+          for (const a of [...plano.allocations.paraPeriodoCheio, ...plano.allocations.paraRecortar]) {
+            const original = instructorAllocations.find(x => x.id === a.id);
+            if (original) {
+              updateInstructorAllocation({ ...original, startDate: a.startDate, endDate: a.endDate });
+            }
+          }
+          for (const a of plano.allocations.paraRemover) removeInstructorAllocation(a.id);
+
+          // --- acompanhante (improvável em interna, mas o plano trata) ---
+          // Remove primeiro, cria depois: ver a nota de ordem no Demands.tsx.
+          for (const ca of plano.companions.paraRemover) removeCompanionAllocation(ca.id);
+          for (const ca of plano.companions.paraAtualizar) {
+            try {
+              await updateCompanionAllocationDates(ca.id, ca.startDate, ca.endDate);
+            } catch (e) {
+              console.error('Erro ao sincronizar horário do acompanhante:', e);
+            }
+          }
+          for (const ca of plano.companions.paraCriar) {
+            addCompanionAllocation({
+              id: `CA-${Date.now()}-${ca.startDate.slice(0, 10)}-${ca.instructorId.slice(0, 6)}`,
+              demandId: sanitized.id,
+              instructorId: ca.instructorId,
+              startDate: ca.startDate,
+              endDate: ca.endDate,
+            });
+          }
+
+          // --- participante: período próprio recortado / limpo ---
           for (const pt of plano.participants.paraRecortar) {
             try {
               await updateDemandParticipantPeriod(pt.id, pt.startDate, pt.endDate);
@@ -1174,11 +1221,159 @@ const InternalDemands: React.FC = () => {
    * comportamento para a interna ficou para depois.
    */
 
-  /** Alocações de instrutor da demanda, com fallback para o principal. Leitura pura. */
+  /**
+   * Alocações de instrutor da demanda, com fallback para o principal, e a
+   * COBERTURA de cada uma frente aos dias reais da demanda.
+   *
+   * A cobertura existe por causa da alocação-fantasma (DEM-1551): linha de
+   * `instructor_allocations` parada num período que a demanda já deixou. A
+   * agenda não a mostra (só renderiza a interseção), então este bloco é o
+   * único lugar em que ela aparece — e tem de aparecer COM AVISO, nunca com as
+   * datas velhas em silêncio. Nada aqui corrige dado: o aviso mais a lixeira
+   * resolvem, e a mudança de data daqui em diante passa pelo plano no save.
+   */
   const currentInstructorEntries = useMemo(() => {
     if (!formDemand.id) return [];
-    return resolveDemandInstructors(formDemand.id, formDemand.instructorId, instructorAllocations);
-  }, [formDemand.id, formDemand.instructorId, instructorAllocations]);
+    const diasDemanda = getDemandDays(formDemand as any);
+    return resolveDemandInstructors(formDemand.id, formDemand.instructorId, instructorAllocations).map(
+      entry => ({
+        ...entry,
+        cobertura:
+          entry.source === 'allocation'
+            ? classifyAllocationAgainstDemand(entry, diasDemanda)
+            : null,
+      })
+    );
+  }, [
+    formDemand.id,
+    formDemand.instructorId,
+    formDemand.startDate,
+    formDemand.endDate,
+    formDemand.dateMode,
+    formDemand.specificDates,
+    instructorAllocations,
+  ]);
+
+  /* ─────────────────── LIXEIRA DO BLOCO INSTRUTORES ───────────────────────
+   *
+   * Mesmo padrão do cliente (linha some pela lixeira), com confirmação porque
+   * aqui a linha pode ser a única forma de enxergar uma alocação-fantasma. A
+   * decisão de rota é pura (domain/demandInstructors.routeInstructorRemoval):
+   *
+   *   • linha de `instructor_allocations` → removeInstructorAllocation do App,
+   *     o caminho existente (recalcula quem sobra, volta a demanda para
+   *     PENDENTE quando não sobra ninguém). Nunca um delete solto daqui.
+   *   • linha do fallback `demands.instructor_id` → updateDemand com o campo
+   *     limpo; a demanda vira "Não Alocado". Não há linha para apagar.
+   *
+   * Depois da remoção vale a logística por pessoa: blocos VAZIOS de quem saiu
+   * são liberados (releaseLogisticBlocksForPerson, mesma regra do participante
+   * e do acompanhante); bloco com dado nunca é apagado. Só libera se a pessoa
+   * perdeu o ÚLTIMO vínculo com a demanda — outra alocação dela, participação
+   * ou o campo principal ainda apontando para ela mantêm os blocos.
+   */
+  const [confirmRemoveInstructor, setConfirmRemoveInstructor] = useState<ResolvedInstructorEntry | null>(null);
+  const [removingInstructor, setRemovingInstructor] = useState(false);
+
+  const handleConfirmRemoveInstructor = useCallback(async () => {
+    const entry = confirmRemoveInstructor;
+    const demandId = formDemand.id;
+    if (!entry || !demandId || !canEditDemand) return;
+
+    const nome = getInstructorName(entry.instructorId);
+    const rota = routeInstructorRemoval(entry);
+    setRemovingInstructor(true);
+
+    try {
+      let aindaVinculado: boolean;
+
+      if (rota.kind === 'DELETE_ALLOCATION') {
+        // Caminho existente do App: recorta/merge/volta para PENDENTE.
+        removeInstructorAllocation(rota.allocationId);
+
+        const outrasDaPessoa = instructorAllocations.filter(
+          a => a.demandId === demandId && a.id !== rota.allocationId && a.instructorId === entry.instructorId
+        );
+        const sobrouAlguem = instructorAllocations.some(
+          a => a.demandId === demandId && a.id !== rota.allocationId
+        );
+        // O App zera demands.instructor_id quando não sobra alocação nenhuma;
+        // o estado local do modal acompanha para o bloco não cair no fallback
+        // e mostrar de novo quem acabou de sair.
+        if (!sobrouAlguem) {
+          setFormDemand(prev => ({ ...prev, instructorId: undefined, status: 'PENDENTE' as DemandStatus }));
+        }
+        aindaVinculado =
+          outrasDaPessoa.length > 0 ||
+          (sobrouAlguem && formDemand.instructorId === entry.instructorId);
+
+        logAction({
+          modulo: 'Demandas',
+          acao: 'Editar',
+          descricao: [
+            `Alocação de instrutor removida da demanda interna ${demandId}`,
+            `Instrutor: ${nome}`,
+            `Período: ${formatDateOnlySafe(entry.startDate)} a ${formatDateOnlySafe(entry.endDate)}`,
+          ].join(' | '),
+          dadosAntes: entry,
+        });
+      } else {
+        // Fallback: não existe linha em instructor_allocations. Limpa o campo.
+        const limpa = {
+          ...(formDemand as Demand),
+          instructorId: undefined,
+          status: 'PENDENTE' as DemandStatus,
+        };
+        await Promise.resolve(updateDemand(limpa));
+        setFormDemand(limpa);
+        setActiveDemand(prev => (prev ? { ...prev, instructorId: undefined, status: 'PENDENTE' as DemandStatus } : prev));
+        aindaVinculado = false;
+
+        logAction({
+          modulo: 'Demandas',
+          acao: 'Editar',
+          descricao: `Instrutor principal removido da demanda interna ${demandId} | Instrutor: ${nome} → Não Alocado`,
+          dadosAntes: formDemand as Demand,
+          dadosDepois: limpa,
+        });
+      }
+
+      const participa = demandParticipants.some(
+        pt => pt.demandId === demandId && pt.instructorId === entry.instructorId
+      );
+      if (!aindaVinculado && !participa) {
+        await releaseLogisticBlocksForPerson(demandId, entry.instructorId);
+        const logistics = await loadLogisticsFor(demandId);
+        setFormDemand(prev => ({
+          ...prev,
+          logisticasLocomocao: logistics.locoBlocks,
+          logisticasHospedagem: logistics.hospBlocks,
+        }));
+      }
+
+      setNotification({
+        message:
+          rota.kind === 'DELETE_ALLOCATION'
+            ? `Alocação de ${nome} removida.`
+            : `${nome} deixou de ser o instrutor principal. A demanda está Não Alocada.`,
+        type: 'success',
+      });
+    } finally {
+      setRemovingInstructor(false);
+      setConfirmRemoveInstructor(null);
+    }
+  }, [
+    confirmRemoveInstructor,
+    formDemand,
+    canEditDemand,
+    instructorAllocations,
+    demandParticipants,
+    removeInstructorAllocation,
+    updateDemand,
+    releaseLogisticBlocksForPerson,
+    setNotification,
+    instructors,
+  ]);
 
   const currentResourceAllocations = useMemo(() => {
     if (!formDemand.id) return [];
@@ -2162,12 +2357,14 @@ const InternalDemands: React.FC = () => {
                   Mesmo par de cards do modal de cliente (Demands.tsx). */}
               {modalSubMode === 'VIEW' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 no-print">
-                  {/* Instrutores — SOMENTE LEITURA.
-                      Sem botão de adicionar e sem nenhum caminho de escrita em
-                      instructor_allocations: alocar instrutor em demanda interna
-                      fica para depois (o fluxo do cliente substitui a alocação
-                      anterior por split de período, fora de escopo aqui).
-                      As linhas exibidas podem ter vindo da agenda. */}
+                  {/* Instrutores — leitura + LIXEIRA.
+                      Sem botão de adicionar (o fluxo do cliente substitui a
+                      alocação anterior por split de período, fora de escopo).
+                      As linhas exibidas vêm da agenda (instructor_allocations)
+                      ou do fallback demands.instructor_id, e a lixeira remove
+                      cada uma pelo SEU caminho (routeInstructorRemoval).
+                      Linha fora dos dias da demanda é alocação-fantasma
+                      (DEM-1551) e sai marcada em âmbar — a agenda não a mostra. */}
                   <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
                     <div className="w-full px-6 py-4 flex items-center justify-between bg-white">
                       <div className="flex items-center gap-3">
@@ -2178,26 +2375,58 @@ const InternalDemands: React.FC = () => {
                     <div className="px-6 py-4 border-t border-slate-100 bg-white min-h-[100px]">
                       {currentInstructorEntries.length > 0 ? (
                         <div className="space-y-3">
-                          {currentInstructorEntries.map((entry, idx) => (
+                          {currentInstructorEntries.map((entry, idx) => {
+                            const foraDoPeriodo = !!entry.cobertura && entry.cobertura.cobertura !== 'DENTRO';
+                            return (
                             <div
                               key={entry.allocationId || `${entry.instructorId}-${idx}`}
-                              className="flex items-center gap-4 p-3 bg-slate-50 rounded-xl border border-slate-200"
+                              className={`flex items-center justify-between gap-4 p-3 rounded-xl border group ${
+                                foraDoPeriodo
+                                  ? 'bg-amber-50 border-amber-300'
+                                  : 'bg-slate-50 border-slate-200'
+                              }`}
                             >
-                              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-xs uppercase">
-                                {getInstructorName(entry.instructorId).charAt(0)}
+                              <div className="flex items-center gap-4 min-w-0">
+                                <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-xs uppercase shrink-0">
+                                  {getInstructorName(entry.instructorId).charAt(0)}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-bold text-slate-800 truncate">{getInstructorName(entry.instructorId)}</p>
+                                  {entry.startDate ? (
+                                    <p className={`text-[10px] font-medium flex items-center gap-2 ${foraDoPeriodo ? 'text-amber-700' : 'text-slate-500'}`}>
+                                      <Calendar size={10} /> {formatDateOnlySafe(entry.startDate)} até {formatDateOnlySafe(entry.endDate)}
+                                    </p>
+                                  ) : (
+                                    <p className="text-[10px] font-medium text-slate-400">Instrutor principal da demanda</p>
+                                  )}
+                                  {foraDoPeriodo && entry.cobertura && (
+                                    <p
+                                      className="mt-1 text-[10px] font-black uppercase tracking-wider text-amber-700 flex items-center gap-1.5"
+                                      title={`Dias da alocação fora da demanda: ${entry.cobertura.diasFora.join(', ')}. A agenda não mostra esta alocação, mas ela bloqueia conflito nesses dias.`}
+                                    >
+                                      <AlertTriangle size={11} className="shrink-0" />
+                                      {entry.cobertura.cobertura === 'FORA'
+                                        ? 'Fora do período da demanda'
+                                        : 'Parcialmente fora do período da demanda'}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
-                              <div>
-                                <p className="text-sm font-bold text-slate-800">{getInstructorName(entry.instructorId)}</p>
-                                {entry.startDate ? (
-                                  <p className="text-[10px] font-medium text-slate-500 flex items-center gap-2">
-                                    <Calendar size={10} /> {formatDateOnlySafe(entry.startDate)} até {formatDateOnlySafe(entry.endDate)}
-                                  </p>
-                                ) : (
-                                  <p className="text-[10px] font-medium text-slate-400">Instrutor principal da demanda</p>
-                                )}
-                              </div>
+                              {currentStatus !== 'CANCELADA' && canEditDemand && (
+                                <button
+                                  onClick={() => setConfirmRemoveInstructor(entry)}
+                                  disabled={removingInstructor}
+                                  className={`p-2 text-slate-300 hover:text-red-500 transition-colors disabled:opacity-40 shrink-0 ${
+                                    foraDoPeriodo ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                                  }`}
+                                  title={entry.source === 'allocation' ? 'Remover alocação' : 'Remover instrutor principal'}
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              )}
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       ) : (
                         <p className="text-xs text-slate-400 italic py-2">Nenhum instrutor alocado.</p>
@@ -2512,6 +2741,57 @@ const InternalDemands: React.FC = () => {
               </button>
               <button onClick={handleDeleteDemand} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-black text-xs uppercase tracking-widest transition">
                 Excluir
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Confirmação: remover instrutor do bloco Instrutores.
+          Texto DIFERENTE por origem: apagar uma linha de alocação e limpar o
+          instrutor principal são duas coisas, e quem confirma precisa saber qual. */}
+      {confirmRemoveInstructor && createPortal(
+        <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+            {confirmRemoveInstructor.source === 'allocation' ? (
+              <>
+                <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Remover alocação?</h3>
+                <p className="text-sm text-slate-500">
+                  A alocação de <strong>{getInstructorName(confirmRemoveInstructor.instructorId)}</strong> no período{' '}
+                  <strong>
+                    {formatDateOnlySafe(confirmRemoveInstructor.startDate)} até {formatDateOnlySafe(confirmRemoveInstructor.endDate)}
+                  </strong>{' '}
+                  será removida da demanda <strong>{formDemand.id}</strong>. Se for a única, a demanda volta a ficar sem instrutor.
+                </p>
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Remover instrutor principal?</h3>
+                <p className="text-sm text-slate-500">
+                  <strong>{getInstructorName(confirmRemoveInstructor.instructorId)}</strong> é o <strong>instrutor principal</strong> da
+                  demanda <strong>{formDemand.id}</strong> (não há alocação por período). O campo será limpo e a demanda passa a
+                  <strong> Não Alocado</strong>.
+                </p>
+              </>
+            )}
+            <p className="text-[11px] text-slate-400">
+              Blocos de logística vazios dessa pessoa são liberados. Bloco com dado preenchido não é apagado.
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                onClick={() => setConfirmRemoveInstructor(null)}
+                disabled={removingInstructor}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-black text-xs uppercase tracking-widest hover:bg-slate-50 transition disabled:opacity-40"
+              >
+                Voltar
+              </button>
+              <button
+                onClick={handleConfirmRemoveInstructor}
+                disabled={removingInstructor}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-black text-xs uppercase tracking-widest transition disabled:opacity-40"
+              >
+                {removingInstructor ? 'Removendo...' : 'Remover'}
               </button>
             </div>
           </div>

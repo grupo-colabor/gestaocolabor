@@ -375,20 +375,34 @@ console.log('\n[5] Guarda de fonte — isolamento de instructor_allocations');
     (service.match(/\.from\('([a-z_]+)'\)/g) ?? []).every(m => m === ".from('demand_participants')")
   );
 
-  // O form da interna já era proibido de escrever em instructor_allocations
-  // (bloco Instrutores é somente leitura). A F1 não pode ter aberto essa porta.
+  // O form da interna nunca ABRE alocação nem reescreve a tabela inteira (o
+  // split destrutivo do cliente continua fora dela). A F1 não pode ter aberto
+  // essa porta. O que a interna faz em instructor_allocations é outra coisa e
+  // passa sempre pelo App: o plano de reagendamento no save (update/remove
+  // recortando o que JÁ existe) e a lixeira do bloco Instrutores — os dois
+  // presos em smoke:recorte-alocacoes.
   for (const escrita of [
     'addInstructorAllocation',
-    'updateInstructorAllocation',
     'replaceInstructorAllocationsForDemand',
     'deleteInstructorAllocationsByDemandId',
   ]) {
     check(`InternalDemands.tsx não chama ${escrita}`, !interna.includes(escrita));
   }
   check(
+    'updateInstructorAllocation só aparece na aplicação do plano de reagendamento',
+    interna.split('updateInstructorAllocation(').length - 1 === 1 &&
+      /plano\.allocations\.paraRecortar\]\)[\s\S]{0,300}updateInstructorAllocation\(/.test(interna)
+  );
+  check(
     'InternalDemands.tsx não importa services/instructorAllocations',
     !/from\s+['"].*services\/instructorAllocations['"]/.test(interna)
   );
+  // Os handlers de participante continuam sem tocar em alocação.
+  const removeHandler = interna.slice(
+    interna.indexOf('const handleRemoveParticipant'),
+    interna.indexOf('const handleCancelDemand')
+  );
+  check('handleRemoveParticipant não toca em instructor allocation', removeHandler.length > 0 && !/InstructorAllocation/.test(removeHandler));
 
   // O handler que adiciona participante grava participante — e só.
   const handler = interna.slice(

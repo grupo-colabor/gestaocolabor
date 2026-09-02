@@ -41,6 +41,7 @@ import {
   companionDaysFromRows,
   type HoursRowLike,
 } from '../domain/measurementOverrides';
+import { isHybridModality } from '../domain/modalityRules';
 import fs from 'fs';
 import path from 'path';
 
@@ -507,8 +508,8 @@ console.log('\n[6] Painel: o novo fica atrás do gate');
   // O placeholder passou a depender do PAPEL: titular e participante veem o
   // padrão da demanda; acompanhante abre vazio, com a sugestão na legenda.
   check(
-    'o campo de horas usa placeholder para o default de quem tem default',
-    painel.includes("placeholder={secao.papel === 'ACOMPANHANTE' ? '' : String(secao.horasPadrao)}")
+    'o campo de horas usa placeholder para o default de quem tem default (acompanhante e híbrida abrem vazios)',
+    painel.includes("placeholder={secao.papel === 'ACOMPANHANTE' || secao.hibrida ? '' : String(secao.horasPadrao)}")
   );
   check(
     'e a sugestão do acompanhante é TEXTO, não valor do campo',
@@ -1166,7 +1167,8 @@ console.log('\n[10] Round-trip de valorHH e horas por bloco');
   // para o titular).
   check(
     'o total do painel resolve o ausente pelo domínio',
-    painel.includes('blockHoraAula(b, { demandDefaultHours: cargaPadrao })')
+    painel.includes('const ctxPainel = { demandDefaultHours: cargaPadrao, hibrida: isHibrida(demandaDaMedicao) };') &&
+      painel.includes('blockHoraAula(b, ctxPainel)')
   );
   check(
     'e as seções também',
@@ -1176,6 +1178,168 @@ console.log('\n[10] Round-trip de valorHH e horas por bloco');
     'aviso (não bloqueio) para acompanhante com valor e sem horas',
     painel.includes('acompanhantesSemHoras') && !/return;[\s\S]{0,80}acompanhantesSemHoras/.test(painel)
   );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [11] HÍBRIDA — o default de horas vira pergunta explícita
+ *
+ * DEM-1556: CIPA-Mineração 40h, híbrida, 2 dias presenciais alocados. O campo
+ * Horas abria com 40h "Puxado do Treinamento" — mas 40h é a carga TOTAL, e o
+ * split presencial/online varia por demanda. Quem esquecia de corrigir pagava
+ * a carga cheia. Regra: em híbrida nenhum papel herda default; o total da
+ * pessoa é só despesas até alguém digitar (mesma semântica do acompanhante).
+ * PRESENCIAL/ONLINE: zero mudança.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[11] Híbrida: sem default de horas — pergunta explícita');
+{
+  const CARGA_TOTAL = 40;
+  const HIBRIDA = { demandDefaultHours: CARGA_TOTAL, hibrida: true };
+  const PRESENCIAL = { demandDefaultHours: CARGA_TOTAL };
+
+  // O JSON como o save grava: valorHH preenchido, SEM horas (ninguém digitou).
+  const medicaoHibrida: any = {
+    demandId: 'DEM-1556',
+    attachments: [
+      { category: 'HOSPEDAGEM', value: 300 },
+      { category: 'ALMOCO', value: 45, instructorId: 'ACOMP' },
+    ],
+    expenses: {
+      // classHours AUSENTE: a abertura em híbrida não pré-preenche.
+      hourRate: 100,
+      participantes: [
+        { instructorId: 'TITULAR', papel: 'TITULAR', valorHH: 100 },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', valorHH: 90 },
+      ],
+    },
+  };
+  const blocos = normalizeMeasurementBlocks(medicaoHibrida, 'TITULAR');
+  const titular = blocos[0];
+  const acomp = blocos[1];
+
+  /* --- painel híbrido: sem default --- */
+  eq('titular de híbrida sem horas NÃO herda a carga total', blockPanelHours(titular, HIBRIDA), 0);
+  eq('logo o hora/aula dele é zero até digitar', blockHoraAula(titular, HIBRIDA), 0);
+  eq(
+    'e o total da pessoa é só as despesas dela',
+    blockExpenseBreakdown(medicaoHibrida, titular).total + blockHoraAula(titular, HIBRIDA),
+    300
+  );
+  eq('acompanhante continua manual (não mudou)', blockPanelHours(acomp, HIBRIDA), 0);
+
+  /* --- horas digitadas: conta normal --- */
+  const digitado: any = {
+    ...medicaoHibrida,
+    expenses: {
+      ...medicaoHibrida.expenses,
+      participantes: [
+        { instructorId: 'TITULAR', papel: 'TITULAR', horas: 16, valorHH: 100 },
+        { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', valorHH: 90 },
+      ],
+    },
+  };
+  const blocoDigitado = normalizeMeasurementBlocks(digitado, 'TITULAR')[0];
+  eq('horas presenciais digitadas vencem (16h)', blockPanelHours(blocoDigitado, HIBRIDA), 16);
+  eq('e o hora/aula é 16 × valorHH', blockHoraAula(blocoDigitado, HIBRIDA), 1600);
+  eq('um 0 digitado também é decisão, não ausência',
+    blockPanelHours({ ...blocoDigitado, horas: 0, horasInformadas: true }, HIBRIDA), 0);
+
+  /* --- v1 (uma pessoa) híbrida: classHours ausente => hora/aula zero --- */
+  const v1Hibrida: any = { attachments: [{ category: 'LOCOMOCAO', value: 120 }], expenses: { hourRate: 100 } };
+  eq('v1 híbrida sem classHours: hora/aula zero', computeMeasurementTotals(v1Hibrida).horaAula, 0);
+  eq('e o total com hora/aula é só despesas', computeMeasurementTotals(v1Hibrida).totalComHoraAula, 120);
+
+  /* --- REGRESSÃO ANCORADA: presencial idêntico ao comportamento atual --- */
+  eq('presencial: titular sem horas conta a carga da demanda', blockPanelHours(titular, PRESENCIAL), CARGA_TOTAL);
+  eq('presencial: hora/aula = carga × valorHH', blockHoraAula(titular, PRESENCIAL), 4000);
+  eq('presencial: acompanhante segue manual', blockPanelHours(acomp, PRESENCIAL), 0);
+  eq('hibrida: false explícito é o mesmo que presencial',
+    blockPanelHours(titular, { demandDefaultHours: CARGA_TOTAL, hibrida: false }), CARGA_TOTAL);
+
+  /* --- CONTRAPROVA: aplicar o default de presencial numa híbrida tem de FALHAR --- */
+  const comoEraAntes = blockHoraAula(titular, PRESENCIAL);   // o painel antigo, na DEM-1556
+  eq('(contraprova) o default de presencial paga a carga cheia à híbrida: R$ 4.000', comoEraAntes, 4000);
+  check(
+    '...que é exatamente a armadilha: 40h pagas por 2 dias presenciais',
+    comoEraAntes !== blockHoraAula(titular, HIBRIDA) && blockHoraAula(titular, HIBRIDA) === 0
+  );
+
+  /* --- a regra de modalidade aceita as grafias do cadastro --- */
+  eq("'HIBRIDO' é híbrida", isHybridModality('HIBRIDO'), true);
+  eq("'Híbrido' (com acento) é híbrida", isHybridModality('Híbrido'), true);
+  eq("'hibrido ' (minúsculo, espaço) é híbrida", isHybridModality('hibrido '), true);
+  eq("'PRESENCIAL' não é", isHybridModality('PRESENCIAL'), false);
+  eq("'ONLINE' não é", isHybridModality('ONLINE'), false);
+  eq('ausente não é', isHybridModality(undefined), false);
+
+  /* --- guarda de fonte: a tela aplica a regra nas quatro pontas --- */
+  const painel = ler('components/Measurement.tsx');
+  const abertura = painel.slice(
+    painel.indexOf('const handleOpenDetail'),
+    painel.indexOf('const handleSaveMeasurement')
+  );
+  check('a modalidade do TREINAMENTO prevalece sobre a da demanda', painel.includes('isHybridModality(t?.modality ?? d.modality)'));
+  check(
+    'abrir a medição de híbrida NÃO pré-preenche classHours',
+    abertura.includes('const horasIniciais = isHibrida(d) ? undefined : trainingHours;') &&
+      abertura.includes('classHours: m.expenses?.classHours ?? horasIniciais,')
+  );
+  check(
+    'v1: sem placeholder de carga total em híbrida',
+    painel.includes("placeholder={_selIsHibrida ? '' : String(trainingDefaultHours || 0)}")
+  );
+  check(
+    'v1: aviso âmbar com a carga total só como informação',
+    painel.includes('Demanda híbrida: informe as horas presenciais realizadas') &&
+      painel.includes('(carga total do treinamento: ${trainingDefaultHours}h)')
+  );
+  check(
+    'v1: o botão de restaurar não traz a carga cheia de volta em híbrida',
+    painel.includes('!_selIsHibrida && classHours !== trainingDefaultHours')
+  );
+  check(
+    'v2: as seções resolvem com o contexto de híbrida',
+    /horasContadas: blockPanelHours\(comPapel, \{\s*demandDefaultHours: classHours \|\| trainingDefaultHours,\s*hibrida: _selIsHibrida,/.test(painel)
+  );
+  check(
+    'v2: legenda informativa por bloco (titular e participante), com a carga total',
+    painel.includes('(carga total do treinamento: ${secao.horasPadrao}h)')
+  );
+  check(
+    'Salvar e Finalizar: confirmação (não bloqueio) para HH preenchido e horas vazias',
+    painel.includes('o hora/aula desta pessoa ficará zerado. Continuar?') &&
+      /const continuar = window\.confirm\([\s\S]{0,300}if \(!continuar\) return;/.test(painel)
+  );
+  check(
+    'Word: híbrida sem horas sai "não informado" (v1 e por pessoa)',
+    painel.includes("hibridaDoc && !classHours ? 'não informado' : String(classHours)") &&
+      painel.includes("b.papel === 'ACOMPANHANTE' || hibridaDoc")
+  );
+  check(
+    'WhatsApp: híbrida sem horas sai "horas: não informado"',
+    painel.includes("'⏱️ Horas presenciais: não informado\\n'") &&
+      painel.includes("(semHoras ? ' (horas: não informado)' : '')")
+  );
+  // Nada novo no JSON: nenhum campo gravado por causa da híbrida.
+  const gravacao = painel.slice(
+    painel.indexOf('const participantesParaGravar'),
+    painel.indexOf('updateMeasurement(cleaned)')
+  );
+  check('o trecho que monta o JSON gravado existe', gravacao.length > 0);
+  check(
+    'nenhum campo novo é gravado no JSON por causa da híbrida',
+    !/hibrid/i.test(gravacao) && !painel.includes('expenses.hibrida')
+  );
+  // PRESENCIAL/ONLINE intocados: a legenda antiga e o default antigo continuam lá.
+  check(
+    'presencial/online: "Puxado do Treinamento" e o default continuam',
+    painel.includes("'Puxado da Demanda' : 'Puxado do Treinamento'") &&
+      painel.includes('const trainingHours = getDemandDefaultHours(d) || undefined;')
+  );
+
+  // A tabela do domínio documenta a linha nova.
+  const dominio = ler('domain/measurementTotals.ts');
+  check('a tabela de resoluções ganhou a linha de HÍBRIDA', dominio.includes('| HÍBRIDA ×') && dominio.includes('SEM DEFAULT'));
+  check('e registra a divergência do rateio do titular em vez de decidir sozinha', dominio.includes('Divergência conhecida'));
 }
 
 console.log(

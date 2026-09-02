@@ -460,6 +460,24 @@ export function aggregatePanelExpenseBreakdown(
  *   | TITULAR      | carga padrão da demanda     | mantém o rateio da alocação       |
  *   | PARTICIPANTE | carga padrão da demanda     | `horas_previstas` (carga cheia)   |
  *   | ACOMPANHANTE | ZERO (manual obrigatório)   | não gera linha nenhuma            |
+ *   | HÍBRIDA ×    | SEM DEFAULT: ZERO até       | sem linha de horas até digitar    |
+ *   | qualquer     | digitar (mesma semântica do | (o rateio de allocations CONTINUA |
+ *   | papel        | acompanhante)               | valendo para o titular, se houver)|
+ *
+ * A linha de HÍBRIDA (`PanelHoursContext.hibrida`) existe porque ali o default
+ * é armadilha: `training.hours` é a carga TOTAL (ex.: 40h), mas o split
+ * presencial/online varia por demanda (8+32, 16+24...) e só quem mede sabe as
+ * horas presenciais realizadas. Um campo que abre com "40h — Puxado do
+ * Treinamento" tem cara de oficial, e quem esquece de corrigir paga a carga
+ * cheia (DEM-1556: CIPA-Mineração 40h, 2 dias presenciais). Então em híbrida
+ * nenhum papel herda default: a carga total vira TEXTO informativo ao lado do
+ * campo e o total da pessoa é só despesas até alguém digitar.
+ *
+ * ⚠️ Divergência conhecida, NÃO resolvida aqui de propósito: o titular de
+ * híbrida com linha em `instructor_allocations` continua saindo no Excel pelo
+ * rateio (`effectiveDemandHours`: `practicalHours` do treinamento, senão
+ * `hours`), enquanto o painel mostra R$ 0,00 de hora/aula até digitarem. Quem
+ * digita as horas presenciais no painel faz o override e alinha os dois.
  *
  * O painel PRECISA mostrar um número: uma medição de titular sem horas digitadas
  * exibindo "R$ 0,00" é a v1 quebrada — lá o valor sempre foi
@@ -593,6 +611,14 @@ export interface PanelHoursContext {
    * Interna: `horas_previstas`.
    */
   demandDefaultHours: number;
+  /**
+   * Demanda HÍBRIDA: NENHUM papel herda `demandDefaultHours`. A carga total do
+   * treinamento é só informação de tela; o bloco vale ZERO até alguém digitar
+   * as horas presenciais realizadas. Ver a linha de HÍBRIDA na tabela.
+   *
+   * Ausente = comportamento de sempre (PRESENCIAL / ONLINE: zero mudança).
+   */
+  hibrida?: boolean;
 }
 
 /**
@@ -607,6 +633,9 @@ export function blockPanelHours(b: MeasurementPersonBlock, ctx: PanelHoursContex
   // Acompanhante é manual obrigatório: a sugestão proporcional é texto na tela,
   // nunca um número que entra na conta sem alguém ter olhado.
   if (b.papel === 'ACOMPANHANTE') return 0;
+  // Híbrida: a mesma semântica do acompanhante para TODO papel — a carga total
+  // do treinamento não é o que foi ministrado presencialmente.
+  if (ctx.hibrida) return 0;
   return ctx.demandDefaultHours;
 }
 

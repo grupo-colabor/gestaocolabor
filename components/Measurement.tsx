@@ -34,6 +34,7 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Bord
 import * as pdfjsLib from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
 import { calculateDemandStatus } from '../domain/demandStatus';
+import { isHybridModality } from '../domain/modalityRules';
 import { demandIntersectsRange, isNightDemand, getDemandDays } from '../domain/demandDays';
 import { companionDaysFromRows, companionDefaultHours } from '../domain/measurementOverrides';
 import { supabase } from '../lib/supabase';
@@ -270,6 +271,24 @@ const MeasurementView: React.FC = () => {
     const t = d ? trainings.find(tr => tr.id === d.trainingId) : null;
     return typeof t?.hours === 'number' ? t.hours : Number((t as any)?.hours) || 0;
   };
+
+  /**
+   * Demanda HÍBRIDA: o default de horas vira PERGUNTA explícita.
+   *
+   * `training.hours` é a carga TOTAL (ex.: 40h), mas o split presencial/online
+   * varia por demanda (8+32, 16+24...) e só quem mede sabe as horas presenciais
+   * realizadas. Um campo aberto com "40h — Puxado do Treinamento" tem cara de
+   * oficial, e quem esquece de corrigir paga a carga cheia (DEM-1556). Em
+   * híbrida, portanto: campo vazio, carga total só como texto informativo, e o
+   * hora/aula vale zero até alguém digitar. PRESENCIAL e ONLINE: zero mudança.
+   *
+   * A modalidade do TREINAMENTO prevalece sobre a da demanda, como no rateio.
+   */
+  const isHibrida = (d?: Demand): boolean => {
+    if (!d || isInterna(d)) return false;
+    const t = trainings.find(tr => tr.id === d.trainingId);
+    return isHybridModality(t?.modality ?? d.modality);
+  };
   const getRegionName = (id: string) => regions.find(r => r.id === id)?.name || 'N/A';
   const getInstructorName = (id?: string) => instructors.find(i => i.id === id)?.name || 'Não Alocado';
 
@@ -423,10 +442,12 @@ const totals = useMemo(() => {
   // sabe converter ausente em número é o domínio, por papel.
   const demandaDaMedicao = demands.find(d => d.id === selectedMeasurement.demandId);
   const cargaPadrao = classHours || getDemandDefaultHours(demandaDaMedicao);
+  // Híbrida: ninguém herda a carga total; ausente vale zero até digitar.
+  const ctxPainel = { demandDefaultHours: cargaPadrao, hibrida: isHibrida(demandaDaMedicao) };
 
   const hourClass = blocosDaMedicao.length
     ? normalizeMeasurementBlocks(selectedMeasurement as any, demandaDaMedicao?.instructorId).reduce(
-        (acc: number, b) => acc + blockHoraAula(b, { demandDefaultHours: cargaPadrao }),
+        (acc: number, b) => acc + blockHoraAula(b, ctxPainel),
         0
       )
     : classHours * hourRate;
@@ -448,8 +469,11 @@ const totals = useMemo(() => {
   // ela não tem — senão o botão de restaurar zeraria o campo.
   const _selDemand = demands.find(d => d.id === selectedMeasurement?.demandId);
   const _selIsInterna = isInterna(_selDemand);
+  const _selIsHibrida = isHibrida(_selDemand);
   const trainingDefaultHours = getDemandDefaultHours(_selDemand);
-  const isClassHoursEdited = !!selectedMeasurement && classHours !== trainingDefaultHours;
+  // Híbrida não tem "padrão" para comparar nem para restaurar: o campo vazio
+  // é o estado esperado, e o botão de restaurar traria a carga cheia de volta.
+  const isClassHoursEdited = !!selectedMeasurement && !_selIsHibrida && classHours !== trainingDefaultHours;
 
   /* ───────────────── MEDICAO POR PESSOA (F2 interna, F3 cliente) ─────────
    *
@@ -592,15 +616,20 @@ const totals = useMemo(() => {
         nome: getInstructorName(b.instructorId),
         despesas: blockExpenseBreakdown(paraNormalizar as any, b),
         // Sugestão DESTA pessoa: acompanhante tem a proporcional aos dias.
+        // Em híbrida é só a carga TOTAL informativa da legenda, nunca placeholder.
         horasPadrao: horasPadraoDaPessoa(b.instructorId, papel),
+        // Híbrida: titular e participante NÃO herdam default (ver isHibrida).
+        hibrida: _selIsHibrida,
         // O que o painel CONTA: titular e participante valem o padrão da
-        // demanda sem ninguém digitar; acompanhante vale 0 até digitarem.
+        // demanda sem ninguém digitar; acompanhante vale 0 até digitarem —
+        // e em híbrida TODO papel vale 0 até digitarem.
         horasContadas: blockPanelHours(comPapel, {
           demandDefaultHours: classHours || trainingDefaultHours,
+          hibrida: _selIsHibrida,
         }),
       };
     });
-  }, [selectedMeasurement, temBlocosPorPessoa, pessoasDaMedicao, instructors, companionAllocations, trainingDefaultHours, classHours]);
+  }, [selectedMeasurement, temBlocosPorPessoa, pessoasDaMedicao, instructors, companionAllocations, trainingDefaultHours, classHours, _selIsHibrida]);
 
   /**
    * Grava um campo do bloco de UMA pessoa no estado local.
@@ -667,6 +696,11 @@ const totals = useMemo(() => {
   // não travar o campo em zero, igual ao comportamento anterior.
   const trainingHours = getDemandDefaultHours(d) || undefined;
 
+  // Híbrida: NÃO pré-preenche. A carga total do treinamento não é o que foi
+  // ministrado presencialmente; ela vira texto informativo ao lado do campo, e
+  // o campo abre VAZIO até alguém digitar as horas presenciais realizadas.
+  const horasIniciais = isHibrida(d) ? undefined : trainingHours;
+
   const next: Measurement = {
   ...m,
   expenses: {
@@ -692,7 +726,7 @@ const totals = useMemo(() => {
     others: m.expenses?.others ?? '',
 
     // ✅ novos campos
-    classHours: m.expenses?.classHours ?? trainingHours,
+    classHours: m.expenses?.classHours ?? horasIniciais,
     hourRate: m.expenses?.hourRate ?? undefined
   }
 };
@@ -703,6 +737,31 @@ const totals = useMemo(() => {
 
   const handleSaveMeasurement = () => {
     if (selectedMeasurement) {
+      /**
+       * HÍBRIDA: valor hora/aula preenchido e horas presenciais em branco é
+       * quase sempre esquecimento — e aqui não existe default que disfarce: o
+       * hora/aula da pessoa fica ZERADO. Pergunta ANTES de gravar, mas não
+       * bloqueia ("ainda não sei as horas" é um estado legítimo de conferência).
+       * Acompanhante já é manual e tem o aviso próprio logo abaixo.
+       */
+      if (_selIsHibrida) {
+        const semHorasPresenciais = temBlocosPorPessoa
+          ? secoesPorPessoa
+              .filter(x => x.papel !== 'ACOMPANHANTE' && !x.horasInformadas && x.valorHH > 0)
+              .map(x => x.nome)
+          : hourRate > 0 && !classHours
+            ? [getInstructorName(_selDemand?.instructorId)]
+            : [];
+
+        if (semHorasPresenciais.length > 0) {
+          const continuar = window.confirm(
+            `Horas presenciais não informadas (${semHorasPresenciais.join(', ')}) — ` +
+            `o hora/aula desta pessoa ficará zerado. Continuar?`
+          );
+          if (!continuar) return;
+        }
+      }
+
       /**
        * Blocos por pessoa: gravados APENAS quando a demanda tem mais de uma
        * pessoa. Numa medicao de cliente ou de interna sem participante a chave
@@ -1126,7 +1185,9 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
   // Mesma resolução do painel — este documento é o recibo que a pessoa assina,
   // e ele não pode dizer R$ 0,00 onde a tela disse outra coisa.
   const cargaDoDoc = classHours || getDemandDefaultHours(d);
-  const ctxDoc = { demandDefaultHours: cargaDoDoc };
+  // Híbrida: sem default — o recibo diz "não informado", nunca a carga total.
+  const hibridaDoc = isHibrida(d);
+  const ctxDoc = { demandDefaultHours: cargaDoDoc, hibrida: hibridaDoc };
   const horaAulaDoDoc = _blocosParaTotal.length
     ? normalizeMeasurementBlocks(m as any, d.instructorId).reduce(
         (acc: number, b) => acc + blockHoraAula(b, ctxDoc),
@@ -1315,7 +1376,9 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
             new TextRun(
               b.horasInformadas
                 ? String(b.horas)
-                : b.papel === 'ACOMPANHANTE'
+                : b.papel === 'ACOMPANHANTE' || hibridaDoc
+                  // Híbrida idem: a carga total do treinamento NUNCA sai como
+                  // horas realizadas de ninguém.
                   ? 'não informado'
                   : `${horasDaPessoa} (padrão da demanda)`
             ),
@@ -1350,8 +1413,9 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
       new Paragraph({ text: "💰 HORA/AULA", heading: HeadingLevel.HEADING_3, spacing: { before: 200 } }),
       new Paragraph({
         children: [
-          new TextRun({ text: isInternaDoc ? 'Horas da Demanda: ' : 'Horas do Treinamento: ', bold: true }),
-          new TextRun(String(classHours)),
+          new TextRun({ text: isInternaDoc ? 'Horas da Demanda: ' : hibridaDoc ? 'Horas presenciais: ' : 'Horas do Treinamento: ', bold: true }),
+          // Híbrida sem horas digitadas: "não informado", nunca a carga total.
+          new TextRun(hibridaDoc && !classHours ? 'não informado' : String(classHours)),
         ],
       }),
       new Paragraph({ children: [new TextRun({ text: "Valor Hora/Aula: ", bold: true }), new TextRun(formatCurrency(hourRate))] }),
@@ -1562,10 +1626,19 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
     const d = demands.find(dm => dm.id === selectedMeasurement.demandId);
     // Uma linha por pessoa com o total dela, quando ha blocos. Sem blocos a
     // mensagem sai exatamente como sempre saiu — nem uma quebra de linha a mais.
+    // Híbrida sem horas digitadas: diz "horas: não informado" — nunca a carga
+    // total do treinamento. PRESENCIAL/ONLINE: mensagem byte a byte igual.
+    const hibridaMsg = isHibrida(d);
+    const linhaPessoa = (x: (typeof secoesPorPessoa)[number]) => {
+      const semHoras = hibridaMsg && x.papel !== 'ACOMPANHANTE' && !x.horasInformadas;
+      return `👤 ${x.nome}: ${formatCurrency(x.despesas.total + x.horasContadas * x.valorHH)}` +
+        (semHoras ? ' (horas: não informado)' : '');
+    };
     const porPessoa = temBlocosPorPessoa
-      ? secoesPorPessoa
-          .map(x => `👤 ${x.nome}: ${formatCurrency(x.despesas.total + x.horasContadas * x.valorHH)}`)
-          .join('\n') + '\n'
+      ? secoesPorPessoa.map(linhaPessoa).join('\n') + '\n'
+      : '';
+    const horasHibridaV1 = !temBlocosPorPessoa && hibridaMsg && !classHours
+      ? '⏱️ Horas presenciais: não informado\n'
       : '';
 
     const text = encodeURIComponent(`Olá! Segue resumo da medição #${d?.id}:
@@ -1574,7 +1647,7 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
 🚗 Locomoção: ${formatCurrency(totals.locomocao)}
 🍽️ Alimentação: ${formatCurrency(totals.cafe + totals.almoco + totals.jantar)}
 ➕ Outros: ${formatCurrency(totals.outros)}
-${porPessoa}
+${horasHibridaV1}${porPessoa}
 *TOTAL GERAL: ${formatCurrency(totals.total)}*
 
 Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`);
@@ -2037,7 +2110,9 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                             // Acompanhante abre VAZIO de propósito: a sugestão
                             // fica na legenda, como texto, para ninguém salvar
                             // um número proporcional sem ter olhado.
-                            placeholder={secao.papel === 'ACOMPANHANTE' ? '' : String(secao.horasPadrao)}
+                            // Híbrida idem, para TODO papel: a carga total do
+                            // treinamento não é o que foi ministrado presencialmente.
+                            placeholder={secao.papel === 'ACOMPANHANTE' || secao.hibrida ? '' : String(secao.horasPadrao)}
                             onChange={e => {
                               const raw = e.target.value;
                               // Campo limpo volta a "não informado" — NÃO vira 0.
@@ -2047,7 +2122,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                           {secao.horasInformadas && (
                             <button
                               type="button"
-                              title="Voltar ao padrão da demanda"
+                              title={secao.hibrida ? 'Limpar horas' : 'Voltar ao padrão da demanda'}
                               onClick={() => setCampoDoBloco(secao.instructorId, 'horas', undefined)}
                               className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
                             >
@@ -2058,6 +2133,13 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                         <p className="text-[10px] mt-1">
                           {secao.horasInformadas
                             ? <span className="text-amber-500 font-bold">Editado manualmente</span>
+                            : secao.hibrida && secao.papel !== 'ACOMPANHANTE'
+                              // Híbrida: sem default. A carga total é só informação
+                              // — o que conta é o que for digitado.
+                              ? <span className="text-amber-600 font-bold">
+                                  Demanda híbrida: informe as horas presenciais realizadas
+                                  {secao.horasPadrao > 0 ? ` (carga total do treinamento: ${secao.horasPadrao}h)` : ''}
+                                </span>
                             : secao.papel === 'ACOMPANHANTE'
                               // Acompanhante é MANUAL: ninguém sabe quantas horas
                               // ele fez, só quantos dias acompanhou. A proporção
@@ -2179,7 +2261,9 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                       // Campo vazio começa VAZIO. `classHours` é number, então
                       // um 0 renderizava "0" literal e digitar 8 em cima virava
                       // "08" na tela. Mesma correção do bloco por pessoa.
-                      placeholder={String(trainingDefaultHours || 0)}
+                      // Híbrida: sem placeholder de carga total — o campo é uma
+                      // pergunta, e a carga vai como texto na legenda abaixo.
+                      placeholder={_selIsHibrida ? '' : String(trainingDefaultHours || 0)}
                       value={classHours || ''}
                       onChange={(e) => {
                         const val = Number(e.target.value || 0);
@@ -2210,9 +2294,18 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                     )}
                   </div>
                   <p className="text-[10px] mt-1">
-                    {isClassHoursEdited
-                      ? <span className="text-amber-500 font-bold">Editado manualmente</span>
-                      : <span className="text-slate-400">{_selIsInterna ? 'Puxado da Demanda' : 'Puxado do Treinamento'}</span>
+                    {_selIsHibrida
+                      // Híbrida: nunca "Puxado do Treinamento" — a carga total é
+                      // informativa; o que conta é o que for digitado.
+                      ? (classHours
+                          ? <span className="text-amber-500 font-bold">Horas presenciais informadas manualmente</span>
+                          : <span className="text-amber-600 font-bold">
+                              Demanda híbrida: informe as horas presenciais realizadas
+                              {trainingDefaultHours > 0 ? ` (carga total do treinamento: ${trainingDefaultHours}h)` : ''}
+                            </span>)
+                      : isClassHoursEdited
+                        ? <span className="text-amber-500 font-bold">Editado manualmente</span>
+                        : <span className="text-slate-400">{_selIsInterna ? 'Puxado da Demanda' : 'Puxado do Treinamento'}</span>
                     }
                   </p>
                 </div>

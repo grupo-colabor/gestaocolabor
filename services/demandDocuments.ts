@@ -1,6 +1,43 @@
 import { supabase } from '../lib/supabase';
+import { fetchAllPaginated } from './pagination';
 
 export type DemandDocType = 'LISTA_TURMA' | 'LIBERACAO_INSTRUTOR';
+
+/**
+ * Projeção mínima usada pelo Controle Logístico para montar os checks de
+ * "Lista" e "Liberação" em lote (todas as demandas de uma vez).
+ */
+export type DemandDocumentFlagRow = {
+  demand_id: string;
+  doc_type: DemandDocType;
+  file_path: string | null;
+  is_na: boolean | null;
+};
+
+/**
+ * Busca TODAS as linhas de demand_documents (projeção mínima), paginando via
+ * fetchAllPaginated.
+ *
+ * Um select() sem .range() é cortado silenciosamente em ~1000 linhas pelo
+ * PostgREST/Supabase — foi a causa do check "Lista" não acender no Controle
+ * Logístico para demandas com PDF anexado (ex.: DEM-844) assim que a tabela
+ * passou de 1000 linhas. Mesmo padrão já aplicado em logistic_allocations,
+ * demands e instructor_allocations.
+ *
+ * Erro sobe (throw): o caller NÃO deve tratar falha aqui como "sem documento".
+ */
+export async function fetchAllDemandDocumentFlags(): Promise<DemandDocumentFlagRow[]> {
+  return fetchAllPaginated<DemandDocumentFlagRow>((from, to) =>
+    supabase
+      .from('demand_documents')
+      .select('demand_id, doc_type, file_path, is_na')
+      // (demand_id, doc_type) é único (onConflict do upsert) => ordem estável
+      // entre páginas.
+      .order('demand_id', { ascending: true })
+      .order('doc_type', { ascending: true })
+      .range(from, to)
+  );
+}
 
 export async function markDemandDocumentAsNA(
   demandId: string,

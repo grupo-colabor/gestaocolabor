@@ -28,30 +28,10 @@ import {
   LogisticAllocationRow
 } from '../services/logisticAllocations';
 
-// ✅ Supabase client (para buscar demand_documents em lote)
-import { supabase } from '../lib/supabase';
-
-import type { DemandDocType } from '../services/demandDocuments';
+// ✅ demand_documents em lote (paginado — ver services/demandDocuments.ts)
+import { fetchAllDemandDocumentFlags } from '../services/demandDocuments';
 
 type ViewMode = 'WEEK' | 'MONTH';
-
-
-
-type DemandDocumentRowMini = {
-  demand_id: string;
-  doc_type: DemandDocType;
-  file_path: string | null;
-  is_na: boolean | null;
-};
-
-
-
-type DemandDocument = {
-  demand_id: string;
-  doc_type: DemandDocType;
-  file_path?: string;
-  is_na?: boolean;
-};
 
 const LogisticsControl: React.FC = () => {
   const { demands, companies, trainings, instructors, operationalBases, updateDemand, notificationTarget, setNotificationTarget } = useApp();
@@ -84,6 +64,9 @@ const LogisticsControl: React.FC = () => {
 
 
   const [isSyncing, setIsSyncing] = useState(false);
+  // ✅ Erro de sync exposto na UI. Enquanto houver erro, o checklist NÃO é
+  // renderizado como "pendente/cinza" — seria mentir que não há documento.
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   // Helpers de Nomes — resolvidos pela DEMANDA, não pelo id solto: interna não
   // tem treinamento e pode não ter empresa (domain/demandLabel).
@@ -222,24 +205,21 @@ const LogisticsControl: React.FC = () => {
         if (id) allocMap[id] = r;
       }
 
-      // 2) demand_documents (PDFs)
-      const { data: docsData, error: docsErr } = await supabase
-        .from('demand_documents')
-        .select('demand_id, doc_type, file_path, is_na');
+      // 2) demand_documents (PDFs) — paginado. Se falhar, lança: o catch abaixo
+      //    expõe o erro e o write-back (passo 3) NÃO roda, porque calcular
+      //    has_class_list_pdf/has_release_pdf sem a lista completa de docs
+      //    gravaria "false" no banco para demandas que TÊM PDF.
+      const docRows = await fetchAllDemandDocumentFlags();
 
+      const docsMap: Record<
+        string,
+        {
+          has_class_list_pdf: boolean;
+          has_release_pdf: boolean;
+        }
+      > = {};
 
-    const docsMap: Record<
-      string,
-      {
-        has_class_list_pdf: boolean;
-        has_release_pdf: boolean;
-      }
-    > = {};
-
-    if (docsErr) {
-      console.error('[LogisticsControl] demand_documents error:', docsErr);
-    } else {
-      for (const row of (docsData as DemandDocumentRowMini[]) || []) {
+      for (const row of docRows) {
         const demandId = normId(row?.demand_id);
         if (!demandId) continue;
 
@@ -261,8 +241,6 @@ const LogisticsControl: React.FC = () => {
           docsMap[demandId].has_release_pdf = true;
         }
       }
-    }
-
 
       // 3) Atualiza logistic_allocations somente após docsMap estar pronto
       const updates: Promise<any>[] = [];
@@ -309,12 +287,16 @@ const LogisticsControl: React.FC = () => {
         setLogisticsByDemandId(allocMap);
       }
 
-      // 5) docs sempre atualiza (mesmo se der erro, pode ficar vazio)
+      // 5) docs só atualiza com a lista completa (qualquer erro já saiu pelo catch)
       setDocsByDemandId(docsMap);
+      setSyncError(null);
     } catch (e) {
       console.error('[LogisticsControl] sync error', e);
-      setLogisticsByDemandId({});
-      setDocsByDemandId({});
+      // Não zera os mapas: zerar renderizaria todo check como "pendente",
+      // igual a "não tem documento". Mantém o último estado bom e mostra o
+      // erro; a tabela abaixo esconde os checks enquanto syncError existir.
+      const msg = e instanceof Error ? e.message : String((e as any)?.message ?? e);
+      setSyncError(`Falha ao sincronizar o Controle Logístico com o banco: ${msg}`);
     } finally {
       setIsSyncing(false);
     }
@@ -410,6 +392,22 @@ const LogisticsControl: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {syncError && (
+        <div
+          role="alert"
+          className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 animate-fade-in"
+        >
+          <AlertCircle size={18} className="text-red-500 shrink-0 mt-0.5" />
+          <div className="text-[11px] font-bold text-red-700 leading-tight">
+            <p>{syncError}</p>
+            <p className="mt-1 font-semibold text-red-600">
+              Os checks de Hotel, Carro, Material, Liberação e Lista não estão sendo exibidos para não
+              parecerem pendências reais. Clique em "Atualizar" para tentar de novo.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Controle Logístico</h1>
@@ -547,7 +545,20 @@ const LogisticsControl: React.FC = () => {
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {filteredDemands.filter(d => requiresLogistics(d.modality)).length > 0 ? (
+              {syncError ? (
+                // ✅ Sem falha silenciosa: com erro de sync NÃO renderizamos os
+                // checks (todos sairiam cinza = "pendente"), e sim o erro.
+                <tr>
+                  <td colSpan={9} className="p-20 text-center text-red-500">
+                    <div className="flex flex-col items-center gap-4">
+                      <AlertCircle size={48} className="opacity-30" />
+                      <p className="font-bold text-sm">
+                        Não foi possível carregar o checklist. Veja o erro acima e clique em "Atualizar".
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredDemands.filter(d => requiresLogistics(d.modality)).length > 0 ? (
                 filteredDemands
                   .filter(d => requiresLogistics(d.modality))
                   .map(d => {

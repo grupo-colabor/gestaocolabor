@@ -75,9 +75,14 @@ export type MedicaoExportResult =
 /* ========================================================================== */
 /* Espelha os mappers do App.tsx, restrito aos campos usados pelo cálculo de
  * horas e pelas colunas da planilha. O export não lê o contexto do React de
- * propósito: busca do banco na hora, para não depender de estado stale. */
+ * propósito: busca do banco na hora, para não depender de estado stale.
+ *
+ * EXPORTADOS (sem mudança de comportamento) para o motor de exportação
+ * (services/exports/loadExportData.ts) mapear as MESMAS linhas do MESMO jeito.
+ * Uma segunda cópia do mapeamento divergiria do Excel de pagamento na
+ * primeira coluna nova. */
 
-function mapSpecificDates(raw: any): Demand['specificDates'] {
+export function mapSpecificDates(raw: any): Demand['specificDates'] {
   if (!raw) return undefined;
   const arr = Array.isArray(raw) ? raw : typeof raw === 'string' ? safeParseArray(raw) : null;
   if (!Array.isArray(arr) || arr.length === 0) return undefined;
@@ -124,7 +129,7 @@ function safeParseObject(raw: string): any | null {
   }
 }
 
-function mapDemand(row: any): Demand {
+export function mapDemand(row: any): Demand {
   return {
     id: row.id,
     // Demanda interna: carga horária em horasPrevistas (consumida por
@@ -151,7 +156,7 @@ function mapDemand(row: any): Demand {
   } as Demand;
 }
 
-function mapTraining(row: any): Training {
+export function mapTraining(row: any): Training {
   return {
     id: row.id,
     name: row.name ?? '',
@@ -162,7 +167,7 @@ function mapTraining(row: any): Training {
   } as Training;
 }
 
-function mapMeasurement(row: any): Measurement {
+export function mapMeasurement(row: any): Measurement {
   return {
     id: row.id,
     demandId: row.demand_id,
@@ -174,7 +179,7 @@ function mapMeasurement(row: any): Measurement {
   } as Measurement;
 }
 
-function mapInstructor(row: any): Pick<Instructor, 'id' | 'name' | 'cpf'> {
+export function mapInstructor(row: any): Pick<Instructor, 'id' | 'name' | 'cpf'> {
   return {
     id: row.id,
     name: row.full_name ?? '(sem nome)',
@@ -182,7 +187,7 @@ function mapInstructor(row: any): Pick<Instructor, 'id' | 'name' | 'cpf'> {
   };
 }
 
-function mapAllocation(row: any): InstructorAllocation {
+export function mapAllocation(row: any): InstructorAllocation {
   return {
     id: row.id,
     demandId: row.demand_id,

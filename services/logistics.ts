@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { fetchAllPaginated } from './pagination';
 
 export type LogisticAllocationRow = {
   id: string; // text
@@ -208,6 +209,33 @@ export async function fetchLogisticBlocksByDemandId(demandId: string): Promise<L
  * Busca os blocos de logística de várias demandas de uma vez (1 query).
  * Usado pelo export Excel para evitar N+1 fetches.
  */
+/**
+ * Busca TODOS os blocos de logística, paginando via `fetchAllPaginated`.
+ *
+ * Existe para o motor de Exportações (services/exports/loadExportData.ts):
+ * `fetchLogisticBlocksByDemandIds` monta um `.in()` com os ids, o que serve
+ * para o subconjunto filtrado do Export Modal, mas com o cadastro inteiro
+ * (~1.500 demandas) a URL estoura o limite do PostgREST e a leitura falha —
+ * ou, pior, volta parcial. A tabela tem ~2 linhas por demanda e já passa das
+ * 1.000, então o corte silencioso do select() sem .range() também se aplica.
+ *
+ * Ordem estável entre páginas: (demand_id, block_type, block_order) é o
+ * índice da 003 e, na prática, a chave lógica do bloco; `id` desempata.
+ * Erro PROPAGA — o export não pode tratar falha aqui como "sem logística".
+ */
+export async function fetchAllLogisticBlocks(): Promise<LogisticBlockRow[]> {
+  return fetchAllPaginated<LogisticBlockRow>((from, to) =>
+    supabase
+      .from('logistic_blocks')
+      .select('*')
+      .order('demand_id', { ascending: true })
+      .order('block_type', { ascending: true })
+      .order('block_order', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to)
+  );
+}
+
 export async function fetchLogisticBlocksByDemandIds(demandIds: string[]): Promise<LogisticBlockRow[]> {
   if (demandIds.length === 0) return [];
   const { data, error } = await supabase

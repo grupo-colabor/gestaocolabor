@@ -20,6 +20,10 @@ import { formatDias } from '../services/medicaoWorkbook';
 import { formatDiasList } from '../domain/exports/shared';
 import { buildMedicoesRows, MEDICOES_DATASET, type MedicaoRow } from '../domain/exports/datasets/medicoes';
 import { buildTable, defaultColumnKeys } from '../domain/exports/buildRows';
+import { buildDemandasRows, DEMANDAS_DATASET, transportLabel, lodgingLabel } from '../domain/exports/datasets/demandas';
+import { EXPORT_DATASETS, getDataset, visibleDatasets } from '../domain/exports/registry';
+import { EMPTY_FILTERS } from '../domain/exports/types';
+import { applyFilters } from '../domain/exports/filters';
 import { INTERNAL_COMPANY_LABEL } from '../domain/demandLabel';
 
 export interface SmokeTools {
@@ -331,6 +335,88 @@ export function runDatasetChecks(t: SmokeTools): number {
     try { buildTable(MEDICOES_DATASET, rows, ['naoExiste']); } catch { lancou = true; }
     check('chave desconhecida é erro', lancou);
     check('dataset Medições exige a view measurement', MEDICOES_DATASET.requiredView === 'measurement');
+  }
+
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * [C2] Dataset Demandas — uma linha por demanda
+   * ──────────────────────────────────────────────────────────────────────── */
+  console.log('\n[C2] Dataset Demandas');
+  {
+    const logisticBlocks: any[] = [
+      { demand_id: 'DEM-100', block_type: 'LOCOMOCAO', block_order: 1, transport_mode: 'TAXI' },
+      { demand_id: 'DEM-100', block_type: 'LOCOMOCAO', block_order: 0, transport_mode: 'CARRO_ALUGADO', rental_company: 'Localiza', rental_check_in: '2026-08-10T11:00:00.000Z', receipt_url: ['a.pdf', 'b.pdf'] },
+      { demand_id: 'DEM-100', block_type: 'HOSPEDAGEM', block_order: 0, lodging_mode: 'PRECISA_HOTEL', hotel_name: 'Ibis', hotel_check_in: '2026-08-09' },
+      { demand_id: 'DEM-101', block_type: 'LOCOMOCAO', block_order: 0, transport_mode: 'OUTROS', transport_other_description: 'Van' },
+    ];
+    const documentFlags: any[] = [
+      { demand_id: 'DEM-100', doc_type: 'LISTA_TURMA', file_path: 'demands/DEM-100/LISTA_TURMA.pdf', is_na: false },
+      { demand_id: 'DEM-100', doc_type: 'LIBERACAO_INSTRUTOR', file_path: null, is_na: true },
+    ];
+    const dsrc = { ...src, logisticBlocks, documentFlags, demands: [...demands, demandaCliente({ id: 'DEM-SEM', instructorId: undefined })] };
+    const drows = buildDemandasRows(dsrc);
+    const dde = (id: string) => drows.find(r => r.demand.id === id)!;
+
+    eq('uma linha por demanda', drows.length, dsrc.demands.length);
+    eq('titulares do rateio (dividida: dois)', dde('DEM-100').titulares, ['Titular', 'Segundo']);
+    eq('participantes só na interna', dde('DEM-900').participantes, ['Segundo']);
+    eq('acompanhantes só no cliente', dde('DEM-101').acompanhantes, ['Acompanhante']);
+    eq('interna não lista acompanhante', dde('DEM-900').acompanhantes, []);
+    eq('sem ninguém -> listas vazias', dde('DEM-SEM').titulares, []);
+    eq('bloco primário = block_order 0 (não o primeiro do array)', dde('DEM-100').locomocao?.transport_mode, 'CARRO_ALUGADO');
+    eq('hospedagem primária', dde('DEM-100').hospedagem?.hotel_name, 'Ibis');
+    eq('blocos contados', dde('DEM-100').nBlocosLogistica, 3);
+    eq('lista de turma anexada', dde('DEM-100').listaTurma, 'Anexado');
+    eq('liberação N/A', dde('DEM-100').liberacaoInstrutor, 'N/A');
+    eq('sem flag -> Pendente', dde('DEM-101').listaTurma, 'Pendente');
+    check('tem medição', dde('DEM-100').temMedicao && !dde('DEM-SEM').temMedicao);
+    eq('carga horária cliente = training.hours', dde('DEM-100').cargaHoraria, 16);
+    eq('carga horária interna = horas previstas', dde('DEM-900').cargaHoraria, 16);
+    eq('transporte OUTROS com descrição', transportLabel('OUTROS', 'Van'), 'Outros — Van');
+    eq('transporte NA', transportLabel('NA'), 'N/A');
+    eq('transporte desconhecido -> vazio', transportLabel(null), '');
+    eq('hospedagem PRECISA_HOTEL -> Hotel', lodgingLabel('PRECISA_HOTEL'), 'Hotel');
+    eq('empresa na convenção do pagamento', dde('DEM-900').empresa, INTERNAL_COMPANY_LABEL);
+    eq('status calculado (futura -> ALOCADA)', dde('DEM-103').statusCalculado, 'ALOCADA');
+
+    const cols = DEMANDAS_DATASET.columns;
+    check('todas as colunas resolvem em toda linha', drows.every(r => cols.every(c => { c.get(r); return true; })));
+    const tabela = buildTable(DEMANDAS_DATASET, drows, defaultColumnKeys(DEMANDAS_DATASET));
+    eq('matriz alinhada ao cabeçalho', tabela.rows[0].length, tabela.columns.length);
+    const notas = cols.find(c => c.key === 'locomocaoNotas')!;
+    eq('notas fiscais contadas', notas.get(dde('DEM-100')), 2);
+    const checkin = cols.find(c => c.key === 'locomocaoCheckIn')!;
+    check('check-in de locadora em dd/mm/yyyy HH:mm', /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/.test(String(checkin.get(dde('DEM-100')))));
+    const filtrado = applyFilters(drows, { ...EMPTY_FILTERS, instructorId: 'INS-T', tipo: 'interna' }, DEMANDAS_DATASET.filters, { trainingsById: t.fixtures.trainingsById, now: HOJE });
+    eq('filtro de instrutor é ignorado em Demandas; tipo aplica', filtrado.map(r => r.demand.id), ['DEM-900']);
+  }
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * [G] Registry
+   * ──────────────────────────────────────────────────────────────────────── */
+  console.log('\n[G] Registry');
+  {
+    eq('F1 registra Medições e Demandas', EXPORT_DATASETS.map(d => d.key), ['medicoes', 'demandas']);
+    for (const d of EXPORT_DATASETS) {
+      const keys = d.columns.map(c => c.key);
+      eq(d.key + ': chaves únicas', new Set(keys).size, keys.length);
+      check(d.key + ': tem coluna ligada por padrão', d.columns.some(c => c.defaultOn));
+      check(d.key + ': declara requiredView', typeof d.requiredView === 'string' && d.requiredView.length > 0);
+      check(d.key + ': sem CPF', !keys.some(k => /cpf/i.test(k)) && !d.columns.some(c => /cpf/i.test(c.header)));
+    }
+    eq('Demandas exige a view demands', getDataset('demandas').requiredView, 'demands');
+    // Simula ROLE_PERMISSIONS: analista sem 'measurement'.
+    const analista = new Set(['dashboard', 'demands', 'internal-demands', 'exportacoes']);
+    eq('analista vê só Demandas', visibleDatasets(v => analista.has(v)).map(d => d.key), ['demandas']);
+    const admin = new Set([...analista, 'measurement']);
+    eq('admin vê os dois', visibleDatasets(v => admin.has(v)).map(d => d.key), ['medicoes', 'demandas']);
+    eq('coordenador não vê nenhum', visibleDatasets(() => false).length, 0);
+    let lancou = false;
+    try { getDataset('nada' as any); } catch { lancou = true; }
+    check('dataset desconhecido é erro', lancou);
+    const registry = t.ler('domain/exports/registry.ts');
+    check('o registry documenta que é defesa de UI e que RLS por papel fica para a leva de segurança',
+      registry.includes('DEFESA DE UI') && /RLS por[\s*]+papel/.test(registry));
   }
 
   return falhas;

@@ -1,0 +1,45 @@
+/**
+ * MOTOR DE EXPORTAÇÃO — registro dos datasets
+ *
+ * F1: Medições e Demandas. Módulos novos entram aqui, com `requiredView`.
+ *
+ * ⚠️ ACESSO — DEFESA DE UI, NÃO DE BANCO
+ * ---------------------------------------------------------------------------
+ * `requiredView` é a view de `ROLE_PERMISSIONS` (App.tsx) que o perfil precisa
+ * ter para VER o dataset na aba Exportações. Hoje o analista não tem
+ * 'measurement', então não vê Medições; o coordenador não tem 'exportacoes' e
+ * não vê a aba. Isso reproduz o gate que a UI já aplica em cada tela.
+ *
+ * O BANCO não sabe disso: todas as policies de SELECT são "qualquer
+ * autenticado" (migrations 003, 007, 012, 016 e as não versionadas de
+ * `measurements`/`instructors`/`companies`), sem filtro por papel ou coluna.
+ * Um analista com a sessão aberta consegue ler `measurements` pela API. RLS por
+ * papel é migration e pertence à leva de segurança — fora da F1. Enquanto isso,
+ * este registro é o ÚNICO ponto que decide o que cada perfil baixa por aqui, e
+ * é por isso que a checagem fica em dado (registry) e não espalhada na tela.
+ */
+import { MEDICOES_DATASET } from './datasets/medicoes';
+import { DEMANDAS_DATASET } from './datasets/demandas';
+import type { DatasetDef, DatasetKey, FilterableRow } from './types';
+
+export type AnyDataset = DatasetDef<any>;
+
+export const EXPORT_DATASETS: AnyDataset[] = [MEDICOES_DATASET, DEMANDAS_DATASET];
+
+export function getDataset(key: DatasetKey): AnyDataset {
+  const d = EXPORT_DATASETS.find(x => x.key === key);
+  if (!d) throw new Error(`Dataset desconhecido: ${key}`);
+  return d;
+}
+
+/**
+ * Os datasets que um perfil pode ver, dado o predicado de acesso do App
+ * (`canAccessView(role, view)`), injetado para o domínio não conhecer papéis.
+ */
+export function visibleDatasets(canAccessView: (view: string) => boolean): AnyDataset[] {
+  return EXPORT_DATASETS.filter(d => canAccessView(d.requiredView));
+}
+
+/** Guarda de tipo para chamadas genéricas. */
+export const isFilterableRow = (r: unknown): r is FilterableRow =>
+  !!r && typeof r === 'object' && 'demand' in (r as any);

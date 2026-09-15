@@ -133,3 +133,17 @@ export function formatDiasList(dias: string[]): string {
   if (isContiguous(dias)) return `${toBrDate(dias[0])} a ${toBrDate(dias[dias.length - 1])}`;
   return dias.map(toBrDate).join(', ');
 }
+
+/**
+ * timestamptz (instante, ex.: check-in de locadora) -> 'dd/mm/yyyy HH:mm' no
+ * fuso do navegador. Aqui `new Date()` é o correto: a coluna guarda um
+ * instante, não a "hora de parede" que `demands.start_date` guarda. É a mesma
+ * conversão do Export Modal (`formatCheckInOut`). Inválido/vazio -> ''.
+ */
+export function toBrDateTimeLocal(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}

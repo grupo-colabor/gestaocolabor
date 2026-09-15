@@ -89,7 +89,11 @@ const HOJE = new Date('2026-09-15T12:00:00');
  * ────────────────────────────────────────────────────────────────────────── */
 const TRAININGS: any[] = [
   { id: 'T_PRE', name: 'NR 35 Trabalho em Altura', hours: 16, practicalHours: null, modality: 'PRESENCIAL' },
-  { id: 'T_HIB', name: 'NR 20 Intermediário', hours: 40, practicalHours: 8, modality: 'Híbrido' },
+  // ⚠️ Sem acento de propósito: `normalizeModality` de domain/instructorHours.ts
+  // NÃO tira acento, então um treinamento gravado como 'Híbrido' paga a carga
+  // cheia (hours) no Excel em vez das práticas. É comportamento anterior à F1,
+  // registrado no relatório da entrega; o export reproduz o Excel, não o corrige.
+  { id: 'T_HIB', name: 'NR 20 Intermediário', hours: 40, practicalHours: 8, modality: 'HIBRIDO' },
   { id: 'T_EAD', name: 'NR 01 Básico', hours: 4, practicalHours: null, modality: 'EAD' },
 ];
 const trainingsById = buildTrainingsById(TRAININGS);

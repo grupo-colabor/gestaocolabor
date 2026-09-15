@@ -108,3 +108,28 @@ export const demandDayCount = (demand: Demand): number => getDemandDays(demand).
 
 /** 2 casas, mesmo arredondamento do Excel de pagamento. Evita ruído de float. */
 export const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
+
+/* ────────────────────────────── dias ────────────────────────────── */
+
+function isContiguous(dias: string[]): boolean {
+  for (let i = 1; i < dias.length; i++) {
+    const prev = new Date(`${dias[i - 1]}T12:00:00`);
+    prev.setDate(prev.getDate() + 1);
+    const expected = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}-${String(prev.getDate()).padStart(2, '0')}`;
+    if (expected !== dias[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * '05/03/2026' | '05/03/2026 a 07/03/2026' | '05/03/2026, 09/03/2026'.
+ * Mesma regra de `formatDias` em services/medicaoWorkbook.ts — reescrita aqui
+ * porque domain/ não importa services/ (guarda de fonte); o smoke confere que
+ * as duas continuam iguais.
+ */
+export function formatDiasList(dias: string[]): string {
+  if (!dias.length) return '';
+  if (dias.length === 1) return toBrDate(dias[0]);
+  if (isContiguous(dias)) return `${toBrDate(dias[0])} a ${toBrDate(dias[dias.length - 1])}`;
+  return dias.map(toBrDate).join(', ');
+}

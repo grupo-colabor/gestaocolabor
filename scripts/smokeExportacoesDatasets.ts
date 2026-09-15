@@ -1,8 +1,27 @@
 /**
  * SMOKE — Exportações: blocos [A] [B] [C] [D] [G] (datasets e registry)
  *
- * Chamado por smokeExportacoes.ts. Preenchido nos commits dos datasets.
+ * Chamado por smokeExportacoes.ts, que passa as fixtures e os helpers. As
+ * asserções comparam o dataset com as funções do domínio que alimentam o
+ * painel, o Dashboard e o Excel de pagamento — nunca com números digitados à
+ * mão, senão o teste fica verde sobre qualquer coisa.
  */
+import {
+  computeMeasurementTotals,
+  computePanelExpenseBreakdown,
+  normalizeMeasurementBlocks,
+  blockHoraAula,
+  aggregateMeasurements,
+  aggregatePanelExpenseBreakdown,
+} from '../domain/measurementTotals';
+import { computeInstructorHoursByDemand, eligibleDemandIdsForPayment } from '../domain/instructorHours';
+import { applyMeasurementOverrides } from '../domain/measurementOverrides';
+import { formatDias } from '../services/medicaoWorkbook';
+import { formatDiasList } from '../domain/exports/shared';
+import { buildMedicoesRows, MEDICOES_DATASET, type MedicaoRow } from '../domain/exports/datasets/medicoes';
+import { buildTable, defaultColumnKeys } from '../domain/exports/buildRows';
+import { INTERNAL_COMPANY_LABEL } from '../domain/demandLabel';
+
 export interface SmokeTools {
   check: (nome: string, condicao: boolean, detalhe?: string) => void;
   eq: (nome: string, atual: unknown, esperado: unknown) => void;
@@ -12,8 +31,307 @@ export interface SmokeTools {
   fixtures: any;
 }
 
+const soma = (ns: (number | null)[]) => ns.reduce<number>((a, b) => a + (b ?? 0), 0);
+
 /** Devolve o nº de falhas acumuladas nos blocos de dataset. */
-export function runDatasetChecks(_t: SmokeTools): number {
-  console.log('\n[A-D, G] datasets — pendentes (entram com domain/exports/datasets)');
-  return 0;
+export function runDatasetChecks(t: SmokeTools): number {
+  let falhas = 0;
+  const check: SmokeTools['check'] = (nome, cond, det) => {
+    if (!cond) falhas++;
+    t.check(nome, cond, det);
+  };
+  const eq: SmokeTools['eq'] = (nome, a, b) => {
+    const ok = Object.is(a, b) || JSON.stringify(a) === JSON.stringify(b);
+    if (!ok) falhas++;
+    t.eq(nome, a, b);
+  };
+  const perto: SmokeTools['perto'] = (nome, a, b) => {
+    if (Math.abs(a - b) >= 1e-6) falhas++;
+    t.perto(nome, a, b);
+  };
+
+  const { TRAININGS, COMPANIES, INSTRUCTORS, demandaCliente, demandaInterna, HOJE } = t.fixtures;
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * Fixtures de medição — cada caso do cabeçalho de datasets/medicoes.ts
+   * ──────────────────────────────────────────────────────────────────────── */
+
+  // M1 — INTERNA v2: titular sem horas digitadas + participante com 10h.
+  // Anexos: sem dono (→ titular), do participante, de dono removido (→ titular)
+  // e um órfão de OUTROS (fora do total, contado).
+  const D_INT = demandaInterna();
+  const M1: any = {
+    id: 'MEA-DEM-900', demandId: 'DEM-900', status: 'CONFERENCIA', updatedAt: '2026-08-05T10:00:00',
+    expenses: {
+      classHours: 16,
+      participantes: [
+        { instructorId: 'INS-T', papel: 'TITULAR', valorHH: 100 },
+        { instructorId: 'INS-2', papel: 'PARTICIPANTE', horas: 10, valorHH: 80 },
+      ],
+    },
+    attachments: [
+      { id: 'a1', category: 'HOSPEDAGEM', value: 200 },
+      { id: 'a2', category: 'ALMOCO', value: '50,00', instructorId: 'INS-2', reembolsavel: false },
+      { id: 'a3', category: 'OUTROS', value: 30, otherId: 'O1', instructorId: 'INS-9' },
+      { id: 'a4', category: 'OUTROS', value: 5, otherId: 'ZZ' },
+    ],
+    otherExpenses: [{ id: 'O1', description: 'Pedágio', value: '' }],
+  };
+
+  // M2 — CLIENTE v1 dividida por dias: dois titulares no rateio, medição mono.
+  const D_SPLIT = demandaCliente();
+  const M2: any = {
+    id: 'MEA-DEM-100', demandId: 'DEM-100', status: 'LANCAMENTO', updatedAt: '2026-08-12',
+    expenses: { classHours: 16, hourRate: 120 },
+    attachments: [{ id: 'b1', category: 'LOCOMOCAO', value: 80 }],
+    otherExpenses: [],
+  };
+
+  // M3 — CLIENTE v2 com acompanhante SEM horas: painel 0, Excel sem linha.
+  const D_ACOMP = demandaCliente({ id: 'DEM-101' });
+  const M3: any = {
+    id: 'MEA-DEM-101', demandId: 'DEM-101', status: 'NAO_INICIADA', updatedAt: '',
+    expenses: {
+      classHours: 16,
+      participantes: [
+        { instructorId: 'INS-T', papel: 'TITULAR', valorHH: 100 },
+        { instructorId: 'INS-A', papel: 'ACOMPANHANTE', valorHH: 50 },
+      ],
+    },
+    attachments: [{ id: 'c1', category: 'JANTAR', value: 40, instructorId: 'INS-A' }],
+    otherExpenses: [],
+  };
+
+  // M4 — HÍBRIDA v2 sem horas digitadas: painel 0; Excel paga as práticas (8h).
+  const D_HIB = demandaCliente({ id: 'DEM-102', trainingId: 'T_HIB', modality: 'PRESENCIAL' });
+  const M4: any = {
+    id: 'MEA-DEM-102', demandId: 'DEM-102', status: 'LANCAMENTO', updatedAt: '2026-08-12',
+    expenses: { participantes: [{ instructorId: 'INS-T', papel: 'TITULAR', valorHH: 100 }] },
+    attachments: [],
+    otherExpenses: [],
+  };
+
+  // M5 — demanda FUTURA (não concluída) com medição já aberta.
+  const D_FUT = demandaCliente({ id: 'DEM-103', startDate: '2026-12-01T08:00', endDate: '2026-12-02T17:00' });
+  const M5: any = {
+    id: 'MEA-DEM-103', demandId: 'DEM-103', status: 'NAO_INICIADA', updatedAt: '',
+    expenses: { classHours: 16, hourRate: 100 },
+    attachments: [],
+    otherExpenses: [],
+  };
+
+  // M6 — medição sem ninguém no cadastro (instructor_id nulo, sem alocação).
+  const D_NINGUEM = demandaCliente({ id: 'DEM-104', instructorId: undefined });
+  const M6: any = {
+    id: 'MEA-DEM-104', demandId: 'DEM-104', status: 'LANCAMENTO', updatedAt: '',
+    expenses: { classHours: 16, hourRate: 100 },
+    attachments: [{ id: 'd1', category: 'CAFE', value: 12 }],
+    otherExpenses: [],
+  };
+
+  const demands = [D_INT, D_SPLIT, D_ACOMP, D_HIB, D_FUT, D_NINGUEM];
+  const measurements = [M1, M2, M3, M4, M5, M6];
+  const instructorAllocations: any[] = [
+    { id: 'A0', demandId: 'DEM-900', instructorId: 'INS-T', startDate: '2026-08-03T08:00', endDate: '2026-08-04T18:00' },
+    { id: 'A1', demandId: 'DEM-100', instructorId: 'INS-T', startDate: '2026-08-10T08:00', endDate: '2026-08-10T17:00' },
+    { id: 'A2', demandId: 'DEM-100', instructorId: 'INS-2', startDate: '2026-08-11T08:00', endDate: '2026-08-11T17:00' },
+    { id: 'A3', demandId: 'DEM-101', instructorId: 'INS-T', startDate: '2026-08-10T08:00', endDate: '2026-08-11T17:00' },
+    { id: 'A4', demandId: 'DEM-102', instructorId: 'INS-T', startDate: '2026-08-10T08:00', endDate: '2026-08-11T17:00' },
+    { id: 'A5', demandId: 'DEM-103', instructorId: 'INS-T', startDate: '2026-12-01T08:00', endDate: '2026-12-02T17:00' },
+  ];
+  const participants: any[] = [{ id: 'P1', demandId: 'DEM-900', instructorId: 'INS-2', startDate: null, endDate: null }];
+  const companions: any[] = [
+    { id: 'K1', demandId: 'DEM-101', instructorId: 'INS-A', startDate: '2026-08-10T08:00', endDate: '2026-08-10T18:00' },
+  ];
+
+  const src = {
+    demands, measurements, trainings: TRAININGS, instructors: INSTRUCTORS, companies: COMPANIES,
+    instructorAllocations, participants, companions,
+    regionNameById: new Map([['MG', 'Minas Gerais']]),
+    now: HOJE,
+  };
+  const rows = buildMedicoesRows(src);
+  const de = (demandId: string, instructorId: string) =>
+    rows.find(r => r.demand.id === demandId && r.instructorId === instructorId) as MedicaoRow;
+  const daDemanda = (demandId: string) => rows.filter(r => r.demand.id === demandId);
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * [C] Linhas: uma por pessoa; v1 mono; partição dos anexos
+   * ──────────────────────────────────────────────────────────────────────── */
+  console.log('\n[C] Uma linha por pessoa × demanda');
+  {
+    eq('total de linhas = 2+2+2+1+1+1', rows.length, 9);
+    eq('interna: titular + participante', daDemanda('DEM-900').map(r => `${r.instructorName}:${r.papel}`).sort(), ['Segundo:PARTICIPANTE', 'Titular:TITULAR']);
+    eq('cliente dividido: um titular por trecho do rateio', daDemanda('DEM-100').map(r => r.papel), ['TITULAR', 'TITULAR']);
+    eq('cliente com acompanhante: titular + acompanhante', daDemanda('DEM-101').map(r => r.papel).sort(), ['ACOMPANHANTE', 'TITULAR']);
+    eq('sem ninguém: uma linha "(sem instrutor)"', daDemanda('DEM-104').map(r => r.instructorName), ['(sem instrutor)']);
+    eq('e o vínculo dela é sem-pessoa', de('DEM-104', '').vinculo, 'sem-pessoa');
+
+    // v1: o bloco inteiro vai para o titular principal; o segundo titular não tem bloco.
+    const t1 = de('DEM-100', 'INS-T');
+    const t2 = de('DEM-100', 'INS-2');
+    check('v1: titular principal tem o bloco', t1.temBloco);
+    check('v1: segundo titular não tem bloco', !t2.temBloco);
+    eq('v1: horas informadas do titular = classHours', t1.horasInformadas, 16);
+    eq('v1: segundo titular sem horas informadas (null, não 0)', t2.horasInformadas, null);
+    eq('v1: hora/aula painel do segundo titular em branco', t2.horaAulaPainel, null);
+    perto('v1: despesas todas no titular', t1.despesas.total, 80);
+    perto('v1: segundo titular sem despesas', t2.despesas.total, 0);
+
+    // v2: partição — sem dono e dono removido caem no titular; órfão fora, contado.
+    const i1 = de('DEM-900', 'INS-T');
+    const i2 = de('DEM-900', 'INS-2');
+    perto('v2: item sem dono + dono removido caem no titular (200 + 30)', i1.despesas.total, 230);
+    eq('v2: órfão de OUTROS contado no titular', i1.despesas.itensOrfaos, 1);
+    perto('v2: item do participante fica com ele', i2.despesas.total, 50);
+    perto('v2: não reembolsável é recorte por pessoa', i2.naoReembolsavel, 50);
+    perto('v2: e continua dentro do total', i2.despesas.total, 50);
+    perto('v2: despesas reembolsáveis = total − não reembolsável', i2.despesasReembolsaveis, 0);
+    perto('v2: titular não herda o não reembolsável do participante', i1.naoReembolsavel, 0);
+  }
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * [A] Somas por medição fecham com o domínio; Σ Total geral fecha com o card
+   * ──────────────────────────────────────────────────────────────────────── */
+  console.log('\n[A] Σ por medição = computeMeasurementTotals / computePanelExpenseBreakdown');
+  {
+    for (const m of measurements) {
+      const d = demands.find(x => x.id === m.demandId)!;
+      const linhas = daDemanda(d.id);
+      const training = TRAININGS.find((x: any) => x.id === d.trainingId);
+      const ctx = {
+        demandDefaultHours: Number(m.expenses?.classHours) > 0 ? Number(m.expenses.classHours)
+          : d.tipo === 'interna' ? Number(d.horasPrevistas) : Number(training?.hours ?? 0),
+        hibrida: d.tipo !== 'interna' && String(training?.modality ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase() === 'HIBRIDO',
+      };
+      const esperado = computeMeasurementTotals(m, ctx);
+      if (ctx.hibrida) {
+        // Divergência CONHECIDA (measurementTotals.ts, tabela "DUAS resoluções"):
+        // `computeMeasurementTotals` não recebe `hibrida` e resolve o ausente
+        // pela carga cheia; o PAINEL zera até alguém digitar. O export segue o
+        // painel — e o smoke prende as duas coisas: igual ao painel, diferente
+        // do agregado do Dashboard.
+        const painel = normalizeMeasurementBlocks(m, d.instructorId).reduce((acc, b) => acc + blockHoraAula(b, ctx), 0);
+        perto(`${d.id} (híbrida): Σ hora/aula painel = fórmula do painel com hibrida`, soma(linhas.map(r => r.horaAulaPainel)), painel);
+        check(`${d.id} (híbrida): e difere de computeMeasurementTotals, como documentado`, Math.abs(painel - esperado.horaAula) > 1e-6);
+      } else {
+        perto(`${d.id}: Σ hora/aula painel = computeMeasurementTotals(m, ctx).horaAula`, soma(linhas.map(r => r.horaAulaPainel)), esperado.horaAula);
+      }
+      const quebra = computePanelExpenseBreakdown(m);
+      perto(`${d.id}: Σ despesas = computePanelExpenseBreakdown(m).total`, soma(linhas.map(r => r.despesas.total)), quebra.total);
+      perto(`${d.id}: Σ hospedagem`, soma(linhas.map(r => r.despesas.hospedagem)), quebra.hospedagem);
+      perto(`${d.id}: Σ alimentação`, soma(linhas.map(r => r.despesas.alimentacao)), quebra.alimentacao);
+      perto(`${d.id}: Σ outros`, soma(linhas.map(r => r.despesas.outros)), quebra.outros);
+      eq(`${d.id}: Σ órfãos`, soma(linhas.map(r => r.despesas.itensOrfaos)), quebra.itensOrfaos);
+      perto(`${d.id}: Σ não reembolsável = computeMeasurementTotals.naoReembolsavel`, soma(linhas.map(r => r.naoReembolsavel)), esperado.naoReembolsavel);
+    }
+
+    // O card "Custo das Demandas Internas" (Dashboard.tsx, ~2859):
+    //   aggregateMeasurements(ms).horaAula + aggregatePanelExpenseBreakdown(ms).total
+    // sobre as medições das internas do recorte. Aqui: internas concluídas.
+    // Invariante que sustenta a igualdade: o painel grava `classHours` com a
+    // carga da demanda em toda abertura (measurementTotals.ts ~170), então a
+    // resolução do Dashboard (sem contexto) e a do painel coincidem.
+    const internasConcluidas = rows.filter(r => r.tipo === 'Interna' && r.statusCalculado === 'CONCLUIDA');
+    const msInternas = measurements.filter(m => internasConcluidas.some(r => r.measurement === m));
+    const card = aggregateMeasurements(msInternas).horaAula + aggregatePanelExpenseBreakdown(msInternas).total;
+    perto('Σ Total geral (internas concluídas) = card Custo das Demandas Internas', soma(internasConcluidas.map(r => r.totalGeral)), card);
+    check('e o card não é zero (a fixture tem interna medida)', card > 0);
+    perto('Total geral = hora/aula painel + total despesas (linha a linha)',
+      soma(rows.map(r => r.totalGeral)), soma(rows.map(r => (r.horaAulaPainel ?? 0) + r.despesas.total)));
+  }
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * [B] Horas pagamento = applyMeasurementOverrides; em branco onde o Excel cala
+   * ──────────────────────────────────────────────────────────────────────── */
+  console.log('\n[B] Horas pagamento = a linha do Excel de pagamento');
+  {
+    const rateio = computeInstructorHoursByDemand({ demands, instructorAllocations, trainings: TRAININGS, measurements } as any);
+    const esperado = applyMeasurementOverrides({
+      rows: rateio,
+      measurements,
+      demands,
+      participants,
+      companions,
+      eligibleDemandIds: eligibleDemandIdsForPayment({ demands, trainings: TRAININGS } as any),
+    });
+    const porChave = new Map(esperado.map(r => [`${r.demandId} ${r.instructorId}`, r]));
+
+    for (const r of rows) {
+      const k = `${r.demand.id} ${r.instructorId}`;
+      const e = porChave.get(k);
+      if (e) {
+        perto(`${k}: horas pagamento = override`, r.horasPagamento ?? NaN, Math.round((e.horas + Number.EPSILON) * 100) / 100);
+        check(`${k}: elegível`, r.elegivelPagamento);
+        eq(`${k}: dias = formatDias do Excel`, r.diasPagamento, formatDias(e.dias));
+      } else {
+        eq(`${k}: sem linha no Excel -> horas pagamento EM BRANCO`, r.horasPagamento, null);
+        check(`${k}: não elegível`, !r.elegivelPagamento);
+      }
+    }
+    eq('todas as linhas do Excel têm linha no export', esperado.length, rows.filter(r => r.elegivelPagamento).length);
+
+    // Casos nomeados — o que cada origem tem que dizer.
+    eq('titular v2 sem horas digitadas -> rateio', de('DEM-900', 'INS-T').origemHoras, 'Rateio da alocação');
+    eq('participante com horas -> informada', de('DEM-900', 'INS-2').origemHoras, 'Informada na medição');
+    perto('participante paga as horas informadas (10), não horas_previstas', de('DEM-900', 'INS-2').horasPagamento ?? NaN, 10);
+    eq('cliente dividido -> rateio (dividida)', de('DEM-100', 'INS-2').origemHoras, 'Rateio da alocação (dividida)');
+    perto('cliente dividido: 1 de 2 dias de 16h = 8h', de('DEM-100', 'INS-2').horasPagamento ?? NaN, 8);
+    eq('acompanhante sem horas -> sem linha, origem explica', de('DEM-101', 'INS-A').origemHoras, 'Acompanhante sem horas informadas');
+    eq('acompanhante: horas painel = 0 (manual obrigatório)', de('DEM-101', 'INS-A').horasPainel, 0);
+    eq('híbrida sem digitar: painel 0', de('DEM-102', 'INS-T').horasPainel, 0);
+    perto('híbrida sem digitar: Excel paga as horas práticas do treinamento (8h)', de('DEM-102', 'INS-T').horasPagamento ?? NaN, 8);
+    eq('demanda futura -> não elegível', de('DEM-103', 'INS-T').origemHoras, 'Não elegível: demanda não concluída');
+    eq('sem ninguém -> sem alocação', de('DEM-104', '').origemHoras, 'Sem alocação em instructor_allocations');
+    perto('hora/aula por horas pagamento = horas × valorHH', de('DEM-900', 'INS-2').horaAulaPagamento ?? NaN, 800);
+  }
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * [D] Rótulos
+   * ──────────────────────────────────────────────────────────────────────── */
+  console.log('\n[D] Rótulos das linhas');
+  {
+    eq('interna sem empresa -> Colabor (Interna)', de('DEM-900', 'INS-T').empresa, INTERNAL_COMPANY_LABEL);
+    eq('interna: título = categoria — descrição', de('DEM-900', 'INS-T').titulo, 'SIPAT — Palestra de abertura');
+    eq('cliente: título = nome do treinamento', de('DEM-100', 'INS-T').titulo, 'NR 35 Trabalho em Altura');
+    eq('modalidade resolvida pelo treinamento (demanda diz PRESENCIAL, treinamento HIBRIDO)', de('DEM-102', 'INS-T').modalidade, 'Híbrido');
+    check('e a linha sabe que é híbrida', de('DEM-102', 'INS-T').hibrida);
+    eq('noturno pela regra do domínio (fim 18:00 -> não)', de('DEM-900', 'INS-T').noturno, false);
+    const noturna = buildMedicoesRows({ ...src, demands: [demandaCliente({ id: 'DEM-N', endDate: '2026-08-11T19:00' })], measurements: [{ ...M2, demandId: 'DEM-N' }] });
+    eq('noturno: fim 19:00 -> sim', noturna[0].noturno, true);
+    eq('status calculado', de('DEM-103', 'INS-T').statusCalculado, 'ALOCADA');
+    eq('região pelo mapa do contexto', de('DEM-100', 'INS-T').regiao, 'Minas Gerais');
+    eq('região sem mapa -> id', de('DEM-900', 'INS-T').regiao, 'ES');
+    eq('data dd/mm/yyyy', de('DEM-900', 'INS-T').medicaoAtualizadaEm, '05/08/2026');
+    eq('chave tarifa: participante é Titular', de('DEM-900', 'INS-2').papelTarifa, 'Titular');
+    eq('chave tarifa: acompanhante', de('DEM-101', 'INS-A').papelTarifa, 'Acompanhante');
+    eq('formatDiasList == formatDias (contíguo)', formatDiasList(['2026-08-10', '2026-08-11']), formatDias(['2026-08-10', '2026-08-11']));
+    eq('formatDiasList == formatDias (salteado)', formatDiasList(['2026-08-10', '2026-08-12']), formatDias(['2026-08-10', '2026-08-12']));
+    eq('formatDiasList vazio -> "" (o Excel usa —; aqui em branco é não se aplica)', formatDiasList([]), '');
+  }
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * [G] Colunas do dataset Medições
+   * ──────────────────────────────────────────────────────────────────────── */
+  console.log('\n[G] Colunas — Medições');
+  {
+    const keys = MEDICOES_DATASET.columns.map(c => c.key);
+    eq('chaves únicas', new Set(keys).size, keys.length);
+    const defaults = defaultColumnKeys(MEDICOES_DATASET);
+    check('Horas pagamento e Elegível nascem ligadas', defaults.includes('horasPagamento') && defaults.includes('elegivelPagamento'));
+    check('Horas informadas, Horas painel e Origem nascem desligadas',
+      !defaults.includes('horasInformadas') && !defaults.includes('horasPainel') && !defaults.includes('origemHoras'));
+    check('CPF não existe como coluna', !keys.some(k => /cpf/i.test(k)));
+    check('todas as colunas resolvem em toda linha sem lançar', rows.every(r => MEDICOES_DATASET.columns.every(c => { c.get(r); return true; })));
+
+    const tabela = buildTable(MEDICOES_DATASET, rows.slice(0, 2), ['instrutor', 'demandId', 'instrutor', 'horasPagamento']);
+    eq('ordem da saída segue a seleção; repetida colapsa', tabela.columns.map(c => c.key), ['instrutor', 'demandId', 'horasPagamento']);
+    eq('matriz alinhada', tabela.rows[0].length, 3);
+    let lancou = false;
+    try { buildTable(MEDICOES_DATASET, rows, ['naoExiste']); } catch { lancou = true; }
+    check('chave desconhecida é erro', lancou);
+    check('dataset Medições exige a view measurement', MEDICOES_DATASET.requiredView === 'measurement');
+  }
+
+  return falhas;
 }

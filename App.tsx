@@ -24,6 +24,7 @@ import {
   FileSearch,
   Bell,
   Shield,
+  FileDown,
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
@@ -70,6 +71,7 @@ import Evidences from './components/Evidences';
 import Notifications from './components/Notifications';
 import AuthGate from './components/AuthGate';
 import AuditPage from './components/Audit';
+import Exportacoes from './components/Exportacoes';
 import { fetchTrainings, deleteTrainingById } from './services/trainings';
 import { fetchCompanies, insertCompany, updateCompanyById, CompanyRow } from './services/companies';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -168,7 +170,8 @@ type View =
   | 'logistics-control'
   | 'measurement'
   | 'evidences'
-  | 'audit';
+  | 'audit'
+  | 'exportacoes';
 
 interface AppState {
   companies: Company[];
@@ -3622,6 +3625,12 @@ type Action =
 // 'internal-demands' fica com admin e analista. Coordenador continua só com
 // 'calendar' (apenas visualização) — demanda interna é registro operacional,
 // não entra no perfil de consulta de agenda.
+//
+// 'exportacoes' (F1): admin e analista. Dentro da aba, cada dataset exige a
+// view do módulo de origem (domain/exports/registry.ts, `requiredView`) —
+// analista não tem 'measurement', então não vê o dataset Medições. É defesa
+// de UI, como o resto desta tabela; RLS por papel fica para a leva de
+// segurança.
 const ROLE_PERMISSIONS: Record<string, View[]> = {
   admin: [
     'dashboard',
@@ -3634,7 +3643,8 @@ const ROLE_PERMISSIONS: Record<string, View[]> = {
     'logistics-control',
     'measurement',
     'evidences',
-    'audit'
+    'audit',
+    'exportacoes'
   ],
   analista: [
     'dashboard',
@@ -3646,6 +3656,7 @@ const ROLE_PERMISSIONS: Record<string, View[]> = {
     'logistics',
     'logistics-control',
     'evidences',
+    'exportacoes',
   ],
   coordenador: ['calendar'] // apenas visualização
 };
@@ -3684,7 +3695,7 @@ const canPerformAction = (role: string | undefined, action: Action): boolean => 
   return ROLE_ACTIONS[role]?.includes(action) ?? false;
 };
 
-const canAccessView = (role: string | undefined, view: View) => {
+export const canAccessView = (role: string | undefined, view: View) => {
   if (!role) return false;
   return ROLE_PERMISSIONS[role]?.includes(view);
 };
@@ -3787,6 +3798,8 @@ const renderContent = () => {
         return <Evidences />;
       case 'audit':
         return <AuditPage />;
+      case 'exportacoes':
+        return <Exportacoes />;
       default:
         return <Dashboard />;
     }
@@ -3960,6 +3973,16 @@ const renderContent = () => {
               label="Auditoria"
               active={currentView === 'audit'}
               onClick={() => setCurrentView('audit')}
+              collapsed={isSidebarCollapsed}
+            />
+          )}
+
+          {canAccessView(profile?.role, 'exportacoes') && (
+            <SidebarButton
+              icon={FileDown}
+              label="Exportações"
+              active={currentView === 'exportacoes'}
+              onClick={() => setCurrentView('exportacoes')}
               collapsed={isSidebarCollapsed}
             />
           )}

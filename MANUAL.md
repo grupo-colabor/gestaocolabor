@@ -37,8 +37,8 @@ O **COLABOR** é um sistema de gestão de treinamentos corporativos. Ele central
 
 | Perfil | O que pode fazer |
 |--------|-----------------|
-| **Admin** | Acesso total: criar, editar, deletar demandas; gerenciar usuários e cadastros |
-| **Analista** | Criar, editar e deletar demandas; visualizar tudo |
+| **Admin** | Acesso total: criar, editar, deletar demandas; gerenciar usuários e cadastros; exportações de Medições e Demandas |
+| **Analista** | Criar, editar e deletar demandas; visualizar tudo, exceto Medição; exportação de Demandas |
 | **Coordenador** | Visualiza apenas demandas que possuem instrutor alocado |
 
 ---
@@ -571,6 +571,44 @@ Gerenciamento de contas de acesso ao sistema.
 | Transporte | Tipo de transporte |
 | Hospedagem | Tipo de hospedagem |
 
+### Aba Exportações (planilhas de análise)
+
+**Como acessar:** menu lateral → **Exportações** (perfis Admin e Analista).
+
+É um exportador genérico para **análise**: você escolhe o módulo, filtra, escolhe e ordena as colunas, vê uma prévia com a contagem e baixa **XLSX** ou **CSV**. Não substitui a planilha de pagamento (Medição → Exportar Medição), que continua com fórmulas, aba Tarifas e proteção.
+
+**Módulos disponíveis:**
+
+| Módulo | O que sai | Quem vê |
+|--------|-----------|---------|
+| **Medições** | Uma linha por **pessoa × demanda** (titular, participante de interna, acompanhante) para toda demanda com medição aberta, em qualquer estágio: horas, valor HH, hora/aula e despesas por pessoa | Quem acessa a tela de Medição (Admin) |
+| **Demandas** | Uma linha por demanda: cadastro, status calculado, pessoas, logística primária, documentos, se há medição | Admin e Analista |
+
+**Passo a passo:**
+1. Escolha o módulo
+2. Clique em **Carregar dados** — a busca é sempre nova no banco; se algo falhar, aparece um aviso vermelho e nada é gerado
+3. Aplique os filtros (período, status, modalidade, tipo cliente/interna, UF, cliente; em Medições também pessoa e papel)
+4. Ligue/desligue colunas e ordene com as setas ↑/↓ — **Padrão** volta à seleção inicial
+5. Confira a prévia e a contagem de linhas
+6. Clique em **XLSX** ou **CSV**
+
+**Formato:** datas em DD/MM/AAAA; valores como número (moeda R$ no XLSX; vírgula decimal e separador `;` no CSV, que abre direto no Excel em português); cabeçalho congelado e autofiltro no XLSX. Interna sem empresa aparece como **Colabor (Interna)**.
+
+#### Horas pagamento × Horas informadas — e por que o export não rateia
+
+No módulo **Medições** existem três colunas de horas, porque o sistema resolve "horas em branco" de jeitos diferentes conforme o lugar:
+
+| Coluna | De onde vem | Quando fica em branco |
+|--------|-------------|------------------------|
+| **Horas pagamento** (ligada por padrão) | A linha que a planilha de pagamento imprimiria para a pessoa naquela demanda: rateio da alocação em `instructor_allocations`, substituído pelas horas digitadas na medição quando houver | Quando a planilha **não geraria linha**: demanda ainda não concluída, acompanhante sem horas digitadas, pessoa sem alocação. Em branco nunca é zero |
+| **Horas informadas** (desligada) | O que está gravado na medição (o campo da pessoa, ou a carga da medição antiga) | Ninguém digitou |
+| **Horas (painel)** (desligada) | O que o Painel de Medição conta na seção da pessoa: em branco vale a carga padrão da demanda; acompanhante e demanda híbrida valem 0 até alguém digitar | Pessoa sem bloco no painel (segundo titular de uma medição antiga) |
+
+Ligue **Origem das horas** para ver, linha a linha, de onde veio a coluna Horas pagamento ou por que ela está em branco. **Elegível pagamento** (ligada por padrão) diz se a pessoa entra na planilha.
+
+O **filtro de período** seleciona as demandas que têm ao menos um dia dentro do intervalo, e as horas saem **inteiras**. A planilha de pagamento, ao contrário, rateia as horas pelos dias que caem dentro do mês: uma demanda de 5 dias que começa dois dias antes do fechamento entra na planilha com 3/5 das horas e no export com todas. Para fechar o mês, use a planilha; para analisar volumes e custos por demanda, pessoa ou cliente, use o export.
+
+**Despesas** saem nas quatro categorias do painel (Hospedagem, Locomoção, Alimentação, Outros). **Total despesas** inclui os itens marcados como não reembolsáveis — eles foram gastos —, **Não reembolsável** mostra esse recorte à parte e **Despesas reembolsáveis** (desligada) é a diferença. **Total geral** = hora/aula (painel) + total despesas, a mesma composição do card *Custo das Demandas Internas* do Dashboard.
 ### Exportar Demanda para Word
 
 **Como acessar:** Abrir uma demanda → botão **Exportar para Word**

@@ -29,6 +29,7 @@
 import type {
   MeasurementTemplate,
   ResolvedCell,
+  ResolvedFormSheet,
   ResolvedRowsSheet,
   ResolvedSheet,
   TemplateCellValue,
@@ -68,7 +69,11 @@ function cellValue(cell: ResolvedCell): any {
 const clone = <T,>(o: T): T => (o ? JSON.parse(JSON.stringify(o)) : o);
 
 function applyCell(target: any, cell: ResolvedCell | null, protoStyle?: any) {
-  if (protoStyle) target.style = clone(protoStyle);
+  // ⚠️ Células carregadas do arquivo COMPARTILHAM o objeto de estilo quando
+  // têm o mesmo estilo (é assim que o ExcelJS lê o xlsx). Mutar `fill` ou
+  // `numFmt` direto pintaria todas as irmãs — foi o que fez G20 ficar amarela
+  // junto com G19 no BM. Sempre clonar antes de mexer.
+  target.style = protoStyle ? clone(protoStyle) : clone(target.style ?? {});
   if (!cell) {
     target.value = null;
     return;
@@ -158,6 +163,75 @@ function writeRowsSheetIntoBase(workbook: any, ws: any, sheet: ResolvedRowsSheet
   }
 }
 
+/**
+ * Preenche uma folha FORM (documento assinável, ex. BM) DENTRO do arquivo-base.
+ *
+ * Células endereçadas: só o valor (e o fill amarelo quando destacada); a
+ * mesclagem vem do arquivo. Região de linhas:
+ *   1. quando as linhas passam da capacidade pré-formatada, `insertRows` na
+ *      linha do total — verificado no ExcelJS 4.4 com o vale-bm.xlsx: as
+ *      mesclagens abaixo (total e assinaturas) são deslocadas e as imagens
+ *      ficam; o que NÃO vem de graça é o estilo e a mesclagem das linhas
+ *      novas (copiados da 1ª linha da região) e as fórmulas (o ExcelJS não as
+ *      desloca — por isso o total é sempre reescrito na faixa real);
+ *   2. escreve as linhas; nas posições pré-formatadas que sobraram, limpa as
+ *      colunas de dado (o modelo traz exemplos) e deixa as fórmulas do arquivo,
+ *      que mostram "-";
+ *   3. total na linha calculada pelo resolvedor;
+ *   4. com inserção, solta a altura de impressão (fitToHeight 0): o modelo é
+ *      "1 página × 1 página" e um BM longo ficaria ilegível.
+ */
+/**
+ * Devolve as mesclagens das linhas INSERIDAS, para serem aplicadas numa
+ * segunda passagem. ⚠️ Depois de `insertRows` o ExcelJS só desloca as
+ * mesclagens existentes ao GRAVAR; no modelo em memória as linhas novas ainda
+ * aparecem cobertas pelas mesclagens antigas e `mergeCells` lança "Cannot
+ * merge already merged cells". Gravar, recarregar e mesclar resolve
+ * (verificado com o vale-bm.xlsx); ver `buildTemplateWorkbook`.
+ */
+function writeFormSheetIntoBase(ws: any, sheet: ResolvedFormSheet): string[] {
+  for (const c of sheet.cells) {
+    applyCell(ws.getCell(c.address), { value: c.value, formula: c.formula, format: c.format, highlight: c.highlight });
+  }
+
+  const reg = sheet.region;
+  if (!reg) return [];
+
+  const nCols = Math.max(ws.columnCount, 10);
+  const protoRow = ws.getRow(reg.firstRow);
+  const protoStyles: any[] = [];
+  for (let c = 1; c <= nCols; c++) protoStyles.push(clone(protoRow.getCell(c).style));
+  const protoHeight = protoRow.height;
+
+  const mergesPendentes: string[] = [];
+  if (reg.extraRows > 0) {
+    ws.insertRows(reg.totalsRowInFile, Array.from({ length: reg.extraRows }, () => []));
+    for (let r = reg.totalsRowInFile; r < reg.totalsRowInFile + reg.extraRows; r++) {
+      const row = ws.getRow(r);
+      for (let c = 1; c <= nCols; c++) row.getCell(c).style = clone(protoStyles[c - 1]);
+      if (protoHeight) row.height = protoHeight;
+      for (const m of reg.mergeCols) {
+        const [a, b] = m.split(':');
+        mergesPendentes.push(`${a}${r}:${b}${r}`);
+      }
+    }
+    ws.pageSetup = { ...ws.pageSetup, fitToHeight: 0 };
+  }
+
+  reg.rows.forEach((cells, i) => {
+    const r = reg.firstRow + i;
+    for (const { col, cell } of cells) applyCell(ws.getCell(`${col}${r}`), cell);
+  });
+
+  // Sobras pré-formatadas: limpa os exemplos do modelo, mantém as fórmulas.
+  for (let r = reg.firstRow + reg.rows.length; r <= reg.lastRowInFile; r++) {
+    for (const col of reg.clearCols) ws.getCell(`${col}${r}`).value = null;
+  }
+
+  ws.getCell(`${reg.totalsCell.col}${reg.totalsRow}`).value = { formula: reg.totalsCell.formula };
+  return mergesPendentes;
+}
+
 function writeRowsSheetFromScratch(ws: any, sheet: ResolvedRowsSheet) {
   ws.columns = sheet.columns.map(c => ({ width: 16 }));
   const header = ws.getRow(sheet.headerRow);
@@ -189,7 +263,7 @@ export async function buildTemplateWorkbook(
 ): Promise<any> {
   const ExcelJSModule = await import('exceljs');
   const ExcelJS = (ExcelJSModule as any).default ?? ExcelJSModule;
-  const workbook = new ExcelJS.Workbook();
+  let workbook = new ExcelJS.Workbook();
 
   if (baseFile) {
     await workbook.xlsx.load(baseFile as any);
@@ -197,6 +271,9 @@ export async function buildTemplateWorkbook(
     workbook.creator = 'Gestão Colabor';
     workbook.created = new Date();
   }
+
+  /** Mesclagens das linhas inseridas em folhas form — aplicadas na 2ª passagem. */
+  const mergesPendentes: { sheet: string; ranges: string[] }[] = [];
 
   for (const sheet of sheets) {
     const existing = workbook.getWorksheet(sheet.name);
@@ -208,14 +285,32 @@ export async function buildTemplateWorkbook(
       continue;
     }
     if (sheet.kind === 'form') {
-      // Folha form (BM): escritor próprio, entra no commit do escritor do BM.
-      throw new Error(`Template: folha form "${sheet.name}" ainda sem escritor`);
+      // Folha form só faz sentido sobre o arquivo do cliente: os endereços
+      // e as mesclagens são dele.
+      if (!baseFile || !existing) {
+        throw new Error(`A folha "${sheet.name}" do template "${template.label}" precisa do arquivo-base (${template.baseFile ?? 'não informado'}).`);
+      }
+      const ranges = writeFormSheetIntoBase(existing, sheet);
+      if (ranges.length) mergesPendentes.push({ sheet: sheet.name, ranges });
+      continue;
     }
     if (baseFile) {
       if (!existing) throw new Error(`O arquivo-base do template "${template.label}" não tem a aba "${sheet.name}".`);
       writeRowsSheetIntoBase(workbook, existing, sheet);
     } else {
       writeRowsSheetFromScratch(existing ?? workbook.addWorksheet(sheet.name), sheet);
+    }
+  }
+
+  // 2ª passagem: com linhas inseridas, grava, recarrega e só então mescla as
+  // linhas novas — ver writeFormSheetIntoBase.
+  if (mergesPendentes.length) {
+    const buffer = await workbook.xlsx.writeBuffer();
+    workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer);
+    for (const { sheet, ranges } of mergesPendentes) {
+      const ws = workbook.getWorksheet(sheet);
+      for (const r of ranges) ws.mergeCells(r);
     }
   }
 

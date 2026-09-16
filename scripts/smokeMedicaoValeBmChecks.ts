@@ -169,8 +169,4 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
   return falhas;
 }
 
-/** [X] escritor e [Z] zip — entram nos commits seguintes. */
-export async function runBmWriterChecks(_t: BmSmokeTools, _ctx: { src: any; recorte: any[] }): Promise<number> {
-  console.log('\n[X] [Z] — pendentes (escritor e zip)');
-  return 0;
-}
+import { runBmWriterChecks } from './smokeMedicaoValeBmWriter';

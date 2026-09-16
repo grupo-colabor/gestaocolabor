@@ -3,17 +3,23 @@ import { useState, useEffect } from 'react';
 const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 100] as const;
 export { ITEMS_PER_PAGE_OPTIONS };
 
-export function usePagination<T>(items: T[], storageKey: string) {
+/**
+ * `defaultSize` (opcional) é o tamanho inicial quando não há preferência
+ * guardada — pode ficar fora de ITEMS_PER_PAGE_OPTIONS (ex.: 25 nas listas
+ * recolhíveis da aba Exportações, que escondem o seletor). Uma preferência
+ * guardada válida continua vencendo.
+ */
+export function usePagination<T>(items: T[], storageKey: string, defaultSize = 20) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(() => {
     try {
       const stored = localStorage.getItem(storageKey);
-      const parsed = stored ? parseInt(stored, 10) : 20;
+      const parsed = stored ? parseInt(stored, 10) : NaN;
       return ITEMS_PER_PAGE_OPTIONS.includes(parsed as typeof ITEMS_PER_PAGE_OPTIONS[number])
         ? parsed
-        : 20;
+        : defaultSize;
     } catch {
-      return 20;
+      return defaultSize;
     }
   });
 

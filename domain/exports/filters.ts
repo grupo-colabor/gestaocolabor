@@ -17,6 +17,7 @@ import type { Demand } from '../../types';
 import { demandIntersectsRange } from '../demandDays';
 import { matchesModality, buildModalityOptions, type ModalityOption } from '../modalityOptions';
 import { resolveCalculatedStatus, STATUS_ORDER, STATUS_LABELS } from './shared';
+import { DEFAULT_OPTIONS, type ExportOptions } from './options';
 import type { ExportFilters, FilterKey, FilterableRow } from './types';
 
 type TrainingLike = { id: string; modality?: unknown };
@@ -25,6 +26,12 @@ export interface FilterContext {
   trainingsById: Map<string, TrainingLike>;
   /** Injetável para o smoke fixar "hoje". */
   now?: Date;
+  /**
+   * Opções marcáveis. Só `incluirCanceladas` age aqui: desligada, a demanda
+   * cancelada sai — exceto quando o filtro de status pede exatamente
+   * 'CANCELADA', que força a inclusão (ver options.ts).
+   */
+  options?: ExportOptions;
 }
 
 export function matchesFilters(
@@ -35,12 +42,21 @@ export function matchesFilters(
 ): boolean {
   const d = row.demand;
   const on = (k: FilterKey) => allowed.includes(k);
+  const opts = ctx.options ?? DEFAULT_OPTIONS;
 
   if (on('periodo') && (f.dataInicio || f.dataFim)) {
     if (!demandIntersectsRange(d, f.dataInicio || undefined, f.dataFim || undefined)) return false;
   }
+  // Status calculado uma vez: serve ao filtro de status e à regra de canceladas.
+  const statusCalculado =
+    (on('status') && f.status) || !opts.incluirCanceladas
+      ? resolveCalculatedStatus(d, ctx.trainingsById, ctx.now)
+      : null;
   if (on('status') && f.status) {
-    if (resolveCalculatedStatus(d, ctx.trainingsById, ctx.now) !== f.status) return false;
+    if (statusCalculado !== f.status) return false;
+  }
+  if (!opts.incluirCanceladas && statusCalculado === 'CANCELADA' && f.status !== 'CANCELADA') {
+    return false;
   }
   if (on('modalidade') && f.modalidade) {
     if (!matchesModality(d, ctx.trainingsById, f.modalidade)) return false;

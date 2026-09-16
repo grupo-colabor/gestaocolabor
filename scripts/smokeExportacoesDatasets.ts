@@ -24,6 +24,7 @@ import { buildDemandasRows, DEMANDAS_DATASET, transportLabel, lodgingLabel } fro
 import { EXPORT_DATASETS, getDataset, visibleDatasets } from '../domain/exports/registry';
 import { EMPTY_FILTERS } from '../domain/exports/types';
 import { applyFilters } from '../domain/exports/filters';
+import { DEFAULT_OPTIONS } from '../domain/exports/options';
 import { INTERNAL_COMPANY_LABEL } from '../domain/demandLabel';
 
 export interface SmokeTools {
@@ -417,6 +418,74 @@ export function runDatasetChecks(t: SmokeTools): number {
     const registry = t.ler('domain/exports/registry.ts');
     check('o registry documenta que é defesa de UI e que RLS por papel fica para a leva de segurança',
       registry.includes('DEFESA DE UI') && /RLS por[\s*]+papel/.test(registry));
+  }
+
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * [A1] Opção usarValorHH e coluna Origem da tarifa
+   * ──────────────────────────────────────────────────────────────────────── */
+  console.log('\n[A1] usarValorHH / Origem da tarifa');
+  {
+    // Fixtures: M1 titular valorHH 100 (informada), M2 v1 hourRate 120 (informada),
+    // M4 híbrida valorHH 100, M5 v1 hourRate 100, M6 v1 hourRate 100.
+    const semTarifa: any = { ...M1, id: 'MEA-DEM-905', demandId: 'DEM-905',
+      expenses: { classHours: 16, participantes: [
+        { instructorId: 'INS-T', papel: 'TITULAR' },                       // ausente
+        { instructorId: 'INS-2', papel: 'PARTICIPANTE', horas: 10, valorHH: 0 }, // zero digitado
+      ] } };
+    const v1Vazia: any = { ...M2, id: 'MEA-DEM-906', demandId: 'DEM-906', expenses: { classHours: 16, hourRate: '' } };
+    const srcT = {
+      ...src,
+      demands: [...demands, demandaInterna({ id: 'DEM-905' }), demandaCliente({ id: 'DEM-906' })],
+      measurements: [...measurements, semTarifa, v1Vazia],
+      participants: [...participants, { id: 'P2', demandId: 'DEM-905', instructorId: 'INS-2', startDate: null, endDate: null }],
+      instructorAllocations: [...instructorAllocations,
+        { id: 'A9', demandId: 'DEM-905', instructorId: 'INS-T', startDate: '2026-08-03T08:00', endDate: '2026-08-04T18:00' },
+        { id: 'A10', demandId: 'DEM-906', instructorId: 'INS-T', startDate: '2026-08-10T08:00', endDate: '2026-08-11T17:00' }],
+    };
+    const ligada = buildMedicoesRows(srcT);
+    const l = (d: string, i: string) => ligada.find(r => r.demand.id === d && r.instructorId === i)!;
+    eq('tarifa informada -> Tarifa da medição', l('DEM-900', 'INS-T').origemTarifa, 'Tarifa da medição');
+    eq('v1 hourRate informado -> Tarifa da medição', l('DEM-100', 'INS-T').origemTarifa, 'Tarifa da medição');
+    eq('valorHH ausente -> Sem tarifa na medição', l('DEM-905', 'INS-T').origemTarifa, 'Sem tarifa na medição');
+    eq('e o número continua 0 com a opção ligada (comportamento de hoje)', l('DEM-905', 'INS-T').valorHH, 0);
+    eq('valorHH 0 digitado -> Tarifa zero (digitada)', l('DEM-905', 'INS-2').origemTarifa, 'Tarifa zero (digitada)');
+    eq('v1 hourRate "" -> Sem tarifa na medição', l('DEM-906', 'INS-T').origemTarifa, 'Sem tarifa na medição');
+    eq('segundo titular v1 sem bloco -> origem em branco', l('DEM-100', 'INS-2').origemTarifa, '');
+    check('default da opção é ligada', DEFAULT_OPTIONS.usarValorHH === true);
+
+    const desligada = buildMedicoesRows({ ...srcT, options: { ...DEFAULT_OPTIONS, usarValorHH: false } });
+    const d = (dd: string, i: string) => desligada.find(r => r.demand.id === dd && r.instructorId === i)!;
+    eq('desligada: Valor HH em branco', d('DEM-900', 'INS-T').valorHH, null);
+    eq('desligada: Hora/aula painel em branco', d('DEM-900', 'INS-T').horaAulaPainel, null);
+    eq('desligada: Hora/aula pagamento em branco', d('DEM-900', 'INS-2').horaAulaPagamento, null);
+    eq('desligada: Total geral em branco', d('DEM-900', 'INS-T').totalGeral, null);
+    eq('desligada: origem explica', d('DEM-900', 'INS-T').origemTarifa, 'Tarifa da medição desativada');
+    perto('desligada: despesas continuam', d('DEM-900', 'INS-T').despesas.total, 230);
+    perto('desligada: horas pagamento continuam', d('DEM-900', 'INS-2').horasPagamento ?? NaN, 10);
+    check('Origem da tarifa nasce ligada', defaultColumnKeys(MEDICOES_DATASET).includes('origemTarifa'));
+    eq('Medições oferece as duas opções', MEDICOES_DATASET.options, ['usarValorHH', 'incluirCanceladas']);
+    eq('Demandas oferece só canceladas', DEMANDAS_DATASET.options, ['incluirCanceladas']);
+  }
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * [A2] Opção incluirCanceladas
+   * ──────────────────────────────────────────────────────────────────────── */
+  console.log('\n[A2] incluirCanceladas');
+  {
+    const cancelada = demandaCliente({ id: 'DEM-CAN', status: 'CANCELADA' });
+    const linhas: any[] = [
+      { demand: demandaCliente() },
+      { demand: cancelada },
+    ];
+    const ctxBase = { trainingsById: t.fixtures.trainingsById, now: HOJE };
+    const todos: any = ['periodo', 'status'];
+    check('default da opção é desligada', DEFAULT_OPTIONS.incluirCanceladas === false);
+    eq('desligada + status Todos -> cancelada fora', applyFilters(linhas, EMPTY_FILTERS, todos, ctxBase).map(r => r.demand.id), ['DEM-100']);
+    eq('desligada + status Cancelada -> força inclusão', applyFilters(linhas, { ...EMPTY_FILTERS, status: 'CANCELADA' }, todos, ctxBase).map(r => r.demand.id), ['DEM-CAN']);
+    eq('ligada + status Todos -> as duas', applyFilters(linhas, EMPTY_FILTERS, todos, { ...ctxBase, options: { ...DEFAULT_OPTIONS, incluirCanceladas: true } }).length, 2);
+    eq('desligada vale mesmo sem o filtro de status declarado', applyFilters(linhas, EMPTY_FILTERS, ['periodo'], ctxBase).length, 1);
+    eq('sem ctx.options -> defaults (F1 chamadores continuam válidos)', applyFilters(linhas, EMPTY_FILTERS, todos, { trainingsById: t.fixtures.trainingsById }).length, 1);
   }
 
   return falhas;

@@ -13,6 +13,7 @@
  */
 import type { Demand } from '../../types';
 import type { MeasurementRole } from '../measurementTotals';
+import type { OptionKey } from './options';
 
 /** O que uma célula pode carregar. `null` = em branco ("não se aplica"), NUNCA zero. */
 export type CellValue = string | number | boolean | null;
@@ -74,6 +75,8 @@ export interface DatasetDef<Row extends FilterableRow> {
   requiredView: string;
   /** Filtros que fazem sentido para este dataset — a UI só mostra estes. */
   filters: FilterKey[];
+  /** Opções marcáveis (domain/exports/options.ts) que este dataset oferece. */
+  options: OptionKey[];
   columns: ColumnDef<Row>[];
   /** Prefixo do nome do arquivo. */
   fileBase: string;

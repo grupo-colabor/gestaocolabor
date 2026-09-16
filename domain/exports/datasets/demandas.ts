@@ -341,6 +341,7 @@ export const DEMANDAS_DATASET: DatasetDef<DemandaRow> = {
   description: 'Uma linha por demanda: cadastro, pessoas, logística primária, documentos e se há medição.',
   requiredView: 'demands',
   filters: ['periodo', 'status', 'modalidade', 'tipo', 'uf', 'cliente'],
+  options: ['incluirCanceladas'],
   columns: DEMANDAS_COLUMNS,
   fileBase: 'demandas',
 };

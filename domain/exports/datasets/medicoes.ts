@@ -85,6 +85,7 @@ import {
   round2,
 } from '../shared';
 import { PAPEL_LABELS } from '../filters';
+import { DEFAULT_OPTIONS, type ExportOptions } from '../options';
 import type { CellValue, ColumnDef, DatasetDef, FilterableRow } from '../types';
 
 /* ────────────────────────────── entrada ────────────────────────────── */
@@ -102,9 +103,29 @@ export interface MedicoesSource {
   regionNameById?: Map<string, string>;
   /** Injetável para o smoke fixar "hoje" no status calculado. */
   now?: Date;
+  /** Opções marcáveis (options.ts). Ausente = defaults. */
+  options?: ExportOptions;
 }
 
 /* ─────────────────────────────── linha ─────────────────────────────── */
+
+/**
+ * De onde vem o Valor HH da linha — ou por que está em branco/zero.
+ *
+ * A Colabor ainda não preenche o HH da medição, então um R$ 0,00 de hora/aula
+ * costuma ser "ninguém digitou", não "vale zero". `normalizeMeasurementBlocks`
+ * devolve 0 nos dois casos (parseExpenseValue), por isso o dataset olha o JSON
+ * cru ao lado do bloco, com a mesma regra de "ausente" do domínio (undefined,
+ * null ou string vazia — 0 NÃO é ausente).
+ */
+export type OrigemTarifa =
+  | 'Tarifa da medição'
+  | 'Tarifa zero (digitada)'
+  | 'Sem tarifa na medição'
+  | 'Tarifa da medição desativada';
+
+const tarifaNaoInformada = (v: unknown): boolean =>
+  v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
 
 export type OrigemHoras =
   | 'Informada na medição'
@@ -149,7 +170,10 @@ export interface MedicaoRow extends FilterableRow {
   origemHoras: OrigemHoras | string;
   diasPagamento: string;
 
+  /** `null` também quando a opção usarValorHH está desligada. */
   valorHH: number | null;
+  /** '' quando a pessoa não tem bloco no painel. */
+  origemTarifa: OrigemTarifa | '';
   horaAulaPainel: number | null;
   /** Horas pagamento × valorHH da medição. O Excel usa a aba Tarifas, não este valor. */
   horaAulaPagamento: number | null;
@@ -157,7 +181,8 @@ export interface MedicaoRow extends FilterableRow {
   despesas: PanelExpenseBreakdown;
   naoReembolsavel: number;
   despesasReembolsaveis: number;
-  totalGeral: number;
+  /** `null` quando usarValorHH está desligada: sem hora/aula não há total. */
+  totalGeral: number | null;
 
   medicaoStatus: string;
   medicaoAtualizadaEm: string;
@@ -173,6 +198,7 @@ const zeroBreakdown = (): PanelExpenseBreakdown => ({
 
 export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
   const now = src.now ?? new Date();
+  const opts = src.options ?? DEFAULT_OPTIONS;
   const trainingsById = buildTrainingsById(src.trainings);
   const demandsById = new Map(src.demands.map(d => [d.id, d]));
   const instructorName = (id: string) =>
@@ -278,8 +304,25 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
       const blocoComPapel = bloco ? { ...bloco, papel } : undefined;
 
       const horasPainel = blocoComPapel ? blockPanelHours(blocoComPapel, ctx) : null;
-      const horaAulaPainel = blocoComPapel ? blockHoraAula(blocoComPapel, ctx) : null;
-      const valorHH = blocoComPapel ? blocoComPapel.valorHH : null;
+
+      // Tarifa: o número vem do bloco; o "de onde veio" vem do JSON cru.
+      const tarifaCrua = !blocoComPapel
+        ? undefined
+        : v2
+          ? gravados.find(g => g.instructorId === pessoa.instructorId)?.valorHH
+          : (m.expenses as any)?.hourRate;
+      const origemTarifa: MedicaoRow['origemTarifa'] = !blocoComPapel
+        ? ''
+        : !opts.usarValorHH
+          ? 'Tarifa da medição desativada'
+          : tarifaNaoInformada(tarifaCrua)
+            ? 'Sem tarifa na medição'
+            : blocoComPapel.valorHH === 0
+              ? 'Tarifa zero (digitada)'
+              : 'Tarifa da medição';
+      const usarHH = opts.usarValorHH;
+      const horaAulaPainel = blocoComPapel && usarHH ? blockHoraAula(blocoComPapel, ctx) : null;
+      const valorHH = blocoComPapel && usarHH ? blocoComPapel.valorHH : null;
       const horasInformadas =
         blocoComPapel && blocoComPapel.horasInformadas && blocoComPapel.horas !== undefined
           ? blocoComPapel.horas
@@ -332,12 +375,14 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
         origemHoras,
         diasPagamento: pag ? formatDiasList(pag.dias) : '',
         valorHH,
+        origemTarifa,
         horaAulaPainel,
         horaAulaPagamento: pag && valorHH !== null ? round2(pag.horas * valorHH) : null,
         despesas,
         naoReembolsavel,
         despesasReembolsaveis: round2(despesas.total - naoReembolsavel),
-        totalGeral: round2((horaAulaPainel ?? 0) + despesas.total),
+        // Sem tarifa não há total: em branco, nunca "só as despesas" com cara de total.
+        totalGeral: usarHH ? round2((horaAulaPainel ?? 0) + despesas.total) : null,
       });
     }
   }
@@ -391,7 +436,8 @@ export const MEDICOES_COLUMNS: ColumnDef<MedicaoRow>[] = [
   col('elegivelPagamento', 'Elegível pagamento', 'boolean', true, r => r.elegivelPagamento, { width: 10, help: 'Demanda concluída (status calculado) e pessoa com linha de pagamento.' }),
   col('diasPagamento', 'Dias (pagamento)', 'text', false, r => r.diasPagamento, { width: 24 }),
 
-  col('valorHH', 'Valor HH (R$)', 'currency', true, r => r.valorHH, { width: 12, help: 'Gravado na medição. O Excel de pagamento usa a aba Tarifas, não este valor.' }),
+  col('valorHH', 'Valor HH (R$)', 'currency', true, r => r.valorHH, { width: 12, help: 'Gravado na medição. O Excel de pagamento usa a aba Tarifas, não este valor. Em branco com a opção "Usar Valor HH da medição" desligada.' }),
+  col('origemTarifa', 'Origem da tarifa', 'text', true, r => r.origemTarifa, { width: 26, help: 'Tarifa da medição, tarifa zero digitada, sem tarifa na medição (R$ 0,00 por ausência) ou desativada pela opção.' }),
   col('horaAulaPainel', 'Hora/aula (R$, painel)', 'currency', true, r => r.horaAulaPainel, { width: 14, help: 'Horas (painel) × Valor HH — o mesmo número da seção da pessoa no painel.' }),
   col('horaAulaPagamento', 'Hora/aula (R$, horas pagamento)', 'currency', false, r => r.horaAulaPagamento, { width: 16, help: 'Horas pagamento × Valor HH da medição. Estimativa; a tarifa oficial é a da planilha.' }),
 
@@ -416,6 +462,7 @@ export const MEDICOES_DATASET: DatasetDef<MedicaoRow> = {
   description: 'Uma linha por pessoa em cada demanda com medição aberta: horas, hora/aula e despesas por pessoa.',
   requiredView: 'measurement',
   filters: ['periodo', 'status', 'modalidade', 'tipo', 'uf', 'cliente', 'instrutor', 'papel'],
+  options: ['usarValorHH', 'incluirCanceladas'],
   columns: MEDICOES_COLUMNS,
   fileBase: 'medicoes',
 };

@@ -23,6 +23,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { visibleDatasets, getDataset, type AnyDataset } from '../domain/exports/registry';
 import { EMPTY_FILTERS, type DatasetKey, type ExportFilters, type ExportTable } from '../domain/exports/types';
 import { applyFilters, buildFilterOptions } from '../domain/exports/filters';
+import { DEFAULT_OPTIONS, type ExportOptions } from '../domain/exports/options';
 import { buildTable, defaultColumnKeys } from '../domain/exports/buildRows';
 import { buildMedicoesRows } from '../domain/exports/datasets/medicoes';
 import { buildDemandasRows } from '../domain/exports/datasets/demandas';
@@ -63,6 +64,7 @@ const Exportacoes: React.FC = () => {
   const [erro, setErro] = useState<string | null>(null);
   const [gerando, setGerando] = useState<'xlsx' | 'csv' | null>(null);
   const [filters, setFilters] = useState<ExportFilters>(EMPTY_FILTERS);
+  const [options, setOptions] = useState<ExportOptions>(DEFAULT_OPTIONS);
   const [selected, setSelected] = useState<Record<string, string[]>>({});
 
   // Colunas por dataset: nascem no default aprovado; a seleção sobrevive à
@@ -94,10 +96,10 @@ const Exportacoes: React.FC = () => {
   // Linhas do dataset (sem filtro): montadas uma vez por carga.
   const rows = useMemo(() => {
     if (!dataset || !cargaServe || !carga) return null;
-    const src = { ...carga.data, regionNameById };
+    const src = { ...carga.data, regionNameById, options };
     if (dataset.key === 'medicoes') return buildMedicoesRows(src);
     return buildDemandasRows(src);
-  }, [dataset, carga, cargaServe, regionNameById]);
+  }, [dataset, carga, cargaServe, regionNameById, options]);
 
   const trainingsById = useMemo(
     () => buildTrainingsById(carga?.data.trainings ?? []),
@@ -110,8 +112,8 @@ const Exportacoes: React.FC = () => {
   );
 
   const filteredRows = useMemo(
-    () => (rows && dataset ? applyFilters(rows, filters, dataset.filters, { trainingsById }) : null),
-    [rows, dataset, filters, trainingsById]
+    () => (rows && dataset ? applyFilters(rows, filters, dataset.filters, { trainingsById, options }) : null),
+    [rows, dataset, filters, trainingsById, options]
   );
 
   const table: ExportTable | null = useMemo(() => {
@@ -201,7 +203,15 @@ const Exportacoes: React.FC = () => {
 
       {dataset && rows && (
         <>
-          <FiltrosExportacao allowed={dataset.filters} value={filters} options={filterOptions} onChange={setFilters} />
+          <FiltrosExportacao
+            allowed={dataset.filters}
+            value={filters}
+            options={filterOptions}
+            onChange={setFilters}
+            allowedOptions={dataset.options}
+            optionValues={options}
+            onOptionsChange={setOptions}
+          />
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
             <div className="lg:col-span-1">

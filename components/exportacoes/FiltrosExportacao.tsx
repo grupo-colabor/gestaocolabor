@@ -9,6 +9,7 @@ import {
 import type { ExportFilters, FilterKey } from '../../domain/exports/types';
 import type { FilterOptions } from '../../domain/exports/filters';
 import { EMPTY_FILTERS } from '../../domain/exports/types';
+import { OPTION_LABELS, type ExportOptions, type OptionKey } from '../../domain/exports/options';
 
 /**
  * Filtros da exportação. Só renderiza as chaves que o dataset declara
@@ -21,7 +22,11 @@ const FiltrosExportacao: React.FC<{
   value: ExportFilters;
   options: FilterOptions | null;
   onChange: (next: ExportFilters) => void;
-}> = ({ allowed, value, options, onChange }) => {
+  /** Opções marcáveis que o dataset oferece (options.ts) e o estado delas. */
+  allowedOptions: OptionKey[];
+  optionValues: ExportOptions;
+  onOptionsChange: (next: ExportOptions) => void;
+}> = ({ allowed, value, options, onChange, allowedOptions, optionValues, onOptionsChange }) => {
   const on = (k: FilterKey) => allowed.includes(k);
   const set = (patch: Partial<ExportFilters>) => onChange({ ...value, ...patch });
 
@@ -94,6 +99,22 @@ const FiltrosExportacao: React.FC<{
           <Select label="Papel" v={value.papel} onV={s => set({ papel: s as ExportFilters['papel'] })} items={options?.papel ?? []} />
         )}
       </FilterGrid>
+
+      {allowedOptions.length > 0 && (
+        <div className="flex flex-wrap gap-x-6 gap-y-2 border-t border-slate-100 pt-3">
+          {allowedOptions.map(k => (
+            <label key={k} className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer" title={OPTION_LABELS[k].help}>
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                checked={optionValues[k]}
+                onChange={e => onOptionsChange({ ...optionValues, [k]: e.target.checked })}
+              />
+              {OPTION_LABELS[k].label}
+            </label>
+          ))}
+        </div>
+      )}
 
       <p className="text-[11px] text-slate-400 leading-relaxed border-t border-slate-100 pt-3">
         O período seleciona as demandas que têm ao menos um dia dentro do intervalo. As horas saem

@@ -10,8 +10,10 @@ import {
 } from '../domain/demandLabel';
 import {
   computeMeasurementTotals,
+  computePanelExpenseBreakdown,
   normalizeMeasurementBlocks,
   blockExpenseBreakdown,
+  isPagoPeloInstrutor,
 } from '../domain/measurementTotals';
 import { blockPanelHours, blockHoraAula } from '../domain/measurementTotals';
 import { resolveDemandInstructors } from '../domain/demandInstructors';
@@ -92,8 +94,10 @@ const CategoryBlock = ({
   onRemoveAttachment,
   onAddManualValue,
   showReembolsavel,
-  onToggleReembolsavel
-}: { 
+  onToggleReembolsavel,
+  onTogglePagoPeloInstrutor,
+  donoPadraoNome
+}: {
   category: ExpenseCategory, 
   label: string, 
   icon: any,
@@ -121,7 +125,15 @@ const CategoryBlock = ({
    * dela e capturado inteiro pelo card "Custo das Demandas Internas".
    */
   showReembolsavel?: boolean,
-  onToggleReembolsavel?: (id: string) => void
+  onToggleReembolsavel?: (id: string) => void,
+  /**
+   * Flag "pago pelo instrutor" (Excel de pagamento). Sempre visivel, inclusive
+   * em interna: o instrutor pode pagar uma despesa de interna do bolso e
+   * precisar de reembolso — e isso nao muda o custo, so o pagamento.
+   */
+  onTogglePagoPeloInstrutor?: (id: string) => void,
+  /** Nome do titular, para o aviso de item sem dono marcado como pago. */
+  donoPadraoNome?: string
 }) => {
   const relevantAttachments = attachments.filter(a => 
     a.category === category && (otherId ? a.otherId === otherId : !a.otherId)
@@ -164,6 +176,8 @@ const CategoryBlock = ({
             onRemove={onRemoveAttachment}
             showReembolsavel={showReembolsavel}
             onToggleReembolsavel={onToggleReembolsavel}
+            onTogglePagoPeloInstrutor={onTogglePagoPeloInstrutor}
+            donoPadraoNome={donoPadraoNome}
           />
         ))}
         
@@ -615,6 +629,10 @@ const totals = useMemo(() => {
         ...comPapel,
         nome: getInstructorName(b.instructorId),
         despesas: blockExpenseBreakdown(paraNormalizar as any, b),
+        // O que a Colabor deve a ESTA pessoa: os itens dela marcados como pagos
+        // pelo instrutor. Mesmo laço, um predicado a mais — é o que o Excel de
+        // pagamento imprime nas colunas de despesa.
+        reembolso: blockExpenseBreakdown(paraNormalizar as any, b, { itemFilter: isPagoPeloInstrutor }).total,
         // Sugestão DESTA pessoa: acompanhante tem a proporcional aos dias.
         // Em híbrida é só a carga TOTAL informativa da legenda, nunca placeholder.
         horasPadrao: horasPadraoDaPessoa(b.instructorId, papel),
@@ -630,6 +648,34 @@ const totals = useMemo(() => {
       };
     });
   }, [selectedMeasurement, temBlocosPorPessoa, pessoasDaMedicao, instructors, companionAllocations, trainingDefaultHours, classHours, _selIsHibrida]);
+
+  /**
+   * Total a reembolsar ao instrutor na medicao inteira (rodape e WhatsApp).
+   * Mesmo recorte das secoes; nao subtrai nada do total — e um recorte.
+   */
+  const reembolsoInstrutorTotal = useMemo(
+    () => selectedMeasurement
+      ? computePanelExpenseBreakdown(selectedMeasurement as any, { itemFilter: isPagoPeloInstrutor }).total
+      : 0,
+    [selectedMeasurement]
+  );
+
+  /**
+   * Titulares da demanda (cadastro), sem o gate de `pessoasDaMedicao`: numa
+   * demanda de cliente dividida por dias sem acompanhante o painel nao tem
+   * secoes por pessoa, e todo reembolso marcado vai para o titular de
+   * `demands.instructor_id` (regra em domain/measurementPersonBlocks.ts). O
+   * aviso abaixo existe para isso nao ser implicito.
+   */
+  const titularesDaDemanda = useMemo(
+    () => _selDemand
+      ? resolveDemandInstructors(_selDemand.id, _selDemand.instructorId, instructorAllocations).map(t => t.instructorId).filter(Boolean)
+      : [],
+    [_selDemand, instructorAllocations]
+  );
+  const reembolsoAtribuidoA = !temBlocosPorPessoa && titularesDaDemanda.length > 1 && reembolsoInstrutorTotal > 0
+    ? getInstructorName(_selDemand?.instructorId || titularesDaDemanda[0])
+    : null;
 
   /**
    * Grava um campo do bloco de UMA pessoa no estado local.
@@ -883,8 +929,9 @@ const totals = useMemo(() => {
        *
        * Acompanhante com valor hora/aula preenchido e horas em branco é quase
        * sempre esquecimento: alguém digitou quanto vale a hora dele e não disse
-       * quantas foram. Como o Excel se recusa a inventar horas, essa pessoa
-       * simplesmente não sai na planilha — sem nenhum sinal, se não for este.
+       * quantas foram. O Excel não inventa horas: a linha dele sai com Horas em
+       * branco (amarela) e hora/aula "horas não informadas" até alguém
+       * preencher — na medição ou na própria planilha.
        *
        * Não bloqueia porque "ainda não sei as horas" é um estado legítimo de
        * uma medição em conferência. O save já aconteceu quando este aviso
@@ -900,9 +947,9 @@ const totals = useMemo(() => {
         const nomes = acompanhantesSemHoras.map(x => x.nome).join(', ');
         alert(
           `Medição salva.\n\nAtenção: ${nomes} ${acompanhantesSemHoras.length > 1 ? 'estão' : 'está'} ` +
-          `como acompanhante com valor hora/aula preenchido, mas sem horas informadas — ` +
-          `e acompanhante sem horas NÃO entra na planilha de pagamento.\n\n` +
-          `Se for para pagar, reabra a medição e informe as horas.`
+          `como acompanhante com valor hora/aula preenchido, mas sem horas informadas.\n\n` +
+          `Na planilha de pagamento a linha sai com Horas em branco (célula amarela) e ` +
+          `hora/aula "horas não informadas" até alguém preencher — aqui na medição ou na própria planilha.`
         );
       }
 
@@ -1040,6 +1087,22 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
       ...selectedMeasurement,
       attachments: selectedMeasurement.attachments.map(a =>
         a.id === id ? { ...a, reembolsavel: a.reembolsavel === false } : a
+      ),
+    });
+  };
+
+  /**
+   * Alterna "o instrutor pagou este item (a Colabor reembolsa a ele)?".
+   * Independente do toggle acima; so altera o item; nao muda total nem
+   * categoria — e o unico recorte que entra nas colunas de despesa do Excel de
+   * pagamento. Persiste junto com o resto no Salvar (jsonb attachments).
+   */
+  const handleTogglePagoPeloInstrutor = (id: string) => {
+    if (!selectedMeasurement) return;
+    setSelectedMeasurement({
+      ...selectedMeasurement,
+      attachments: selectedMeasurement.attachments.map(a =>
+        a.id === id ? { ...a, pagoPeloInstrutor: !isPagoPeloInstrutor(a) } : a
       ),
     });
   };
@@ -1632,8 +1695,12 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
     const linhaPessoa = (x: (typeof secoesPorPessoa)[number]) => {
       const semHoras = hibridaMsg && x.papel !== 'ACOMPANHANTE' && !x.horasInformadas;
       return `👤 ${x.nome}: ${formatCurrency(x.despesas.total + x.horasContadas * x.valorHH)}` +
-        (semHoras ? ' (horas: não informado)' : '');
+        (semHoras ? ' (horas: não informado)' : '') +
+        (x.reembolso > 0 ? ` · a reembolsar ao instrutor: ${formatCurrency(x.reembolso)}` : '');
     };
+    const reembolsoMsg = reembolsoInstrutorTotal > 0
+      ? `💸 A reembolsar ao instrutor: ${formatCurrency(reembolsoInstrutorTotal)}\n`
+      : '';
     const porPessoa = temBlocosPorPessoa
       ? secoesPorPessoa.map(linhaPessoa).join('\n') + '\n'
       : '';
@@ -1647,7 +1714,7 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
 🚗 Locomoção: ${formatCurrency(totals.locomocao)}
 🍽️ Alimentação: ${formatCurrency(totals.cafe + totals.almoco + totals.jantar)}
 ➕ Outros: ${formatCurrency(totals.outros)}
-${horasHibridaV1}${porPessoa}
+${horasHibridaV1}${porPessoa}${reembolsoMsg}
 *TOTAL GERAL: ${formatCurrency(totals.total)}*
 
 Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`);
@@ -2092,6 +2159,11 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                       <span className="text-sm font-black text-slate-900">
                         {formatCurrency(secao.despesas.total + secao.horasContadas * secao.valorHH)}
                       </span>
+                      {secao.reembolso > 0 && (
+                        <span className="block text-[10px] font-bold text-blue-600 mt-0.5">
+                          a reembolsar ao instrutor: {formatCurrency(secao.reembolso)}
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -2197,40 +2269,40 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                       <CategoryBlock
                         category="HOSPEDAGEM" label="Hospedagem" icon={Home} colorClass="text-green-500"
-                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
+                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId} donoPadraoNome={secao.titular ? secao.nome : undefined}
                         onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                         onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
+                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel} onTogglePagoPeloInstrutor={handleTogglePagoPeloInstrutor}
                       />
                       <CategoryBlock
                         category="LOCOMOCAO" label="Locomoção" icon={Truck} colorClass="text-amber-500"
-                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
+                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId} donoPadraoNome={secao.titular ? secao.nome : undefined}
                         onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                         onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
+                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel} onTogglePagoPeloInstrutor={handleTogglePagoPeloInstrutor}
                       />
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <CategoryBlock
                         category="CAFE" label="Café da Manhã" icon={Tag} colorClass="text-blue-400"
-                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
+                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId} donoPadraoNome={secao.titular ? secao.nome : undefined}
                         onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                         onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
+                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel} onTogglePagoPeloInstrutor={handleTogglePagoPeloInstrutor}
                       />
                       <CategoryBlock
                         category="ALMOCO" label="Almoço" icon={Tag} colorClass="text-blue-500"
-                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
+                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId} donoPadraoNome={secao.titular ? secao.nome : undefined}
                         onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                         onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
+                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel} onTogglePagoPeloInstrutor={handleTogglePagoPeloInstrutor}
                       />
                       <CategoryBlock
                         category="JANTAR" label="Jantar" icon={Tag} colorClass="text-blue-600"
-                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId}
+                        attachments={secao.attachments as Attachment[]} ownerId={secao.instructorId} donoPadraoNome={secao.titular ? secao.nome : undefined}
                         onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                         onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
+                        showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel} onTogglePagoPeloInstrutor={handleTogglePagoPeloInstrutor}
                       />
                     </div>
                   </div>
@@ -2241,6 +2313,15 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                   editando a mesma coisa. */}
               {!temBlocosPorPessoa && (
               <>
+              {reembolsoAtribuidoA && (
+                <div className="flex items-start gap-2 text-[11px] font-bold text-blue-800 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
+                  <Info size={14} className="mt-px flex-shrink-0" />
+                  <span>
+                    Medição sem seções por pessoa (demanda dividida entre {titularesDaDemanda.length} titulares) —
+                    reembolso atribuído a <strong>{reembolsoAtribuidoA}</strong> na planilha de pagamento.
+                  </span>
+                </div>
+              )}
               <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
               <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-4">
                 <DollarSign size={14} className="text-emerald-500" /> Hora/Aula
@@ -2354,14 +2435,14 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                   attachments={selectedMeasurement.attachments}
                   onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                   onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
+                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel} onTogglePagoPeloInstrutor={handleTogglePagoPeloInstrutor}
                 />
                 <CategoryBlock 
                   category="LOCOMOCAO" label="Locomoção" icon={Truck} colorClass="text-amber-500" 
                   attachments={selectedMeasurement.attachments}
                   onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                   onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
+                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel} onTogglePagoPeloInstrutor={handleTogglePagoPeloInstrutor}
                 />
               </div>
 
@@ -2373,7 +2454,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                   attachments={selectedMeasurement.attachments}
                   onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                   onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
+                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel} onTogglePagoPeloInstrutor={handleTogglePagoPeloInstrutor}
                 />
                 <CategoryBlock 
                   category="ALMOCO" label="Almoço" icon={Tag} colorClass="text-blue-500" 
@@ -2382,7 +2463,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                   attachments={selectedMeasurement.attachments}
                   onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                   onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
+                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel} onTogglePagoPeloInstrutor={handleTogglePagoPeloInstrutor}
                 />
                 <CategoryBlock 
                   category="JANTAR" label="Jantar" icon={Tag} colorClass="text-blue-600" 
@@ -2391,7 +2472,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                   attachments={selectedMeasurement.attachments}
                   onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                   onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
+                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel} onTogglePagoPeloInstrutor={handleTogglePagoPeloInstrutor}
                 />
               </div>
               </>
@@ -2425,7 +2506,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                           attachments={selectedMeasurement.attachments}
                           onUploadFile={handleUploadFile} onUpdateValue={handleUpdateAttachmentValue}
                           onRemoveAttachment={handleRemoveAttachment} onAddManualValue={handleAddManualValue}
-                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel}
+                  showReembolsavel={!_selIsInterna} onToggleReembolsavel={handleToggleReembolsavel} onTogglePagoPeloInstrutor={handleTogglePagoPeloInstrutor}
                         />
                       </div>
                     </div>
@@ -2435,6 +2516,12 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
             </div>
 
             <div className="p-7 bg-white border-t border-slate-200 flex justify-end items-center gap-6">
+              {reembolsoInstrutorTotal > 0 && (
+                <div className="flex flex-col text-right">
+                  <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest">A reembolsar ao instrutor</span>
+                  <span className="text-lg font-black text-blue-600 leading-tight">{formatCurrency(reembolsoInstrutorTotal)}</span>
+                </div>
+              )}
               {!_selIsInterna && totals.naoReembolsavel > 0 && (
                 <div className="flex flex-col text-right">
                   <span className="text-[10px] font-black text-amber-500 uppercase tracking-widest">Nao reembolsavel</span>

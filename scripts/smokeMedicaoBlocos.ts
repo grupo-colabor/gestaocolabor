@@ -1636,6 +1636,38 @@ console.log('\n[13] Acompanhante sem horas gera linha (montagem do export)');
   check('o reconcile usa o comparador puro', runner.includes("from './reconcileExportacoesCore'") && runner.includes('compareExcelWithExport(blocks, rows, start, end)'));
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * [14] PAINEL — flag nova ao lado da antiga, totais e avisos
+ * (guardas de fonte: o painel não roda em Node)
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[14] Painel: "Pago pelo instrutor" ao lado de "Não reembolsa"');
+{
+  const item = ler('components/measurement/ExpenseItemRow.tsx');
+  check('a linha do item lê as duas flags pelos helpers do domínio', item.includes('isNaoReembolsavel(a)') && item.includes('isPagoPeloInstrutor(a)'));
+  check('rótulo da flag da Vale diz o estado', item.includes('Não reembolsa') && !item.includes("'Nao reemb.'"));
+  check('rótulo da flag nova diz o estado', item.includes('Pago pelo instrutor'));
+  check('tooltip da Vale', item.includes('Fica fora da medição da Vale'));
+  check('tooltip do pagamento', item.includes('Entra no Excel de pagamento do instrutor'));
+  check('ativa: âmbar (Vale) e azul (pagamento)', item.includes('bg-amber-100 text-amber-700') && item.includes('bg-blue-100 text-blue-700'));
+  check('a flag nova só depende do handler (aparece em interna também)', item.includes('{onTogglePagoPeloInstrutor && (') && !/showPagoPeloInstrutor/.test(item));
+  check('item sem dono marcado avisa para quem vai o reembolso', item.includes('o reembolso vai para {donoPadraoNome} (titular)'));
+  const p = ler('components/Measurement.tsx');
+  check('a regra do botão antigo não mudou (toggle de reembolsavel === false)', p.includes('a.id === id ? { ...a, reembolsavel: a.reembolsavel === false } : a'));
+  check('o toggle novo inverte pelo helper (nunca grava a string "true")', p.includes('{ ...a, pagoPeloInstrutor: !isPagoPeloInstrutor(a) }'));
+  eq('o handler chega a todos os CategoryBlock (11: 5 por pessoa + 5 v1 + Outros)', (p.match(/onTogglePagoPeloInstrutor=\{handleTogglePagoPeloInstrutor\}/g) ?? []).length, 11);
+  check('a flag nova NÃO é escondida em interna', !/onTogglePagoPeloInstrutor=\{!_selIsInterna/.test(p));
+  check('seção da pessoa mostra "a reembolsar ao instrutor" pelo mesmo laço do painel',
+    p.includes("reembolso: blockExpenseBreakdown(paraNormalizar as any, b, { itemFilter: isPagoPeloInstrutor }).total") &&
+      p.includes('a reembolsar ao instrutor: {formatCurrency(secao.reembolso)}'));
+  check('rodapé mostra o total a reembolsar', p.includes('A reembolsar ao instrutor') && p.includes('formatCurrency(reembolsoInstrutorTotal)'));
+  check('WhatsApp idem (por pessoa e total)', p.includes('a reembolsar ao instrutor: ${formatCurrency(x.reembolso)}') && p.includes('💸 A reembolsar ao instrutor:'));
+  check('alerta do acompanhante sem horas diz que ele SAI na planilha (em branco), não que fica de fora',
+    p.includes('Horas em branco (célula amarela)') && !p.includes('NÃO entra na planilha de pagamento'));
+  check('demanda dividida sem seções: aviso de a quem o reembolso é atribuído',
+    p.includes('reembolso atribuído a <strong>{reembolsoAtribuidoA}</strong>') && p.includes('titularesDaDemanda.length > 1'));
+  check('o titular das seções recebe donoPadraoNome (aviso de item sem dono)', (p.match(/donoPadraoNome=\{secao\.titular \? secao\.nome : undefined\}/g) ?? []).length === 5);
+}
+
 console.log(
   falhas === 0 ? '\n✅ SMOKE MEDICAO BLOCOS: OK' : `\n❌ SMOKE MEDICAO BLOCOS: ${falhas} falha(s)`
 );

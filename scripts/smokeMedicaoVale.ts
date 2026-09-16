@@ -194,9 +194,17 @@ console.log('\n[V] Template Vale');
   eq('resolveTemplate devolve as duas abas na ordem', abas.map(a => `${a.name}:${a.kind}`), ['Turmas Realizadas:rows', 'Plantas:static']);
 }
 
-/* Blocos [D] [X] [P] entram com o dataset, o escritor e o painel. */
-import { runValeDatasetChecks } from './smokeMedicaoValeDatasets';
-falhas += runValeDatasetChecks({ ...tools, fixtures });
+/* Blocos [D] dataset, [X] escritor (assíncrono: lê o arquivo-base), [P] painel. */
+import { runValeDatasetChecks, buildValeContext } from './smokeMedicaoValeDatasets';
+import { runWriterChecks } from './smokeMedicaoValeWriter';
 
-console.log(falhas === 0 ? '\n✅ SMOKE MEDICAO VALE: OK' : `\n❌ SMOKE MEDICAO VALE: ${falhas} falha(s)`);
-process.exit(falhas === 0 ? 0 : 1);
+(async () => {
+  falhas += runValeDatasetChecks({ ...tools, fixtures });
+  falhas += await runWriterChecks({ ...tools, fixtures }, buildValeContext());
+
+  console.log(falhas === 0 ? '\n✅ SMOKE MEDICAO VALE: OK' : `\n❌ SMOKE MEDICAO VALE: ${falhas} falha(s)`);
+  process.exit(falhas === 0 ? 0 : 1);
+})().catch(e => {
+  console.error(e);
+  process.exit(1);
+});

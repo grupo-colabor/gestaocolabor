@@ -171,12 +171,11 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     eq('status da medição inclui Sem medição', opts.statusMedicao.map(o => o.value).includes(SEM_MEDICAO) && MEDICAO_STATUS_OPTIONS.length, 6);
   }
 
-  falhas += runWriterAndPanelChecks({ ...t, check, eq, perto }, { src, rows });
   return falhas;
 }
 
-/** [X] e [P] — entram nos commits 5 e 6. */
-export function runWriterAndPanelChecks(_t: ValeSmokeTools, _ctx: { src: any; rows: any[] }): number {
-  console.log('\n[X] [P] — pendentes (escritor e painel)');
-  return 0;
+/** O que os blocos assíncronos ([X] escritor, [P] painel) recebem. */
+export function buildValeContext() {
+  const src = buildValeFixtureSource();
+  return { src, rows: buildMedicaoValeRows(src) };
 }

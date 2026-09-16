@@ -11,7 +11,7 @@
  *     e bloqueiam a geração.
  */
 import React, { useMemo, useState } from 'react';
-import { FileSpreadsheet, Loader2, Save, Info } from 'lucide-react';
+import { FileSpreadsheet, Loader2, Info } from 'lucide-react';
 
 import type { TemplateDatasetDef } from '../../domain/exports/registry';
 import type { ExportSourceData } from '../../services/exports/loadExportData';
@@ -67,11 +67,14 @@ const MedicaoTemplateView: React.FC<{
   const [salvando, setSalvando] = useState(false);
   const [gerando, setGerando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  /** Remonta os inputs (não controlados) da grade após salvar/descartar/recarregar. */
+  const [resetKey, setResetKey] = useState(0);
 
   // Nova carga = valores novos do banco e edições pendentes descartadas.
   React.useEffect(() => {
     setValoresSalvos(carga.templateValues);
     setPendentes(new Map());
+    setResetKey(k => k + 1);
   }, [carga]);
 
   const baseIndex = useMemo(() => indexTemplateValues(valoresSalvos), [valoresSalvos]);
@@ -131,6 +134,7 @@ const MedicaoTemplateView: React.FC<{
         return [...porChave.values()];
       });
       setPendentes(new Map());
+      setResetKey(k => k + 1);
       onNotify(`${gravados.length} valor(es) salvos.`, 'success');
     } catch (e: any) {
       setErro(`Falha ao salvar: ${e?.message || e}`);
@@ -138,6 +142,14 @@ const MedicaoTemplateView: React.FC<{
       setSalvando(false);
     }
   };
+
+  const descartar = () => {
+    setPendentes(new Map());
+    setResetKey(k => k + 1);
+  };
+
+  const demandasComPendencia = useMemo(() => new Set(pendencias.map(p => p.demand.id)), [pendencias]);
+  const semPeriodo = !filters.dataInicio && !filters.dataFim;
 
   const gerar = async () => {
     if (!podeGerar) return;
@@ -194,11 +206,30 @@ const MedicaoTemplateView: React.FC<{
         }
       />
 
+      {semPeriodo && (
+        <p className="text-[11px] text-slate-400 -mt-3 px-2">
+          sem período: todas as turmas concluídas ({elegiveis.length})
+        </p>
+      )}
+
       {erro && <ExportBanner tipo="erro"><strong>Bloqueado.</strong> {erro}</ExportBanner>}
 
       <PainelPendencias pendencias={pendencias} totalNoRecorte={filtered.length} />
 
-      <GradeEditavel rows={elegiveis} columns={sheetTurmas.columns ?? []} values={values} onEdit={registrarEdicao} trainingNames={trainingNames} />
+      <GradeEditavel
+        rows={elegiveis}
+        allRows={rows}
+        columns={sheetTurmas.columns ?? []}
+        values={values}
+        onEdit={registrarEdicao}
+        trainingNames={trainingNames}
+        demandasComPendencia={demandasComPendencia}
+        pendentes={pendentes.size}
+        salvando={salvando}
+        onSalvar={salvar}
+        onDescartar={descartar}
+        resetKey={resetKey}
+      />
 
       <div className="bg-slate-900 text-white rounded-2xl px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-6">
@@ -213,14 +244,6 @@ const MedicaoTemplateView: React.FC<{
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={salvar}
-            disabled={!temPendente || salvando}
-            className="bg-amber-500 hover:bg-amber-400 text-slate-900 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {salvando ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Salvar
-          </button>
           <button
             type="button"
             onClick={gerar}

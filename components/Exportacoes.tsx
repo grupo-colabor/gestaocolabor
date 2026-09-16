@@ -20,7 +20,7 @@ import { Download, FileSpreadsheet, FileText, Loader2, RefreshCw } from 'lucide-
 
 import { canAccessView, useApp } from '../App';
 import { useAuth } from '../contexts/AuthContext';
-import { visibleDatasets, getDataset, isTemplateDataset, type ExportDatasetEntry } from '../domain/exports/registry';
+import { visibleDatasets, getDataset, isTemplateDataset, templateIdsOf, type ExportDatasetEntry } from '../domain/exports/registry';
 import { EMPTY_FILTERS, type DatasetKey, type ExportFilters, type ExportTable } from '../domain/exports/types';
 import { applyFilters, buildFilterOptions } from '../domain/exports/filters';
 import { DEFAULT_OPTIONS, type ExportOptions } from '../domain/exports/options';
@@ -42,7 +42,7 @@ import ExportBanner from './exportacoes/ExportBanner';
 /** Acima disto a prévia continua paginada, mas o aviso lembra que o arquivo vai ser grande. */
 const AVISO_LINHAS = 20_000;
 
-type Carga = { data: ExportSourceData; comLogistica: boolean; templateId: string | null };
+type Carga = { data: ExportSourceData; comLogistica: boolean; templateKey: string };
 
 const Exportacoes: React.FC = () => {
   const { regions, operationalBases, setNotification } = useApp();
@@ -75,18 +75,19 @@ const Exportacoes: React.FC = () => {
   const setSelectedKeys = (keys: string[]) => dataset && setSelected(prev => ({ ...prev, [dataset.key]: keys }));
 
   const precisaLogistica = datasetKey === 'demandas' || !!templateDataset;
-  const templateId = templateDataset?.template.id ?? null;
+  const templateIds = templateDataset ? templateIdsOf(templateDataset) : [];
+  const templateKey = [...templateIds].sort().join(',');
   const cargaServe =
-    !!carga && (!precisaLogistica || carga.comLogistica) && (!templateId || carga.templateId === templateId);
+    !!carga && (!precisaLogistica || carga.comLogistica) && (!templateKey || carga.templateKey === templateKey);
 
   const carregar = useCallback(async () => {
     if (!datasetKey) return;
     setCarregando(true);
     setErro(null);
     try {
-      const comLogistica = datasetKey === 'demandas' || !!templateId;
-      const data = await loadExportData({ includeLogistics: comLogistica, templateId });
-      setCarga({ data, comLogistica, templateId });
+      const comLogistica = datasetKey === 'demandas' || !!templateKey;
+      const data = await loadExportData({ includeLogistics: comLogistica, templateIds });
+      setCarga({ data, comLogistica, templateKey });
     } catch (e: any) {
       console.error('[Exportacoes] falha ao carregar', e);
       setCarga(null);
@@ -94,7 +95,8 @@ const Exportacoes: React.FC = () => {
     } finally {
       setCarregando(false);
     }
-  }, [datasetKey, templateId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetKey, templateKey]);
 
   const regionNameById = useMemo(() => new Map(regions.map(r => [r.id, r.name])), [regions]);
 

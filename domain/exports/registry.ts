@@ -21,6 +21,7 @@
 import { MEDICOES_DATASET } from './datasets/medicoes';
 import { DEMANDAS_DATASET } from './datasets/demandas';
 import { VALE_TEMPLATE } from './templates/vale';
+import { VALE_BM_TEMPLATE } from './templates/vale-bm';
 import type { MeasurementTemplate } from './templates/types';
 import type { OptionKey } from './options';
 import type { DatasetDef, DatasetKey, FilterKey, FilterableRow } from './types';
@@ -41,6 +42,11 @@ export interface TemplateDatasetDef {
   filters: FilterKey[];
   options: OptionKey[];
   template: MeasurementTemplate;
+  /**
+   * Templates cujos valores manuais a tela precisa carregar. Default =
+   * [template.id]. O BM lê os preços do vale-v1 e o cabeçalho do vale-bm-v1.
+   */
+  templateIds?: string[];
 }
 
 export type ExportDatasetEntry = AnyDataset | TemplateDatasetDef;
@@ -60,7 +66,27 @@ export const MEDICAO_VALE_DATASET: TemplateDatasetDef = {
   template: VALE_TEMPLATE,
 };
 
-export const EXPORT_DATASETS: ExportDatasetEntry[] = [MEDICOES_DATASET, DEMANDAS_DATASET, MEDICAO_VALE_DATASET];
+export const VALE_BM_DATASET: TemplateDatasetDef = {
+  kind: 'template',
+  key: 'vale-bm',
+  label: 'BM Vale',
+  description:
+    'Boletim de Medição no modelo da Vale: a mesma seleção da Medição Vale agregada por treinamento, um BM por (corredor, mina).',
+  requiredView: 'measurement',
+  filters: ['periodoInicio', 'corredor', 'site', 'statusMedicao'],
+  options: ['incluirCanceladas'],
+  template: VALE_BM_TEMPLATE,
+  templateIds: [VALE_TEMPLATE.id, VALE_BM_TEMPLATE.id],
+};
+
+export const EXPORT_DATASETS: ExportDatasetEntry[] = [
+  MEDICOES_DATASET,
+  DEMANDAS_DATASET,
+  MEDICAO_VALE_DATASET,
+  VALE_BM_DATASET,
+];
+
+export const templateIdsOf = (d: TemplateDatasetDef): string[] => d.templateIds ?? [d.template.id];
 
 export function getDataset(key: DatasetKey): ExportDatasetEntry {
   const d = EXPORT_DATASETS.find(x => x.key === key);

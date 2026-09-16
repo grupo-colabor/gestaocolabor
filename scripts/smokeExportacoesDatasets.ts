@@ -397,7 +397,10 @@ export function runDatasetChecks(t: SmokeTools): number {
    * ──────────────────────────────────────────────────────────────────────── */
   console.log('\n[G] Registry');
   {
-    eq('registry: Medições, Demandas e Medição Vale', EXPORT_DATASETS.map(d => d.key), ['medicoes', 'demandas', 'medicao-vale']);
+    eq('registry: Medições, Demandas, Medição Vale e BM Vale', EXPORT_DATASETS.map(d => d.key), ['medicoes', 'demandas', 'medicao-vale', 'vale-bm']);
+    const bmDs = EXPORT_DATASETS.find(d => d.key === 'vale-bm')!;
+    check('BM Vale é template, exige measurement e carrega os valores do vale-v1 e do vale-bm-v1',
+      isTemplateDataset(bmDs) && bmDs.requiredView === 'measurement' && JSON.stringify(bmDs.templateIds) === JSON.stringify(['vale-v1', 'vale-bm-v1']));
     const vale = EXPORT_DATASETS.find(d => d.key === 'medicao-vale')!;
     check('Medição Vale é dataset de template e exige a view measurement', isTemplateDataset(vale) && vale.requiredView === 'measurement');
     check('Medição Vale filtra por data de início, corredor, site e status da medição', isTemplateDataset(vale) && ['periodoInicio', 'corredor', 'site', 'statusMedicao'].every(f => vale.filters.includes(f as any)));
@@ -414,7 +417,7 @@ export function runDatasetChecks(t: SmokeTools): number {
     const analista = new Set(['dashboard', 'demands', 'internal-demands', 'exportacoes']);
     eq('analista vê só Demandas', visibleDatasets(v => analista.has(v)).map(d => d.key), ['demandas']);
     const admin = new Set([...analista, 'measurement']);
-    eq('admin vê os três', visibleDatasets(v => admin.has(v)).map(d => d.key), ['medicoes', 'demandas', 'medicao-vale']);
+    eq('admin vê os quatro', visibleDatasets(v => admin.has(v)).map(d => d.key), ['medicoes', 'demandas', 'medicao-vale', 'vale-bm']);
     eq('coordenador não vê nenhum', visibleDatasets(() => false).length, 0);
     let lancou = false;
     try { getDataset('nada' as any); } catch { lancou = true; }

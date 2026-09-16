@@ -159,6 +159,40 @@ export function buildPendencias(rows: MedicaoValeRow[], ctx: PendenciasContext):
   return out;
 }
 
+/**
+ * Acrescenta avisos de outra origem (ex.: o BM — turma sem local, cabeçalho
+ * não cadastrado, cadastro de treinamento duplicado) às pendências já
+ * montadas, criando a linha da demanda quando ela não tinha nenhuma. Mantém a
+ * ordem (fatos primeiro, depois mais avisos, depois data).
+ */
+export function mergePendencias(
+  base: PendenciaRow[],
+  extras: { row: MedicaoValeRow; pendencia: Pendencia }[]
+): PendenciaRow[] {
+  const porDemanda = new Map(base.map(p => [p.demand.id, { ...p, pendencias: [...p.pendencias] }]));
+  for (const { row, pendencia } of extras) {
+    const atual = porDemanda.get(row.demand.id) ?? {
+      demand: row.demand,
+      medicaoStatus: row.medicaoStatus,
+      origem: row,
+      pendencias: [],
+      fatos: 0,
+      avisos: 0,
+    };
+    if (!atual.pendencias.some(p => p.texto === pendencia.texto)) atual.pendencias.push(pendencia);
+    porDemanda.set(row.demand.id, atual);
+  }
+  const out = [...porDemanda.values()].map(p => ({
+    ...p,
+    fatos: p.pendencias.filter(x => x.tipo === 'fato').length,
+    avisos: p.pendencias.filter(x => x.tipo === 'aviso').length,
+  }));
+  out.sort(
+    (a, b) => b.fatos - a.fatos || b.avisos - a.avisos || a.origem.input.dataInicio.localeCompare(b.origem.input.dataInicio)
+  );
+  return out;
+}
+
 /* ─────────────────────── export do painel pelo motor da F1 ─────────────────────── */
 
 const col = (

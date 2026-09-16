@@ -14,6 +14,8 @@ export type EdicaoPendente = {
   refId: string;
   columnKey: string;
   value: number | string | null;
+  /** Template dono do valor. Ausente = o template da aba de linhas (preços e campos por turma). */
+  templateId?: string;
 };
 
 const FONTE_LABEL: Record<ManualValueSource, string> = {

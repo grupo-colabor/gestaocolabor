@@ -59,9 +59,10 @@ export interface ExportSourceData {
   documentFlags: DocFlagLike[];
   /** `logistic_allocations` (a linha do Controle Logístico) — só com includeLogistics. */
   logisticAllocations: LogisticAllocationRow[];
-  /** Valores manuais do template pedido em `templateId`; vazio quando não pedido. */
+  /** Valores manuais dos templates pedidos em `templateIds`; vazio quando não pedido. */
   templateValues: TemplateValueRow[];
-  templateId: string | null;
+  /** Ordenados, para a tela comparar a carga com o dataset atual. */
+  templateIds: string[];
   /** Quando os dados foram lidos — vai para o rodapé da tela. */
   loadedAt: Date;
 }
@@ -87,8 +88,8 @@ export interface LoadExportDataOptions {
    * paga essas 5 a 7 requisições a mais.
    */
   includeLogistics: boolean;
-  /** Template de medição cujos valores manuais devem vir junto (Etapa 2). */
-  templateId?: string | null;
+  /** Templates de medição cujos valores manuais devem vir junto (Etapa 2 / BM). */
+  templateIds?: string[];
 }
 
 export async function loadExportData(opts: LoadExportDataOptions): Promise<ExportSourceData> {
@@ -118,7 +119,7 @@ export async function loadExportData(opts: LoadExportDataOptions): Promise<Expor
     opts.includeLogistics ? fetchAllDemandDocumentFlags() : Promise.resolve([]),
     // Pelo fetcher paginado existente (Controle Logístico), não por query nova.
     opts.includeLogistics ? fetchLogisticAllocations() : Promise.resolve([]),
-    opts.templateId ? fetchTemplateValues(opts.templateId) : Promise.resolve([]),
+    opts.templateIds && opts.templateIds.length ? fetchTemplateValues(opts.templateIds) : Promise.resolve([]),
   ]);
 
   return {
@@ -150,7 +151,7 @@ export async function loadExportData(opts: LoadExportDataOptions): Promise<Expor
     documentFlags: (docRows ?? []) as DocFlagLike[],
     logisticAllocations: logisticAllocationRows ?? [],
     templateValues: templateValueRows ?? [],
-    templateId: opts.templateId ?? null,
+    templateIds: [...(opts.templateIds ?? [])].sort(),
     loadedAt: new Date(),
   };
 }

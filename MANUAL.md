@@ -396,6 +396,43 @@ Cada demanda concluída percorre os seguintes estágios:
 5. Adicione **Observações** se necessário
 6. Avance o estágio conforme aprovação
 
+### As duas marcações de cada item de despesa
+
+Cada notinha ou valor avulso tem dois botões à direita do valor. São independentes: um item pode ter nenhum, um ou os dois.
+
+| Botão | O que significa | Efeito |
+|-------|-----------------|--------|
+| **NÃO REEMBOLSA** (âmbar quando marcado) | O **cliente** não reembolsa este item (ex.: Uber até a locadora, almoço acima do teto) | Fica **fora** da Medição Vale e do BM. Continua no total da medição e no custo do Dashboard |
+| **PAGO PELO INSTRUTOR** (azul quando marcado) | O **instrutor** pagou do próprio bolso e a Colabor precisa reembolsá-lo | Entra nas colunas de despesa do **Excel de pagamento** do instrutor. Não muda o custo nem a medição da Vale |
+
+| Não reembolsa | Pago pelo instrutor | Medição Vale / BM | Excel de pagamento |
+|---|---|---|---|
+| não | não | entra | não entra |
+| não | sim | entra | entra |
+| sim | não | fora | não entra |
+| sim | sim | fora | entra |
+
+O botão **Pago pelo instrutor** aparece também em demanda interna. Itens antigos nascem sem a marcação: nada vira reembolso ao instrutor sem alguém clicar.
+
+Na medição com seções por pessoa, o reembolso é de quem lançou o item. Item lançado **sem pessoa** (medição antiga, ou painel de uma pessoa só) vai para o **titular** — a linha do item avisa isso. Em demanda de cliente **dividida entre dois titulares** sem acompanhante o painel não tem seções por pessoa, e todo reembolso marcado vai para o titular principal da demanda; o painel mostra um aviso com o nome.
+
+O total da pessoa e o rodapé mostram **"a reembolsar ao instrutor"** quando houver item marcado. O resumo do WhatsApp também.
+
+### Exportar Medição (planilha de pagamento, Excel)
+
+Em Medição → **Exportar Medição**, escolha o mês (ou um período) e gere o `.xlsx`. Entram demandas **concluídas** com instrutor alocado, com as horas recortadas pelos dias dentro do período.
+
+**Aba de cada instrutor**, no formato da planilha manual da Colabor:
+
+- Linha 1: nome. Linha 2: CPF/CNPJ (do cadastro) e **dados bancários** — estes vêm do Resumo por fórmula: digite uma vez lá.
+- Colunas: Código · Empresa · Treinamento · Data · Local · Modalidade · **Hospedagem · Transporte (Locomoção) · Alimentação · Outros · Total despesas** · **Horas** · **Hora/aula (R$)** · **Total (R$)** · Tipo · Categoria · Noturno · Papel.
+- As colunas de despesa trazem **só o que foi marcado como "Pago pelo instrutor"** na medição. Despesa paga pela Colabor não aparece na aba dele.
+- **Hora/aula** = horas × a tarifa da aba **Tarifas** (uma linha por instrutor + empresa + tipo + noturno + papel; a única coluna a preencher). **Total** = despesas + hora/aula.
+
+**Acompanhante sem horas informadas** passa a aparecer na aba dele: a célula de **Horas** sai em branco e **amarela** (a única célula editável da aba), o Hora/aula mostra o texto *"horas não informadas"* até alguém preencher — na medição ou na própria planilha —, e as despesas dele entram normalmente. Isso vale para todo acompanhante alocado em demanda concluída, **com ou sem medição salva**. Consequências: a lista de nomes no Resumo cresce, e **Tarifas pendentes** passa a contar a tarifa de acompanhante dessas pessoas (ela existe na aba Tarifas para o valor calcular assim que as horas forem preenchidas). Acompanhante com **0 h** digitado continua fora: zero é decisão, não ausência.
+
+**Resumo**: Instrutor · Total de Horas · **Hora/aula (R$)** · **Despesas a reembolsar (R$)** · **Total a pagar (R$)** (= hora/aula + despesas) · Tarifas pendentes · CPF/CNPJ · Dados Bancários. Tudo por fórmula sobre as abas; a linha TOTAL GERAL soma as cinco colunas.
+
 ### Exportar Medição para Word
 
 No modal de detalhes da medição, clique em **Exportar** para gerar um documento .docx com todas as despesas, totais por categoria e total geral.
@@ -600,7 +637,7 @@ No módulo **Medições** existem três colunas de horas, porque o sistema resol
 
 | Coluna | De onde vem | Quando fica em branco |
 |--------|-------------|------------------------|
-| **Horas pagamento** (ligada por padrão) | A linha que a planilha de pagamento imprimiria para a pessoa naquela demanda: rateio da alocação em `instructor_allocations`, substituído pelas horas digitadas na medição quando houver | Quando a planilha **não geraria linha**: demanda ainda não concluída, acompanhante sem horas digitadas, pessoa sem alocação. Em branco nunca é zero |
+| **Horas pagamento** (ligada por padrão) | A linha que a planilha de pagamento imprimiria para a pessoa naquela demanda: rateio da alocação em `instructor_allocations`, substituído pelas horas digitadas na medição quando houver | Quando a planilha **não tem horas** para a pessoa: demanda ainda não concluída, pessoa sem alocação, ou acompanhante sem horas digitadas (este aparece na planilha com Horas em branco e amarela — a origem diz "Acompanhante sem horas informadas"). Em branco nunca é zero |
 | **Horas informadas** (desligada) | O que está gravado na medição (o campo da pessoa, ou a carga da medição antiga) | Ninguém digitou |
 | **Horas (painel)** (desligada) | O que o Painel de Medição conta na seção da pessoa: em branco vale a carga padrão da demanda; acompanhante e demanda híbrida valem 0 até alguém digitar | Pessoa sem bloco no painel (segundo titular de uma medição antiga) |
 
@@ -608,7 +645,7 @@ Ligue **Origem das horas** para ver, linha a linha, de onde veio a coluna Horas 
 
 O **filtro de período** seleciona as demandas que têm ao menos um dia dentro do intervalo, e as horas saem **inteiras**. A planilha de pagamento, ao contrário, rateia as horas pelos dias que caem dentro do mês: uma demanda de 5 dias que começa dois dias antes do fechamento entra na planilha com 3/5 das horas e no export com todas. Para fechar o mês, use a planilha; para analisar volumes e custos por demanda, pessoa ou cliente, use o export.
 
-**Despesas** saem nas quatro categorias do painel (Hospedagem, Locomoção, Alimentação, Outros). **Total despesas** inclui os itens marcados como não reembolsáveis — eles foram gastos —, **Não reembolsável** mostra esse recorte à parte e **Despesas reembolsáveis** (desligada) é a diferença. **Total geral** = hora/aula (painel) + total despesas, a mesma composição do card *Custo das Demandas Internas* do Dashboard.
+**Despesas** saem nas quatro categorias do painel (Hospedagem, Locomoção, Alimentação, Outros). **Total despesas** inclui os itens marcados como não reembolsáveis — eles foram gastos —, **Não reembolsável** mostra esse recorte à parte e **Despesas reembolsáveis** (desligada) é a diferença. **Reembolso ao instrutor (R$)** (desligada) é o outro recorte, independente: os itens da pessoa marcados como *Pago pelo instrutor* — o que sai nas colunas de despesa do Excel de pagamento. **Total geral** = hora/aula (painel) + total despesas, a mesma composição do card *Custo das Demandas Internas* do Dashboard.
 #### Opções marcáveis (Medições e Demandas)
 
 - **Usar Valor HH da medição** (ligada por padrão, só em Medições): desligada, as colunas *Valor HH*, *Hora/aula* e *Total geral* saem em branco. A coluna **Origem da tarifa** diz, linha a linha, se a tarifa veio da medição, se foi digitada como zero, se não existe na medição (o R$ 0,00 "por ausência") ou se a opção está desligada.

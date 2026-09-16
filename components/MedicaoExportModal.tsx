@@ -226,16 +226,20 @@ const MedicaoExportModal: React.FC<MedicaoExportModalProps> = ({ isOpen, onClose
             <p className="font-black uppercase tracking-widest text-[10px] mb-1">Como preencher</p>
             O valor da <strong>Hora/Aula</strong> não sai do sistema: preencha a coluna amarela da aba
             <strong> Tarifas</strong>. Cada linha lá é uma combinação de <em>instrutor + empresa + tipo +
-            noturno</em>, porque a tarifa muda nos três eixos: por cliente, entre <strong>Treinamento</strong> e
-            <strong> Interna</strong>, e entre hora diurna e <strong>noturna</strong> (turno que termina 19:00 ou
-            mais tarde). O mesmo instrutor na mesma empresa pode aparecer em mais de uma linha — preencha todas.
+            noturno + papel</em>, porque a tarifa muda nos quatro eixos: por cliente, entre <strong>Treinamento</strong> e
+            <strong> Interna</strong>, entre hora diurna e <strong>noturna</strong> (turno que termina 19:00 ou
+            mais tarde), e entre quem ministra (<strong>Titular</strong>) e quem <strong>acompanha</strong>.
+            O mesmo instrutor na mesma empresa pode aparecer em mais de uma linha — preencha todas.
             Os valores, os totais e o TOTAL GERAL são calculados pelo próprio Excel.
             A coluna <strong>Tarifas pendentes</strong> do Resumo mostra o que ainda falta preencher.
           </div>
 
           <p className="text-[11px] text-slate-400 leading-relaxed">
             Entram apenas demandas <strong>concluídas</strong> com instrutor alocado. Demandas que atravessam
-            os limites do período entram proporcionalmente aos dias dentro dele.
+            os limites do período entram proporcionalmente aos dias dentro dele. As colunas de despesa da aba
+            de cada instrutor trazem só o que foi marcado como <strong>Pago pelo instrutor</strong> na medição.
+            <strong> Acompanhante sem horas informadas</strong> sai com a célula de Horas em branco e amarela
+            (preencha lá, ou na medição e exporte de novo) — e conta em Tarifas pendentes até lá.
           </p>
         </div>
 

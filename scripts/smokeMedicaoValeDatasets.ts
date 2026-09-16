@@ -37,7 +37,7 @@ export const INSTRUCTORS = [
 ];
 export const demandaVale = (over: any = {}): any => ({
   id: 'DEM-100', tipo: 'cliente', companyId: 'C_VALE', trainingId: 'T_PRE', regionId: 'MG',
-  trainingLocal: 'Brucutu', demandState: 'MG', corredor: 'Sudeste', clientDemandId: 'SAP-100',
+  trainingLocal: 'Brucutu', demandState: 'MG', corredor: 'Sudeste', clientDemandId: 'SAP-' + String(over.id ?? 'DEM-100').replace('DEM-', ''),
   modality: 'PRESENCIAL', dateMode: 'CONTINUO', startDate: '2026-08-10T08:00', endDate: '2026-08-11T17:00',
   status: 'ALOCADA', instructorId: 'INS-T', ...over,
 });

@@ -197,10 +197,12 @@ console.log('\n[V] Template Vale');
 /* Blocos [D] dataset, [X] escritor (assíncrono: lê o arquivo-base), [P] painel. */
 import { runValeDatasetChecks, buildValeContext } from './smokeMedicaoValeDatasets';
 import { runWriterChecks } from './smokeMedicaoValeWriter';
+import { runPanelChecks } from './smokeMedicaoValePanel';
 
 (async () => {
   falhas += runValeDatasetChecks({ ...tools, fixtures });
   falhas += await runWriterChecks({ ...tools, fixtures }, buildValeContext());
+  falhas += runPanelChecks({ ...tools, fixtures }, buildValeContext());
 
   console.log(falhas === 0 ? '\n✅ SMOKE MEDICAO VALE: OK' : `\n❌ SMOKE MEDICAO VALE: ${falhas} falha(s)`);
   process.exit(falhas === 0 ? 0 : 1);

@@ -96,7 +96,7 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
   let falhas = 0;
   const check: ValeSmokeTools['check'] = (n, c, d) => { if (!c) falhas++; t.check(n, c, d); };
   const eq: ValeSmokeTools['eq'] = (n, a, b) => { if (!(Object.is(a, b) || JSON.stringify(a) === JSON.stringify(b))) falhas++; t.eq(n, a, b); };
-  const perto: ValeSmokeTools['perto'] = (n, a, b) => { if (Math.abs(a - b) >= 1e-6) falhas++; t.perto(n, a, b); };
+  const perto: ValeSmokeTools['perto'] = (n, a, b) => { if (!(Math.abs(a - b) < 1e-6)) falhas++; t.perto(n, a, b); }; // NaN-safe
 
   const src = buildValeFixtureSource();
   const rows = buildMedicaoValeRows(src);

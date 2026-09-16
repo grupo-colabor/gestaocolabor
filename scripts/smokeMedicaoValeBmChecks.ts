@@ -85,7 +85,7 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
   let falhas = 0;
   const check: BmSmokeTools['check'] = (n, c, d) => { if (!c) falhas++; t.check(n, c, d); };
   const eq: BmSmokeTools['eq'] = (n, a, b) => { if (!(Object.is(a, b) || JSON.stringify(a) === JSON.stringify(b))) falhas++; t.eq(n, a, b); };
-  const perto: BmSmokeTools['perto'] = (n, a, b) => { if (Math.abs(a - b) >= 1e-6) falhas++; t.perto(n, a, b); };
+  const perto: BmSmokeTools['perto'] = (n, a, b) => { if (!(Math.abs(a - b) < 1e-6)) falhas++; t.perto(n, a, b); }; // NaN-safe
 
   const { src, recorte, brucutu } = buildBmFixture();
 
@@ -165,8 +165,12 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
     eq('nome do zip', bmZipName(VALE_BM_TEMPLATE, 'Ferrovia/MG', '2026-08-01', '2026-08-31'), 'vale-bm-ferrovia-mg-2026-08-01_2026-08-31.zip');
   }
 
-  falhas += await runBmWriterChecks({ check, eq, perto }, { src, recorte });
-  falhas += await runBmZipChecks({ check, eq, perto }, { src, recorte });
+  // Sequenciado: `falhas += await f()` leria `falhas` antes da chamada e
+  // perderia os incrementos do `check` local feitos dentro de f.
+  const nw = await runBmWriterChecks({ check, eq, perto }, { src, recorte });
+  falhas += nw;
+  const nz = await runBmZipChecks({ check, eq, perto }, { src, recorte });
+  falhas += nz;
   return falhas;
 }
 

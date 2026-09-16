@@ -302,7 +302,12 @@ export { check, eq, perto, ler, semComentarios };
 // Os blocos de dataset vivem em arquivos irmãos para este ficar legível; cada
 // um recebe as mesmas fixtures e o mesmo contador de falhas.
 import { runDatasetChecks } from './smokeExportacoesDatasets';
-falhas += runDatasetChecks({ check, eq, perto, ler, semComentarios, fixtures });
+// ⚠️ NÃO usar `falhas += runDatasetChecks(...)`: o JS lê o operando da esquerda
+// ANTES de chamar a função, e os `falhas++` feitos lá dentro (via `check`) eram
+// sobrescritos pela soma — o smoke imprimia FALHA e saía com 0. O contador
+// local do módulo de datasets é a fonte; o `check` daqui só imprime.
+const falhasDatasets = runDatasetChecks({ check, eq, perto, ler, semComentarios, fixtures });
+falhas = Math.max(falhas, falhasDatasets);
 
 console.log(falhas === 0 ? '\n✅ SMOKE EXPORTACOES: OK' : `\n❌ SMOKE EXPORTACOES: ${falhas} falha(s)`);
 process.exit(falhas === 0 ? 0 : 1);

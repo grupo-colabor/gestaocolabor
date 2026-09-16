@@ -104,7 +104,9 @@ console.log('\n[F] Resolvedor de folha form');
 import { runBmChecks } from './smokeMedicaoValeBmChecks';
 
 (async () => {
-  falhas += await runBmChecks(tools);
+  // Sequenciado: `falhas += await f()` leria `falhas` antes da chamada.
+  const n = await runBmChecks(tools);
+  falhas = Math.max(falhas, n);
   console.log(falhas === 0 ? '\n✅ SMOKE MEDICAO VALE BM: OK' : `\n❌ SMOKE MEDICAO VALE BM: ${falhas} falha(s)`);
   process.exit(falhas === 0 ? 0 : 1);
 })().catch(e => { console.error(e); process.exit(1); });

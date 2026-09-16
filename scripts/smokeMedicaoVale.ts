@@ -200,9 +200,14 @@ import { runWriterChecks } from './smokeMedicaoValeWriter';
 import { runPanelChecks } from './smokeMedicaoValePanel';
 
 (async () => {
-  falhas += runValeDatasetChecks({ ...tools, fixtures });
-  falhas += await runWriterChecks({ ...tools, fixtures }, buildValeContext());
-  falhas += runPanelChecks({ ...tools, fixtures }, buildValeContext());
+  // Sequenciado de propósito (`falhas += f()` lê `falhas` ANTES de chamar f e
+  // perderia os incrementos feitos lá dentro pelo `check` compartilhado).
+  const f1 = runValeDatasetChecks({ ...tools, fixtures });
+  falhas = Math.max(falhas, f1);
+  const f2 = await runWriterChecks({ ...tools, fixtures }, buildValeContext());
+  falhas = Math.max(falhas, f2);
+  const f3 = runPanelChecks({ ...tools, fixtures }, buildValeContext());
+  falhas = Math.max(falhas, f3);
 
   console.log(falhas === 0 ? '\n✅ SMOKE MEDICAO VALE: OK' : `\n❌ SMOKE MEDICAO VALE: ${falhas} falha(s)`);
   process.exit(falhas === 0 ? 0 : 1);

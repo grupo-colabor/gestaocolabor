@@ -187,6 +187,35 @@ console.log('\n— Interna: sem toggle, custo integral');
   checkEq('total tambem', a.total, 80);
 }
 
+console.log('\n— Flag "pago pelo instrutor" NAO altera o custo');
+{
+  // A despesa foi gasta independentemente de quem pagou: Dashboard, card de
+  // custo e card de nao reembolsaveis somam o item do mesmo jeito com e sem a
+  // flag. O que ela muda e SO o Excel de pagamento do instrutor.
+  const semFlag = {
+    demandId: 'D3', otherExpenses: [], expenses: { classHours: 4, hourRate: 100 },
+    attachments: [att({ id: 'k1', cat: 'HOSPEDAGEM', v: 300 }), att({ id: 'k2', cat: 'LOCOMOCAO', v: 40, re: false })],
+  };
+  const comFlag = {
+    ...semFlag,
+    attachments: semFlag.attachments.map(a => ({ ...a, pagoPeloInstrutor: true })),
+  };
+  const a = computeMeasurementTotals(semFlag as any);
+  const b = computeMeasurementTotals(comFlag as any);
+  checkEq('total de despesas igual (340)', b.total, a.total);
+  checkEq('total com hora/aula igual (740)', b.totalComHoraAula, a.totalComHoraAula);
+  checkEq('nao reembolsavel da Vale igual (40)', b.naoReembolsavel, a.naoReembolsavel);
+  checkEq('quebra do painel igual', computePanelExpenseBreakdown(comFlag as any), computePanelExpenseBreakdown(semFlag as any));
+  checkEq('agregado do Dashboard igual', aggregateMeasurements([comFlag] as any).total, aggregateMeasurements([semFlag] as any).total);
+  checkEq(
+    'card de nao reembolsaveis igual',
+    aggregatePanelExpenseBreakdown([comFlag] as any, { itemFilter: isNaoReembolsavel }).total,
+    aggregatePanelExpenseBreakdown([semFlag] as any, { itemFilter: isNaoReembolsavel }).total
+  );
+  const dashboard = fsCustos.readFileSync(pathCustos.join(process.cwd(), 'components/Dashboard.tsx'), 'utf8');
+  check('Dashboard.tsx nao le a flag (custo continua cego a quem pagou)', !dashboard.includes('pagoPeloInstrutor') && !dashboard.includes('isPagoPeloInstrutor'));
+}
+
 console.log('\n— Agregacao: contadores');
 {
   const semMarcado = { demandId: 'D1', otherExpenses: [], expenses: {}, attachments: [att({ id: 'p', cat: 'CAFE', v: 10 })] };

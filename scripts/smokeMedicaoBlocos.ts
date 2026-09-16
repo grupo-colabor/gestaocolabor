@@ -33,8 +33,11 @@ import {
   blockExpenseBreakdown,
   computeMeasurementTotals,
   computePanelExpenseBreakdown,
+  isNaoReembolsavel,
+  isPagoPeloInstrutor,
   type TotalizableMeasurement,
 } from '../domain/measurementTotals';
+import { resolvePersonBlocks } from '../domain/measurementPersonBlocks';
 import {
   applyMeasurementOverrides,
   companionDefaultHours,
@@ -1340,6 +1343,134 @@ console.log('\n[11] Híbrida: sem default de horas — pergunta explícita');
   const dominio = ler('domain/measurementTotals.ts');
   check('a tabela de resoluções ganhou a linha de HÍBRIDA', dominio.includes('| HÍBRIDA ×') && dominio.includes('SEM DEFAULT'));
   check('e registra a divergência do rateio do titular em vez de decidir sozinha', dominio.includes('Divergência conhecida'));
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [12] "PAGO PELO INSTRUTOR" — a segunda flag do item de despesa
+ *
+ * Independente do `reembolsavel` (que é a flag da Vale). Só `true` conta; o
+ * recorte por pessoa sai do mesmo laço do painel (`blockExpenseBreakdown` com
+ * predicado); item sem dono marcado vai para o titular na v1 e na v2; e o
+ * custo (Dashboard) não muda com a flag.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[12] Pago pelo instrutor');
+{
+  /* ---- default e leitura estrita ---- */
+  eq('item antigo (sem o campo) NÃO é pago pelo instrutor', isPagoPeloInstrutor({ value: 10 } as any), false);
+  eq('null idem', isPagoPeloInstrutor({ pagoPeloInstrutor: null } as any), false);
+  eq('false idem', isPagoPeloInstrutor({ pagoPeloInstrutor: false } as any), false);
+  eq('a STRING "true" não conta (só o booleano)', isPagoPeloInstrutor({ pagoPeloInstrutor: 'true' } as any), false);
+  eq('true conta', isPagoPeloInstrutor({ pagoPeloInstrutor: true } as any), true);
+
+  /* ---- matriz das quatro combinações: Vale × pagamento ---- */
+  const MATRIZ: TotalizableMeasurement = {
+    expenses: {},
+    otherExpenses: [],
+    attachments: [
+      { category: 'HOSPEDAGEM', value: 100 },                                            // Vale entra | Excel não
+      { category: 'LOCOMOCAO', value: 20, pagoPeloInstrutor: true },                      // Vale entra | Excel entra
+      { category: 'ALMOCO', value: 3, reembolsavel: false },                              // Vale fora  | Excel não
+      { category: 'JANTAR', value: 0.4, reembolsavel: false, pagoPeloInstrutor: true },   // Vale fora  | Excel entra
+    ],
+  };
+  const vale = computePanelExpenseBreakdown(MATRIZ, { itemFilter: a => !isNaoReembolsavel(a) });
+  const excel = computePanelExpenseBreakdown(MATRIZ, { itemFilter: isPagoPeloInstrutor });
+  const tudo = computePanelExpenseBreakdown(MATRIZ);
+  check('Vale: entram as duas linhas reembolsáveis (100 + 20)', Math.abs(vale.total - 120) < 1e-9, String(vale.total));
+  check('Excel: entram as duas pagas pelo instrutor (20 + 0.4)', Math.abs(excel.total - 20.4) < 1e-9, String(excel.total));
+  check('custo cheio: as quatro (123.4)', Math.abs(tudo.total - 123.4) < 1e-9, String(tudo.total));
+  check('os dois recortes se cruzam: 1 item em ambos, 1 em nenhum', vale.itens === 2 && excel.itens === 2 && tudo.itens === 4);
+  check(
+    'a flag nova não altera o custo (mesmo total com e sem ela)',
+    Math.abs(
+      computePanelExpenseBreakdown({
+        ...MATRIZ,
+        attachments: MATRIZ.attachments!.map(a => ({ ...a, pagoPeloInstrutor: undefined })),
+      }).total - tudo.total
+    ) < 1e-9
+  );
+  check(
+    'nem o não reembolsável da Vale',
+    computeMeasurementTotals(MATRIZ).naoReembolsavel === computeMeasurementTotals({
+      ...MATRIZ,
+      attachments: MATRIZ.attachments!.map(a => ({ ...a, pagoPeloInstrutor: undefined })),
+    }).naoReembolsavel
+  );
+
+  /* ---- recorte por pessoa: mesmo laço do painel, um && a mais ---- */
+  {
+    const V2_PAGO: TotalizableMeasurement = {
+      ...V2,
+      attachments: V2.attachments!.map((a, i) => (i === 1 || i === 3 ? { ...a, pagoPeloInstrutor: true } : a)),
+      // i=1: LOCOMOCAO 120 do titular; i=3: HOSPEDAGEM 280 do P2
+    };
+    const blocos = normalizeMeasurementBlocks(V2_PAGO, TITULAR);
+    const reembolsoDe = (id: string) =>
+      blockExpenseBreakdown(V2_PAGO, blocos.find(b => b.instructorId === id)!, { itemFilter: isPagoPeloInstrutor });
+    eq('titular: só a locomoção marcada (120)', reembolsoDe(TITULAR).total, 120);
+    eq('P2: só a hospedagem marcada (280)', reembolsoDe(P2).total, 280);
+    eq('P3: nada marcado', reembolsoDe(P3).total, 0);
+    eq(
+      'Σ reembolso por pessoa = recorte sobre a medição inteira',
+      soma(blocos.map(b => blockExpenseBreakdown(V2_PAGO, b, { itemFilter: isPagoPeloInstrutor }).total)),
+      computePanelExpenseBreakdown(V2_PAGO, { itemFilter: isPagoPeloInstrutor }).total
+    );
+    // Compat: sem predicado extra a função devolve o que sempre devolveu — e a
+    // flag não muda o total do bloco (cada medição normalizada com os SEUS itens;
+    // a partição é por identidade de objeto).
+    eq(
+      'sem predicado extra, blockExpenseBreakdown continua igual (compat)',
+      blockExpenseBreakdown(V2_PAGO, blocos[0]).total,
+      blockExpenseBreakdown(V2, normalizeMeasurementBlocks(V2, TITULAR)[0]).total
+    );
+  }
+
+  /* ---- item SEM DONO marcado como pago vai para o titular — v1 e v2 ---- */
+  {
+    const semDonoPago = { category: 'ALMOCO' as const, value: 55, pagoPeloInstrutor: true };
+
+    // v1: medição mono-pessoa numa demanda dividida entre dois titulares.
+    const v1: TotalizableMeasurement = { expenses: { classHours: 8, hourRate: 100 }, otherExpenses: [], attachments: [semDonoPago] };
+    const pessoasV1 = [
+      { instructorId: 'T-PRINCIPAL', papel: 'TITULAR' as const },
+      { instructorId: 'T-SEGUNDO', papel: 'TITULAR' as const },
+    ];
+    const r1 = resolvePersonBlocks(v1, { instructorId: 'T-PRINCIPAL' }, pessoasV1);
+    eq('v1: caminho mono-pessoa', r1.v2, false);
+    eq('v1: o titular principal tem o bloco', r1.blocoDe('T-PRINCIPAL')?.instructorId, 'T-PRINCIPAL');
+    eq('v1: o segundo titular NÃO tem bloco', r1.blocoDe('T-SEGUNDO'), undefined);
+    eq('v1: o reembolso do item sem dono vai para o titular principal', blockExpenseBreakdown(r1.paraNormalizar, r1.blocoDe('T-PRINCIPAL')!, { itemFilter: isPagoPeloInstrutor }).total, 55);
+
+    // v2: cliente com acompanhante, sem nada gravado ainda — a segunda
+    // categoria já força o caminho por pessoa.
+    const v2: TotalizableMeasurement = { expenses: {}, otherExpenses: [], attachments: [semDonoPago, { category: 'LOCOMOCAO', value: 30, instructorId: 'ACOMP', pagoPeloInstrutor: true }] };
+    const pessoasV2 = [
+      { instructorId: 'TIT', papel: 'TITULAR' as const },
+      { instructorId: 'ACOMP', papel: 'ACOMPANHANTE' as const },
+    ];
+    const r2 = resolvePersonBlocks(v2, { instructorId: 'TIT' }, pessoasV2);
+    eq('v2: caminho por pessoa mesmo sem bloco gravado', r2.v2, true);
+    eq('v2: dois blocos', r2.blocos.length, 2);
+    eq('v2: item sem dono marcado vai para o titular', blockExpenseBreakdown(r2.paraNormalizar, r2.blocoDe('TIT')!, { itemFilter: isPagoPeloInstrutor }).total, 55);
+    eq('v2: item do acompanhante fica com ele', blockExpenseBreakdown(r2.paraNormalizar, r2.blocoDe('ACOMP')!, { itemFilter: isPagoPeloInstrutor }).total, 30);
+    eq('v2: papel do bloco do acompanhante vem da lista', r2.blocoDe('ACOMP')?.papel, 'ACOMPANHANTE');
+
+    // v2 com bloco gravado: o gravado vence o vazio; dono removido cai no titular.
+    const v2g: TotalizableMeasurement = {
+      expenses: { participantes: [{ instructorId: 'TIT', papel: 'TITULAR', horas: 8, valorHH: 100 }, { instructorId: 'REMOVIDO', papel: 'ACOMPANHANTE', horas: 4 }] },
+      otherExpenses: [],
+      attachments: [{ category: 'CAFE', value: 7, instructorId: 'REMOVIDO', pagoPeloInstrutor: true }],
+    };
+    const r3 = resolvePersonBlocks(v2g, { instructorId: 'TIT' }, pessoasV2);
+    eq('v2 gravado: horas do bloco gravado sobrevivem', r3.blocoDe('TIT')?.horas, 8);
+    eq('v2 gravado: acompanhante do cadastro sem bloco gravado entra vazio', r3.blocoDe('ACOMP')?.horasInformadas, false);
+    eq('v2 gravado: item de dono REMOVIDO do cadastro cai no titular', blockExpenseBreakdown(r3.paraNormalizar, r3.blocoDe('TIT')!, { itemFilter: isPagoPeloInstrutor }).total, 7);
+  }
+
+  /* ---- o dataset Medições usa o helper (uma regra só) ---- */
+  const dataset = ler('domain/exports/datasets/medicoes.ts');
+  check('o dataset Medições importa resolvePersonBlocks', dataset.includes("from '../../measurementPersonBlocks'"));
+  check('e não tem mais a cópia local da decisão v1/v2', !dataset.includes('const temSegundaCategoria') && !dataset.includes('normalizeMeasurementBlocks('));
 }
 
 console.log(

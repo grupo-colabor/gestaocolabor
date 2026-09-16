@@ -53,21 +53,18 @@ import type {
   CompanionAllocation,
 } from '../../../types';
 import {
-  normalizeMeasurementBlocks,
   blockPanelHours,
   blockHoraAula,
   blockExpenseBreakdown,
-  computePanelExpenseBreakdown,
   isNaoReembolsavel,
   parseExpenseValue,
-  type MeasurementPersonBlock,
   type MeasurementRole,
   type PanelExpenseBreakdown,
-  type TotalizableMeasurement,
 } from '../../measurementTotals';
 import { computeInstructorHoursByDemand, eligibleDemandIdsForPayment } from '../../instructorHours';
 import { applyMeasurementOverrides, type HoursRowLike } from '../../measurementOverrides';
 import { resolveMeasurementPeople, type MeasurementPerson } from '../../measurementPeople';
+import { resolvePersonBlocks } from '../../measurementPersonBlocks';
 import { panelDefaultHours } from '../../demandDefaultHours';
 import { isHybridModality } from '../../modalityRules';
 import { buildTrainingsById } from '../../modalityOptions';
@@ -245,31 +242,11 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
     };
 
     const pessoas = resolveMeasurementPeople(demand, src.instructorAllocations, src.participants, src.companions);
-    const temSegundaCategoria = pessoas.some(p => p.papel !== 'TITULAR');
     const gravados = m.expenses?.participantes ?? [];
-    const titularId = demand.instructorId || pessoas.find(p => p.papel === 'TITULAR')?.instructorId || '';
 
-    // Caminho v2 (o do painel) ou v1 — ver cabeçalho.
-    const v2 = gravados.length > 0 || temSegundaCategoria;
-    const paraNormalizar: TotalizableMeasurement = v2
-      ? {
-          ...(m as any),
-          expenses: {
-            ...(m.expenses as any),
-            participantes: pessoas.map(p => {
-              const g = gravados.find(x => x.instructorId === p.instructorId);
-              return g ?? { instructorId: p.instructorId, papel: p.papel };
-            }),
-          },
-        }
-      : (m as any);
-    const blocos = normalizeMeasurementBlocks(paraNormalizar, titularId);
-    const blocoDe = (instructorId: string): MeasurementPersonBlock | undefined =>
-      v2
-        ? blocos.find(b => b.instructorId === instructorId)
-        : blocos[0]?.instructorId === instructorId || (!blocos[0]?.instructorId && !instructorId)
-          ? blocos[0]
-          : undefined;
+    // Caminho v2 (o do painel) ou v1 — a decisão mora em
+    // domain/measurementPersonBlocks.ts, compartilhada com o Excel de pagamento.
+    const { v2, paraNormalizar, blocoDe } = resolvePersonBlocks(m as any, demand, pessoas);
 
     const base = {
       demand,
@@ -330,12 +307,7 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
 
       const despesas = blocoComPapel ? blockExpenseBreakdown(paraNormalizar, blocoComPapel) : zeroBreakdown();
       const naoReembolsavel = blocoComPapel
-        ? (() => {
-            const doBloco = new Set(blocoComPapel.attachments);
-            return computePanelExpenseBreakdown(paraNormalizar, {
-              itemFilter: a => doBloco.has(a) && isNaoReembolsavel(a),
-            }).total;
-          })()
+        ? blockExpenseBreakdown(paraNormalizar, blocoComPapel, { itemFilter: isNaoReembolsavel }).total
         : 0;
 
       const k = chave(demand.id, pessoa.instructorId);

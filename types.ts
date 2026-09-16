@@ -325,6 +325,15 @@ export interface Attachment {
    */
   reembolsavel?: boolean;
   /**
+   * Despesa PAGA PELO INSTRUTOR, que a Colabor precisa reembolsar a ele. E o
+   * que entra nas colunas de despesa do Excel de pagamento. Independente de
+   * `reembolsavel` (aquele diz se o CLIENTE reembolsa a Colabor; este diz se a
+   * Colabor reembolsa o instrutor). Ausente = false: a leitura e `=== true`,
+   * entao item antigo continua fora do Excel sem backfill.
+   * Ver domain/measurementTotals.ts (`isPagoPeloInstrutor`).
+   */
+  pagoPeloInstrutor?: boolean;
+  /**
    * Dono do item na medicao multi-pessoa (F2). AUSENTE = item do TITULAR.
    *
    * E um INDICE sobre o array plano, nao um aninhamento: os leitores de hoje

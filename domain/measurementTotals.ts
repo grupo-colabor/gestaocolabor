@@ -33,6 +33,25 @@
  *
  * O item marcado CONTINUA no total e na sua categoria — ele foi gasto de
  * verdade. "Não reembolsável" é um recorte à parte, não uma subtração.
+ *
+ * ---------------------------------------------------------------------------
+ * `pagoPeloInstrutor`
+ * ---------------------------------------------------------------------------
+ * Segunda flag, INDEPENDENTE da primeira: o instrutor pagou a despesa do
+ * próprio bolso e a Colabor precisa reembolsá-lo. É o único recorte que entra
+ * nas colunas de despesa do Excel de pagamento. As duas se cruzam livremente:
+ *
+ *   | reembolsavel (Vale) | pagoPeloInstrutor | Medição Vale / BM | Excel pagamento |
+ *   |---------------------|-------------------|-------------------|-----------------|
+ *   | sim (ausente)       | não (ausente)     | entra             | não entra       |
+ *   | sim (ausente)       | sim               | entra             | entra           |
+ *   | não (false)         | não (ausente)     | fora              | não entra       |
+ *   | não (false)         | sim               | fora              | entra           |
+ *
+ * Ausente = false, leitura `=== true` (o inverso do `reembolsavel`, que lê
+ * `=== false`): nenhum item antigo vira reembolso ao instrutor sem alguém
+ * marcar. Também não altera o custo: Dashboard e card de custo somam o item
+ * independentemente de quem pagou.
  */
 
 export type ExpenseCategoryKey = 'HOSPEDAGEM' | 'LOCOMOCAO' | 'CAFE' | 'ALMOCO' | 'JANTAR' | 'OUTROS';
@@ -44,6 +63,8 @@ export interface TotalizableAttachment {
   otherId?: string | null;
   /** Ausente = reembolsável. Ver cabeçalho. */
   reembolsavel?: boolean | null;
+  /** Ausente = não foi o instrutor que pagou. Ver cabeçalho. */
+  pagoPeloInstrutor?: boolean | null;
   /**
    * Dono do item (v2 — medição multi-pessoa). AUSENTE = item do TITULAR.
    *
@@ -91,6 +112,13 @@ export interface TotalizableMeasurement {
  * reembolsável — é o que mantém os itens antigos corretos sem backfill.
  */
 export const isNaoReembolsavel = (a: TotalizableAttachment): boolean => a?.reembolsavel === false;
+
+/**
+ * Item pago pelo INSTRUTOR (a Colabor reembolsa a ele)? Só o booleano `true`
+ * conta: ausência, `null` e a string `"true"` são "não" — nenhum item antigo
+ * entra no Excel de pagamento por acidente.
+ */
+export const isPagoPeloInstrutor = (a: TotalizableAttachment): boolean => a?.pagoPeloInstrutor === true;
 
 /** Aceita `"1.234,56"`, `"12.5"` e number. Mesma tolerância do código original. */
 export function parseExpenseValue(v: number | string | null | undefined): number {
@@ -656,11 +684,20 @@ export function blockHoraAula(b: MeasurementPersonBlock, ctx: PanelHoursContext)
  * Reusa `computePanelExpenseBreakdown` com o `itemFilter` que já existia — sem
  * percurso novo, e com o mesmo tratamento de órfão de OUTROS. É por isso que a
  * soma dos blocos fecha com o total da medição.
+ *
+ * `opts.itemFilter` é um recorte ADICIONAL dentro do bloco: os itens da pessoa
+ * que também passam no predicado. É como o dataset Medições tira o "não
+ * reembolsável" por pessoa e como o Excel de pagamento tira o "pago pelo
+ * instrutor" por pessoa — o mesmo laço, com um `&&` a mais.
  */
 export function blockExpenseBreakdown(
   m: TotalizableMeasurement | null | undefined,
-  block: MeasurementPersonBlock
+  block: MeasurementPersonBlock,
+  opts: PanelExpenseBreakdownOptions = {}
 ): PanelExpenseBreakdown {
   const doBloco = new Set(block.attachments);
-  return computePanelExpenseBreakdown(m, { itemFilter: a => doBloco.has(a) });
+  const extra = opts.itemFilter;
+  return computePanelExpenseBreakdown(m, {
+    itemFilter: a => doBloco.has(a) && (!extra || extra(a)),
+  });
 }

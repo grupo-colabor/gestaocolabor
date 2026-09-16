@@ -609,6 +609,51 @@ Ligue **Origem das horas** para ver, linha a linha, de onde veio a coluna Horas 
 O **filtro de período** seleciona as demandas que têm ao menos um dia dentro do intervalo, e as horas saem **inteiras**. A planilha de pagamento, ao contrário, rateia as horas pelos dias que caem dentro do mês: uma demanda de 5 dias que começa dois dias antes do fechamento entra na planilha com 3/5 das horas e no export com todas. Para fechar o mês, use a planilha; para analisar volumes e custos por demanda, pessoa ou cliente, use o export.
 
 **Despesas** saem nas quatro categorias do painel (Hospedagem, Locomoção, Alimentação, Outros). **Total despesas** inclui os itens marcados como não reembolsáveis — eles foram gastos —, **Não reembolsável** mostra esse recorte à parte e **Despesas reembolsáveis** (desligada) é a diferença. **Total geral** = hora/aula (painel) + total despesas, a mesma composição do card *Custo das Demandas Internas* do Dashboard.
+#### Opções marcáveis (Medições e Demandas)
+
+- **Usar Valor HH da medição** (ligada por padrão, só em Medições): desligada, as colunas *Valor HH*, *Hora/aula* e *Total geral* saem em branco. A coluna **Origem da tarifa** diz, linha a linha, se a tarifa veio da medição, se foi digitada como zero, se não existe na medição (o R$ 0,00 "por ausência") ou se a opção está desligada.
+- **Incluir canceladas** (desligada por padrão): demandas canceladas ficam fora, a menos que o filtro de status seja exatamente *Cancelada*, que força a inclusão.
+
+#### Medição Vale (planilha no modelo do cliente)
+
+**Como acessar:** Exportações → módulo **Medição Vale** (perfil com acesso à Medição).
+
+Gera o XLSX **no layout do modelo da Vale**, a partir do próprio arquivo-modelo guardado no sistema: aba **Turmas Realizadas** (uma turma por demanda) e aba **Plantas** (copiada do modelo, sem cruzamento com os dados do app).
+
+**Quem entra na aba Turmas:** demandas de **cliente** da Vale, **concluídas**, com instrutor titular, cuja **data de início** cai no período. Cancelada, não concluída, sem titular e demanda interna com empresa Vale ficam fora — e aparecem no painel de pendências. O **status da medição não bloqueia**: é filtro (Não iniciada, Em lançamento, Em conferência, Pronta para faturamento, Faturada, Sem medição), com "todas" por padrão.
+
+**Colunas e origem:**
+
+| Coluna do modelo | De onde vem |
+|---|---|
+| Número do anexo | sequência 1..n |
+| ID da Turma | campo *ID SAP / Pedido Cliente* da demanda (em branco e amarelo quando falta) |
+| Treinamento, Local, Data, Horário | cadastro da demanda (data e horário do primeiro dia) |
+| Carga horária | carga do treinamento, inclusive em híbrida |
+| Preço unitário HH | **digitado na prévia**; lembrado por treinamento, sobrescrevível na turma (em branco e amarelo quando falta) |
+| Valor total do treinamento | fórmula `=G×H` do modelo |
+| Despesas reembolsáveis (locação/táxi, alimentação, hospedagem, outros) | as categorias da medição (Locomoção, Alimentação, Hospedagem, Outros), **só os itens reembolsáveis** |
+| Combustível | digitado na prévia (nasce 0; o app não separa combustível) |
+| % despesa reembolsável | 0,2 do modelo, editável |
+| Valor total despesas | fórmula `=SOMA(J:N)+(SOMA(J:N)×O)` do modelo |
+| Consultor | instrutor(es) titular(es); demanda dividida sai "A / B" |
+| Observação | digitada na prévia, por turma |
+| Linha de totais | `SOMA` em G, I a N e P, logo abaixo da última turma |
+
+**Passo a passo:**
+1. Escolha **Medição Vale** e clique em **Carregar dados**
+2. Filtre por período (data de início), corredor, site e status da medição
+3. Leia o painel **O que falta para fechar a medição** — ⛔ tira a demanda da planilha; ⚠ entra, mas confira. Dá para baixar em XLSX
+4. Preencha os campos manuais (preço HH por treinamento e, se preciso, por turma; combustível; %; observação) e clique em **Salvar**
+5. Confira a prévia e clique em **Gerar Medição Vale** — o botão fica travado enquanto houver edição não salva
+
+**Pendências e de onde vêm:** não concluída, cancelada e sem titular (fatos, do cadastro); sem ID SAP; sem preço HH; sem medição aberta ou não iniciada; medição não pronta; item não reembolsável excluído das colunas; ID SAP repetido em outra demanda do recorte; interna com empresa Vale. A única **inferência** é *logística indica viagem, mas não há despesa lançada* (carro ou hotel na logística e nenhum item na medição) — é aviso, nunca bloqueio.
+
+#### Nota rápida: por que a Medição Vale é diferente do dataset Medições
+
+- **Período.** O dataset Medições pega toda demanda que *toca* o intervalo (interseção), porque é análise. A Medição Vale usa a **data de início**: cada turma tem uma data só na planilha e precisa cair num único mês — senão uma turma que atravessa o fechamento seria cobrada duas vezes.
+- **Não reembolsável.** Na medição, um item marcado como não reembolsável continua no total (foi gasto). Na planilha da Vale ele **não entra**: as colunas se chamam "despesa reembolsável" e a marca existe justamente para o que o cliente não paga. O painel avisa quanto ficou fora.
+- **Preço HH.** O sistema lembra o último preço salvo **por treinamento** e pré-preenche todas as turmas daquele treinamento; quando uma turma precisa de outro preço, sobrescreva só nela. A coluna "fonte do preço" na grade mostra de onde veio cada valor. Nada é gravado até o **Salvar**; o download nunca grava.
 ### Exportar Demanda para Word
 
 **Como acessar:** Abrir uma demanda → botão **Exportar para Word**

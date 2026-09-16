@@ -57,6 +57,7 @@ import {
   blockHoraAula,
   blockExpenseBreakdown,
   isNaoReembolsavel,
+  isPagoPeloInstrutor,
   parseExpenseValue,
   type MeasurementRole,
   type PanelExpenseBreakdown,
@@ -178,6 +179,12 @@ export interface MedicaoRow extends FilterableRow {
   despesas: PanelExpenseBreakdown;
   naoReembolsavel: number;
   despesasReembolsaveis: number;
+  /**
+   * Itens desta pessoa marcados como "pago pelo instrutor": o que a Colabor
+   * deve a ela e o que o Excel de pagamento imprime nas colunas de despesa.
+   * Recorte independente de `naoReembolsavel`; já está dentro do total.
+   */
+  reembolsoInstrutor: number;
   /** `null` quando usarValorHH está desligada: sem hora/aula não há total. */
   totalGeral: number | null;
 
@@ -309,6 +316,9 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
       const naoReembolsavel = blocoComPapel
         ? blockExpenseBreakdown(paraNormalizar, blocoComPapel, { itemFilter: isNaoReembolsavel }).total
         : 0;
+      const reembolsoInstrutor = blocoComPapel
+        ? blockExpenseBreakdown(paraNormalizar, blocoComPapel, { itemFilter: isPagoPeloInstrutor }).total
+        : 0;
 
       const k = chave(demand.id, pessoa.instructorId);
       const pag = pagamentoPorChave.get(k);
@@ -353,6 +363,7 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
         despesas,
         naoReembolsavel,
         despesasReembolsaveis: round2(despesas.total - naoReembolsavel),
+        reembolsoInstrutor,
         // Sem tarifa não há total: em branco, nunca "só as despesas" com cara de total.
         totalGeral: usarHH ? round2((horaAulaPainel ?? 0) + despesas.total) : null,
       });
@@ -420,6 +431,7 @@ export const MEDICOES_COLUMNS: ColumnDef<MedicaoRow>[] = [
   col('totalDespesas', 'Total despesas (R$)', 'currency', true, r => r.despesas.total, { width: 14, help: 'Soma dos quatro buckets. Inclui os itens marcados como não reembolsáveis — eles foram gastos.' }),
   col('naoReembolsavel', 'Não reembolsável (R$)', 'currency', true, r => r.naoReembolsavel, { width: 14, help: 'Recorte dos itens que o cliente não reembolsa. Já está dentro do total.' }),
   col('despesasReembolsaveis', 'Despesas reembolsáveis (R$)', 'currency', false, r => r.despesasReembolsaveis, { width: 14, help: 'Total despesas − Não reembolsável.' }),
+  col('reembolsoInstrutor', 'Reembolso ao instrutor (R$)', 'currency', false, r => r.reembolsoInstrutor, { width: 16, help: 'Itens desta pessoa marcados como "Pago pelo instrutor": o que a Colabor deve a ela — as colunas de despesa do Excel de pagamento. Independente de Não reembolsável; já está dentro do total.' }),
   col('totalGeral', 'Total geral (R$)', 'currency', true, r => r.totalGeral, { width: 14, help: 'Hora/aula (painel) + Total despesas — a composição do card Custo das Demandas Internas.' }),
   col('itensDespesa', 'Itens de despesa', 'number', false, r => r.despesas.itens, { width: 10 }),
   col('itensOrfaos', 'Itens órfãos', 'number', false, r => r.despesas.itensOrfaos, { width: 10, help: 'Anexos de Outros apontando para linha apagada: fora do total, como no painel.' }),

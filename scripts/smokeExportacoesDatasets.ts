@@ -13,6 +13,7 @@ import {
   blockHoraAula,
   aggregateMeasurements,
   aggregatePanelExpenseBreakdown,
+  isPagoPeloInstrutor,
 } from '../domain/measurementTotals';
 import { computeInstructorHoursByDemand, eligibleDemandIdsForPayment } from '../domain/instructorHours';
 import { applyMeasurementOverrides } from '../domain/measurementOverrides';
@@ -75,7 +76,8 @@ export function runDatasetChecks(t: SmokeTools): number {
       ],
     },
     attachments: [
-      { id: 'a1', category: 'HOSPEDAGEM', value: 200 },
+      // sem dono e pago pelo instrutor -> o reembolso vai para o titular
+      { id: 'a1', category: 'HOSPEDAGEM', value: 200, pagoPeloInstrutor: true },
       { id: 'a2', category: 'ALMOCO', value: '50,00', instructorId: 'INS-2', reembolsavel: false },
       { id: 'a3', category: 'OUTROS', value: 30, otherId: 'O1', instructorId: 'INS-9' },
       { id: 'a4', category: 'OUTROS', value: 5, otherId: 'ZZ' },
@@ -103,7 +105,9 @@ export function runDatasetChecks(t: SmokeTools): number {
         { instructorId: 'INS-A', papel: 'ACOMPANHANTE', valorHH: 50 },
       ],
     },
-    attachments: [{ id: 'c1', category: 'JANTAR', value: 40, instructorId: 'INS-A' }],
+    // Jantar do acompanhante, pago por ele: não reembolsável pela Vale E
+    // reembolso ao instrutor — as duas flags juntas.
+    attachments: [{ id: 'c1', category: 'JANTAR', value: 40, instructorId: 'INS-A', reembolsavel: false, pagoPeloInstrutor: true }],
     otherExpenses: [],
   };
 
@@ -193,6 +197,15 @@ export function runDatasetChecks(t: SmokeTools): number {
     perto('v2: e continua dentro do total', i2.despesas.total, 50);
     perto('v2: despesas reembolsáveis = total − não reembolsável', i2.despesasReembolsaveis, 0);
     perto('v2: titular não herda o não reembolsável do participante', i1.naoReembolsavel, 0);
+
+    // Reembolso ao instrutor: recorte independente, por pessoa.
+    perto('reembolso: item sem dono marcado vai para o titular (200)', i1.reembolsoInstrutor, 200);
+    perto('reembolso: participante sem item marcado = 0', i2.reembolsoInstrutor, 0);
+    const a1 = de('DEM-101', 'INS-A');
+    perto('reembolso: acompanhante com jantar pago por ele (40)', a1.reembolsoInstrutor, 40);
+    perto('reembolso: e o mesmo item continua no não reembolsável da Vale (flags independentes)', a1.naoReembolsavel, 40);
+    perto('reembolso: titular da mesma demanda = 0', de('DEM-101', 'INS-T').reembolsoInstrutor, 0);
+    perto('reembolso: v1 sem item marcado = 0', t1.reembolsoInstrutor, 0);
   }
 
   /* ──────────────────────────────────────────────────────────────────────────
@@ -229,6 +242,7 @@ export function runDatasetChecks(t: SmokeTools): number {
       perto(`${d.id}: Σ outros`, soma(linhas.map(r => r.despesas.outros)), quebra.outros);
       eq(`${d.id}: Σ órfãos`, soma(linhas.map(r => r.despesas.itensOrfaos)), quebra.itensOrfaos);
       perto(`${d.id}: Σ não reembolsável = computeMeasurementTotals.naoReembolsavel`, soma(linhas.map(r => r.naoReembolsavel)), esperado.naoReembolsavel);
+      perto(`${d.id}: Σ reembolso ao instrutor = recorte pagoPeloInstrutor da medição`, soma(linhas.map(r => r.reembolsoInstrutor)), computePanelExpenseBreakdown(m, { itemFilter: isPagoPeloInstrutor }).total);
     }
 
     // O card "Custo das Demandas Internas" (Dashboard.tsx, ~2859):
@@ -326,6 +340,11 @@ export function runDatasetChecks(t: SmokeTools): number {
     check('Horas pagamento e Elegível nascem ligadas', defaults.includes('horasPagamento') && defaults.includes('elegivelPagamento'));
     check('Horas informadas, Horas painel e Origem nascem desligadas',
       !defaults.includes('horasInformadas') && !defaults.includes('horasPainel') && !defaults.includes('origemHoras'));
+    check('Reembolso ao instrutor existe e nasce DESLIGADA', keys.includes('reembolsoInstrutor') && !defaults.includes('reembolsoInstrutor'));
+    check('Medição Vale e BM não leem a flag nova',
+      !t.ler('domain/exports/datasets/medicaoVale.ts').includes('pagoPeloInstrutor') &&
+        !t.ler('domain/exports/datasets/medicaoValeBm.ts').includes('pagoPeloInstrutor') &&
+        !t.ler('domain/exports/datasets/medicaoVale.ts').includes('isPagoPeloInstrutor'));
     check('CPF não existe como coluna', !keys.some(k => /cpf/i.test(k)));
     check('todas as colunas resolvem em toda linha sem lançar', rows.every(r => MEDICOES_DATASET.columns.every(c => { c.get(r); return true; })));
 

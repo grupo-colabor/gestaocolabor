@@ -649,6 +649,32 @@ Gera o XLSX **no layout do modelo da Vale**, a partir do próprio arquivo-modelo
 
 **Pendências e de onde vêm:** não concluída, cancelada e sem titular (fatos, do cadastro); sem ID SAP; sem preço HH; sem medição aberta ou não iniciada; medição não pronta; item não reembolsável excluído das colunas; ID SAP repetido em outra demanda do recorte; interna com empresa Vale. A única **inferência** é *logística indica viagem, mas não há despesa lançada* (carro ou hotel na logística e nenhum item na medição) — é aviso, nunca bloqueio.
 
+#### BM da Vale (Boletim de Medição)
+
+**Como acessar:** Exportações → módulo **BM Vale** (perfil com acesso à Medição).
+
+O BM é o documento que a Vale assina: a medição **agregada por treinamento**, no modelo da Vale (folha `BOLETIM MEDIÇÃO`), gerado a partir do próprio arquivo-modelo guardado no sistema. **Ele sai da mesma seleção da Medição Vale**: mesmas turmas (concluídas, com instrutor, data de início no período), mesmo preço HH (com sobrescrita por turma), mesma exclusão de item não reembolsável. Por isso o **Σ das linhas de treinamento do BM é igual ao Σ da coluna I** da aba Turmas, e a **quantidade da linha de despesas é igual ao Σ da coluna P** — batem por construção, e o sistema confere isso automaticamente.
+
+**Um BM por (corredor, mina).** Corredor é obrigatório nos filtros. Mina = *Local Treinamento* da demanda. Com o filtro de site/mina, sai um `.xlsx`; sem ele, sai um `.zip` com um `.xlsx` por mina do recorte. Turma **sem local** na demanda fica fora do BM — a tela mostra em destaque quantas ficaram e o painel de pendências lista cada uma; corrija o local na demanda.
+
+**O que o BM traz:**
+
+| Bloco | Conteúdo | De onde vem |
+|---|---|---|
+| Cabeçalho | gerência executiva, gerência, contrato nº, contratada/CNPJ, objeto, gestor, local de prestação, data de envio, período | cadastro por corredor/mina (bloco **Cabeçalho do BM**, uma vez por mina, com Salvar); data de envio = hoje, editável; período = o filtro, `dd/mm/aaaa a dd/mm/aaaa` |
+| Linhas do QQP | uma linha por treinamento: QQP 20, `Aplicação de Treinamento - <nome>`, unidade Hora/Aula, preço HH, quantidade = Σ carga horária das turmas, valor = fórmula preço × quantidade | turmas do recorte agregadas por **nome do treinamento + preço**; preços diferentes viram linhas separadas; cadastro duplicado (mesmo nome, ids diferentes) vira aviso, o BM sai limpo |
+| Linha de despesas | QQP 70, `Despesas Tributáveis (hospedagem,transporte e alimentação)`, unidade 1, preço 1, quantidade = Σ das despesas das turmas | com o acréscimo de % de cada turma (coluna P da Medição Vale). Se a Colabor decidir sem o acréscimo, é uma constante do template |
+| Valor total desta medição | fórmula SOMA das linhas | sempre na faixa real; mais de 24 linhas insere linhas antes do total sem mexer nas assinaturas |
+| Assinaturas | intocadas | o modelo |
+
+Os números das linhas do QQP (20 e 70) fazem parte do cabeçalho por corredor/mina, porque podem variar por contrato.
+
+**Passo a passo:**
+1. Escolha **BM Vale** e **Carregar dados**
+2. Filtre por período (data de início), **corredor** (obrigatório), site/mina e status da medição
+3. Leia o painel de pendências — além dos motivos da Medição Vale, o BM avisa: sem local, cabeçalho não cadastrado, cadastro de treinamento duplicado
+4. Na primeira vez em cada mina, preencha o **Cabeçalho do BM** e clique em **Salvar**; os preços HH são os mesmos da Medição Vale (grade *Campos manuais*)
+5. Confira a prévia por mina e clique em **Gerar BM Vale**. Se algum cabeçalho estiver incompleto, a tela pergunta antes de gerar; o BM sai com as células em branco em amarelo
 #### Nota rápida: por que a Medição Vale é diferente do dataset Medições
 
 - **Período.** O dataset Medições pega toda demanda que *toca* o intervalo (interseção), porque é análise. A Medição Vale usa a **data de início**: cada turma tem uma data só na planilha e precisa cair num único mês — senão uma turma que atravessa o fechamento seria cobrada duas vezes.

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { requiresLogistics } from '../domain/modalityRules';
+import { isValeCompanyName, localObrigatorio, motivoLocalInvalido } from '../domain/demandLocalRules';
 import { buildModalityOptions, buildTrainingsById, matchesModality } from '../domain/modalityOptions';
 import { createPortal } from 'react-dom';
 import { usePagination } from '../hooks/usePagination';
@@ -438,6 +439,12 @@ useEffect(() => {
    * ONLINE_AO_VIVO). Num PRESENCIAL/HÍBRIDO/TUTORIA, 'N/A' faria a demanda
    * travar em PENDENTE pelo motor de status (demandStatus.ts) — não é opção.
    */
+  // O gate da Vale (nome da empresa contém "VALE") — o mesmo do campo ID SAP.
+  // Declarado antes de `localOptions`, que o usa para tirar 'N/A' do datalist.
+  const isValeSelected = useMemo(() => {
+    return isValeCompanyName(companies.find(c => c.id === formDemand.companyId)?.name);
+  }, [companies, formDemand.companyId]);
+
   const localOptions = useMemo(() => {
     const isNAValue = (v: string) => v.trim().toUpperCase() === 'N/A';
     const base = [
@@ -448,8 +455,9 @@ useEffect(() => {
       .filter(v => !!v && !isNAValue(v));
 
     const unique = Array.from(new Set(base)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-    return requiresLogistics(formDemand.modality) ? unique : ['N/A', ...unique];
-  }, [operationalBases.locaisTreinamento, locationAssociations, formDemand.modality]);
+    // Vale: 'N/A' não é opção em modalidade nenhuma (a validação recusa).
+    return localObrigatorio(formDemand.modality, isValeSelected) ? unique : ['N/A', ...unique];
+  }, [operationalBases.locaisTreinamento, locationAssociations, formDemand.modality, isValeSelected]);
 
   const [activeDemand, setActiveDemand] = useState<Demand | null>(null);
 
@@ -569,9 +577,15 @@ const markDocAsNA = async (docType: 'LISTA_TURMA' | 'LIBERACAO_INSTRUTOR') => {
     return [];
   }, [modalSubMode, formDemand, recommendInstructors]);
 
-  const isValeSelected = useMemo(() => {
-    return companies.find(c => c.id === formDemand.companyId)?.name.toUpperCase().includes('VALE') || false;
-  }, [companies, formDemand.companyId]);
+  /**
+   * Local inválido para a empresa/modalidade atual (mensagem), ou null.
+   * Vale: vazio e 'N/A' são recusados em QUALQUER modalidade — a turma precisa
+   * de mina/site para a medição e o BM. Regra em domain/demandLocalRules.ts.
+   */
+  const localInvalido = useMemo(
+    () => motivoLocalInvalido(formDemand.trainingLocal, formDemand.modality, isValeSelected),
+    [formDemand.trainingLocal, formDemand.modality, isValeSelected]
+  );
 
   const isFormValid = useMemo(() => {
   const hasCompanyAndTraining = !!(formDemand.companyId && formDemand.trainingId);
@@ -590,13 +604,13 @@ const markDocAsNA = async (docType: 'LISTA_TURMA' | 'LIBERACAO_INSTRUTOR') => {
     if (!hasStartTime || !hasEndTime) return false;
   }
 
-  // Local é obrigatório apenas para modalidades que requerem logística
-  const needsLocal = requiresLogistics(formDemand.modality);
-  if (needsLocal && !formDemand.trainingLocal) return false;
+  // Local: obrigatório onde a modalidade exige logística e, para a Vale, em
+  // qualquer modalidade (vazio e 'N/A' recusados) — ver `localInvalido`.
+  if (localInvalido) return false;
   if (!formDemand.demandState) return false;
 
   return true;
-}, [formDemand]);
+}, [formDemand, localInvalido]);
 
 
     // ✅ Instrutor principal por demanda (menor startDate nas alocações)
@@ -1391,6 +1405,13 @@ useEffect(() => {
 // NÃO passe startDate/endDate por new Date()/toISOString().
 
 const handleSave = async () => {
+  // Vale sem local (ou 'N/A'): o botão já fica desabilitado por isFormValid;
+  // esta guarda é a mensagem explícita se o save for acionado por outro caminho.
+  if (isValeSelected && localInvalido) {
+    setResourceError(`${localInvalido}.`);
+    setTimeout(() => setResourceError(null), 4000);
+    return;
+  }
   if (!isFormValid) return;
 
   // ⛔ trava clique duplo
@@ -2881,20 +2902,25 @@ const companionInstructorIds = useMemo(() => {
                               })()}
                               <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                                  Local do Treinamento {requiresLogistics(formDemand.modality) ? '*' : ''}
+                                  Local do Treinamento {localObrigatorio(formDemand.modality, isValeSelected) ? '*' : ''}
                                 </label>
 
                               {/* Editável em TODAS as modalidades. No online o campo é opcional
                                   (a validação só exige local onde requiresLogistics) e 'N/A' vem
-                                  no topo do datalist — ver localOptions. */}
+                                  no topo do datalist — ver localOptions. EXCETO para a Vale:
+                                  obrigatório em qualquer modalidade, 'N/A' recusado (a turma
+                                  precisa de mina/site para a medição e o BM). */}
                               <input
                                 list="locais-treinamento-list"
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                className={`w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isValeSelected && localInvalido ? 'border-red-300 bg-red-50/40' : 'border-gray-300'}`}
                                 value={formDemand.trainingLocal || ''}
                                 onChange={(e) => handleTrainingLocalChange(e.target.value)}
-                                placeholder={!requiresLogistics(formDemand.modality) ? 'N/A ou local de referência...' : 'Ex: Brucutu, Vitória...'}
+                                placeholder={isValeSelected ? 'Mina / site (obrigatório para a Vale)' : !requiresLogistics(formDemand.modality) ? 'N/A ou local de referência...' : 'Ex: Brucutu, Vitória...'}
                               />
-                              {!requiresLogistics(formDemand.modality) && (
+                              {isValeSelected && localInvalido && (
+                                <p className="text-[10px] font-bold text-red-600 mt-1">{localInvalido}.</p>
+                              )}
+                              {!isValeSelected && !requiresLogistics(formDemand.modality) && (
                                 <p className="text-[10px] text-slate-400 mt-1">
                                   Opcional para online — use N/A se não houver local de referência.
                                 </p>

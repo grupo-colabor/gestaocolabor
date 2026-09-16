@@ -24,6 +24,7 @@ import fs from 'fs';
 import path from 'path';
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { requiresLogistics } from '../domain/modalityRules';
+import { isValeCompanyName, localObrigatorio, motivoLocalInvalido, MSG_LOCAL_VALE } from '../domain/demandLocalRules';
 
 let falhas = 0;
 
@@ -294,9 +295,14 @@ console.log('\n— GUARDAS DE FONTE (as reproduções acima ainda batem com o c�
     'Demands: DataView não força N/A no online',
     demands.includes("value={formDemand.trainingLocal || 'N/A'}")
   );
+  // A validação saiu do JSX para domain/demandLocalRules.ts (`motivoLocalInvalido`):
+  // para as demais empresas continua exigindo local só onde há logística — o
+  // bloco [V] abaixo prende isso caso a caso; aqui só que Demands.tsx a consome.
   check(
-    'Demands: validação segue exigindo local só onde há logística',
-    demands.includes('const needsLocal = requiresLogistics(formDemand.modality);')
+    'Demands: validação segue exigindo local só onde há logística (via motivoLocalInvalido)',
+    demands.includes('if (localInvalido) return false;') &&
+      motivoLocalInvalido('', 'ONLINE', false) === null &&
+      motivoLocalInvalido('', 'PRESENCIAL', false) !== null
   );
   // A regra do bypass geografico saiu do corpo de recommendInstructors para
   // domain/instructorRecommendation.ts (hasGeoAnchor), para a selecao de
@@ -320,6 +326,52 @@ console.log('\n— GUARDAS DE FONTE (as reproduções acima ainda batem com o c�
     'CalendarView: agenda ainda esconde local N/A',
     calendar.includes("demand.trainingLocal !== 'N/A'")
   );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [V] Local obrigatório quando a empresa é Vale — em qualquer modalidade
+ *
+ * A turma da Vale precisa de mina/site para a Medição Vale e o BM (turma sem
+ * local fica fora do BM). Vazio e 'N/A' são recusados no formulário, na criação
+ * e na edição; para as outras empresas nada muda. Regra pura em
+ * domain/demandLocalRules.ts; Demands.tsx só a consome.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[V] Local obrigatório para a Vale');
+{
+  // gate: o mesmo do campo ID SAP (nome contém "VALE")
+  eq('"Vale S.A." é Vale', isValeCompanyName('Vale S.A.'), true);
+  eq('"VALE" é Vale', isValeCompanyName('VALE'), true);
+  eq('"Salobo Metais (Vale)" é Vale', isValeCompanyName('Salobo Metais (Vale)'), true);
+  eq('"ArcelorMittal" não é', isValeCompanyName('ArcelorMittal'), false);
+  eq('sem empresa não é', isValeCompanyName(undefined), false);
+
+  // Vale: recusa vazio e N/A em QUALQUER modalidade
+  for (const modalidade of ['ONLINE', 'PRESENCIAL', 'HIBRIDO', 'ONLINE_AO_VIVO', 'EAD', 'TUTORIA']) {
+    eq(`Vale + ${modalidade}: vazio é recusado`, motivoLocalInvalido('', modalidade, true), MSG_LOCAL_VALE);
+    eq(`Vale + ${modalidade}: 'N/A' é recusado`, motivoLocalInvalido('N/A', modalidade, true), MSG_LOCAL_VALE);
+    eq(`Vale + ${modalidade}: 'n/a' (caixa baixa) é recusado`, motivoLocalInvalido(' n/a ', modalidade, true), MSG_LOCAL_VALE);
+    eq(`Vale + ${modalidade}: local real passa`, motivoLocalInvalido('Mina de Brucutu', modalidade, true), null);
+    eq(`Vale + ${modalidade}: local é obrigatório (asterisco)`, localObrigatorio(modalidade, true), true);
+  }
+  eq('mensagem exata', MSG_LOCAL_VALE, 'Demanda Vale precisa de local (mina/site) para a medição e o BM');
+
+  // Outras empresas: como sempre foi
+  eq('outra empresa + ONLINE: vazio passa', motivoLocalInvalido('', 'ONLINE', false), null);
+  eq("outra empresa + ONLINE: 'N/A' passa", motivoLocalInvalido('N/A', 'ONLINE', false), null);
+  eq('outra empresa + PRESENCIAL: vazio é recusado', typeof motivoLocalInvalido('', 'PRESENCIAL', false), 'string');
+  eq("outra empresa + PRESENCIAL: 'N/A' passa na validação do formulário (o motor de status é quem pune)", motivoLocalInvalido('N/A', 'PRESENCIAL', false), null);
+  eq('outra empresa + ONLINE: local não é obrigatório', localObrigatorio('ONLINE', false), false);
+  eq('outra empresa + PRESENCIAL: local é obrigatório', localObrigatorio('PRESENCIAL', false), true);
+
+  // Demands.tsx consome a regra (criação e edição passam pelo mesmo isFormValid/handleSave)
+  const demandsSrc = fs.readFileSync(path.join(process.cwd(), 'components/Demands.tsx'), 'utf8');
+  check('isValeSelected usa o gate do domínio', demandsSrc.includes('isValeCompanyName(companies.find(c => c.id === formDemand.companyId)?.name)'));
+  check('isFormValid recusa pelo motivo do domínio', demandsSrc.includes('if (localInvalido) return false;') && demandsSrc.includes('motivoLocalInvalido(formDemand.trainingLocal, formDemand.modality, isValeSelected)'));
+  check('handleSave tem a mensagem explícita para a Vale', demandsSrc.includes('if (isValeSelected && localInvalido) {') && demandsSrc.includes('setResourceError(`${localInvalido}.`)'));
+  check('asterisco do rótulo segue localObrigatorio', demandsSrc.includes("Local do Treinamento {localObrigatorio(formDemand.modality, isValeSelected) ? '*' : ''}"));
+  check('texto "Opcional para online" some quando é Vale', demandsSrc.includes('{!isValeSelected && !requiresLogistics(formDemand.modality) && ('));
+  check("'N/A' sai do datalist para a Vale", demandsSrc.includes("localObrigatorio(formDemand.modality, isValeSelected) ? unique : ['N/A', ...unique]"));
+  check('o código não migra dado: nenhum update de trainingLocal em massa', !/trainingLocal:\s*'Mina|corrigirLocal|backfill/i.test(demandsSrc));
 }
 
 console.log(

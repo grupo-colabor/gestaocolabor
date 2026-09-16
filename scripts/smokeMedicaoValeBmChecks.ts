@@ -166,7 +166,9 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
   }
 
   falhas += await runBmWriterChecks({ check, eq, perto }, { src, recorte });
+  falhas += await runBmZipChecks({ check, eq, perto }, { src, recorte });
   return falhas;
 }
 
 import { runBmWriterChecks } from './smokeMedicaoValeBmWriter';
+import { runBmZipChecks } from './smokeMedicaoValeBmZip';

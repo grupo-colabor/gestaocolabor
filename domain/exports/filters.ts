@@ -14,11 +14,21 @@
  * não deste export, e a aba avisa em texto fixo.
  */
 import type { Demand } from '../../types';
-import { demandIntersectsRange } from '../demandDays';
+import { demandIntersectsRange, toDateKey } from '../demandDays';
 import { matchesModality, buildModalityOptions, type ModalityOption } from '../modalityOptions';
 import { resolveCalculatedStatus, STATUS_ORDER, STATUS_LABELS } from './shared';
 import { DEFAULT_OPTIONS, type ExportOptions } from './options';
-import type { ExportFilters, FilterKey, FilterableRow } from './types';
+import { SEM_MEDICAO, type ExportFilters, type FilterKey, type FilterableRow } from './types';
+
+/** Rótulos dos estágios da medição — os mesmos de STAGE_LABELS em Measurement.tsx. */
+export const MEDICAO_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: 'NAO_INICIADA', label: 'Não iniciada' },
+  { value: 'LANCAMENTO', label: 'Em lançamento de despesas' },
+  { value: 'CONFERENCIA', label: 'Em conferência' },
+  { value: 'PRONTA_FATURAMENTO', label: 'Pronta para faturamento' },
+  { value: 'FATURADA', label: 'Faturada' },
+  { value: SEM_MEDICAO, label: 'Sem medição' },
+];
 
 type TrainingLike = { id: string; modality?: unknown };
 
@@ -46,6 +56,21 @@ export function matchesFilters(
 
   if (on('periodo') && (f.dataInicio || f.dataFim)) {
     if (!demandIntersectsRange(d, f.dataInicio || undefined, f.dataFim || undefined)) return false;
+  }
+  if (on('periodoInicio') && (f.dataInicio || f.dataFim)) {
+    const inicio = toDateKey(d.startDate);
+    if (f.dataInicio && inicio < f.dataInicio) return false;
+    if (f.dataFim && inicio > f.dataFim) return false;
+  }
+  if (on('corredor') && f.corredor) {
+    if ((d.corredor ?? '') !== f.corredor) return false;
+  }
+  if (on('site') && f.site) {
+    if ((d.trainingLocal ?? '') !== f.site) return false;
+  }
+  if (on('statusMedicao') && f.statusMedicao.length > 0) {
+    const atual = row.medicaoStatus || SEM_MEDICAO;
+    if (!f.statusMedicao.includes(atual)) return false;
   }
   // Status calculado uma vez: serve ao filtro de status e à regra de canceladas.
   const statusCalculado =
@@ -98,6 +123,11 @@ export interface FilterOptions {
   clientes: { id: string; name: string }[];
   instrutores: { id: string; name: string }[];
   papel: { value: string; label: string }[];
+  /** Corredores presentes nos dados, unidos aos da base operacional quando informados. */
+  corredores: string[];
+  /** Locais/sites presentes nos dados. */
+  sites: string[];
+  statusMedicao: { value: string; label: string }[];
 }
 
 export const PAPEL_LABELS: Record<string, string> = {
@@ -115,12 +145,16 @@ export function buildFilterOptions<Row extends FilterableRow>(
   rows: Row[],
   trainings: TrainingLike[],
   companies: { id: string; name: string }[],
-  instructors: { id: string; name: string }[]
+  instructors: { id: string; name: string }[],
+  /** `operationalBases.corredores` do contexto — a mesma fonte dos filtros de Demandas e Controle Logístico. */
+  corredoresBase: string[] = []
 ): FilterOptions {
   const demandsSeen = new Map<string, Demand>();
   const ufs = new Set<string>();
   const companyIds = new Set<string>();
   const instructorIds = new Set<string>();
+  const corredores = new Set<string>(corredoresBase.filter(Boolean));
+  const sites = new Set<string>();
 
   for (const r of rows) {
     demandsSeen.set(r.demand.id, r.demand);
@@ -128,6 +162,8 @@ export function buildFilterOptions<Row extends FilterableRow>(
     if (uf) ufs.add(uf);
     if (r.demand.companyId) companyIds.add(r.demand.companyId);
     if (r.instructorId) instructorIds.add(r.instructorId);
+    if (r.demand.corredor) corredores.add(r.demand.corredor);
+    if (r.demand.trainingLocal && r.demand.trainingLocal !== 'N/A') sites.add(r.demand.trainingLocal);
   }
 
   const nameOf = (list: { id: string; name: string }[], id: string) =>
@@ -148,5 +184,8 @@ export function buildFilterOptions<Row extends FilterableRow>(
       .map(id => ({ id, name: nameOf(instructors, id) }))
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
     papel: Object.entries(PAPEL_LABELS).map(([value, label]) => ({ value, label })),
+    corredores: [...corredores].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    sites: [...sites].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    statusMedicao: MEDICAO_STATUS_OPTIONS,
   };
 }

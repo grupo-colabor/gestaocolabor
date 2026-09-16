@@ -45,13 +45,21 @@ export type DatasetKey = 'medicoes' | 'demandas';
 
 export type FilterKey =
   | 'periodo'
+  /** Período pela DATA DE INÍCIO dentro do intervalo (Medição Vale), não por interseção. */
+  | 'periodoInicio'
   | 'status'
   | 'modalidade'
   | 'tipo'
   | 'uf'
   | 'cliente'
   | 'instrutor'
-  | 'papel';
+  | 'papel'
+  | 'corredor'
+  | 'site'
+  /** Status da medição, multi-seleção; 'SEM_MEDICAO' = demanda sem linha em measurements. */
+  | 'statusMedicao';
+
+export const SEM_MEDICAO = 'SEM_MEDICAO';
 
 /**
  * Toda linha exportável carrega a demanda de origem (é sobre ela que período,
@@ -62,6 +70,8 @@ export interface FilterableRow {
   demand: Demand;
   instructorId?: string;
   papel?: MeasurementRole;
+  /** Status da medição da demanda; vazio/ausente = sem medição aberta. */
+  medicaoStatus?: string;
 }
 
 export interface DatasetDef<Row extends FilterableRow> {
@@ -98,6 +108,12 @@ export interface ExportFilters {
   /** Só em datasets de pessoa. */
   instructorId: string;
   papel: '' | MeasurementRole;
+  /** `demands.corredor`, ou ''. */
+  corredor: string;
+  /** `demands.training_local` (site/planta), ou ''. */
+  site: string;
+  /** Status da medição (multi). Vazio = todos. Aceita SEM_MEDICAO. */
+  statusMedicao: string[];
 }
 
 export const EMPTY_FILTERS: ExportFilters = {
@@ -110,6 +126,9 @@ export const EMPTY_FILTERS: ExportFilters = {
   companyId: '',
   instructorId: '',
   papel: '',
+  corredor: '',
+  site: '',
+  statusMedicao: [],
 };
 
 /** Cabeçalho + matriz, prontos para qualquer escritor. */

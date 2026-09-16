@@ -1,20 +1,21 @@
 /**
  * VALORES MANUAIS DOS TEMPLATES DE MEDIÇÃO — `measurement_template_values`
  *
- * Migration 017. Dois escopos:
+ * Migrations 017 e 018. Três escopos:
  *   • 'training' — valor por treinamento (o preço HH padrão da Vale);
  *   • 'demand'   — valor por demanda (preço sobrescrito, combustível, % de
- *                  despesa, observação).
+ *                  despesa, observação);
+ *   • 'context'  — valor por contexto "<corredor>|<mina>" (cabeçalho do BM).
  *
- * Leitura: TUDO de um template, paginado via fetchAllPaginated. Tabela vazia
- * (primeira execução, ou nenhum valor digitado ainda) é um resultado
- * legítimo — devolve [] sem erro. Erro de banco PROPAGA.
+ * Leitura: TUDO de um ou mais templates, paginado via fetchAllPaginated.
+ * Tabela vazia (primeira execução, ou nenhum valor digitado ainda) é um
+ * resultado legítimo — devolve [] sem erro. Erro de banco PROPAGA.
  *
  * Escrita: upsert pela chave (template_id, scope, column_key, training_id,
- * demand_id), que casa com a constraint UNIQUE NULLS NOT DISTINCT da 017.
- * Endurecido: se o banco devolver menos linhas do que as enviadas, é RLS
- * filtrando em silêncio — lança, nunca finge que gravou. A tela grava só no
- * "Salvar" da prévia, nunca no download.
+ * demand_id, context_key), que casa com a constraint UNIQUE NULLS NOT
+ * DISTINCT da 018. Endurecido: se o banco devolver menos linhas do que as
+ * enviadas, é RLS filtrando em silêncio — lança, nunca finge que gravou. A
+ * tela grava só no "Salvar" da prévia, nunca no download.
  *
  * Nada aqui é lido pelo Excel de pagamento nem pelo painel de Medição.
  */
@@ -31,13 +32,14 @@ export interface TemplateValueRow {
   column_key: string;
   training_id: string | null;
   demand_id: string | null;
-  /** jsonb escalar: número (preço, %) ou string (observação). */
+  context_key: string | null;
+  /** jsonb escalar: número (preço, %) ou string (observação, cabeçalho). */
   value: number | string | null;
   updated_at?: string;
   updated_by?: string | null;
 }
 
-/** O que a tela manda ao salvar. `refId` é o treinamento ou a demanda, conforme o escopo. */
+/** O que a tela manda ao salvar. `refId` é o treinamento, a demanda ou a chave de contexto, conforme o escopo. */
 export interface TemplateValueInput {
   scope: TemplateValueScope;
   refId: string;
@@ -45,14 +47,17 @@ export interface TemplateValueInput {
   value: number | string | null;
 }
 
-const SELECT_FIELDS = 'id, template_id, scope, column_key, training_id, demand_id, value, updated_at, updated_by';
+const SELECT_FIELDS =
+  'id, template_id, scope, column_key, training_id, demand_id, context_key, value, updated_at, updated_by';
 
-export async function fetchTemplateValues(templateId: string): Promise<TemplateValueRow[]> {
+export async function fetchTemplateValues(templateIds: string | string[]): Promise<TemplateValueRow[]> {
+  const ids = Array.isArray(templateIds) ? templateIds : [templateIds];
+  if (ids.length === 0) return [];
   return fetchAllPaginated<TemplateValueRow>((from, to) =>
     supabase
       .from('measurement_template_values')
       .select(SELECT_FIELDS)
-      .eq('template_id', templateId)
+      .in('template_id', ids)
       .order('id', { ascending: true })
       .range(from, to)
   );
@@ -67,13 +72,14 @@ export async function saveTemplateValues(templateId: string, items: TemplateValu
     column_key: i.columnKey,
     training_id: i.scope === 'training' ? i.refId : null,
     demand_id: i.scope === 'demand' ? i.refId : null,
+    context_key: i.scope === 'context' ? i.refId : null,
     value: i.value,
     updated_at: new Date().toISOString(),
   }));
 
   const { data, error } = await supabase
     .from('measurement_template_values')
-    .upsert(payload, { onConflict: 'template_id,scope,column_key,training_id,demand_id' })
+    .upsert(payload, { onConflict: 'template_id,scope,column_key,training_id,demand_id,context_key' })
     .select(SELECT_FIELDS);
 
   if (error) {

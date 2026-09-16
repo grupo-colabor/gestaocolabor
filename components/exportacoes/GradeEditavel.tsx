@@ -3,14 +3,14 @@ import { ChevronDown, ChevronRight, Loader2, PencilLine, Save, Search, Undo2 } f
 import type { MedicaoValeRow } from '../../domain/exports/datasets/medicaoVale';
 import type { TemplateColumn } from '../../domain/exports/templates/types';
 import { resolveManualValue, type ManualValueSource } from '../../domain/exports/templates/resolve';
-import type { TemplateValuesIndex } from '../../domain/exports/templates/values';
+import type { TemplateValuesIndex, TemplateValueScope } from '../../domain/exports/templates/values';
 import { toBrDate } from '../../domain/exports/shared';
 import { usePagination } from '../../hooks/usePagination';
 import { useStableArray } from '../../hooks/useStableArray';
 import Pagination from '../Pagination';
 
 export type EdicaoPendente = {
-  scope: 'training' | 'demand';
+  scope: TemplateValueScope;
   refId: string;
   columnKey: string;
   value: number | string | null;

@@ -21,7 +21,12 @@ import type { ExportOptions } from '../../domain/exports/options';
 import { buildMedicaoValeRows, toRowsSheetInput } from '../../domain/exports/datasets/medicaoVale';
 import { buildPendencias } from '../../domain/exports/pendencias';
 import { resolveTemplate, resolveRowsSheet } from '../../domain/exports/templates/resolve';
-import { indexTemplateValues, emptyTemplateValuesIndex, type TemplateValuesIndex } from '../../domain/exports/templates/values';
+import {
+  indexTemplateValues,
+  emptyTemplateValuesIndex,
+  TEMPLATE_VALUE_SCOPES,
+  type TemplateValuesIndex,
+} from '../../domain/exports/templates/values';
 import { buildTrainingsById } from '../../domain/modalityOptions';
 import { saveTemplateValues, type TemplateValueRow } from '../../services/exports/templateValues';
 import { downloadTemplateXlsx } from '../../services/exports/templateXlsxWriter';
@@ -38,7 +43,7 @@ const chaveEdicao = (e: EdicaoPendente) => `${e.scope}:${e.refId}:${e.columnKey}
 /** Índice base + edições pendentes, sem mutar o base. */
 function mergeIndex(base: TemplateValuesIndex, pendentes: Map<string, EdicaoPendente>): TemplateValuesIndex {
   const out = emptyTemplateValuesIndex();
-  for (const scope of ['training', 'demand'] as const) {
+  for (const scope of TEMPLATE_VALUE_SCOPES) {
     for (const [ref, cols] of base[scope]) out[scope].set(ref, new Map(cols));
   }
   for (const e of pendentes.values()) {

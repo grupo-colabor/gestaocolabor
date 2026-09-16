@@ -47,6 +47,7 @@ import {
   type HoursRowLike,
 } from '../domain/measurementOverrides';
 import { isHybridModality } from '../domain/modalityRules';
+import { computeInstructorHoursByDemand } from '../domain/instructorHours';
 import fs from 'fs';
 import path from 'path';
 
@@ -1666,6 +1667,42 @@ console.log('\n[14] Painel: "Pago pelo instrutor" ao lado de "Não reembolsa"');
   check('demanda dividida sem seções: aviso de a quem o reembolso é atribuído',
     p.includes('reembolso atribuído a <strong>{reembolsoAtribuidoA}</strong>') && p.includes('titularesDaDemanda.length > 1'));
   check('o titular das seções recebe donoPadraoNome (aviso de item sem dono)', (p.match(/donoPadraoNome=\{secao\.titular \? secao\.nome : undefined\}/g) ?? []).length === 5);
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [15] BLINDAGEM — "Híbrido" com acento é híbrida no rateio de pagamento
+ *
+ * O rateio tinha um normalizador local SEM remoção de acento: um treinamento
+ * gravado como "Híbrido" cairia na carga cheia em vez das horas práticas. O
+ * banco hoje só tem HIBRIDO em caixa alta (conferido em 09/2026) — isto prende
+ * o comportamento para o dia em que alguém digitar com acento.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[15] Blindagem: grafias de "híbrido" no rateio de pagamento');
+{
+  const GRAFIAS = ['Híbrido', 'hibrido', 'HÍBRIDA', 'Hibrida', 'HIBRIDO', 'híbrido ', 'Hí-brido'];
+  const horasRateio = (modality: string) => {
+    const rows = computeInstructorHoursByDemand({
+      demands: [{ id: 'D-H', trainingId: 'T-H', modality: 'PRESENCIAL', dateMode: 'CONTINUO', startDate: '2026-03-02T08:00', endDate: '2026-03-06T17:00', status: 'CONCLUIDA' }] as any,
+      instructorAllocations: [{ id: 'a', demandId: 'D-H', instructorId: 'A', startDate: '2026-03-06', endDate: '2026-03-06' }],
+      trainings: [{ id: 'T-H', name: 'CIPA', hours: 40, practicalHours: 8, modality }] as any,
+      measurements: [],
+      periodStart: '2026-03-01',
+      periodEnd: '2026-03-31',
+    });
+    return rows.find(r => r.instructorId === 'A')?.horas ?? null;
+  };
+  for (const g of GRAFIAS) {
+    eq(`rateio: "${g}" paga as horas práticas (8h), não a carga cheia`, horasRateio(g), 8);
+    eq(`isHybridModality("${g}")`, isHybridModality(g), true);
+  }
+  eq('(contraprova) PRESENCIAL paga a carga cheia (40h)', horasRateio('PRESENCIAL'), 40);
+  eq('(contraprova) isHybridModality("PRESENCIAL") = false', isHybridModality('PRESENCIAL'), false);
+
+  const ih = ler('domain/instructorHours.ts');
+  check('instructorHours usa a normalização única do projeto (canonicalModality)', ih.includes("import { canonicalModality, MODALITY_UNSET } from './modalityOptions';"));
+  check('e não tem mais normalizador local', !ih.includes('const normalizeModality'));
+  const mr = ler('domain/modalityRules.ts');
+  check('isHybridModality também usa canonicalModality', mr.includes("canonicalModality(m) === 'HIBRIDO'"));
 }
 
 console.log(

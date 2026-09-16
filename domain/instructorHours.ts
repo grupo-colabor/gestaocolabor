@@ -32,6 +32,7 @@
  */
 import { getDemandDays } from './demandDays';
 import { calculateDemandStatus } from './demandStatus';
+import { canonicalModality, MODALITY_UNSET } from './modalityOptions';
 import type { Demand, InstructorAllocation, Training, Measurement } from '../types';
 
 export interface ComputeInstructorHoursInput {
@@ -69,12 +70,23 @@ export interface InstructorDemandHoursRow {
   dividida: boolean;
 }
 
-const normalizeModality = (raw: any) =>
-  String(raw ?? '').trim().toUpperCase().replaceAll('-', '').replaceAll(' ', '');
-
-/** A modalidade do TREINAMENTO prevalece sobre a da demanda — igual ao resto do app. */
+/**
+ * A modalidade do TREINAMENTO prevalece sobre a da demanda — igual ao resto do app.
+ *
+ * Normalização ÚNICA do projeto (`canonicalModality`, domain/modalityOptions):
+ * caixa, hífen/espaço, ACENTO e os aliases legados (HÍBRIDA → HIBRIDO,
+ * EAD → ONLINE). Antes havia um normalizador local sem remoção de acento, e um
+ * treinamento gravado como "Híbrido" cairia no `training.hours` cheio em vez
+ * das horas práticas — pagamento errado em silêncio. Hoje o banco só tem
+ * HIBRIDO em caixa alta (conferido em 09/2026); isto é blindagem para o dia em
+ * que alguém digitar com acento.
+ *
+ * Vazio continua vazio ('' e não o marcador MODALITY_UNSET): `calculateDemandStatus`
+ * recebe esta string e trata ausente como "exige instrutor e logística".
+ */
 function resolveModality(demand: Demand, training: Training | undefined): string {
-  return normalizeModality(training?.modality ?? demand.modality);
+  const key = canonicalModality(training?.modality ?? demand.modality);
+  return key === MODALITY_UNSET ? '' : key;
 }
 
 /**

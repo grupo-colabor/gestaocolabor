@@ -107,10 +107,82 @@ export interface TemplateSheetFileLayout {
   totalsRow: number;
 }
 
+/* ───────────────────── folha 'form' (documento assinável, ex. BM) ───────────────────── */
+
+/**
+ * Célula endereçada por posição fixa no arquivo do cliente ('F13'). A
+ * mesclagem vem do arquivo-base e não é tocada. `source`:
+ *   • 'context'   — cadastro por contexto (measurement_template_values, escopo
+ *                   'context', chave "<corredor>|<mina>"), lido por `key`;
+ *   • 'manual'    — digitado na tela para esta geração, não persistido;
+ *   • 'periodo'   — rótulo do período do filtro ('dd/mm/yyyy a dd/mm/yyyy');
+ *   • 'dataEnvio' — data de envio (hoje por padrão, editável), formato date.
+ */
+export type TemplateFormCellSource = 'context' | 'manual' | 'periodo' | 'dataEnvio';
+
+export interface TemplateFormCell {
+  key: string;
+  /** Endereço no arquivo ('F13'). Numa mesclagem, a célula superior esquerda. */
+  cell: string;
+  source: TemplateFormCellSource;
+  format?: TemplateFormat;
+  defaultValue?: TemplateCellValue;
+  highlightWhenEmpty?: boolean;
+  /** Rótulo na tela (bloco "Cabeçalho"). */
+  label?: string;
+}
+
+/**
+ * Coluna da REGIÃO de linhas dentro da folha form. Aqui a letra vem do
+ * arquivo (`col`), porque a folha é posicional — diferente da aba de linhas,
+ * onde a letra segue a ordem do template. Fórmulas continuam por chave
+ * (`{col:key}`), resolvidas para a letra da coluna.
+ */
+export interface TemplateRegionColumn {
+  key: string;
+  col: string;
+  source: 'field' | 'formula' | 'constant';
+  /** 'field': campo da linha agregada (default = key). */
+  field?: string;
+  formula?: string;
+  /** 'constant': valor fixo em toda linha. */
+  value?: TemplateCellValue;
+  format?: TemplateFormat;
+  highlightWhenEmpty?: boolean;
+}
+
+export interface TemplateRowRegion {
+  /** 'training' = uma linha por treinamento agregado (+ preço). */
+  rowScope: 'training';
+  firstRow: number;
+  /** Última linha pré-formatada no arquivo; acima disso o escritor insere linhas. */
+  lastRowInFile: number;
+  /** Linha do total no arquivo (é deslocada quando há inserção). */
+  totalsRowInFile: number;
+  columns: TemplateRegionColumn[];
+  /** Mesclagens por linha, em letras ('C:E'), recriadas nas linhas inseridas. */
+  mergeCols: string[];
+  /** Célula do total (coluna) e a fórmula com {first}/{last}. Sempre reescrita. */
+  totals: { col: string; formula: string };
+  /** Colunas cujos valores são limpos nas linhas pré-formatadas não usadas. */
+  clearCols?: string[];
+}
+
+/** Campo do cadastro por contexto que a tela oferece (bloco "Cabeçalho"). */
+export interface TemplateContextField {
+  key: string;
+  label: string;
+  defaultValue?: string;
+}
+
 export interface TemplateSheet {
   /** Nome EXATO da aba no arquivo do cliente. */
   name: string;
-  kind: 'rows' | 'static';
+  kind: 'rows' | 'static' | 'form';
+  /** 'form': células endereçadas. */
+  cells?: TemplateFormCell[];
+  /** 'form': região de linhas (opcional). */
+  region?: TemplateRowRegion;
   /** 'rows': o que vira linha. F1/Etapa 2: uma linha por demanda. */
   rowScope?: 'demand';
   /** 'rows': linha do cabeçalho (1 quando não há título acima). */
@@ -149,6 +221,13 @@ export interface MeasurementTemplate {
   fileNameBase: string;
   /** Texto fixo que a aba mostra (diferenças de regra, ex.: período por data de início). */
   notes?: string[];
+  /**
+   * Constantes de regra do template, trocáveis em uma linha (ex.:
+   * `despesasComAcrescimo: true` no BM). Não são campos por demanda.
+   */
+  constants?: Record<string, string | number | boolean>;
+  /** Campos do cadastro por contexto ("<corredor>|<mina>") que a tela oferece. */
+  contextFields?: TemplateContextField[];
 }
 
 /* ─────────────────────────── saída do resolvedor ─────────────────────────── */
@@ -189,4 +268,38 @@ export interface ResolvedStaticSheet {
   staticFrom: 'file';
 }
 
-export type ResolvedSheet = ResolvedRowsSheet | ResolvedStaticSheet;
+export interface ResolvedFormCell {
+  address: string;
+  value?: TemplateCellValue;
+  formula?: string;
+  format?: TemplateFormat;
+  highlight?: boolean;
+}
+
+export interface ResolvedRegion {
+  firstRow: number;
+  lastRowInFile: number;
+  totalsRowInFile: number;
+  /** Quantas linhas pré-formatadas o arquivo traz. */
+  capacity: number;
+  /** Linhas a inserir antes do total (0 quando cabe). */
+  extraRows: number;
+  /** Linha do total DEPOIS da inserção. */
+  totalsRow: number;
+  /** Última linha da faixa somada (totalsRow − 1). */
+  lastRow: number;
+  mergeCols: string[];
+  clearCols: string[];
+  /** Uma linha = células por coluna (letra). */
+  rows: { col: string; cell: ResolvedCell }[][];
+  totalsCell: { col: string; formula: string };
+}
+
+export interface ResolvedFormSheet {
+  name: string;
+  kind: 'form';
+  cells: ResolvedFormCell[];
+  region?: ResolvedRegion;
+}
+
+export type ResolvedSheet = ResolvedRowsSheet | ResolvedStaticSheet | ResolvedFormSheet;

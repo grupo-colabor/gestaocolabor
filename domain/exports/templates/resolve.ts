@@ -15,6 +15,9 @@ import type {
   MeasurementTemplate,
   ResolvedCell,
   ResolvedColumn,
+  ResolvedFormCell,
+  ResolvedFormSheet,
+  ResolvedRegion,
   ResolvedRowsSheet,
   ResolvedSheet,
   TemplateCellValue,
@@ -186,16 +189,103 @@ export function resolveRowsSheet(
   return { name: sheet.name, kind: 'rows', headerRow, firstDataRow, columns, rows: resolvedRows, totalsRow, file: sheet.file };
 }
 
+/* ─────────────────────────── folha form (BM) ─────────────────────────── */
+
+/** Uma linha da região já agregada pelo dataset: campo → valor. */
+export type RegionRowInput = Record<string, TemplateCellValue>;
+
+export interface FormSheetInput {
+  /** Cadastro por contexto da mina desta geração (values.context.get(chave)). */
+  context?: Map<string, TemplateValue>;
+  /** Valores digitados para esta geração (ex.: dataEnvio). Não persistidos. */
+  manual?: Record<string, TemplateCellValue>;
+  /** 'dd/mm/yyyy a dd/mm/yyyy'. */
+  periodoLabel?: string;
+  regionRows?: RegionRowInput[];
+}
+
+export function resolveFormSheet(sheet: TemplateSheet, input: FormSheetInput): ResolvedFormSheet {
+  if (sheet.kind !== 'form') throw new Error(`Template: aba ${sheet.name} não é form`);
+  const manual = input.manual ?? {};
+
+  const cells: ResolvedFormCell[] = (sheet.cells ?? []).map(c => {
+    let value: TemplateCellValue;
+    switch (c.source) {
+      case 'context': {
+        const v = input.context?.get(c.key);
+        value = v === undefined ? null : v;
+        break;
+      }
+      case 'manual':
+      case 'dataEnvio':
+        value = manual[c.key] ?? null;
+        break;
+      case 'periodo':
+        value = input.periodoLabel ?? null;
+        break;
+      default:
+        throw new Error(`Template: source desconhecido "${(c as any).source}" na célula ${c.cell}`);
+    }
+    if (isEmpty(value) && c.defaultValue !== undefined) value = c.defaultValue;
+    return { address: c.cell, value, format: c.format, highlight: !!c.highlightWhenEmpty && isEmpty(value) };
+  });
+
+  let region: ResolvedRegion | undefined;
+  if (sheet.region) {
+    const r = sheet.region;
+    const rowsIn = input.regionRows ?? [];
+    const columns: ResolvedColumn[] = r.columns.map(c => ({ key: c.key, header: c.key, letter: c.col, format: c.format }));
+    const capacity = r.lastRowInFile - r.firstRow + 1;
+    const extraRows = Math.max(0, rowsIn.length - capacity);
+    const totalsRow = r.totalsRowInFile + extraRows;
+    const lastRow = totalsRow - 1;
+
+    const rows = rowsIn.map((row, i) => {
+      const rowNumber = r.firstRow + i;
+      return r.columns.map(c => {
+        const base: ResolvedCell = { format: c.format };
+        if (c.source === 'formula') {
+          if (!c.formula) throw new Error(`Template: coluna ${c.key} da região é fórmula sem texto`);
+          return { col: c.col, cell: { ...base, formula: resolveFormula(c.formula, columns, { row: rowNumber, first: r.firstRow, last: lastRow }) } };
+        }
+        const value: TemplateCellValue = c.source === 'constant' ? (c.value ?? null) : (row[c.field ?? c.key] ?? null);
+        return { col: c.col, cell: { ...base, value, highlight: !!c.highlightWhenEmpty && isEmpty(value) } };
+      });
+    });
+
+    region = {
+      firstRow: r.firstRow,
+      lastRowInFile: r.lastRowInFile,
+      totalsRowInFile: r.totalsRowInFile,
+      capacity,
+      extraRows,
+      totalsRow,
+      lastRow,
+      mergeCols: r.mergeCols,
+      clearCols: r.clearCols ?? r.columns.filter(c => c.source !== 'formula').map(c => c.col),
+      rows,
+      // Sempre reescrita na faixa real (first..lastRow), com ou sem inserção.
+      totalsCell: { col: r.totals.col, formula: resolveFormula(r.totals.formula, columns, { first: r.firstRow, last: lastRow }) },
+    };
+  }
+
+  return { name: sheet.name, kind: 'form', cells, region };
+}
+
 export function resolveTemplate(
   template: MeasurementTemplate,
   rows: RowsSheetInput[],
-  values: TemplateValuesIndex
+  values: TemplateValuesIndex,
+  form?: FormSheetInput
 ): ResolvedSheet[] {
-  return template.sheets.map(s =>
-    s.kind === 'static'
-      ? { name: s.name, kind: 'static', staticFrom: s.staticFrom ?? 'file' }
-      : resolveRowsSheet(s, rows, values)
-  );
+  return template.sheets.map(s => {
+    if (s.kind === 'static') return { name: s.name, kind: 'static', staticFrom: s.staticFrom ?? 'file' } as ResolvedSheet;
+    if (s.kind === 'form') {
+      if (!form) throw new Error(`Template: aba ${s.name} é form e precisa de FormSheetInput`);
+      return resolveFormSheet(s, form);
+    }
+    return resolveRowsSheet(s, rows, values);
+  });
 }
 
 /** As colunas editáveis de uma aba de linhas, para a grade da prévia. */

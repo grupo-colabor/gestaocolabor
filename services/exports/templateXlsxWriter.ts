@@ -207,6 +207,10 @@ export async function buildTemplateWorkbook(
       }
       continue;
     }
+    if (sheet.kind === 'form') {
+      // Folha form (BM): escritor próprio, entra no commit do escritor do BM.
+      throw new Error(`Template: folha form "${sheet.name}" ainda sem escritor`);
+    }
     if (baseFile) {
       if (!existing) throw new Error(`O arquivo-base do template "${template.label}" não tem a aba "${sheet.name}".`);
       writeRowsSheetIntoBase(workbook, existing, sheet);

@@ -41,6 +41,8 @@ import { demandIntersectsRange, isNightDemand, getDemandDays } from '../domain/d
 import { companionDaysFromRows, companionDefaultHours } from '../domain/measurementOverrides';
 import { supabase } from '../lib/supabase';
 import { logAction } from '../services/auditLog';
+import { fetchMeasurementByDemandId } from '../services/measurements';
+import { AUTH_MODE } from '../config/authMode';
 
 const STAGE_LABELS: Record<MeasurementStatus, string> = {
   NAO_INICIADA: 'Não iniciada',
@@ -733,7 +735,45 @@ const totals = useMemo(() => {
     }, { count: 0, hospedagem: 0, locomocao: 0, alimentacao: 0, total: 0 });
   }, [measurements, selectedForExport]);
 
-  const handleOpenDetail = (m: Measurement) => {
+  /**
+   * RELÊ a medição do banco antes de abrir o painel.
+   *
+   * O estado global `measurements` é carregado no boot e só atualizado pelos
+   * saves DESTE navegador — a tabela não está no realtime. O Salvar grava o
+   * jsonb inteiro (attachments, flags, valores), então abrir a partir de uma
+   * cópia velha e salvar apagaria o que outra pessoa gravou nesse meio-tempo.
+   * A releitura encurta a janela de "desde o boot" para "enquanto o painel
+   * está aberto". Trava otimista por `updated_at` fica como seguimento
+   * (supabase/migrations/README_reembolso.md).
+   *
+   * Falha na leitura NÃO bloqueia: avisa no console e abre com a cópia local,
+   * como sempre abriu. Modo mock não tem banco e abre direto.
+   */
+  const handleOpenDetail = async (m: Measurement) => {
+    let fresca = m;
+    if (AUTH_MODE === 'supabase') {
+      try {
+        const { data, error } = await fetchMeasurementByDemandId(m.demandId);
+        if (error) {
+          console.warn('[Measurement] releitura ao abrir falhou; abrindo com a cópia local', error);
+        } else if (data) {
+          fresca = {
+            ...m,
+            status: (data.status ?? m.status) as MeasurementStatus,
+            expenses: { ...(data.expenses ?? {}) } as Measurement['expenses'],
+            attachments: data.attachments ?? [],
+            otherExpenses: data.other_expenses ?? [],
+            updatedAt: data.updated_at ?? m.updatedAt,
+          };
+        }
+      } catch (e) {
+        console.warn('[Measurement] releitura ao abrir lançou; abrindo com a cópia local', e);
+      }
+    }
+    abrirPainel(fresca);
+  };
+
+  const abrirPainel = (m: Measurement) => {
   const d = demands.find(dm => dm.id === m.demandId);
 
   // Cliente: horas do treinamento. Interna: horasPrevistas — sem isso o campo

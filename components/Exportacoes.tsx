@@ -20,7 +20,7 @@ import { Download, FileSpreadsheet, FileText, Loader2, RefreshCw } from 'lucide-
 
 import { canAccessView, useApp } from '../App';
 import { useAuth } from '../contexts/AuthContext';
-import { visibleDatasets, getDataset, type AnyDataset } from '../domain/exports/registry';
+import { visibleDatasets, getDataset, isTemplateDataset, type ExportDatasetEntry } from '../domain/exports/registry';
 import { EMPTY_FILTERS, type DatasetKey, type ExportFilters, type ExportTable } from '../domain/exports/types';
 import { applyFilters, buildFilterOptions } from '../domain/exports/filters';
 import { DEFAULT_OPTIONS, type ExportOptions } from '../domain/exports/options';
@@ -33,6 +33,7 @@ import { downloadXlsx } from '../services/exports/xlsxWriter';
 import { downloadCsv, buildExportFileName } from '../services/exports/csvWriter';
 
 import DatasetPicker from './exportacoes/DatasetPicker';
+import MedicaoTemplateView from './exportacoes/MedicaoTemplateView';
 import FiltrosExportacao from './exportacoes/FiltrosExportacao';
 import ColunasSelector from './exportacoes/ColunasSelector';
 import PreviaTabela from './exportacoes/PreviaTabela';
@@ -41,10 +42,10 @@ import ExportBanner from './exportacoes/ExportBanner';
 /** Acima disto a prévia continua paginada, mas o aviso lembra que o arquivo vai ser grande. */
 const AVISO_LINHAS = 20_000;
 
-type Carga = { data: ExportSourceData; comLogistica: boolean };
+type Carga = { data: ExportSourceData; comLogistica: boolean; templateId: string | null };
 
 const Exportacoes: React.FC = () => {
-  const { regions, setNotification } = useApp();
+  const { regions, operationalBases, setNotification } = useApp();
   const { profile } = useAuth();
   const role = profile?.role;
 
@@ -57,7 +58,8 @@ const Exportacoes: React.FC = () => {
   useEffect(() => {
     if (!datasetKey && datasets.length > 0) setDatasetKey(datasets[0].key);
   }, [datasets, datasetKey]);
-  const dataset: AnyDataset | null = datasetKey ? getDataset(datasetKey) : null;
+  const dataset: ExportDatasetEntry | null = datasetKey ? getDataset(datasetKey) : null;
+  const templateDataset = dataset && isTemplateDataset(dataset) ? dataset : null;
 
   const [carga, setCarga] = useState<Carga | null>(null);
   const [carregando, setCarregando] = useState(false);
@@ -69,19 +71,22 @@ const Exportacoes: React.FC = () => {
 
   // Colunas por dataset: nascem no default aprovado; a seleção sobrevive à
   // troca de módulo dentro da sessão.
-  const selectedKeys = dataset ? (selected[dataset.key] ?? defaultColumnKeys(dataset)) : [];
+  const selectedKeys = dataset && !isTemplateDataset(dataset) ? (selected[dataset.key] ?? defaultColumnKeys(dataset)) : [];
   const setSelectedKeys = (keys: string[]) => dataset && setSelected(prev => ({ ...prev, [dataset.key]: keys }));
 
-  const precisaLogistica = datasetKey === 'demandas';
-  const cargaServe = !!carga && (!precisaLogistica || carga.comLogistica);
+  const precisaLogistica = datasetKey === 'demandas' || !!templateDataset;
+  const templateId = templateDataset?.template.id ?? null;
+  const cargaServe =
+    !!carga && (!precisaLogistica || carga.comLogistica) && (!templateId || carga.templateId === templateId);
 
   const carregar = useCallback(async () => {
     if (!datasetKey) return;
     setCarregando(true);
     setErro(null);
     try {
-      const data = await loadExportData({ includeLogistics: datasetKey === 'demandas' });
-      setCarga({ data, comLogistica: datasetKey === 'demandas' });
+      const comLogistica = datasetKey === 'demandas' || !!templateId;
+      const data = await loadExportData({ includeLogistics: comLogistica, templateId });
+      setCarga({ data, comLogistica, templateId });
     } catch (e: any) {
       console.error('[Exportacoes] falha ao carregar', e);
       setCarga(null);
@@ -89,13 +94,13 @@ const Exportacoes: React.FC = () => {
     } finally {
       setCarregando(false);
     }
-  }, [datasetKey]);
+  }, [datasetKey, templateId]);
 
   const regionNameById = useMemo(() => new Map(regions.map(r => [r.id, r.name])), [regions]);
 
   // Linhas do dataset (sem filtro): montadas uma vez por carga.
   const rows = useMemo(() => {
-    if (!dataset || !cargaServe || !carga) return null;
+    if (!dataset || !cargaServe || !carga || isTemplateDataset(dataset)) return null;
     const src = { ...carga.data, regionNameById, options };
     if (dataset.key === 'medicoes') return buildMedicoesRows(src);
     return buildDemandasRows(src);
@@ -117,7 +122,7 @@ const Exportacoes: React.FC = () => {
   );
 
   const table: ExportTable | null = useMemo(() => {
-    if (!dataset || !filteredRows || selectedKeys.length === 0) return null;
+    if (!dataset || isTemplateDataset(dataset) || !filteredRows || selectedKeys.length === 0) return null;
     try {
       return buildTable(dataset, filteredRows, selectedKeys);
     } catch (e) {
@@ -129,7 +134,7 @@ const Exportacoes: React.FC = () => {
   const podeBaixar = !!table && table.rows.length > 0 && !erro && !carregando && !gerando;
 
   const baixar = async (formato: 'xlsx' | 'csv') => {
-    if (!table || !dataset || !podeBaixar) return;
+    if (!table || !dataset || isTemplateDataset(dataset) || !podeBaixar) return;
     setGerando(formato);
     try {
       const nome = buildExportFileName(dataset.fileBase, formato);
@@ -196,12 +201,24 @@ const Exportacoes: React.FC = () => {
 
       {carga && !cargaServe && !carregando && (
         <ExportBanner tipo="aviso">
-          O módulo <strong>Demandas</strong> precisa de logística e documentos, que a última carga não
-          trouxe. Clique em <strong>Recarregar dados</strong>.
+          Este módulo precisa de dados que a última carga não trouxe (logística, documentos ou os
+          valores do template). Clique em <strong>Recarregar dados</strong>.
         </ExportBanner>
       )}
 
-      {dataset && rows && (
+      {templateDataset && carga && cargaServe && (
+        <MedicaoTemplateView
+          dataset={templateDataset}
+          carga={carga.data}
+          options={options}
+          onOptionsChange={setOptions}
+          corredoresBase={operationalBases.corredores ?? []}
+          regionNameById={regionNameById}
+          onNotify={(message, type) => setNotification({ message, type })}
+        />
+      )}
+
+      {dataset && !isTemplateDataset(dataset) && rows && (
         <>
           <FiltrosExportacao
             allowed={dataset.filters}

@@ -41,7 +41,7 @@ export interface ColumnDef<Row> {
   get: (row: Row) => CellValue;
 }
 
-export type DatasetKey = 'medicoes' | 'demandas';
+export type DatasetKey = 'medicoes' | 'demandas' | 'medicao-vale';
 
 export type FilterKey =
   | 'periodo'

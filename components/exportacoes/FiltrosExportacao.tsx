@@ -16,6 +16,9 @@ import { OPTION_LABELS, type ExportOptions, type OptionKey } from '../../domain/
  * (`dataset.filters`); as opções vêm dos dados carregados
  * (domain/exports/filters.buildFilterOptions). Primitivos visuais do painel
  * de filtros da demanda interna (components/demand-form/FilterPanel.tsx).
+ *
+ * `periodo` (interseção) e `periodoInicio` (data de início dentro do
+ * intervalo) usam o mesmo par de datas — o rótulo diz qual regra vale.
  */
 const FiltrosExportacao: React.FC<{
   allowed: FilterKey[];
@@ -26,7 +29,9 @@ const FiltrosExportacao: React.FC<{
   allowedOptions: OptionKey[];
   optionValues: ExportOptions;
   onOptionsChange: (next: ExportOptions) => void;
-}> = ({ allowed, value, options, onChange, allowedOptions, optionValues, onOptionsChange }) => {
+  /** Texto fixo abaixo dos filtros (regra do período). */
+  nota?: React.ReactNode;
+}> = ({ allowed, value, options, onChange, allowedOptions, optionValues, onOptionsChange, nota }) => {
   const on = (k: FilterKey) => allowed.includes(k);
   const set = (patch: Partial<ExportFilters>) => onChange({ ...value, ...patch });
 
@@ -46,6 +51,13 @@ const FiltrosExportacao: React.FC<{
       </select>
     </FilterField>
   );
+
+  const toggleStatusMedicao = (s: string) =>
+    set({
+      statusMedicao: value.statusMedicao.includes(s)
+        ? value.statusMedicao.filter(x => x !== s)
+        : [...value.statusMedicao, s],
+    });
 
   return (
     <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
@@ -72,6 +84,15 @@ const FiltrosExportacao: React.FC<{
             onToChange={v => set({ dataFim: v })}
           />
         )}
+        {on('periodoInicio') && (
+          <FilterDateRangeField
+            label="Período (data de início da turma)"
+            from={value.dataInicio}
+            to={value.dataFim}
+            onFromChange={v => set({ dataInicio: v })}
+            onToChange={v => set({ dataFim: v })}
+          />
+        )}
         {on('status') && (
           <Select label="Status (calculado)" v={value.status} onV={s => set({ status: s })} items={options?.status ?? []} />
         )}
@@ -92,11 +113,34 @@ const FiltrosExportacao: React.FC<{
         {on('cliente') && (
           <Select label="Cliente" v={value.companyId} onV={s => set({ companyId: s })} items={(options?.clientes ?? []).map(c => ({ value: c.id, label: c.name }))} />
         )}
+        {on('corredor') && (
+          <Select label="Corredor" v={value.corredor} onV={s => set({ corredor: s })} items={(options?.corredores ?? []).map(c => ({ value: c, label: c }))} />
+        )}
+        {on('site') && (
+          <Select label="Site / planta (local)" v={value.site} onV={s => set({ site: s })} items={(options?.sites ?? []).map(c => ({ value: c, label: c }))} />
+        )}
         {on('instrutor') && (
           <Select label="Pessoa (instrutor)" v={value.instructorId} onV={s => set({ instructorId: s })} items={(options?.instrutores ?? []).map(i => ({ value: i.id, label: i.name }))} todos="Todas" />
         )}
         {on('papel') && (
           <Select label="Papel" v={value.papel} onV={s => set({ papel: s as ExportFilters['papel'] })} items={options?.papel ?? []} />
+        )}
+        {on('statusMedicao') && (
+          <FilterField label="Status da medição (vazio = todas)" className="lg:col-span-2">
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-1">
+              {(options?.statusMedicao ?? []).map(o => (
+                <label key={o.value} className="flex items-center gap-1.5 text-xs font-bold text-slate-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    checked={value.statusMedicao.includes(o.value)}
+                    onChange={() => toggleStatusMedicao(o.value)}
+                  />
+                  {o.label}
+                </label>
+              ))}
+            </div>
+          </FilterField>
         )}
       </FilterGrid>
 
@@ -117,9 +161,13 @@ const FiltrosExportacao: React.FC<{
       )}
 
       <p className="text-[11px] text-slate-400 leading-relaxed border-t border-slate-100 pt-3">
-        O período seleciona as demandas que têm ao menos um dia dentro do intervalo. As horas saem
-        inteiras, sem rateio pelos dias do período — o rateio mensal é regra da planilha de pagamento
-        (Medição → Exportar Medição), não desta aba.
+        {nota ?? (
+          <>
+            O período seleciona as demandas que têm ao menos um dia dentro do intervalo. As horas saem
+            inteiras, sem rateio pelos dias do período — o rateio mensal é regra da planilha de pagamento
+            (Medição → Exportar Medição), não desta aba.
+          </>
+        )}
       </p>
     </div>
   );

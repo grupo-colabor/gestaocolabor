@@ -27,6 +27,8 @@ import { fetchDemandParticipants } from '../demandParticipants';
 import { fetchCompanionAllocations } from '../companionAllocations';
 import { fetchAllLogisticBlocks } from '../logistics';
 import { fetchAllDemandDocumentFlags } from '../demandDocuments';
+import { fetchLogisticAllocations, type LogisticAllocationRow } from '../logisticAllocations';
+import { fetchTemplateValues, type TemplateValueRow } from './templateValues';
 import {
   mapDemand,
   mapTraining,
@@ -55,6 +57,11 @@ export interface ExportSourceData {
   companions: CompanionAllocation[];
   logisticBlocks: LogisticBlockLike[];
   documentFlags: DocFlagLike[];
+  /** `logistic_allocations` (a linha do Controle Logístico) — só com includeLogistics. */
+  logisticAllocations: LogisticAllocationRow[];
+  /** Valores manuais do template pedido em `templateId`; vazio quando não pedido. */
+  templateValues: TemplateValueRow[];
+  templateId: string | null;
   /** Quando os dados foram lidos — vai para o rodapé da tela. */
   loadedAt: Date;
 }
@@ -80,6 +87,8 @@ export interface LoadExportDataOptions {
    * paga essas 5 a 7 requisições a mais.
    */
   includeLogistics: boolean;
+  /** Template de medição cujos valores manuais devem vir junto (Etapa 2). */
+  templateId?: string | null;
 }
 
 export async function loadExportData(opts: LoadExportDataOptions): Promise<ExportSourceData> {
@@ -94,6 +103,8 @@ export async function loadExportData(opts: LoadExportDataOptions): Promise<Expor
     companionRows,
     logisticRows,
     docRows,
+    logisticAllocationRows,
+    templateValueRows,
   ] = await Promise.all([
     fetchDemands(),
     fetchMeasurements(),
@@ -105,6 +116,9 @@ export async function loadExportData(opts: LoadExportDataOptions): Promise<Expor
     fetchCompanionAllocations(),
     opts.includeLogistics ? fetchAllLogisticBlocks() : Promise.resolve([]),
     opts.includeLogistics ? fetchAllDemandDocumentFlags() : Promise.resolve([]),
+    // Pelo fetcher paginado existente (Controle Logístico), não por query nova.
+    opts.includeLogistics ? fetchLogisticAllocations() : Promise.resolve([]),
+    opts.templateId ? fetchTemplateValues(opts.templateId) : Promise.resolve([]),
   ]);
 
   return {
@@ -134,6 +148,9 @@ export async function loadExportData(opts: LoadExportDataOptions): Promise<Expor
     })),
     logisticBlocks: (logisticRows ?? []) as LogisticBlockLike[],
     documentFlags: (docRows ?? []) as DocFlagLike[],
+    logisticAllocations: logisticAllocationRows ?? [],
+    templateValues: templateValueRows ?? [],
+    templateId: opts.templateId ?? null,
     loadedAt: new Date(),
   };
 }

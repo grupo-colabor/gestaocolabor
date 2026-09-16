@@ -21,7 +21,7 @@ import { formatDiasList } from '../domain/exports/shared';
 import { buildMedicoesRows, MEDICOES_DATASET, type MedicaoRow } from '../domain/exports/datasets/medicoes';
 import { buildTable, defaultColumnKeys } from '../domain/exports/buildRows';
 import { buildDemandasRows, DEMANDAS_DATASET, transportLabel, lodgingLabel } from '../domain/exports/datasets/demandas';
-import { EXPORT_DATASETS, getDataset, visibleDatasets } from '../domain/exports/registry';
+import { EXPORT_DATASETS, getDataset, visibleDatasets, isTemplateDataset } from '../domain/exports/registry';
 import { EMPTY_FILTERS } from '../domain/exports/types';
 import { applyFilters } from '../domain/exports/filters';
 import { DEFAULT_OPTIONS } from '../domain/exports/options';
@@ -397,8 +397,12 @@ export function runDatasetChecks(t: SmokeTools): number {
    * ──────────────────────────────────────────────────────────────────────── */
   console.log('\n[G] Registry');
   {
-    eq('F1 registra Medições e Demandas', EXPORT_DATASETS.map(d => d.key), ['medicoes', 'demandas']);
+    eq('registry: Medições, Demandas e Medição Vale', EXPORT_DATASETS.map(d => d.key), ['medicoes', 'demandas', 'medicao-vale']);
+    const vale = EXPORT_DATASETS.find(d => d.key === 'medicao-vale')!;
+    check('Medição Vale é dataset de template e exige a view measurement', isTemplateDataset(vale) && vale.requiredView === 'measurement');
+    check('Medição Vale filtra por data de início, corredor, site e status da medição', isTemplateDataset(vale) && ['periodoInicio', 'corredor', 'site', 'statusMedicao'].every(f => vale.filters.includes(f as any)));
     for (const d of EXPORT_DATASETS) {
+      if (isTemplateDataset(d)) continue;
       const keys = d.columns.map(c => c.key);
       eq(d.key + ': chaves únicas', new Set(keys).size, keys.length);
       check(d.key + ': tem coluna ligada por padrão', d.columns.some(c => c.defaultOn));
@@ -410,7 +414,7 @@ export function runDatasetChecks(t: SmokeTools): number {
     const analista = new Set(['dashboard', 'demands', 'internal-demands', 'exportacoes']);
     eq('analista vê só Demandas', visibleDatasets(v => analista.has(v)).map(d => d.key), ['demandas']);
     const admin = new Set([...analista, 'measurement']);
-    eq('admin vê os dois', visibleDatasets(v => admin.has(v)).map(d => d.key), ['medicoes', 'demandas']);
+    eq('admin vê os três', visibleDatasets(v => admin.has(v)).map(d => d.key), ['medicoes', 'demandas', 'medicao-vale']);
     eq('coordenador não vê nenhum', visibleDatasets(() => false).length, 0);
     let lancou = false;
     try { getDataset('nada' as any); } catch { lancou = true; }

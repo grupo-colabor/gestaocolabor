@@ -20,13 +20,49 @@
  */
 import { MEDICOES_DATASET } from './datasets/medicoes';
 import { DEMANDAS_DATASET } from './datasets/demandas';
-import type { DatasetDef, DatasetKey, FilterableRow } from './types';
+import { VALE_TEMPLATE } from './templates/vale';
+import type { MeasurementTemplate } from './templates/types';
+import type { OptionKey } from './options';
+import type { DatasetDef, DatasetKey, FilterKey, FilterableRow } from './types';
 
 export type AnyDataset = DatasetDef<any>;
 
-export const EXPORT_DATASETS: AnyDataset[] = [MEDICOES_DATASET, DEMANDAS_DATASET];
+/**
+ * Dataset de TEMPLATE (Etapa 2): gera o XLSX no layout do cliente em vez de
+ * uma tabela de colunas livres. Mesmo gate (`requiredView`), mesmos filtros e
+ * opções do motor; o que muda é o caminho de saída (templateXlsxWriter).
+ */
+export interface TemplateDatasetDef {
+  kind: 'template';
+  key: DatasetKey;
+  label: string;
+  description: string;
+  requiredView: string;
+  filters: FilterKey[];
+  options: OptionKey[];
+  template: MeasurementTemplate;
+}
 
-export function getDataset(key: DatasetKey): AnyDataset {
+export type ExportDatasetEntry = AnyDataset | TemplateDatasetDef;
+
+export const isTemplateDataset = (d: ExportDatasetEntry): d is TemplateDatasetDef =>
+  (d as TemplateDatasetDef).kind === 'template';
+
+export const MEDICAO_VALE_DATASET: TemplateDatasetDef = {
+  kind: 'template',
+  key: 'medicao-vale',
+  label: 'Medição Vale',
+  description:
+    'Planilha no modelo da Vale: uma turma por demanda concluída, com preço HH, despesas reembolsáveis e a aba Plantas.',
+  requiredView: 'measurement',
+  filters: ['periodoInicio', 'corredor', 'site', 'statusMedicao'],
+  options: ['incluirCanceladas'],
+  template: VALE_TEMPLATE,
+};
+
+export const EXPORT_DATASETS: ExportDatasetEntry[] = [MEDICOES_DATASET, DEMANDAS_DATASET, MEDICAO_VALE_DATASET];
+
+export function getDataset(key: DatasetKey): ExportDatasetEntry {
   const d = EXPORT_DATASETS.find(x => x.key === key);
   if (!d) throw new Error(`Dataset desconhecido: ${key}`);
   return d;
@@ -36,7 +72,7 @@ export function getDataset(key: DatasetKey): AnyDataset {
  * Os datasets que um perfil pode ver, dado o predicado de acesso do App
  * (`canAccessView(role, view)`), injetado para o domínio não conhecer papéis.
  */
-export function visibleDatasets(canAccessView: (view: string) => boolean): AnyDataset[] {
+export function visibleDatasets(canAccessView: (view: string) => boolean): ExportDatasetEntry[] {
   return EXPORT_DATASETS.filter(d => canAccessView(d.requiredView));
 }
 

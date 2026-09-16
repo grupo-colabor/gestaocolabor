@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Loader2, PencilLine, Save, Search, Undo2 } from 'lucide-react';
 import type { MedicaoValeRow } from '../../domain/exports/datasets/medicaoVale';
 import type { TemplateColumn } from '../../domain/exports/templates/types';
@@ -6,6 +6,7 @@ import { resolveManualValue, type ManualValueSource } from '../../domain/exports
 import type { TemplateValuesIndex } from '../../domain/exports/templates/values';
 import { toBrDate } from '../../domain/exports/shared';
 import { usePagination } from '../../hooks/usePagination';
+import { useStableArray } from '../../hooks/useStableArray';
 import Pagination from '../Pagination';
 
 export type EdicaoPendente = {
@@ -82,10 +83,20 @@ const GradeEditavel: React.FC<{
   /** Muda a cada salvar/descartar: remonta os inputs (não controlados). */
   resetKey: number;
 }> = ({ rows, allRows, columns, values, onEdit, trainingNames, demandasComPendencia, pendentes, salvando, onSalvar, onDescartar, resetKey }) => {
-  const manuais = columns.filter(c => c.source === 'manual' && c.editable);
-  const porTreinamento = manuais.filter(c => c.persistScope === 'training');
-  const porDemanda = manuais.filter(c => c.persistScope === 'demand' || c.overrideScope === 'demand');
-  const precoCol = porTreinamento[0];
+  // ⚠️ Memoizadas de propósito: `porDemanda` entra nas dependências do
+  // useMemo de `turmas`. Sem isto, cada render produzia um array novo, `turmas`
+  // ganhava referência nova e o usePagination (que volta para a página 1 quando
+  // a lista muda) desfazia o clique em "2" no mesmo ciclo — a paginação da
+  // grade parecia travada. Coberto por scripts/smokeGradePaginacao.tsx.
+  const { porTreinamento, porDemanda, precoCol } = useMemo(() => {
+    const manuais = columns.filter(c => c.source === 'manual' && c.editable);
+    const treino = manuais.filter(c => c.persistScope === 'training');
+    return {
+      porTreinamento: treino,
+      porDemanda: manuais.filter(c => c.persistScope === 'demand' || c.overrideScope === 'demand'),
+      precoCol: treino[0] as TemplateColumn | undefined,
+    };
+  }, [columns]);
 
   const [abertoTreino, setAbertoTreino] = useState(false);
   const [abertoTurma, setAbertoTurma] = useState(false);
@@ -114,16 +125,22 @@ const GradeEditavel: React.FC<{
   );
 
   /* ───────── por turma ───────── */
-  const temExcecao = (r: MedicaoValeRow) => porDemanda.some(c => resolveManualValue(c, r.refs, values).fonte === 'demanda');
-  const turmasComExcecao = useMemo(() => rows.filter(temExcecao).length, [rows, values, porDemanda]);
-  const turmas = useMemo(() => {
+  const temExcecao = useCallback(
+    (r: MedicaoValeRow) => porDemanda.some(c => resolveManualValue(c, r.refs, values).fonte === 'demanda'),
+    [porDemanda, values]
+  );
+  const turmasComExcecao = useMemo(() => rows.filter(temExcecao).length, [rows, temExcecao]);
+  const turmasDerivadas = useMemo(() => {
     const q = normalize(buscaTurma.trim());
     return rows.filter(r => {
       if (soPendentes && !demandasComPendencia.has(r.demand.id) && !temExcecao(r)) return false;
       if (!q) return true;
       return normalize([r.demand.id, r.input.clientDemandId, r.input.trainingName, ...r.input.titulares].join(' ')).includes(q);
     });
-  }, [rows, buscaTurma, soPendentes, demandasComPendencia, values, porDemanda]);
+  }, [rows, buscaTurma, soPendentes, demandasComPendencia, temExcecao]);
+  // Referência estável por conteúdo: editar um preço muda `values` (e
+  // `temExcecao`), mas a lista de turmas é a mesma — a página não pode voltar.
+  const turmas = useStableArray<MedicaoValeRow>(turmasDerivadas, r => r.demand.id);
   const pag = usePagination<MedicaoValeRow>(turmas, 'exportacoes.grade.turmas', PAGE);
 
   const parse = (col: TemplateColumn, raw: string): number | string | null => {

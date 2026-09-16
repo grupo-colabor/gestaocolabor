@@ -22,7 +22,15 @@
  * demanda caem dentro do mês. Demanda que atravessa a borda entra no Excel
  * proporcionalmente e no export inteira — é o comportamento aprovado (o
  * export não rateia), então essas linhas são listadas como "borda (esperado)"
- * e ficam fora da soma comparada. Qualquer outra diferença é FALHA.
+ * e ficam fora da soma comparada.
+ *
+ * Linha do Excel com `horasInformadas === false` (acompanhante sem horas): o
+ * Excel imprime a pessoa com Horas em branco e amarela; o export tem de dizer
+ * `Horas pagamento` em branco com origem "Acompanhante sem horas informadas".
+ * É "sem-horas (ok)". Qualquer outra diferença é FALHA.
+ *
+ * O comparador é puro (reconcileExportacoesCore.ts) e roda também contra
+ * fixtures em `npm run smoke:medicao-blocos` [13].
  *
  * Sai com código 1 se houver diferença não explicada pela borda.
  */
@@ -31,6 +39,7 @@ import { loadExportData } from '../services/exports/loadExportData';
 import { buildMedicoesRows } from '../domain/exports/datasets/medicoes';
 import { monthBounds } from '../services/medicaoWorkbook';
 import { supabase } from '../lib/supabase';
+import { compareExcelWithExport } from './reconcileExportacoesCore';
 
 function mesAlvo(): { year: number; month: number } {
   const env = process.env.RECONCILE_MES;
@@ -70,82 +79,20 @@ async function main() {
     loadExportData({ includeLogistics: false }),
   ]);
   const rows = buildMedicoesRows(data);
-  const exportPorChave = new Map(rows.map(r => [`${r.demand.id} ${r.instructorId}`, r]));
 
-  let falhas = 0;
-  let borda = 0;
-  let iguais = 0;
-  const porInstrutor = new Map<string, { nome: string; excel: number; exportSemBorda: number; borda: number }>();
-
-  for (const b of blocks) {
-    const acc = porInstrutor.get(b.instructorId) ?? { nome: b.nome, excel: 0, exportSemBorda: 0, borda: 0 };
-    for (const linha of b.linhas) {
-      acc.excel += linha.horas;
-      const k = `${linha.demandId} ${b.instructorId}`;
-      const ex = exportPorChave.get(k);
-      if (!ex) {
-        // Sem medição aberta a demanda não entra no dataset Medições — mas
-        // entra no Excel (o rateio não exige medição). É escopo aprovado
-        // (item 2), então conta como "fora do dataset", não como falha.
-        console.log(`  fora-do-dataset  ${k} — demanda sem linha em measurements (Excel: ${r2(linha.horas)}h)`);
-        continue;
-      }
-      // Todos os dias de pagamento dentro do mês? Então o Excel não recortou.
-      const diasTodosNoMes = ex.diasPagamento !== '' && !atravessaBorda(ex.diasPagamento, start, end);
-      if (!diasTodosNoMes) {
-        borda++;
-        acc.borda += linha.horas;
-        console.log(`  borda (esperado) ${k} — Excel ${r2(linha.horas)}h (recorte do mês) × export ${ex.horasPagamento ?? '—'}h (carga cheia)`);
-        continue;
-      }
-      if (ex.horasPagamento === null || Math.abs(ex.horasPagamento - r2(linha.horas)) > 0.005) {
-        falhas++;
-        console.log(`  FALHA            ${k} — Excel ${r2(linha.horas)}h × export ${ex.horasPagamento ?? 'EM BRANCO'} (${ex.origemHoras})`);
-      } else {
-        iguais++;
-        acc.exportSemBorda += ex.horasPagamento;
-      }
-    }
-    porInstrutor.set(b.instructorId, acc);
-  }
-
-  // O caminho inverso: linha elegível no export, no mês, que o Excel não tem.
-  for (const r of rows) {
-    if (!r.elegivelPagamento || !r.diasPagamento) continue;
-    if (!tocaMes(r.diasPagamento, start, end)) continue;
-    const temNoExcel = blocks.some(b => b.instructorId === r.instructorId && b.linhas.some(l => l.demandId === r.demand.id));
-    if (!temNoExcel) {
-      falhas++;
-      console.log(`  FALHA            ${r.demand.id} ${r.instructorId} — elegível no export (${r.horasPagamento}h) mas sem linha no Excel`);
-    }
-  }
+  // O comparador é puro (reconcileExportacoesCore.ts) e roda também contra
+  // fixtures no smoke; aqui só busca os dois lados e imprime.
+  const r = compareExcelWithExport(blocks, rows, start, end);
+  for (const linha of r.log) console.log(linha);
 
   console.log('\nResumo por instrutor (Σ horas; export só das linhas sem borda):');
-  for (const [, a] of [...porInstrutor.entries()].sort((x, y) => x[1].nome.localeCompare(y[1].nome, 'pt-BR'))) {
+  for (const a of r.porInstrutor) {
     console.log(`  ${a.nome.padEnd(34)} Excel ${r2(a.excel).toString().padStart(8)}h   export ${r2(a.exportSemBorda).toString().padStart(8)}h   (borda: ${r2(a.borda)}h)`);
   }
-  console.log(`\n  iguais: ${iguais}   borda (esperado): ${borda}   falhas: ${falhas}`);
-  console.log(falhas === 0 ? '\n✅ RECONCILE EXPORTACOES: OK' : `\n❌ RECONCILE EXPORTACOES: ${falhas} diferença(s) não explicada(s)`);
+  console.log(`\n  iguais: ${r.iguais}   borda (esperado): ${r.borda}   sem-horas (acompanhante): ${r.semHoras}   fora-do-dataset: ${r.foraDoDataset}   falhas: ${r.falhas}`);
+  console.log(r.falhas === 0 ? '\n✅ RECONCILE EXPORTACOES: OK' : `\n❌ RECONCILE EXPORTACOES: ${r.falhas} diferença(s) não explicada(s)`);
   await supabase.auth.signOut();
-  process.exit(falhas === 0 ? 0 : 1);
-}
-
-/** 'dd/mm/yyyy' | 'a a b' | 'a, b' → lista de 'YYYY-MM-DD'. */
-function diasDe(texto: string): string[] {
-  const toIso = (br: string) => `${br.slice(6, 10)}-${br.slice(3, 5)}-${br.slice(0, 2)}`;
-  if (texto.includes(' a ')) {
-    const [a, b] = texto.split(' a ').map(toIso);
-    return [a, b];
-  }
-  return texto.split(', ').map(toIso);
-}
-function atravessaBorda(texto: string, start: string, end: string): boolean {
-  return diasDe(texto).some(d => d < start || d > end);
-}
-function tocaMes(texto: string, start: string, end: string): boolean {
-  const ds = diasDe(texto);
-  if (texto.includes(' a ')) return !(ds[1] < start || ds[0] > end);
-  return ds.some(d => d >= start && d <= end);
+  process.exit(r.falhas === 0 ? 0 : 1);
 }
 
 main().catch(e => {

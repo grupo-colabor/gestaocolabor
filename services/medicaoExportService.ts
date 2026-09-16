@@ -24,6 +24,8 @@ import { fetchTrainings } from './trainings';
 import { fetchInstructors } from './instructors';
 import { computeInstructorHoursByDemand, eligibleDemandIdsForPayment } from '../domain/instructorHours';
 import { applyMeasurementOverrides } from '../domain/measurementOverrides';
+import { buildCompanionRowsWithoutHours, reembolsoDaPessoa } from '../domain/paymentRows';
+import { resolveMeasurementPeople, type MeasurementPerson } from '../domain/measurementPeople';
 import { fetchDemandParticipants } from './demandParticipants';
 import { fetchCompanionAllocations } from './companionAllocations';
 import { isNightDemand } from '../domain/demandDays';
@@ -273,6 +275,28 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
    * exatamente como saía. Regra e tabela de precedência em
    * domain/measurementOverrides.ts.
    */
+  const participants = (participantRows ?? []).map(p => ({
+    demandId: p.demand_id,
+    instructorId: p.instructor_id,
+    startDate: p.start_date,
+    endDate: p.end_date,
+  }));
+  const companions = (companionRows ?? []).map(c => ({
+    demandId: c.demand_id,
+    instructorId: c.instructor_id,
+    startDate: c.start_date,
+  }));
+
+  // O override só age sobre o que JÁ é elegível para este export. Mesma
+  // regra de status e período do rateio, calculada uma vez e compartilhada
+  // com a linha do acompanhante sem horas, logo abaixo.
+  const eligibleDemandIds = eligibleDemandIdsForPayment({
+    demands,
+    trainings,
+    periodStart: dataInicio,
+    periodEnd: dataFim,
+  });
+
   const hoursRows = applyMeasurementOverrides({
     rows: hoursRowsDoRateio,
     measurements: measurements.map(m => ({ ...m, demandId: m.demandId })) as any,
@@ -288,17 +312,32 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
       instructorId: c.instructor_id,
       startDate: c.start_date,
     })),
-    // O override só age sobre o que JÁ é elegível para este export. Mesma
-    // regra de status e período do rateio, calculada uma vez e compartilhada.
-    eligibleDemandIds: eligibleDemandIdsForPayment({
-      demands,
-      trainings,
-      periodStart: dataInicio,
-      periodEnd: dataFim,
-    }),
+    eligibleDemandIds,
     periodStart: dataInicio,
     periodEnd: dataFim,
   });
+
+  /**
+   * Acompanhante SEM horas informadas: o override não gera linha para ele (e
+   * não deve — não inventa horas). A planilha mostra a pessoa mesmo assim, com
+   * Horas em branco/amarela e as despesas dela, para ninguém ficar de fora em
+   * silêncio. Fonte: `companion_allocations` das demandas elegíveis, com ou sem
+   * medição salva. Regra em domain/paymentRows.ts.
+   */
+  const linhasPagamento = [
+    ...hoursRows.map(r => ({ ...r, horasInformadas: true as const })),
+    ...buildCompanionRowsWithoutHours({
+      demands: demands as any,
+      eligibleDemandIds,
+      instructorAllocations,
+      participants,
+      companions,
+      measurements: measurements as any,
+      covered: hoursRows,
+      periodStart: dataInicio,
+      periodEnd: dataFim,
+    }),
+  ];
 
   const trainingNameById = new Map(trainings.map(t => [String(t.id), t.name]));
   const instructorsById = new Map(instructors.map(i => [i.id, i]));
@@ -340,7 +379,20 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
 
   const blocks = new Map<string, MedicaoInstructorBlock>();
 
-  for (const row of hoursRows) {
+  // Pessoas da demanda (cadastro) e medição, para o reembolso por pessoa.
+  // Uma resolução por demanda, reaproveitada em todas as linhas dela.
+  const measurementByDemand = new Map(measurements.map(m => [m.demandId, m]));
+  const pessoasCache = new Map<string, MeasurementPerson[]>();
+  const pessoasDe = (demand: Demand): MeasurementPerson[] => {
+    let lista = pessoasCache.get(demand.id);
+    if (!lista) {
+      lista = resolveMeasurementPeople(demand, instructorAllocations, participants, companions);
+      pessoasCache.set(demand.id, lista);
+    }
+    return lista;
+  };
+
+  for (const row of linhasPagamento) {
     const demand = demandsById.get(row.demandId);
     if (!demand) continue;
 
@@ -383,7 +435,17 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
       local: local || '—',
       modalidade: getModalityLabel(resolveDemandModality(demand, trainingsById)),
       // 2 casas: mesmo arredondamento do export do Dashboard, evita ruído de float.
-      horas: Math.round((row.horas + Number.EPSILON) * 100) / 100,
+      // `null` atravessa intacto: é o "ninguém informou" do acompanhante.
+      horas: row.horas === null ? null : Math.round((row.horas + Number.EPSILON) * 100) / 100,
+      horasInformadas: row.horasInformadas,
+      // Só o que a Colabor deve a ESTA pessoa: itens marcados como pagos pelo
+      // instrutor, atribuídos pela mesma regra de dono do dataset Medições.
+      reembolso: reembolsoDaPessoa(
+        measurementByDemand.get(demand.id),
+        demand,
+        pessoasDe(demand),
+        row.instructorId
+      ),
     });
   }
 

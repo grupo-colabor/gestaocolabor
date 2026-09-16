@@ -894,9 +894,16 @@ console.log('\n[9] Override respeita o recorte do export');
     'o export calcula o conjunto elegível...',
     svc.includes('eligibleDemandIdsForPayment({')
   );
+  // O conjunto é calculado UMA vez e entregue ao override e à linha do
+  // acompanhante sem horas — os dois recortam pela mesma elegibilidade.
   check(
     '...e o entrega ao override',
-    svc.includes('eligibleDemandIds: eligibleDemandIdsForPayment({')
+    svc.includes('const eligibleDemandIds = eligibleDemandIdsForPayment({') &&
+      /applyMeasurementOverrides\(\{[\s\S]{0,900}eligibleDemandIds,/.test(svc)
+  );
+  check(
+    '...e à montagem da linha do acompanhante sem horas (mesmo Set)',
+    /buildCompanionRowsWithoutHours\(\{[\s\S]{0,200}eligibleDemandIds,/.test(svc)
   );
   check(
     'com o MESMO período do rateio',

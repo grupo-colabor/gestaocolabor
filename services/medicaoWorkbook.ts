@@ -20,9 +20,13 @@
  * Tarifas recalcula todas as linhas daquele par.
  */
 
+import type { MedicaoReembolso } from '../domain/paymentRows';
+
 /* ========================================================================== */
 /* Tipos públicos                                                             */
 /* ========================================================================== */
+
+export type { MedicaoReembolso } from '../domain/paymentRows';
 
 export interface MedicaoDetailRow {
   /** Código da demanda (DEM-xxxx). */
@@ -38,7 +42,21 @@ export interface MedicaoDetailRow {
   dias: string[];
   local: string;
   modalidade: string;
-  horas: number;
+  /**
+   * `null` = NINGUÉM INFORMOU (acompanhante sem horas digitadas). A célula sai
+   * vazia, destravada e amarela, e o hora/aula da linha mostra o texto "horas
+   * não informadas" até alguém preencher. Nunca 0: zero aqui seria pagamento
+   * zerado em silêncio.
+   */
+  horas: number | null;
+  /** `false` quando `horas` é `null`. Redundante de propósito: é o que o reconcile lê. */
+  horasInformadas: boolean;
+  /**
+   * Despesas que a Colabor deve a ESTE instrutor nesta demanda: só os itens
+   * marcados como "pago pelo instrutor" na medição (domain/paymentRows.ts).
+   * Despesa paga pela Colabor não aparece na aba dele.
+   */
+  reembolso: MedicaoReembolso;
   /**
    * Categoria da demanda INTERNA (SIPAT, Visita, Apoio Logístico...). Vazia em
    * demanda de cliente, que já é identificada por empresa + treinamento.

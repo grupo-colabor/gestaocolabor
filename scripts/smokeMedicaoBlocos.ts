@@ -38,6 +38,8 @@ import {
   type TotalizableMeasurement,
 } from '../domain/measurementTotals';
 import { resolvePersonBlocks } from '../domain/measurementPersonBlocks';
+import { buildCompanionRowsWithoutHours, reembolsoDaPessoa } from '../domain/paymentRows';
+import { compareExcelWithExport, ORIGEM_ACOMPANHANTE_SEM_HORAS } from './reconcileExportacoesCore';
 import {
   applyMeasurementOverrides,
   companionDefaultHours,
@@ -592,7 +594,11 @@ console.log('\n[7] Fio do export de medição');
   check(
     'nessa ordem (override DEPOIS do rateio, ANTES do workbook)',
     svc.indexOf('computeInstructorHoursByDemand({') < svc.indexOf('applyMeasurementOverrides({') &&
-      svc.indexOf('applyMeasurementOverrides({') < svc.indexOf('for (const row of hoursRows)')
+      // As linhas do override entram na lista final ANTES da montagem das abas;
+      // a linha do acompanhante sem horas é acrescentada a essa lista, nunca
+      // ao rateio nem ao override.
+      svc.indexOf('applyMeasurementOverrides({') < svc.indexOf('const linhasPagamento = [') &&
+      svc.indexOf('const linhasPagamento = [') < svc.indexOf('for (const row of linhasPagamento)')
   );
   check(
     'os participantes são buscados para recortar os dias da linha nova',
@@ -1471,6 +1477,163 @@ console.log('\n[12] Pago pelo instrutor');
   const dataset = ler('domain/exports/datasets/medicoes.ts');
   check('o dataset Medições importa resolvePersonBlocks', dataset.includes("from '../../measurementPersonBlocks'"));
   check('e não tem mais a cópia local da decisão v1/v2', !dataset.includes('const temSegundaCategoria') && !dataset.includes('normalizeMeasurementBlocks('));
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [13] ACOMPANHANTE SEM HORAS NA PLANILHA + reembolso por pessoa + reconcile
+ *
+ * O override continua NÃO gerando linha para acompanhante sem horas (bloco [8],
+ * intocado). Quem gera é a montagem do export, a partir do CADASTRO
+ * (domain/paymentRows.ts): a pessoa aparece com Horas em branco, com ou sem
+ * medição salva. Zero digitado continua fora. E o reconcile aprende a aceitar
+ * essa linha só quando o export concorda com o motivo.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[13] Acompanhante sem horas gera linha (montagem do export)');
+{
+  const DEMANDA: any = {
+    id: 'DEM-A', tipo: 'cliente', dateMode: 'CONTINUO',
+    startDate: '2026-07-06T08:00', endDate: '2026-07-07T18:00', instructorId: 'TIT',
+  };
+  const D1 = '2026-07-06';
+  const D2 = '2026-07-07';
+  const alocTitular = [{ id: 'IA-1', demandId: 'DEM-A', instructorId: 'TIT', startDate: D1, endDate: D2 }];
+  const acompDias = [
+    { demandId: 'DEM-A', instructorId: 'ACOMP', startDate: D1 + 'T08:00' },
+    { demandId: 'DEM-A', instructorId: 'ACOMP', startDate: D2 + 'T08:00' },
+  ];
+  const rateio = [{ demandId: 'DEM-A', instructorId: 'TIT' }];
+  const base = {
+    demands: [DEMANDA],
+    eligibleDemandIds: new Set(['DEM-A']),
+    instructorAllocations: alocTitular,
+    participants: [],
+    companions: acompDias,
+    covered: rateio,
+    periodStart: D1,
+    periodEnd: D2,
+  };
+
+  /* ---- SEM medição salva: a pessoa aparece do mesmo jeito ---- */
+  {
+    const rows = buildCompanionRowsWithoutHours({ ...base, measurements: [] });
+    eq('sem medição: uma linha para o acompanhante', rows.length, 1);
+    eq('com horas NULL (não 0)', rows[0].horas, null);
+    eq('e horasInformadas = false', rows[0].horasInformadas, false);
+    eq('papel Acompanhante (chave de tarifa)', rows[0].papel, 'ACOMPANHANTE');
+    eq('com os dias dele', rows[0].dias.join(','), [D1, D2].join(','));
+    check('(contraprova) o override continua sem gerar essa linha',
+      applyMeasurementOverrides({ rows: [], measurements: [], demands: [DEMANDA], companions: acompDias }).length === 0);
+  }
+
+  /* ---- COM medição salva e bloco sem horas: idem ---- */
+  {
+    const m = { demandId: 'DEM-A', attachments: [], otherExpenses: [], expenses: { participantes: [{ instructorId: 'TIT', papel: 'TITULAR' }, { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', valorHH: 90 }] } };
+    const rows = buildCompanionRowsWithoutHours({ ...base, measurements: [m as any] });
+    eq('com medição e bloco sem horas: uma linha', rows.length, 1);
+  }
+
+  /* ---- horas digitadas > 0: o override já cobriu; aqui NÃO duplica ---- */
+  {
+    const m = { demandId: 'DEM-A', attachments: [], otherExpenses: [], expenses: { participantes: [{ instructorId: 'TIT', papel: 'TITULAR' }, { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', horas: 4 }] } };
+    const doOverride = applyMeasurementOverrides({
+      rows: [{ instructorId: 'TIT', demandId: 'DEM-A', horas: 8, dias: [D1, D2], dividida: false }],
+      measurements: [m as any], demands: [DEMANDA], companions: acompDias,
+    });
+    eq('(cenário) o override gerou a linha do acompanhante com 4h', doOverride.find(r => r.instructorId === 'ACOMP')?.horas, 4);
+    const rows = buildCompanionRowsWithoutHours({ ...base, measurements: [m as any], covered: doOverride });
+    eq('a montagem não duplica quem já tem linha', rows.length, 0);
+  }
+
+  /* ---- ZERO digitado: decisão, não ausência — continua fora ---- */
+  {
+    const m = { demandId: 'DEM-A', attachments: [], otherExpenses: [], expenses: { participantes: [{ instructorId: 'TIT', papel: 'TITULAR' }, { instructorId: 'ACOMP', papel: 'ACOMPANHANTE', horas: 0 }] } };
+    const rows = buildCompanionRowsWithoutHours({ ...base, measurements: [m as any] });
+    eq('zero digitado não vira linha em branco', rows.length, 0);
+  }
+
+  /* ---- recortes: elegibilidade, período, titular-que-também-acompanha, interna ---- */
+  eq('demanda não elegível: nada', buildCompanionRowsWithoutHours({ ...base, measurements: [], eligibleDemandIds: new Set() }).length, 0);
+  eq('fora do período: nada', buildCompanionRowsWithoutHours({ ...base, measurements: [], periodStart: '2026-08-01', periodEnd: '2026-08-31' }).length, 0);
+  eq(
+    'recorte parcial do período: só o dia dentro',
+    buildCompanionRowsWithoutHours({ ...base, measurements: [], periodStart: D2, periodEnd: D2 })[0]?.dias.join(','),
+    D2
+  );
+  eq(
+    'quem já é titular na demanda não vira acompanhante',
+    buildCompanionRowsWithoutHours({ ...base, measurements: [], companions: [{ demandId: 'DEM-A', instructorId: 'TIT', startDate: D1 }] }).length,
+    0
+  );
+  eq(
+    'interna não tem acompanhante (participante é titular pleno)',
+    buildCompanionRowsWithoutHours({ ...base, measurements: [], demands: [{ ...DEMANDA, tipo: 'interna' }] }).length,
+    0
+  );
+
+  /* ---- reembolso por pessoa ---- */
+  {
+    const pessoas = [{ instructorId: 'TIT', papel: 'TITULAR' as const }, { instructorId: 'ACOMP', papel: 'ACOMPANHANTE' as const }];
+    const m = {
+      demandId: 'DEM-A', otherExpenses: [{ id: 'O1' }], expenses: {},
+      attachments: [
+        { category: 'HOSPEDAGEM', value: 300, pagoPeloInstrutor: true },                       // sem dono -> titular
+        { category: 'LOCOMOCAO', value: 80, instructorId: 'ACOMP', pagoPeloInstrutor: true },
+        { category: 'ALMOCO', value: 40, instructorId: 'ACOMP' },                               // Colabor pagou: fora
+        { category: 'OUTROS', value: 25, otherId: 'O1', instructorId: 'ACOMP', pagoPeloInstrutor: true, reembolsavel: false },
+      ],
+    };
+    const t = reembolsoDaPessoa(m as any, DEMANDA, pessoas, 'TIT');
+    const a = reembolsoDaPessoa(m as any, DEMANDA, pessoas, 'ACOMP');
+    eq('titular: hospedagem sem dono marcada (300)', t.hospedagem, 300);
+    eq('titular: total 300', t.total, 300);
+    eq('acompanhante: locomoção 80', a.locomocao, 80);
+    eq('acompanhante: outros 25 (não reembolsável pela Vale, mas pago por ele)', a.outros, 25);
+    eq('acompanhante: almoço pago pela Colabor fica fora', a.alimentacao, 0);
+    eq('acompanhante: total 105', a.total, 105);
+    eq('sem medição: zero', reembolsoDaPessoa(undefined, DEMANDA, pessoas, 'TIT').total, 0);
+    eq('pessoa sem bloco (2º titular v1): zero', reembolsoDaPessoa({ ...m, attachments: [m.attachments[0]] } as any, DEMANDA, [{ instructorId: 'TIT', papel: 'TITULAR' }, { instructorId: 'T2', papel: 'TITULAR' }], 'T2').total, 0);
+  }
+
+  /* ---- reconcile: a linha sem horas só passa com o motivo certo ---- */
+  {
+    const excel = [{
+      instructorId: 'ACOMP', nome: 'Acompanhante',
+      linhas: [{ demandId: 'DEM-A', horas: null, horasInformadas: false }],
+    }, {
+      instructorId: 'TIT', nome: 'Titular',
+      linhas: [{ demandId: 'DEM-A', horas: 8, horasInformadas: true }],
+    }];
+    const exportRow = (over: Partial<any>) => ({
+      demand: { id: 'DEM-A' }, instructorId: 'ACOMP', horasPagamento: null,
+      origemHoras: ORIGEM_ACOMPANHANTE_SEM_HORAS, diasPagamento: '', elegivelPagamento: false, ...over,
+    });
+    const titularRow = { demand: { id: 'DEM-A' }, instructorId: 'TIT', horasPagamento: 8, origemHoras: 'Rateio da alocação', diasPagamento: '06/07/2026 a 07/07/2026', elegivelPagamento: true };
+
+    const ok = compareExcelWithExport(excel, [exportRow({}), titularRow], D1, '2026-07-31');
+    eq('export concorda (em branco + origem certa): sem-horas ok, 0 falhas', `${ok.semHoras}/${ok.iguais}/${ok.falhas}`, '1/1/0');
+
+    const origemErrada = compareExcelWithExport(excel, [exportRow({ origemHoras: 'Sem horas de pagamento (> 0)' }), titularRow], D1, '2026-07-31');
+    eq('origem diferente no export: FALHA', origemErrada.falhas, 1);
+
+    const comHoras = compareExcelWithExport(excel, [exportRow({ horasPagamento: 4, origemHoras: 'Informada na medição' }), titularRow], D1, '2026-07-31');
+    eq('export com horas onde o Excel não tem: FALHA', comHoras.falhas, 1);
+
+    const semDataset = compareExcelWithExport(excel, [titularRow], D1, '2026-07-31');
+    eq('sem linha no export (demanda sem medição): fora-do-dataset, não falha', `${semDataset.foraDoDataset}/${semDataset.falhas}`, '1/0');
+
+    check('a linha sem horas não entra na soma do instrutor',
+      ok.porInstrutor.find(p => p.nome === 'Acompanhante') === undefined || ok.porInstrutor.find(p => p.nome === 'Acompanhante')!.excel === 0);
+  }
+
+  /* ---- o service usa o módulo, com o MESMO recorte de elegibilidade ---- */
+  const svc = ler('services/medicaoExportService.ts');
+  check('o service monta a linha do acompanhante pelo módulo puro', svc.includes('buildCompanionRowsWithoutHours({'));
+  check('com as linhas do override como já cobertas', svc.includes('covered: hoursRows,'));
+  check('e o mesmo Set de elegíveis do override', svc.includes('const eligibleDemandIds = eligibleDemandIdsForPayment({') && (svc.match(/eligibleDemandIds,/g) ?? []).length >= 2);
+  check('o reembolso por pessoa vem do módulo puro', svc.includes('reembolso: reembolsoDaPessoa('));
+  check('horas null atravessam sem virar 0', svc.includes('horas: row.horas === null ? null :'));
+  const runner = ler('scripts/reconcileExportacoes.ts');
+  check('o reconcile usa o comparador puro', runner.includes("from './reconcileExportacoesCore'") && runner.includes('compareExcelWithExport(blocks, rows, start, end)'));
 }
 
 console.log(

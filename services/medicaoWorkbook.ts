@@ -9,15 +9,26 @@
  * (`npm run smoke:medicao`) rodar em Node sem instanciar cliente de banco.
  *
  * REGRA CENTRAL: o app entrega demandas e HORAS; o valor da hora/aula é
- * digitado à mão na planilha depois do export. Por isso TODA célula de valor
- * sai como FÓRMULA — nunca um número calculado aqui.
+ * digitado à mão na planilha depois do export. Por isso TODA célula de
+ * hora/aula e de total sai como FÓRMULA — nunca um número calculado aqui.
  *
  * A tarifa varia por EMPRESA, não por instrutor: o mesmo instrutor recebe um
  * valor/hora na Vale e outro em outro cliente. Por isso as tarifas moram numa
  * aba própria ("Tarifas"), uma linha por par (instrutor, empresa), e a coluna
- * Valor de cada aba de detalhe busca a tarifa por SUMIFS cruzando o nome do
- * instrutor com a empresa da PRÓPRIA LINHA. Preencher uma célula da aba
+ * Hora/aula de cada aba de detalhe busca a tarifa por SUMIFS cruzando o nome
+ * do instrutor com a empresa da PRÓPRIA LINHA. Preencher uma célula da aba
  * Tarifas recalcula todas as linhas daquele par.
+ *
+ * DESPESAS: as quatro colunas de despesa da aba do instrutor são NÚMEROS (fatos
+ * da medição, não tarifa) e trazem SÓ o que a Colabor deve ao instrutor — os
+ * itens marcados como "pago pelo instrutor" no painel. Despesa paga pela
+ * Colabor não aparece na aba dele. `Total despesas`, `Hora/aula` e `Total` da
+ * linha são fórmulas, e os totais usam SUM (nunca `+`): a linha do acompanhante
+ * sem horas informadas tem TEXTO na célula de hora/aula, e `+` daria #VALUE!.
+ *
+ * ACOMPANHANTE SEM HORAS: aparece com Horas em branco, destravada e amarela
+ * (a única entrada manual da aba de detalhe), hora/aula = "horas não
+ * informadas" até alguém digitar, e as despesas dele. Nunca 0 silencioso.
  */
 
 import type { MedicaoReembolso } from '../domain/paymentRows';
@@ -199,21 +210,55 @@ const TARIFAS_SHEET = 'Tarifas';
 
 // Resumo: linha 1 = título com o período por extenso (para o arquivo ser
 // autoexplicativo depois de baixado), linha 2 = cabeçalho, dados da 3 em
-// diante. Tarifas e abas de detalhe não têm título: cabeçalho na 1, dados na 2.
+// diante. Tarifas não tem título: cabeçalho na 1, dados na 2.
 const RESUMO_TITLE_ROW = 1;
 const RESUMO_HEADER_ROW = 2;
 const RESUMO_FIRST_DATA_ROW = 3;
 const TARIFAS_FIRST_DATA_ROW = 2;
-const DETAIL_FIRST_DATA_ROW = 2;
 
-/** Colunas da aba de detalhe que são CHAVE do SUMIFS de tarifa. */
-const DETAIL_COL_EMPRESA = 'B';
-const DETAIL_COL_TIPO = 'I';
-const DETAIL_COL_NOTURNO = 'K';
-const DETAIL_COL_PAPEL = 'L';
-/** Colunas calculadas da aba de detalhe. */
-const DETAIL_COL_HORAS = 'G';
-const DETAIL_COL_VALOR = 'H';
+// Aba do instrutor, no formato da planilha manual da Colabor: linha 1 = nome,
+// linha 2 = CPF/CNPJ e dados bancários (por fórmula, do Resumo), linha 3 =
+// cabeçalho das colunas, dados da 4 em diante. Congelada até a 3.
+const DETAIL_NAME_ROW = 1;
+const DETAIL_INFO_ROW = 2;
+const DETAIL_HEADER_ROW = 3;
+const DETAIL_FIRST_DATA_ROW = 4;
+
+/**
+ * Colunas da aba de detalhe. As despesas entram ANTES das horas, na ordem do
+ * painel (Hospedagem · Transporte · Alimentação · Outros · Total despesas); as
+ * chaves de tarifa (Tipo, Noturno, Papel) e a Categoria informativa ficam no
+ * fim. Toda fórmula referencia estas constantes — mudar uma letra aqui move a
+ * coluna inteira sem quebrar SUM/SUMIFS.
+ */
+const DETAIL_COL_EMPRESA = 'B';      // <- chave de tarifa
+const DETAIL_COL_HOSPEDAGEM = 'G';
+const DETAIL_COL_LOCOMOCAO = 'H';
+const DETAIL_COL_ALIMENTACAO = 'I';
+const DETAIL_COL_OUTROS = 'J';
+const DETAIL_COL_DESPESAS = 'K';     // = SUM(G:J) da linha
+const DETAIL_COL_HORAS = 'L';        // <- multiplicador (em branco/amarela no acompanhante sem horas)
+const DETAIL_COL_HORA_AULA = 'M';    // = L × tarifa (SUMIFS)
+const DETAIL_COL_TOTAL = 'N';        // = SUM(K, M)
+const DETAIL_COL_TIPO = 'O';         // <- chave de tarifa
+const DETAIL_COL_NOTURNO = 'Q';      // <- chave de tarifa
+const DETAIL_COL_PAPEL = 'R';        // <- chave de tarifa
+const DETAIL_LAST_COL_IDX = 18;      // R
+/** Índices 1-based das colunas que recebem fórmula ou número na linha de dados. */
+const DETAIL_IDX = {
+  hospedagem: 7, locomocao: 8, alimentacao: 9, outros: 10, despesas: 11,
+  horas: 12, horaAula: 13, total: 14,
+} as const;
+
+/** Texto que a célula de hora/aula mostra enquanto Horas estiver em branco. */
+export const HORAS_NAO_INFORMADAS = 'horas não informadas';
+
+/** Colunas do Resumo (1-based). */
+const RESUMO_IDX = {
+  instrutor: 1, horas: 2, horaAula: 3, reembolso: 4, totalPagar: 5, pendentes: 6, cpf: 7, banco: 8,
+} as const;
+const RESUMO_COL_BANCO = 'H';
+const RESUMO_LAST_COL_IDX = 8;
 
 /**
  * Colunas da aba Tarifas. A tarifa deixou de ser uma por (instrutor, empresa):
@@ -439,17 +484,19 @@ export async function buildMedicaoWorkbook(
   });
   resumo.columns = [
     { width: 34 }, // A Instrutor
-    { width: 26 }, // B Total de Horas — automático
-    { width: 26 }, // C Total (R$) — automático
-    { width: 22 }, // D Tarifas pendentes — automático
-    { width: 20 }, // E CPF/CNPJ
-    { width: 50 }, // F Dados Bancários
+    { width: 24 }, // B Total de Horas — automático
+    { width: 24 }, // C Hora/aula (R$) — automático
+    { width: 30 }, // D Despesas a reembolsar (R$) — automático
+    { width: 26 }, // E Total a pagar (R$) — automático
+    { width: 26 }, // F Tarifas pendentes — automático
+    { width: 20 }, // G CPF/CNPJ
+    { width: 50 }, // H Dados Bancários
   ];
 
   // Título: o período tem que viajar DENTRO do arquivo. O nome do arquivo se
   // perde assim que alguém renomeia ou encaminha a planilha.
   const titleRow = resumo.addRow([`MEDIÇÃO DE INSTRUTORES — ${periodo.label}`]);
-  resumo.mergeCells(RESUMO_TITLE_ROW, 1, RESUMO_TITLE_ROW, 6);
+  resumo.mergeCells(RESUMO_TITLE_ROW, 1, RESUMO_TITLE_ROW, RESUMO_LAST_COL_IDX);
   titleRow.getCell(1).font = { bold: true, size: 13 };
   titleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
   titleRow.height = 26;
@@ -457,17 +504,27 @@ export async function buildMedicaoWorkbook(
   const resumoHeader = resumo.addRow([
     'Instrutor',
     'Total de Horas — automático',
-    'Total (R$) — automático',
+    'Hora/aula (R$) — automático',
+    'Despesas a reembolsar (R$) — automático',
+    'Total a pagar (R$) — automático',
     'Tarifas pendentes — automático',
     'CPF/CNPJ',
     'Dados Bancários',
   ]);
-  styleHeaderRow(resumoHeader, 6);
+  styleHeaderRow(resumoHeader, RESUMO_LAST_COL_IDX);
 
-  resumoHeader.getCell(4).note =
+  resumoHeader.getCell(RESUMO_IDX.reembolso).note =
+    'Despesas que a Colabor deve a este instrutor: só os itens marcados como ' +
+    '"Pago pelo instrutor" na medição. Despesa paga pela Colabor não entra aqui. ' +
+    'É a soma da coluna Total despesas da aba dele.';
+  resumoHeader.getCell(RESUMO_IDX.totalPagar).note =
+    'Hora/aula + Despesas a reembolsar — a soma da coluna Total da aba do instrutor.';
+  resumoHeader.getCell(RESUMO_IDX.pendentes).note =
     'Quantas tarifas deste instrutor ainda estão em branco na aba Tarifas.\n\n' +
-    'Enquanto este número for maior que zero, o Total (R$) está incompleto: ' +
-    'as demandas da empresa sem tarifa entram valendo R$ 0,00.\n\n' +
+    'Enquanto este número for maior que zero, o Hora/aula (R$) está incompleto: ' +
+    'as demandas da empresa sem tarifa entram valendo R$ 0,00. Um acompanhante ' +
+    'sem horas informadas também conta aqui: a tarifa dele existe na aba Tarifas ' +
+    'para o valor calcular assim que alguém preencher as horas.\n\n' +
     'Confira que a coluna inteira esteja zerada antes de fechar a medição.';
 
   /* ======================================================================== */
@@ -532,29 +589,40 @@ export async function buildMedicaoWorkbook(
     const lastDetailRow = DETAIL_FIRST_DATA_ROW + block.linhas.length - 1;
     const detalhe = sheetRef(sheetName);
     const nomeCriterio = criteriaText(block.nome);
+    // Soma de uma coluna da aba do instrutor: range FECHADO (não coluna
+    // inteira). SUM ignora texto, então a linha de "horas não informadas" e a
+    // linha de total não contaminam nada.
+    const somaDaAba = (col: string) =>
+      `SUM(${detalhe}!${col}${DETAIL_FIRST_DATA_ROW}:${col}${lastDetailRow})`;
 
-    const row = resumo.addRow([block.nome, null, null, null, block.cpf || '', '']);
+    const row = resumo.addRow([block.nome, null, null, null, null, null, block.cpf || '', '']);
 
-    // B: horas somadas da aba do instrutor (range fechado, não coluna inteira).
-    const horasCell = row.getCell(2);
-    horasCell.value = {
-      formula: `SUM(${detalhe}!${DETAIL_COL_HORAS}${DETAIL_FIRST_DATA_ROW}:${DETAIL_COL_HORAS}${lastDetailRow})`,
-    };
+    // B: horas somadas da aba do instrutor.
+    const horasCell = row.getCell(RESUMO_IDX.horas);
+    horasCell.value = { formula: somaDaAba(DETAIL_COL_HORAS) };
     horasCell.numFmt = FMT_HORAS;
 
-    // C: o total NÃO é horas × tarifa única — cada linha da aba de detalhe já
-    // aplicou a tarifa da sua empresa, então aqui é só a soma daquela coluna.
-    const totalCell = row.getCell(3);
-    totalCell.value = {
-      formula: `SUM(${detalhe}!${DETAIL_COL_VALOR}${DETAIL_FIRST_DATA_ROW}:${DETAIL_COL_VALOR}${lastDetailRow})`,
-    };
+    // C: o hora/aula NÃO é horas × tarifa única — cada linha da aba de detalhe
+    // já aplicou a tarifa da sua empresa, então aqui é só a soma daquela coluna.
+    const horaAulaCell = row.getCell(RESUMO_IDX.horaAula);
+    horaAulaCell.value = { formula: somaDaAba(DETAIL_COL_HORA_AULA) };
+    horaAulaCell.numFmt = FMT_MOEDA;
+
+    // D: despesas a reembolsar = Σ Total despesas da aba (só o pago pelo instrutor).
+    const reembolsoCell = row.getCell(RESUMO_IDX.reembolso);
+    reembolsoCell.value = { formula: somaDaAba(DETAIL_COL_DESPESAS) };
+    reembolsoCell.numFmt = FMT_MOEDA;
+
+    // E: total a pagar = Σ Total da aba (que já é SUM(despesas, hora/aula) por linha).
+    const totalCell = row.getCell(RESUMO_IDX.totalPagar);
+    totalCell.value = { formula: somaDaAba(DETAIL_COL_TOTAL) };
     totalCell.numFmt = FMT_MOEDA;
     totalCell.font = { bold: true };
 
-    // D: tarifas ainda em branco deste instrutor na aba Tarifas. Sem isso, uma
+    // F: tarifas ainda em branco deste instrutor na aba Tarifas. Sem isso, uma
     // tarifa esquecida vira R$ 0,00 no total e passa despercebida. Conta a
     // coluna do VALOR, que mudou de letra ao entrarem Tipo e Noturno.
-    const pendentesCell = row.getCell(4);
+    const pendentesCell = row.getCell(RESUMO_IDX.pendentes);
     pendentesCell.value = {
       formula:
         `COUNTIFS(` +
@@ -564,23 +632,26 @@ export async function buildMedicaoWorkbook(
     pendentesCell.numFmt = '0';
     pendentesCell.alignment = { horizontal: 'center' };
 
-    // F: sem dados bancários no cadastro de instrutor — preenchimento manual.
-    markAsInput(row.getCell(6));
+    // H: sem dados bancários no cadastro de instrutor — preenchimento manual.
+    // A aba do instrutor lê esta célula por fórmula (linha 2): digita-se uma vez.
+    markAsInput(row.getCell(RESUMO_IDX.banco));
   }
 
   const lastResumoRow = RESUMO_FIRST_DATA_ROW + planned.length - 1;
-  const totalGeralRow = resumo.addRow(['TOTAL GERAL', null, null, null, '', '']);
+  const totalGeralRow = resumo.addRow(['TOTAL GERAL', null, null, null, null, null, '', '']);
   totalGeralRow.getCell(1).font = { bold: true };
-  for (const col of [2, 3, 4]) {
+  for (const col of [RESUMO_IDX.horas, RESUMO_IDX.horaAula, RESUMO_IDX.reembolso, RESUMO_IDX.totalPagar, RESUMO_IDX.pendentes]) {
     const letra = String.fromCharCode(64 + col);
     const cell = totalGeralRow.getCell(col);
     cell.value = { formula: `SUM(${letra}${RESUMO_FIRST_DATA_ROW}:${letra}${lastResumoRow})` };
     cell.font = { bold: true };
   }
-  totalGeralRow.getCell(2).numFmt = FMT_HORAS;
-  totalGeralRow.getCell(3).numFmt = FMT_MOEDA;
-  totalGeralRow.getCell(4).numFmt = '0';
-  totalGeralRow.getCell(4).alignment = { horizontal: 'center' };
+  totalGeralRow.getCell(RESUMO_IDX.horas).numFmt = FMT_HORAS;
+  totalGeralRow.getCell(RESUMO_IDX.horaAula).numFmt = FMT_MOEDA;
+  totalGeralRow.getCell(RESUMO_IDX.reembolso).numFmt = FMT_MOEDA;
+  totalGeralRow.getCell(RESUMO_IDX.totalPagar).numFmt = FMT_MOEDA;
+  totalGeralRow.getCell(RESUMO_IDX.pendentes).numFmt = '0';
+  totalGeralRow.getCell(RESUMO_IDX.pendentes).alignment = { horizontal: 'center' };
 
   await resumo.protect(undefined, SHEET_PROTECTION);
 
@@ -588,47 +659,75 @@ export async function buildMedicaoWorkbook(
   /* Abas de detalhe — uma por instrutor                                      */
   /* ======================================================================== */
 
-  for (const { block, sheetName } of planned) {
-    const ws = workbook.addWorksheet(sheetName, { views: [{ state: 'frozen', ySplit: 1 }] });
+  for (const { block, sheetName, resumoRow } of planned) {
+    const ws = workbook.addWorksheet(sheetName, { views: [{ state: 'frozen', ySplit: DETAIL_HEADER_ROW }] });
     ws.columns = [
       { width: 14 }, // A Código
-      { width: 32 }, // B Empresa     <- chave de tarifa
+      { width: 32 }, // B Empresa            <- chave de tarifa
       { width: 40 }, // C Treinamento
       { width: 26 }, // D Data
       { width: 28 }, // E Local
       { width: 18 }, // F Modalidade
-      { width: 10 }, // G Horas       <- multiplicador
-      { width: 26 }, // H Valor (R$) — automático
-      { width: 16 }, // I Tipo        <- chave de tarifa
-      { width: 22 }, // J Categoria   (informativa)
-      { width: 12 }, // K Noturno     <- chave de tarifa
-      { width: 16 }, // L Papel       <- chave de tarifa
+      { width: 16 }, // G Hospedagem
+      { width: 22 }, // H Transporte (Locomoção)
+      { width: 16 }, // I Alimentação
+      { width: 14 }, // J Outros
+      { width: 26 }, // K Total despesas — automático
+      { width: 10 }, // L Horas              <- multiplicador
+      { width: 26 }, // M Hora/aula (R$) — automático
+      { width: 24 }, // N Total (R$) — automático
+      { width: 16 }, // O Tipo               <- chave de tarifa
+      { width: 22 }, // P Categoria          (informativa)
+      { width: 12 }, // Q Noturno            <- chave de tarifa
+      { width: 16 }, // R Papel              <- chave de tarifa
     ];
-    // ⚠️ As colunas novas entram no FIM, depois de Valor. Empresa (B), Horas (G)
-    // e Valor (H) NÃO podem mudar de letra: a fórmula de valor referencia
-    // DETAIL_COL_EMPRESA/HORAS por letra.
-    //
-    // I (Tipo) e K (Noturno) são CHAVE de fórmula — o SUMIFS da tarifa cruza as
-    // duas com a aba Tarifas. J (Categoria) é só informativa.
-    const detailHeader = ws.addRow([
-      'Código', 'Empresa', 'Treinamento', 'Data', 'Local', 'Modalidade', 'Horas',
-      'Valor (R$) — automático', 'Tipo', 'Categoria', 'Noturno', 'Papel',
-    ]);
-    styleHeaderRow(detailHeader, 12);
 
+    // Linha 1: nome. Linha 2: CPF/CNPJ (cadastro) e dados bancários — estes por
+    // FÓRMULA a partir do Resumo, para serem digitados uma vez só. O IF evita o
+    // 0 que uma referência a célula vazia mostraria.
+    const nameRow = ws.addRow([block.nome]);
+    ws.mergeCells(DETAIL_NAME_ROW, 1, DETAIL_NAME_ROW, 6);
+    nameRow.getCell(1).font = { bold: true, size: 13 };
+    nameRow.height = 24;
+
+    const infoRow = ws.addRow(['CPF/CNPJ', block.cpf || '', 'Dados bancários', null]);
+    ws.mergeCells(DETAIL_INFO_ROW, 4, DETAIL_INFO_ROW, 8);
+    infoRow.getCell(1).font = { bold: true, color: { argb: 'FF64748B' } };
+    infoRow.getCell(3).font = { bold: true, color: { argb: 'FF64748B' } };
+    const bancoRef = `${RESUMO_SHEET}!${RESUMO_COL_BANCO}${resumoRow}`;
+    infoRow.getCell(4).value = { formula: `IF(${bancoRef}="","",${bancoRef})` };
+
+    // O (Tipo), Q (Noturno) e R (Papel) são CHAVE de fórmula — o SUMIFS da
+    // tarifa cruza as três com a aba Tarifas. P (Categoria) é só informativa.
+    const detailHeader = ws.addRow([
+      'Código', 'Empresa', 'Treinamento', 'Data', 'Local', 'Modalidade',
+      'Hospedagem', 'Transporte (Locomoção)', 'Alimentação', 'Outros', 'Total despesas — automático',
+      'Horas', 'Hora/aula (R$) — automático', 'Total (R$) — automático',
+      'Tipo', 'Categoria', 'Noturno', 'Papel',
+    ]);
+    styleHeaderRow(detailHeader, DETAIL_LAST_COL_IDX);
+
+    detailHeader.getCell(DETAIL_IDX.despesas).note =
+      'Só o que a Colabor deve a este instrutor: itens marcados como "Pago pelo ' +
+      'instrutor" na medição, nas quatro colunas à esquerda. Despesa paga pela ' +
+      'Colabor não aparece nesta aba.';
     // Foi exatamente aqui que o valor da hora foi digitado por cima da fórmula
     // na primeira rodada real — daí a nota, além da proteção da aba.
-    detailHeader.getCell(8).note =
+    detailHeader.getCell(DETAIL_IDX.horaAula).note =
       'NÃO PREENCHA AQUI.\n\n' +
       'Esta coluna é calculada: horas × a tarifa desta linha.\n\n' +
       'A tarifa se preenche na aba Tarifas, na linha que cruza este instrutor ' +
-      'com a empresa da coluna B, o tipo da coluna I, o noturno da coluna K e o ' +
-      'papel da coluna L.';
+      `com a empresa da coluna ${DETAIL_COL_EMPRESA}, o tipo da coluna ${DETAIL_COL_TIPO}, ` +
+      `o noturno da coluna ${DETAIL_COL_NOTURNO} e o papel da coluna ${DETAIL_COL_PAPEL}.\n\n` +
+      `"${HORAS_NAO_INFORMADAS}" = acompanhante sem horas na medição; preencha a ` +
+      'célula amarela de Horas (ou informe na medição e exporte de novo).';
+    detailHeader.getCell(DETAIL_IDX.total).note = 'Total despesas + Hora/aula desta linha.';
 
     const nomeCriterio = criteriaText(block.nome);
 
     block.linhas.forEach((linha, i) => {
       const rowIdx = DETAIL_FIRST_DATA_ROW + i;
+      const r = linha.reembolso;
       const row = ws.addRow([
         linha.demandId,
         linha.empresa,
@@ -636,49 +735,94 @@ export async function buildMedicaoWorkbook(
         formatDias(linha.dias),
         linha.local,
         linha.modalidade,
-        linha.horas,
-        null,
+        r.hospedagem,
+        r.locomocao,
+        r.alimentacao,
+        r.outros,
+        null, // K Total despesas (fórmula)
+        linha.horasInformadas ? linha.horas : null,
+        null, // M Hora/aula (fórmula)
+        null, // N Total (fórmula)
         linha.tipo,
         linha.categoria || null,
         noturnoLabel(linha.noturno),
         linha.papel,
       ]);
-      row.getCell(7).numFmt = FMT_HORAS;
+      for (const idx of [DETAIL_IDX.hospedagem, DETAIL_IDX.locomocao, DETAIL_IDX.alimentacao, DETAIL_IDX.outros]) {
+        row.getCell(idx).numFmt = FMT_MOEDA;
+      }
 
-      // A tarifa vem da combinação DESTA LINHA: o instrutor é literal (a aba é
-      // dele) e empresa/tipo/noturno são referências às próprias colunas, para
-      // a linha de baixo — outro cliente, ou a mesma empresa em turno noturno —
-      // puxar outra tarifa.
-      const valorCell = row.getCell(8);
-      valorCell.value = {
-        formula:
-          `${DETAIL_COL_HORAS}${rowIdx}*SUMIFS(` +
-          `${TARIFAS_SHEET}!$${TARIFA_COL_VALOR}:$${TARIFA_COL_VALOR},` +
-          `${TARIFAS_SHEET}!$${TARIFA_COL_INSTRUTOR}:$${TARIFA_COL_INSTRUTOR},${nomeCriterio},` +
-          `${TARIFAS_SHEET}!$${TARIFA_COL_EMPRESA}:$${TARIFA_COL_EMPRESA},${DETAIL_COL_EMPRESA}${rowIdx},` +
-          `${TARIFAS_SHEET}!$${TARIFA_COL_TIPO}:$${TARIFA_COL_TIPO},${DETAIL_COL_TIPO}${rowIdx},` +
-          `${TARIFAS_SHEET}!$${TARIFA_COL_NOTURNO}:$${TARIFA_COL_NOTURNO},${DETAIL_COL_NOTURNO}${rowIdx},` +
-          `${TARIFAS_SHEET}!$${TARIFA_COL_PAPEL}:$${TARIFA_COL_PAPEL},${DETAIL_COL_PAPEL}${rowIdx})`,
+      // K: total das despesas da linha.
+      const despesasCell = row.getCell(DETAIL_IDX.despesas);
+      despesasCell.value = { formula: `SUM(${DETAIL_COL_HOSPEDAGEM}${rowIdx}:${DETAIL_COL_OUTROS}${rowIdx})` };
+      despesasCell.numFmt = FMT_MOEDA;
+
+      // L: horas. Acompanhante sem horas informadas: em branco, destravada e
+      // amarela — a única entrada manual desta aba, e sinalizada como tal.
+      const horasCell = row.getCell(DETAIL_IDX.horas);
+      horasCell.numFmt = FMT_HORAS;
+      if (!linha.horasInformadas) {
+        markAsInput(horasCell);
+        horasCell.note =
+          'Acompanhante sem horas informadas na medição. Ninguém sabe quantas horas ' +
+          'ele fez, só quantos dias acompanhou — a planilha não inventa. Preencha ' +
+          'aqui, ou informe na medição e exporte de novo.';
+      }
+
+      // M: a tarifa vem da combinação DESTA LINHA: o instrutor é literal (a aba
+      // é dele) e empresa/tipo/noturno/papel são referências às próprias
+      // colunas, para a linha de baixo — outro cliente, ou a mesma empresa em
+      // turno noturno — puxar outra tarifa.
+      const horasVezesTarifa =
+        `${DETAIL_COL_HORAS}${rowIdx}*SUMIFS(` +
+        `${TARIFAS_SHEET}!$${TARIFA_COL_VALOR}:$${TARIFA_COL_VALOR},` +
+        `${TARIFAS_SHEET}!$${TARIFA_COL_INSTRUTOR}:$${TARIFA_COL_INSTRUTOR},${nomeCriterio},` +
+        `${TARIFAS_SHEET}!$${TARIFA_COL_EMPRESA}:$${TARIFA_COL_EMPRESA},${DETAIL_COL_EMPRESA}${rowIdx},` +
+        `${TARIFAS_SHEET}!$${TARIFA_COL_TIPO}:$${TARIFA_COL_TIPO},${DETAIL_COL_TIPO}${rowIdx},` +
+        `${TARIFAS_SHEET}!$${TARIFA_COL_NOTURNO}:$${TARIFA_COL_NOTURNO},${DETAIL_COL_NOTURNO}${rowIdx},` +
+        `${TARIFAS_SHEET}!$${TARIFA_COL_PAPEL}:$${TARIFA_COL_PAPEL},${DETAIL_COL_PAPEL}${rowIdx})`;
+      const horaAulaCell = row.getCell(DETAIL_IDX.horaAula);
+      horaAulaCell.value = {
+        // Sem horas: TEXTO visível até alguém digitar — e some sozinho quando
+        // digitarem, porque a fórmula continua lá. Só nesta linha: as demais
+        // mantêm a fórmula de sempre.
+        formula: linha.horasInformadas
+          ? horasVezesTarifa
+          : `IF(${DETAIL_COL_HORAS}${rowIdx}="","${HORAS_NAO_INFORMADAS}",${horasVezesTarifa})`,
       };
-      valorCell.numFmt = FMT_MOEDA;
+      horaAulaCell.numFmt = FMT_MOEDA;
+
+      // N: SUM, nunca `+` — se M for o texto acima, `+` daria #VALUE!.
+      const totalCell = row.getCell(DETAIL_IDX.total);
+      totalCell.value = { formula: `SUM(${DETAIL_COL_DESPESAS}${rowIdx},${DETAIL_COL_HORA_AULA}${rowIdx})` };
+      totalCell.numFmt = FMT_MOEDA;
+      totalCell.font = { bold: true };
     });
 
     const lastDetailRow = DETAIL_FIRST_DATA_ROW + block.linhas.length - 1;
-    const totalRow = ws.addRow(['', '', '', '', '', 'Total:', null, null, '', '', '', '']);
+    const totalRow = ws.addRow(['', '', '', '', '', 'Total:']);
     totalRow.getCell(6).font = { bold: true };
     totalRow.getCell(6).alignment = { horizontal: 'right' };
-    totalRow.getCell(7).value = {
-      formula: `SUM(${DETAIL_COL_HORAS}${DETAIL_FIRST_DATA_ROW}:${DETAIL_COL_HORAS}${lastDetailRow})`,
-    };
-    totalRow.getCell(7).numFmt = FMT_HORAS;
-    totalRow.getCell(7).font = { bold: true };
-    totalRow.getCell(8).value = {
-      formula: `SUM(${DETAIL_COL_VALOR}${DETAIL_FIRST_DATA_ROW}:${DETAIL_COL_VALOR}${lastDetailRow})`,
-    };
-    totalRow.getCell(8).numFmt = FMT_MOEDA;
-    totalRow.getCell(8).font = { bold: true };
+    const somaColuna = (col: string) => `SUM(${col}${DETAIL_FIRST_DATA_ROW}:${col}${lastDetailRow})`;
+    const totais: [number, string, string][] = [
+      [DETAIL_IDX.hospedagem, DETAIL_COL_HOSPEDAGEM, FMT_MOEDA],
+      [DETAIL_IDX.locomocao, DETAIL_COL_LOCOMOCAO, FMT_MOEDA],
+      [DETAIL_IDX.alimentacao, DETAIL_COL_ALIMENTACAO, FMT_MOEDA],
+      [DETAIL_IDX.outros, DETAIL_COL_OUTROS, FMT_MOEDA],
+      [DETAIL_IDX.despesas, DETAIL_COL_DESPESAS, FMT_MOEDA],
+      [DETAIL_IDX.horas, DETAIL_COL_HORAS, FMT_HORAS],
+      [DETAIL_IDX.horaAula, DETAIL_COL_HORA_AULA, FMT_MOEDA],
+      [DETAIL_IDX.total, DETAIL_COL_TOTAL, FMT_MOEDA],
+    ];
+    for (const [idx, col, fmt] of totais) {
+      const cell = totalRow.getCell(idx);
+      cell.value = { formula: somaColuna(col) };
+      cell.numFmt = fmt;
+      cell.font = { bold: true };
+    }
 
-    // Aba de detalhe é 100% derivada: nada aqui é de preenchimento manual.
+    // Aba de detalhe é derivada, com UMA exceção sinalizada: a célula de Horas
+    // do acompanhante sem horas informadas (amarela, destravada).
     await ws.protect(undefined, SHEET_PROTECTION);
   }
 

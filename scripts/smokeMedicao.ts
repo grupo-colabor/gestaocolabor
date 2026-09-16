@@ -176,7 +176,13 @@ console.log('\n[4] Workbook gerado');
     },
   ];
 
-  const wb = await buildMedicaoWorkbook(blocks as any, periodo);
+  // Linhas de fixture sem despesa a reembolsar e com horas informadas — o caso
+  // de sempre. O bloco [D5] cobre o acompanhante sem horas e o reembolso.
+  const SEM_REEMBOLSO = { hospedagem: 0, locomocao: 0, alimentacao: 0, outros: 0, total: 0 };
+  const comDefaults = (bs: any[]) =>
+    bs.map(b => ({ ...b, linhas: b.linhas.map((l: any) => ({ horasInformadas: true, reembolso: SEM_REEMBOLSO, ...l })) }));
+
+  const wb = await buildMedicaoWorkbook(comDefaults(blocks) as any, periodo);
 
   // Round-trip pelo arquivo: só vale o que sobreviveu à serialização.
   const buffer = await wb.xlsx.writeBuffer();
@@ -223,57 +229,72 @@ console.log('\n[4] Workbook gerado');
     check('Resumo: nota "PREENCHA AQUI" saiu do Resumo', !lido.getWorksheet('Resumo').getCell('B2').note);
   }
 
-  /* ---- aba de detalhe: layout novo ---- */
+  /* ---- aba de detalhe: nome na 1, CPF/banco na 2, cabeçalho na 3, dados da 4 ---- */
   const ana = lido.getWorksheet('Ana Maria');
+  checkEq('Detalhe: linha 1 é o nome do instrutor', texto(ana, 'A1'), 'Ana Maria');
+  checkEq('Detalhe: linha 2 traz o CPF do cadastro', `${texto(ana, 'A2')}=${texto(ana, 'B2')}`, 'CPF/CNPJ=123.456.789-09');
+  checkEq('Detalhe: e os dados bancários por fórmula a partir do Resumo (sem 0 quando vazio)', `${texto(ana, 'C2')}: ${formula(ana, 'D2')}`, 'Dados bancários: IF(Resumo!H3="","",Resumo!H3)');
+  checkEq('Detalhe: cabeçalho congelado até a linha 3', `${ana.views?.[0]?.state}/${ana.views?.[0]?.ySplit}`, 'frozen/3');
   checkEq(
-    'Detalhe: cabeçalho com Empresa em B',
-    ['A1', 'B1', 'C1', 'D1', 'E1', 'F1', 'G1', 'H1'].map(a => texto(ana, a)).join(' | '),
-    'Código | Empresa | Treinamento | Data | Local | Modalidade | Horas | Valor (R$) — automático'
+    'Detalhe: cabeçalho na linha 3, despesas por categoria ANTES das horas',
+    ['A3', 'B3', 'C3', 'D3', 'E3', 'F3', 'G3', 'H3', 'I3', 'J3', 'K3', 'L3', 'M3', 'N3'].map(a => texto(ana, a)).join(' | '),
+    'Código | Empresa | Treinamento | Data | Local | Modalidade | Hospedagem | Transporte (Locomoção) | Alimentação | Outros | Total despesas — automático | Horas | Hora/aula (R$) — automático | Total (R$) — automático'
   );
-  checkEq('Detalhe: empresa da linha 2', texto(ana, 'B2'), 'Vale');
-  checkEq('Detalhe: treinamento empurrado para C', texto(ana, 'C2'), 'NR 33');
-  checkEq('Detalhe: horas agora em G', ana.getCell('G2').value, 6);
-  checkEq('Detalhe: horas com formato de horas', ana.getCell('G2').numFmt, '0.0');
+  checkEq('Detalhe: empresa da linha 4 (1ª de dados)', texto(ana, 'B4'), 'Vale');
+  checkEq('Detalhe: treinamento em C', texto(ana, 'C4'), 'NR 33');
+  checkEq('Detalhe: horas agora em L', ana.getCell('L4').value, 6);
+  checkEq('Detalhe: horas com formato de horas', ana.getCell('L4').numFmt, '0.0');
+  check('Detalhe: horas informadas ficam TRAVADAS (não é célula de input)', ana.getCell('L4').protection?.locked !== false);
 
-  /* ---- coluna Categoria: acrescentada no FIM, sem mover B/G/H ---- */
-  checkEq('Detalhe: Tipo/Categoria/Noturno/Papel são I/J/K/L', ['I1', 'J1', 'K1', 'L1'].map(a => texto(ana, a)).join(' | '), 'Tipo | Categoria | Noturno | Papel');
+  /* ---- chaves de tarifa e Categoria: no FIM, depois dos totais ---- */
+  checkEq('Detalhe: Tipo/Categoria/Noturno/Papel são O/P/Q/R', ['O3', 'P3', 'Q3', 'R3'].map(a => texto(ana, a)).join(' | '), 'Tipo | Categoria | Noturno | Papel');
   // Papel é chave de SUMIFS: rótulo LITERAL, nunca célula vazia — mesma classe
   // do 'Não' da coluna Noturno.
-  checkEq('Detalhe: quem ministra sai como Titular', texto(ana, 'L2'), 'Titular');
-  checkEq('Detalhe: tipo da demanda de cliente', texto(ana, 'I2'), 'Treinamento');
-  checkEq('Detalhe: demanda de cliente não tem categoria', texto(ana, 'J2'), '');
+  checkEq('Detalhe: quem ministra sai como Titular', texto(ana, 'R4'), 'Titular');
+  checkEq('Detalhe: tipo da demanda de cliente', texto(ana, 'O4'), 'Treinamento');
+  checkEq('Detalhe: demanda de cliente não tem categoria', texto(ana, 'P4'), '');
   // Diurno tem que ser rótulo LITERAL: em branco, o SUMIFS da tarifa zerava
   // (critério vindo de célula vazia vira 0 e não casa com texto vazio).
-  checkEq('Detalhe: diurno marca Noturno como Não', texto(ana, 'K2'), 'Não');
+  checkEq('Detalhe: diurno marca Noturno como Não', texto(ana, 'Q4'), 'Não');
 
-  /* ---- fórmula de valor: tarifa cruzada por empresa da própria linha ---- */
+  /* ---- fórmulas da linha: despesas, hora/aula por tarifa da própria linha, total por SUM ---- */
+  checkEq('Detalhe: Total despesas soma as quatro colunas da linha', formula(ana, 'K4'), 'SUM(G4:J4)');
   checkEq(
-    'Detalhe: valor busca tarifa por (instrutor, empresa da linha)',
-    formula(ana, 'H2'),
-    'G2*SUMIFS(Tarifas!$F:$F,Tarifas!$A:$A,"Ana Maria",Tarifas!$B:$B,B2,Tarifas!$C:$C,I2,Tarifas!$D:$D,K2,Tarifas!$E:$E,L2)'
+    'Detalhe: hora/aula busca tarifa por (instrutor, empresa da linha)',
+    formula(ana, 'M4'),
+    'L4*SUMIFS(Tarifas!$F:$F,Tarifas!$A:$A,"Ana Maria",Tarifas!$B:$B,B4,Tarifas!$C:$C,O4,Tarifas!$D:$D,Q4,Tarifas!$E:$E,R4)'
   );
   checkEq(
     'Detalhe: linha de outra empresa referencia a própria coluna B',
-    formula(ana, 'H3'),
-    'G3*SUMIFS(Tarifas!$F:$F,Tarifas!$A:$A,"Ana Maria",Tarifas!$B:$B,B3,Tarifas!$C:$C,I3,Tarifas!$D:$D,K3,Tarifas!$E:$E,L3)'
+    formula(ana, 'M5'),
+    'L5*SUMIFS(Tarifas!$F:$F,Tarifas!$A:$A,"Ana Maria",Tarifas!$B:$B,B5,Tarifas!$C:$C,O5,Tarifas!$D:$D,Q5,Tarifas!$E:$E,R5)'
   );
-  check('Detalhe: fórmula usa vírgula (separador do XML, não do Excel PT-BR)', !String(formula(ana, 'H2')).includes(';'));
-  checkEq('Detalhe: total de horas em G', formula(ana, 'G5'), 'SUM(G2:G4)');
-  checkEq('Detalhe: total de valor em H', formula(ana, 'H5'), 'SUM(H2:H4)');
+  check('Detalhe: fórmula usa vírgula (separador do XML, não do Excel PT-BR)', !String(formula(ana, 'M4')).includes(';'));
+  checkEq('Detalhe: Total da linha é SUM(despesas, hora/aula) — nunca +', formula(ana, 'N4'), 'SUM(K4,M4)');
+  checkEq('Detalhe: total de horas em L', formula(ana, 'L7'), 'SUM(L4:L6)');
+  checkEq('Detalhe: total de hora/aula em M', formula(ana, 'M7'), 'SUM(M4:M6)');
+  checkEq('Detalhe: total de despesas em K', formula(ana, 'K7'), 'SUM(K4:K6)');
+  checkEq('Detalhe: total geral da aba em N', formula(ana, 'N7'), 'SUM(N4:N6)');
 
-  /* ---- Resumo: sem Hora/Aula, com pendências ---- */
+  /* ---- Resumo: hora/aula, despesas a reembolsar, total a pagar, pendências ---- */
   const resumo = lido.getWorksheet('Resumo');
   checkEq('Resumo: título traz o período', texto(resumo, 'A1'), 'MEDIÇÃO DE INSTRUTORES — 26/06/2026 a 25/07/2026');
   checkEq(
-    'Resumo: cabeçalho sem Hora/Aula e com Tarifas pendentes',
-    ['A2', 'B2', 'C2', 'D2', 'E2', 'F2'].map(a => texto(resumo, a)).join(' | '),
-    'Instrutor | Total de Horas — automático | Total (R$) — automático | Tarifas pendentes — automático | CPF/CNPJ | Dados Bancários'
+    'Resumo: cabeçalho com Hora/aula, Despesas a reembolsar, Total a pagar e Tarifas pendentes',
+    ['A2', 'B2', 'C2', 'D2', 'E2', 'F2', 'G2', 'H2'].map(a => texto(resumo, a)).join(' | '),
+    'Instrutor | Total de Horas — automático | Hora/aula (R$) — automático | Despesas a reembolsar (R$) — automático | Total a pagar (R$) — automático | Tarifas pendentes — automático | CPF/CNPJ | Dados Bancários'
   );
-  checkEq('Resumo: horas somam a coluna G da aba do instrutor', formula(resumo, 'B3'), "SUM('Ana Maria'!G2:G4)");
-  checkEq('Resumo: total soma a coluna Valor da aba (não horas × tarifa)', formula(resumo, 'C3'), "SUM('Ana Maria'!H2:H4)");
-  checkEq('Resumo: pendências contam tarifas em branco do instrutor', formula(resumo, 'D3'), 'COUNTIFS(Tarifas!$A:$A,"Ana Maria",Tarifas!$F:$F,"")');
-  checkEq('Resumo: TOTAL GERAL de valores', formula(resumo, 'C5'), 'SUM(C3:C4)');
-  checkEq('Resumo: TOTAL GERAL de pendências', formula(resumo, 'D5'), 'SUM(D3:D4)');
+  checkEq('Resumo: horas somam a coluna L da aba do instrutor', formula(resumo, 'B3'), "SUM('Ana Maria'!L4:L6)");
+  checkEq('Resumo: hora/aula soma a coluna M da aba (não horas × tarifa)', formula(resumo, 'C3'), "SUM('Ana Maria'!M4:M6)");
+  checkEq('Resumo: despesas a reembolsar somam a coluna K da aba', formula(resumo, 'D3'), "SUM('Ana Maria'!K4:K6)");
+  checkEq('Resumo: total a pagar soma a coluna N da aba', formula(resumo, 'E3'), "SUM('Ana Maria'!N4:N6)");
+  checkEq('Resumo: pendências contam tarifas em branco do instrutor', formula(resumo, 'F3'), 'COUNTIFS(Tarifas!$A:$A,"Ana Maria",Tarifas!$F:$F,"")');
+  checkEq('Resumo: CPF em G', texto(resumo, 'G3'), '123.456.789-09');
+  check('Resumo: dados bancários em H, destravados', resumo.getCell('H3').protection?.locked === false);
+  checkEq('Resumo: TOTAL GERAL de hora/aula', formula(resumo, 'C5'), 'SUM(C3:C4)');
+  checkEq('Resumo: TOTAL GERAL de despesas a reembolsar', formula(resumo, 'D5'), 'SUM(D3:D4)');
+  checkEq('Resumo: TOTAL GERAL a pagar', formula(resumo, 'E5'), 'SUM(E3:E4)');
+  checkEq('Resumo: TOTAL GERAL de pendências', formula(resumo, 'F5'), 'SUM(F3:F4)');
 
   /* ---- proteção ---- */
   let formulaDestravada = 0;
@@ -341,13 +362,13 @@ console.log('\n[4] Workbook gerado');
   console.log('\n[6] Demanda interna na planilha de pagamento');
 
   const wbInterna = await buildMedicaoWorkbook(
-    [{
+    comDefaults([{
       instructorId: 'i3', nome: 'Carla Dias', cpf: '',
       linhas: [
         { demandId: 'DEM-104', empresa: 'Vale', trainingName: 'NR 35', dias: ['2026-07-09'], local: 'Vitória - ES', modalidade: 'Presencial', horas: 8, categoria: '', tipo: 'Treinamento' as const, noturno: false, papel: 'Titular' as const },
         { demandId: 'DEM-900', empresa: 'Colabor (Interna)', trainingName: 'Organizar van para Brucutu', dias: ['2026-07-08'], local: 'Brucutu - MG', modalidade: 'Presencial', horas: 6, categoria: 'SIPAT', tipo: 'Interna' as const, noturno: false, papel: 'Titular' as const },
       ],
-    }] as any,
+    }]) as any,
     periodo
   );
 
@@ -357,28 +378,28 @@ console.log('\n[4] Workbook gerado');
   const carla = wbLidoInterna.getWorksheet('Carla Dias');
 
   // As linhas são ordenadas por dia (08/07 antes de 09/07), então a interna cai
-  // na 2 — mas o teste não depende disso: descobre qual é qual pelo código.
-  const li = texto(carla, 'A2') === 'DEM-900' ? '2' : '3';
-  const lc = li === '2' ? '3' : '2';
+  // na 4 (1ª de dados) — mas o teste não depende disso: descobre pelo código.
+  const li = texto(carla, 'A4') === 'DEM-900' ? '4' : '5';
+  const lc = li === '4' ? '5' : '4';
 
   checkEq('Interna: Treinamento traz a descrição', texto(carla, 'C' + li), 'Organizar van para Brucutu');
   // A planilha diz o MESMO que o app: interna sem cliente e 'Colabor (Interna)'
   // (domain/demandLabel), nao '(sem empresa)' — um rotulo em cada lugar parecia
   // cadastro faltando para quem confere pagamento nos dois.
   checkEq('Interna: Empresa usa o rotulo do app', texto(carla, 'B' + li), 'Colabor (Interna)');
-  checkEq('Interna: Tipo na coluna I', texto(carla, 'I' + li), 'Interna');
-  checkEq('Interna: Categoria na coluna J', texto(carla, 'J' + li), 'SIPAT');
-  checkEq('Interna: horas continuam em G', carla.getCell('G' + li).value, 6);
-  checkEq('Cliente: Tipo na coluna I', texto(carla, 'I' + lc), 'Treinamento');
-  checkEq('Cliente: coluna Categoria fica vazia', texto(carla, 'J' + lc), '');
+  checkEq('Interna: Tipo na coluna O', texto(carla, 'O' + li), 'Interna');
+  checkEq('Interna: Categoria na coluna P', texto(carla, 'P' + li), 'SIPAT');
+  checkEq('Interna: horas em L', carla.getCell('L' + li).value, 6);
+  checkEq('Cliente: Tipo na coluna O', texto(carla, 'O' + lc), 'Treinamento');
+  checkEq('Cliente: coluna Categoria fica vazia', texto(carla, 'P' + lc), '');
   check(
-    'Interna: fórmula de valor idêntica à de cliente (G x tarifa por B)',
-    String(formula(carla, 'H' + li)).includes('G' + li + '*SUMIFS(') &&
-    String(formula(carla, 'H' + li)).includes('B' + li)
+    'Interna: fórmula de hora/aula idêntica à de cliente (L x tarifa por B)',
+    String(formula(carla, 'M' + li)).includes('L' + li + '*SUMIFS(') &&
+    String(formula(carla, 'M' + li)).includes('B' + li)
   );
-  checkEq('Interna: cabeçalho das colunas novas', ['I1', 'J1', 'K1'].map(a => texto(carla, a)).join('|'), 'Tipo|Categoria|Noturno');
+  checkEq('Interna: cabeçalho das chaves de tarifa', ['O3', 'P3', 'Q3'].map(a => texto(carla, a)).join('|'), 'Tipo|Categoria|Noturno');
   checkEq('Interna: modalidade sai Presencial', texto(carla, 'F' + li), 'Presencial');
-  checkEq('Interna: total de horas soma as duas linhas', formula(carla, 'G4'), 'SUM(G2:G3)');
+  checkEq('Interna: total de horas soma as duas linhas', formula(carla, 'L6'), 'SUM(L4:L5)');
 
 
 
@@ -390,7 +411,7 @@ console.log('\n[4] Workbook gerado');
   console.log('\n[7] Tarifa por (instrutor, empresa, tipo, noturno)');
 
   const wbGran = await buildMedicaoWorkbook(
-    [{
+    comDefaults([{
       instructorId: 'i4', nome: 'Alan Costa', cpf: '',
       linhas: [
         // MESMA empresa, MESMO tipo, turnos diferentes -> 2 tarifas
@@ -401,7 +422,7 @@ console.log('\n[4] Workbook gerado');
         // Repetição exata da primeira -> NÃO gera linha nova
         { demandId: 'DEM-203', empresa: 'FIDENS', trainingName: 'NR 33', dias: ['2026-07-09'], local: 'BH - MG', modalidade: 'Presencial', horas: 2, categoria: '', tipo: 'Treinamento' as const, noturno: false, papel: 'Titular' as const },
       ],
-    }] as any,
+    }]) as any,
     periodo
   );
 
@@ -426,32 +447,33 @@ console.log('\n[4] Workbook gerado');
       `${empresa}/${tipo}/${noturno}`
     ] ?? 0;
 
+  // Colunas do layout novo: B empresa, O tipo, Q noturno, L horas; dados da linha 4.
   const valorDaLinha = (rowIdx: number) => {
     const empresa = String(alan.getCell(`B${rowIdx}`).value ?? '');
-    const tipo = String(alan.getCell(`I${rowIdx}`).value ?? '');
-    const noturno = String(alan.getCell(`K${rowIdx}`).value ?? '');
-    const horas = Number(alan.getCell(`G${rowIdx}`).value ?? 0);
+    const tipo = String(alan.getCell(`O${rowIdx}`).value ?? '');
+    const noturno = String(alan.getCell(`Q${rowIdx}`).value ?? '');
+    const horas = Number(alan.getCell(`L${rowIdx}`).value ?? 0);
     return horas * tarifaPor(empresa, tipo, noturno);
   };
 
-  checkEq('diurno 8h x 100', valorDaLinha(2), 800);
-  checkEq('NOTURNO 6h x 150 (tarifa maior)', valorDaLinha(3), 900);
-  checkEq('INTERNA 4h x 60 (tarifa menor)', valorDaLinha(4), 240);
-  checkEq('4a linha reusa a tarifa diurna: 2h x 100', valorDaLinha(5), 200);
+  checkEq('diurno 8h x 100', valorDaLinha(4), 800);
+  checkEq('NOTURNO 6h x 150 (tarifa maior)', valorDaLinha(5), 900);
+  checkEq('INTERNA 4h x 60 (tarifa menor)', valorDaLinha(6), 240);
+  checkEq('4a linha reusa a tarifa diurna: 2h x 100', valorDaLinha(7), 200);
   check(
     'noturno e diurno da MESMA empresa dão valores diferentes por hora',
-    valorDaLinha(3) / 6 !== valorDaLinha(2) / 8
+    valorDaLinha(5) / 6 !== valorDaLinha(4) / 8
   );
   check(
     'interna e treinamento da MESMA empresa dão valores diferentes por hora',
-    valorDaLinha(4) / 4 !== valorDaLinha(2) / 8
+    valorDaLinha(6) / 4 !== valorDaLinha(4) / 8
   );
 
   // A fórmula da planilha tem que referenciar as 4 chaves, não só duas
-  const fGran = String(formula(alan, 'H3'));
+  const fGran = String(formula(alan, 'M5'));
   check('fórmula cruza instrutor+empresa+tipo+noturno+papel',
-    fGran.includes('$A:$A') && fGran.includes('$B:$B') && fGran.includes('Tarifas!$C:$C,I3') &&
-      fGran.includes('Tarifas!$D:$D,K3') && fGran.includes('Tarifas!$E:$E,L3'));
+    fGran.includes('$A:$A') && fGran.includes('$B:$B') && fGran.includes('Tarifas!$C:$C,O5') &&
+      fGran.includes('Tarifas!$D:$D,Q5') && fGran.includes('Tarifas!$E:$E,R5'));
   check('fórmula soma a coluna F (valor)', fGran.includes('SUMIFS(Tarifas!$F:$F'));
 
   checkEq('pendências contam as 3 combinações em branco',
@@ -479,7 +501,7 @@ console.log('\n[4] Workbook gerado');
   console.log('\n[8] Regressão: SUMIFS avaliado de verdade sobre a linha 2 de Tarifas');
 
   const wbReg = await buildMedicaoWorkbook(
-    [{
+    comDefaults([{
       // Primeiro alfabeticamente -> cai na LINHA 2 da aba Tarifas, a posição
       // que o bug escondia.
       instructorId: 'i5', nome: 'Alexandre Eduardo', cpf: '',
@@ -487,7 +509,7 @@ console.log('\n[4] Workbook gerado');
         { demandId: 'DEM-1406', empresa: 'VALE', trainingName: 'NR 35', dias: ['2026-07-06'], local: 'BH - MG', modalidade: 'Presencial', horas: 8, categoria: '', tipo: 'Treinamento' as const, noturno: false, papel: 'Titular' as const },
         { demandId: 'DEM-1407', empresa: 'VALE', trainingName: 'NR 33', dias: ['2026-07-07'], local: 'BH - MG', modalidade: 'Presencial', horas: 4, categoria: '', tipo: 'Treinamento' as const, noturno: false, papel: 'Titular' as const },
       ],
-    }] as any,
+    }]) as any,
     periodo
   );
 
@@ -510,8 +532,9 @@ console.log('\n[4] Workbook gerado');
       if (vaziaReg(tarReg.getCell(col + r).value)) chavesVazias.push('Tarifas!' + col + r);
     }
   }
-  for (let r = 2; r <= 3; r++) {
-    for (const col of ['B', 'I', 'K', 'L']) {
+  // Dados da aba de detalhe começam na linha 4; chaves em B, O, Q e R.
+  for (let r = 4; r <= 5; r++) {
+    for (const col of ['B', 'O', 'Q', 'R']) {
       if (vaziaReg(detReg.getCell(col + r).value)) chavesVazias.push('detalhe!' + col + r);
     }
   }
@@ -570,10 +593,13 @@ console.log('\n[4] Workbook gerado');
       return String(celula).toLowerCase() === crit.valor.toLowerCase();
     };
 
-    /** Avalia H{rowIdx} com as tarifas informadas por linha da aba Tarifas. */
-    const avaliarValor = (rowIdx: number, tarifasPorLinha: (number | null)[]) => {
-      const f = String(formula(detSheet, 'H' + rowIdx));
-      const m = /^G(\d+)\*SUMIFS\((.*)\)$/.exec(f);
+    /**
+     * Avalia uma fórmula `L{n}*SUMIFS(...)` com as tarifas informadas por linha
+     * da aba Tarifas. Separado de `avaliarValor` para o bloco [D5] avaliar a
+     * parte interna do IF da linha sem horas com o MESMO motor.
+     */
+    const avaliarHorasVezesTarifa = (f: string, tarifasPorLinha: (number | null)[]) => {
+      const m = /^L(\d+)\*SUMIFS\((.*)\)$/.exec(f);
       if (!m) throw new Error('fórmula fora do formato esperado: ' + f);
       const args = splitArgs(m[2]);
       const somaCol = colunaTarifas(args[0]).map((_v, i) => tarifasPorLinha[i] ?? null);
@@ -585,21 +611,25 @@ console.log('\n[4] Workbook gerado');
         }
         if (bate) total += Number(somaCol[i] ?? 0);
       }
-      return Number(detSheet.getCell('G' + m[1]).value ?? 0) * total;
+      return Number(detSheet.getCell('L' + m[1]).value ?? 0) * total;
     };
 
-    return { casa, criterioDe, avaliarValor };
+    /** Avalia M{rowIdx} (hora/aula) com as tarifas informadas por linha da aba Tarifas. */
+    const avaliarValor = (rowIdx: number, tarifasPorLinha: (number | null)[]) =>
+      avaliarHorasVezesTarifa(String(formula(detSheet, 'M' + rowIdx)), tarifasPorLinha);
+
+    return { casa, criterioDe, avaliarValor, avaliarHorasVezesTarifa };
   };
 
   const { casa, criterioDe, avaliarValor } = criarAvaliador(tarReg, detReg);
 
-  // O caso do bug: R$ 50,00 digitado em E2, 8h na linha 2 do detalhe.
-  checkEq('tarifa em E2 (1a linha de Tarifas) chega na 1a linha do detalhe: 8h x 50', avaliarValor(2, [50]), 400);
-  checkEq('e tambem na 2a linha, mesma combinacao: 4h x 50', avaliarValor(3, [50]), 200);
-  checkEq('sem tarifa preenchida o valor e 0 (e nao um numero errado)', avaliarValor(2, [null]), 0);
+  // O caso do bug: R$ 50,00 digitado em F2, 8h na linha 4 do detalhe (1ª de dados).
+  checkEq('tarifa em F2 (1a linha de Tarifas) chega na 1a linha do detalhe: 8h x 50', avaliarValor(4, [50]), 400);
+  checkEq('e tambem na 2a linha, mesma combinacao: 4h x 50', avaliarValor(5, [50]), 200);
+  checkEq('sem tarifa preenchida o valor e 0 (e nao um numero errado)', avaliarValor(4, [null]), 0);
 
   // Contraprova de que o avaliador NAO e complacente: chave divergente nao casa.
-  check('avaliador rejeita chave divergente (Sim x Nao)', casa('Sim', criterioDe('K2')) === false);
+  check('avaliador rejeita chave divergente (Sim x Nao)', casa('Sim', criterioDe('Q4')) === false);
 
   /* ---- D4: papel é a 5ª chave — mesma pessoa, dois papéis, duas tarifas ---- */
   //
@@ -608,13 +638,13 @@ console.log('\n[4] Workbook gerado');
   // detalhe cairiam na mesma tarifa — a hora de quem acompanha seria paga como
   // a hora de quem ministra.
   const wbD4 = await buildMedicaoWorkbook(
-    [{
+    comDefaults([{
       instructorId: 'i9', nome: 'Carla Nogueira', cpf: '',
       linhas: [
         { demandId: 'DEM-1500', empresa: 'VALE', trainingName: 'NR 35', dias: ['2026-07-06'], local: 'BH - MG', modalidade: 'Presencial', horas: 8, categoria: '', tipo: 'Treinamento' as const, noturno: false, papel: 'Titular' as const },
         { demandId: 'DEM-1501', empresa: 'VALE', trainingName: 'NR 33', dias: ['2026-07-07'], local: 'BH - MG', modalidade: 'Presencial', horas: 4, categoria: '', tipo: 'Treinamento' as const, noturno: false, papel: 'Acompanhante' as const },
       ],
-    }] as any,
+    }]) as any,
     periodo
   );
 
@@ -643,8 +673,9 @@ console.log('\n[4] Workbook gerado');
   tarifasD4[linhaAcomp] = 100;
   tarifasD4[1 - linhaAcomp] = 200;
 
-  const linhaDetTitular = texto(detD4, 'L2') === 'Titular' ? 2 : 3;
-  const linhaDetAcomp = linhaDetTitular === 2 ? 3 : 2;
+  // Papel em R; dados da linha 4.
+  const linhaDetTitular = texto(detD4, 'R4') === 'Titular' ? 4 : 5;
+  const linhaDetAcomp = linhaDetTitular === 4 ? 5 : 4;
   checkEq(
     'linha de quem MINISTRA puxa a tarifa de Titular: 8h x 200',
     avalD4.avaliarValor(linhaDetTitular, tarifasD4),
@@ -669,6 +700,168 @@ console.log('\n[4] Workbook gerado');
     avalD4.avaliarValor(linhaDetTitular, soTitular),
     1600
   );
+
+  /* ======================================================================== */
+  /* [D5] Layout novo: despesas por categoria, acompanhante sem horas,        */
+  /*      Resumo fecha com Σ das abas em recálculo real (com texto no meio)   */
+  /* ======================================================================== */
+  console.log('\n[D5] Despesas a reembolsar, acompanhante sem horas e Resumo fechando');
+
+  const R = (o: Partial<{ hospedagem: number; locomocao: number; alimentacao: number; outros: number }>) => {
+    const b = { hospedagem: 0, locomocao: 0, alimentacao: 0, outros: 0, ...o };
+    return { ...b, total: b.hospedagem + b.locomocao + b.alimentacao + b.outros };
+  };
+  // Diego: uma demanda como titular COM reembolso, e um acompanhamento SEM
+  // horas informadas mas COM despesa dele. Elisa: só hora/aula, sem despesa.
+  const wbD5 = await buildMedicaoWorkbook(
+    [
+      {
+        instructorId: 'j1', nome: 'Diego Reembolso', cpf: '111.222.333-96',
+        linhas: [
+          { demandId: 'DEM-300', empresa: 'VALE', trainingName: 'NR 35', dias: ['2026-07-06'], local: 'BH - MG', modalidade: 'Presencial', horas: 8, horasInformadas: true, reembolso: R({ hospedagem: 300, locomocao: 80 }), categoria: '', tipo: 'Treinamento', noturno: false, papel: 'Titular' },
+          { demandId: 'DEM-301', empresa: 'VALE', trainingName: 'NR 33', dias: ['2026-07-08'], local: 'BH - MG', modalidade: 'Presencial', horas: null, horasInformadas: false, reembolso: R({ alimentacao: 40 }), categoria: '', tipo: 'Treinamento', noturno: false, papel: 'Acompanhante' },
+        ],
+      },
+      {
+        instructorId: 'j2', nome: 'Elisa Semdespesa', cpf: '',
+        linhas: [
+          { demandId: 'DEM-302', empresa: 'VALE', trainingName: 'NR 10', dias: ['2026-07-07'], local: 'BH - MG', modalidade: 'Presencial', horas: 4, horasInformadas: true, reembolso: R({}), categoria: '', tipo: 'Treinamento', noturno: false, papel: 'Titular' },
+        ],
+      },
+    ] as any,
+    periodo
+  );
+  const bufD5 = await wbD5.xlsx.writeBuffer();
+  const lidoD5 = new ExcelJSModule.default.Workbook();
+  await lidoD5.xlsx.load(bufD5 as any);
+  const tarD5 = lidoD5.getWorksheet('Tarifas');
+  const resD5 = lidoD5.getWorksheet('Resumo');
+  const diego = lidoD5.getWorksheet('Diego Reembolso');
+  const elisa = lidoD5.getWorksheet('Elisa Semdespesa');
+
+  /* ---- despesas por categoria: números, na ordem do painel ---- */
+  checkEq('titular: Hospedagem 300 em G', diego.getCell('G4').value, 300);
+  checkEq('titular: Transporte 80 em H', diego.getCell('H4').value, 80);
+  checkEq('titular: Alimentação 0 em I', diego.getCell('I4').value, 0);
+  checkEq('titular: Outros 0 em J', diego.getCell('J4').value, 0);
+  checkEq('titular: Total despesas é SUM(G4:J4)', formula(diego, 'K4'), 'SUM(G4:J4)');
+  checkEq('titular: horas 8 em L', diego.getCell('L4').value, 8);
+  check('titular: hora/aula é a fórmula de sempre (sem IF)', String(formula(diego, 'M4')).startsWith('L4*SUMIFS('));
+  checkEq('titular: Total é SUM(K4,M4)', formula(diego, 'N4'), 'SUM(K4,M4)');
+  checkEq('sem despesa: as quatro colunas zeradas, não vazias', ['G4', 'H4', 'I4', 'J4'].map(a => elisa.getCell(a).value).join(','), '0,0,0,0');
+
+  /* ---- acompanhante sem horas: célula vazia, amarela, destravada; texto no hora/aula ---- */
+  const l5 = diego.getCell('L5');
+  check('acompanhante: Horas em BRANCO (não 0)', l5.value === null || l5.value === undefined);
+  check('acompanhante: Horas destravada', l5.protection?.locked === false);
+  checkEq('acompanhante: Horas amarela', l5.fill?.fgColor?.argb, 'FFFFFF00');
+  check('acompanhante: Horas tem nota explicando', !!l5.note);
+  checkEq(
+    'acompanhante: hora/aula mostra o texto até digitarem, com a fórmula de sempre dentro',
+    formula(diego, 'M5'),
+    'IF(L5="","horas não informadas",L5*SUMIFS(Tarifas!$F:$F,Tarifas!$A:$A,"Diego Reembolso",Tarifas!$B:$B,B5,Tarifas!$C:$C,O5,Tarifas!$D:$D,Q5,Tarifas!$E:$E,R5))'
+  );
+  checkEq('acompanhante: Total é SUM (texto no M não dá #VALUE!)', formula(diego, 'N5'), 'SUM(K5,M5)');
+  checkEq('acompanhante: Papel = Acompanhante', texto(diego, 'R5'), 'Acompanhante');
+  checkEq('acompanhante: a despesa dele aparece mesmo sem horas', diego.getCell('I5').value, 40);
+  check(
+    'acompanhante: a linha de tarifa dele existe (o valor calcula assim que digitarem as horas)',
+    tarD5.getRows(2, tarD5.actualRowCount - 1).some((r: any) => String(r.getCell(1).value) === 'Diego Reembolso' && String(r.getCell(5).value) === 'Acompanhante')
+  );
+  checkEq('totais da aba: uma linha abaixo dos dados', [formula(diego, 'K6'), formula(diego, 'L6'), formula(diego, 'M6'), formula(diego, 'N6')].join(' | '), 'SUM(K4:K5) | SUM(L4:L5) | SUM(M4:M5) | SUM(N4:N5)');
+
+  /* ---- Resumo aponta para as colunas certas ---- */
+  checkEq('Resumo: Diego na linha 3 com as quatro somas', [formula(resD5, 'B3'), formula(resD5, 'C3'), formula(resD5, 'D3'), formula(resD5, 'E3')].join(' | '),
+    "SUM('Diego Reembolso'!L4:L5) | SUM('Diego Reembolso'!M4:M5) | SUM('Diego Reembolso'!K4:K5) | SUM('Diego Reembolso'!N4:N5)");
+
+  /* ---- proteção: a única célula nova destravada é a Horas do acompanhante ---- */
+  {
+    let destravadasD5 = 0;
+    let formulaDestravadaD5 = 0;
+    for (const ws of lidoD5.worksheets) {
+      ws.eachRow((row: any) => row.eachCell({ includeEmpty: true }, (cell: any) => {
+        const temFormula = cell.value && typeof cell.value === 'object' && 'formula' in cell.value;
+        if (cell.protection?.locked === false) { destravadasD5++; if (temFormula) formulaDestravadaD5++; }
+      }));
+    }
+    // 3 tarifas (Diego Titular, Diego Acompanhante, Elisa) + 2 dados bancários + 1 Horas do acompanhante
+    checkEq('destravadas = tarifas + dados bancários + Horas do acompanhante', destravadasD5, 6);
+    checkEq('nenhuma fórmula destravada', formulaDestravadaD5, 0);
+  }
+
+  /* ---- RECÁLCULO REAL: avalia as fórmulas como saíram do arquivo ---- */
+  // Tarifas preenchidas por linha da aba Tarifas (a ordem é a da aba).
+  const tarifaD5 = (r: any) => {
+    const k = `${r.getCell(1).value}|${r.getCell(5).value}`;
+    return ({ 'Diego Reembolso|Titular': 100, 'Diego Reembolso|Acompanhante': 60, 'Elisa Semdespesa|Titular': 50 } as Record<string, number>)[k] ?? null;
+  };
+  const tarifasD5: (number | null)[] = tarD5.getRows(2, tarD5.actualRowCount - 1).map(tarifaD5);
+
+  // Avaliador mínimo: SUM(range) / SUM(a,b) / IF(L="",texto,inner) / L*SUMIFS,
+  // com referências a outra aba ('Nome'!A1:A2). Texto NÃO soma — é o que o
+  // Excel faz, e é o que a linha do acompanhante depende.
+  const evalCell = (ws: any, addr: string): number | string | null => {
+    const v = ws.getCell(addr).value;
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'number' || typeof v === 'string') return v;
+    if (typeof v === 'object' && 'formula' in v) return evalFormula(ws, String(v.formula));
+    return null;
+  };
+  const refToSheet = (ref: string): [any, string] => {
+    const m = /^'([^']+)'!(.+)$/.exec(ref) ?? /^([A-Za-z]+)!(.+)$/.exec(ref);
+    if (m) return [lidoD5.getWorksheet(m[1]), m[2]];
+    return [null, ref];
+  };
+  const evalFormula = (ws: any, f: string): number | string | null => {
+    let m = /^SUM\((.+)\)$/.exec(f);
+    if (m) {
+      let total = 0;
+      for (const arg of splitArgs(m[1])) {
+        const [sheet, ref] = refToSheet(arg.trim());
+        const target = sheet ?? ws;
+        const rng = /^([A-Z])(\d+):([A-Z])(\d+)$/.exec(ref);
+        const addrs: string[] = [];
+        if (rng) {
+          // Range vertical (L4:L5) ou horizontal (G4:J4): percorre as duas dimensões.
+          for (let c = rng[1].charCodeAt(0); c <= rng[3].charCodeAt(0); c++) {
+            for (let r = Number(rng[2]); r <= Number(rng[4]); r++) addrs.push(String.fromCharCode(c) + r);
+          }
+        } else addrs.push(ref);
+        for (const a of addrs) { const x = evalCell(target, a); if (typeof x === 'number') total += x; }
+      }
+      return total;
+    }
+    m = /^IF\(([A-Z]+\d+)="","([^"]*)",(.+)\)$/.exec(f);
+    if (m) {
+      const h = evalCell(ws, m[1]);
+      if (h === null || h === '') return m[2];
+      return criarAvaliador(tarD5, ws).avaliarHorasVezesTarifa(m[3], tarifasD5);
+    }
+    if (/^L\d+\*SUMIFS\(/.test(f)) return criarAvaliador(tarD5, ws).avaliarHorasVezesTarifa(f, tarifasD5);
+    if (/^COUNTIFS\(/.test(f)) return 0; // fora do escopo deste recálculo
+    throw new Error('fórmula não suportada pelo avaliador do smoke: ' + f);
+  };
+
+  checkEq('recálculo: titular K4 = 380', evalCell(diego, 'K4'), 380);
+  checkEq('recálculo: titular M4 = 8h × 100', evalCell(diego, 'M4'), 800);
+  checkEq('recálculo: titular N4 = 380 + 800', evalCell(diego, 'N4'), 1180);
+  checkEq('recálculo: acompanhante M5 é o TEXTO', evalCell(diego, 'M5'), 'horas não informadas');
+  checkEq('recálculo: acompanhante N5 = só as despesas (40), texto ignorado', evalCell(diego, 'N5'), 40);
+  checkEq('recálculo: total da aba M6 = 800 (texto não soma)', evalCell(diego, 'M6'), 800);
+  checkEq('recálculo: Resumo B3 (horas) = 8', evalCell(resD5, 'B3'), 8);
+  checkEq('recálculo: Resumo C3 (hora/aula) = 800', evalCell(resD5, 'C3'), 800);
+  checkEq('recálculo: Resumo D3 (despesas a reembolsar) = 420', evalCell(resD5, 'D3'), 420);
+  checkEq('recálculo: Resumo E3 (total a pagar) = 1220', evalCell(resD5, 'E3'), 1220);
+  checkEq('recálculo: Total a pagar = Hora/aula + Despesas (fecha)', evalCell(resD5, 'E3'), Number(evalCell(resD5, 'C3')) + Number(evalCell(resD5, 'D3')));
+  checkEq('recálculo: Elisa E4 = 4h × 50, sem despesa', evalCell(resD5, 'E4'), 200);
+  checkEq('recálculo: TOTAL GERAL E5 = Σ abas (1420)', evalCell(resD5, 'E5'), 1420);
+  checkEq('recálculo: TOTAL GERAL fecha com C5 + D5', evalCell(resD5, 'E5'), Number(evalCell(resD5, 'C5')) + Number(evalCell(resD5, 'D5')));
+
+  // E quando alguém DIGITA as horas do acompanhante, o texto some e o valor entra
+  // com a tarifa DELE (60), não a do titular.
+  diego.getCell('L5').value = 3;
+  checkEq('recálculo: horas digitadas na célula amarela → 3h × 60 (tarifa de Acompanhante)', evalCell(diego, 'M5'), 180);
+  checkEq('recálculo: e o Total a pagar do Diego passa a 1400', evalCell(resD5, 'E3'), 1400);
 
   /* ======================================================================== */
   /* Item de despesa do Painel: nome/link do anexo                            */

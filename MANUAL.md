@@ -431,7 +431,9 @@ Em Medição → **Exportar Medição**, escolha o mês (ou um período) e gere 
 
 **Acompanhante sem horas informadas** passa a aparecer na aba dele: a célula de **Horas** sai em branco e **amarela** (a única célula editável da aba), o Hora/aula mostra o texto *"horas não informadas"* até alguém preencher — na medição ou na própria planilha —, e as despesas dele entram normalmente. Isso vale para todo acompanhante alocado em demanda concluída, **com ou sem medição salva**. Consequências: a lista de nomes no Resumo cresce, e **Tarifas pendentes** passa a contar a tarifa de acompanhante dessas pessoas (ela existe na aba Tarifas para o valor calcular assim que as horas forem preenchidas). Acompanhante com **0 h** digitado continua fora: zero é decisão, não ausência.
 
-**Resumo**: Instrutor · Total de Horas · **Hora/aula (R$)** · **Despesas a reembolsar (R$)** · **Total a pagar (R$)** (= hora/aula + despesas) · Tarifas pendentes · CPF/CNPJ · Dados Bancários. Tudo por fórmula sobre as abas; a linha TOTAL GERAL soma as cinco colunas.
+**Demanda híbrida sem horas presenciais digitadas** segue a mesma regra: a linha sai normalmente (Modalidade *Híbrido*), com **Horas** em branco e amarela e o Hora/aula mostrando *"híbrida: informe as horas presenciais realizadas"* até alguém digitar — na medição ou na planilha. Não existe mais a exigência de "medição com horas digitadas antes de exportar": o Excel mostra a célula em amarelo até as horas serem digitadas. A carga do treinamento é a total (EAD + prática) e o split varia por demanda; a planilha não adivinha as horas presenciais. Vale para titular, participante e acompanhante, em medição antiga ou por pessoa. Quem digitou as horas no painel sai com elas. O Dashboard **não muda**: continua com a carga total.
+
+**Resumo**: Instrutor · Total de Horas · **Hora/aula (R$)** · **Despesas a reembolsar (R$)** · **Total a pagar (R$)** (= hora/aula + despesas) · Tarifas pendentes · **Horas pendentes** (quantas linhas da aba estão com Horas em branco: acompanhante ou híbrida) · CPF/CNPJ · Dados Bancários. Tudo por fórmula sobre as abas; a linha TOTAL GERAL soma as seis colunas. Antes de fechar o mês, **Tarifas pendentes** e **Horas pendentes** devem estar zeradas.
 
 ### Exportar Medição para Word
 
@@ -637,7 +639,7 @@ No módulo **Medições** existem três colunas de horas, porque o sistema resol
 
 | Coluna | De onde vem | Quando fica em branco |
 |--------|-------------|------------------------|
-| **Horas pagamento** (ligada por padrão) | A linha que a planilha de pagamento imprimiria para a pessoa naquela demanda: rateio da alocação em `instructor_allocations`, substituído pelas horas digitadas na medição quando houver | Quando a planilha **não tem horas** para a pessoa: demanda ainda não concluída, pessoa sem alocação, ou acompanhante sem horas digitadas (este aparece na planilha com Horas em branco e amarela — a origem diz "Acompanhante sem horas informadas"). Em branco nunca é zero |
+| **Horas pagamento** (ligada por padrão) | A linha que a planilha de pagamento imprimiria para a pessoa naquela demanda: rateio da alocação em `instructor_allocations`, substituído pelas horas digitadas na medição quando houver | Quando a planilha **não tem horas** para a pessoa: demanda ainda não concluída, pessoa sem alocação, acompanhante sem horas digitadas ou demanda híbrida sem horas presenciais digitadas (estes aparecem na planilha com Horas em branco e amarela — a origem diz "Acompanhante sem horas informadas" / "Híbrida sem horas presenciais informadas"). Em branco nunca é zero |
 | **Horas informadas** (desligada) | O que está gravado na medição (o campo da pessoa, ou a carga da medição antiga) | Ninguém digitou |
 | **Horas (painel)** (desligada) | O que o Painel de Medição conta na seção da pessoa: em branco vale a carga padrão da demanda; acompanhante e demanda híbrida valem 0 até alguém digitar | Pessoa sem bloco no painel (segundo titular de uma medição antiga) |
 

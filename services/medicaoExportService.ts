@@ -24,7 +24,16 @@ import { fetchTrainings } from './trainings';
 import { fetchInstructors } from './instructors';
 import { computeInstructorHoursByDemand, eligibleDemandIdsForPayment } from '../domain/instructorHours';
 import { applyMeasurementOverrides } from '../domain/measurementOverrides';
-import { buildCompanionRowsWithoutHours, reembolsoDaPessoa } from '../domain/paymentRows';
+import {
+  applyHybridBlankHours,
+  buildCompanionRowsWithoutHours,
+  reembolsoDaPessoa,
+  type HoursRowForHybrid,
+} from '../domain/paymentRows';
+import type { HoursRowLike } from '../domain/measurementOverrides';
+
+/** Uma linha de pagamento já montada: rateio/override, com ou sem horas. */
+type LinhaPagamento = Omit<HoursRowLike, 'horas'> & HoursRowForHybrid;
 import { resolveMeasurementPeople, type MeasurementPerson } from '../domain/measurementPeople';
 import { fetchDemandParticipants } from './demandParticipants';
 import { fetchCompanionAllocations } from './companionAllocations';
@@ -325,7 +334,21 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
    * medição salva. Regra em domain/paymentRows.ts.
    */
   const linhasPagamento = [
-    ...hoursRows.map(r => ({ ...r, horasInformadas: true as const })),
+    // Híbrida sem horas presenciais informadas: o rateio devolve as horas
+    // práticas (ou a carga cheia), mas só quem mede sabe o que foi ministrado
+    // presencialmente. Mesma regra do painel: Horas em branco/amarela até
+    // alguém digitar. Regra em domain/paymentRows.ts; o rateio não muda.
+    ...applyHybridBlankHours(
+      hoursRows.map((r): LinhaPagamento => ({ ...r, horasInformadas: true })),
+      {
+        demands: demands as any,
+        trainings,
+        instructorAllocations,
+        participants,
+        companions,
+        measurements: measurements as any,
+      }
+    ),
     ...buildCompanionRowsWithoutHours({
       demands: demands as any,
       eligibleDemandIds,
@@ -438,6 +461,7 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
       // `null` atravessa intacto: é o "ninguém informou" do acompanhante.
       horas: row.horas === null ? null : Math.round((row.horas + Number.EPSILON) * 100) / 100,
       horasInformadas: row.horasInformadas,
+      motivoSemHoras: row.motivoSemHoras,
       // Só o que a Colabor deve a ESTA pessoa: itens marcados como pagos pelo
       // instrutor, atribuídos pela mesma regra de dono do dataset Medições.
       reembolso: reembolsoDaPessoa(

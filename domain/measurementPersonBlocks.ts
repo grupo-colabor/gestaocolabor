@@ -56,6 +56,16 @@ export interface PersonBlocks {
   blocos: MeasurementPersonBlock[];
   /** O bloco de uma pessoa, ou `undefined` quando ela não tem bloco (2º titular na v1). */
   blocoDe: (instructorId: string) => MeasurementPersonBlock | undefined;
+  /**
+   * Alguém informou as horas desta pessoa? É o critério único de "horas
+   * digitadas" (o `horasInformadas` de `normalizeMeasurementBlocks`).
+   *
+   *   • v2: o bloco da pessoa; sem bloco (pessoa fora da lista) = não.
+   *   • v1: a medição tem UM `classHours` para a demanda inteira, que o rateio
+   *     divide entre os titulares — então vale para TODOS eles, inclusive o
+   *     segundo titular que não tem bloco próprio.
+   */
+  horasInformadasDe: (instructorId: string) => boolean;
 }
 
 export function resolvePersonBlocks(
@@ -90,5 +100,8 @@ export function resolvePersonBlocks(
         ? blocos[0]
         : undefined;
 
-  return { v2, titularId, paraNormalizar, blocos, blocoDe };
+  const horasInformadasDe = (instructorId: string): boolean =>
+    v2 ? !!blocoDe(instructorId)?.horasInformadas : !!blocos[0]?.horasInformadas;
+
+  return { v2, titularId, paraNormalizar, blocos, blocoDe, horasInformadasDe };
 }

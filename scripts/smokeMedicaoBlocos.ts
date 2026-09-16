@@ -38,8 +38,8 @@ import {
   type TotalizableMeasurement,
 } from '../domain/measurementTotals';
 import { resolvePersonBlocks } from '../domain/measurementPersonBlocks';
-import { buildCompanionRowsWithoutHours, reembolsoDaPessoa } from '../domain/paymentRows';
-import { compareExcelWithExport, ORIGEM_ACOMPANHANTE_SEM_HORAS } from './reconcileExportacoesCore';
+import { applyHybridBlankHours, buildCompanionRowsWithoutHours, isHibridaParaPagamento, reembolsoDaPessoa } from '../domain/paymentRows';
+import { compareExcelWithExport, ORIGEM_ACOMPANHANTE_SEM_HORAS, ORIGEM_HIBRIDA_SEM_HORAS } from './reconcileExportacoesCore';
 import {
   applyMeasurementOverrides,
   companionDefaultHours,
@@ -1349,7 +1349,8 @@ console.log('\n[11] Híbrida: sem default de horas — pergunta explícita');
   // A tabela do domínio documenta a linha nova.
   const dominio = ler('domain/measurementTotals.ts');
   check('a tabela de resoluções ganhou a linha de HÍBRIDA', dominio.includes('| HÍBRIDA ×') && dominio.includes('SEM DEFAULT'));
-  check('e registra a divergência do rateio do titular em vez de decidir sozinha', dominio.includes('Divergência conhecida'));
+  check('e registra que a divergência do rateio do titular foi resolvida na planilha (não no rateio)',
+    dominio.includes('Divergência resolvida') && dominio.includes('applyHybridBlankHours') && !dominio.includes('Divergência conhecida'));
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -1703,6 +1704,102 @@ console.log('\n[15] Blindagem: grafias de "híbrido" no rateio de pagamento');
   check('e não tem mais normalizador local', !ih.includes('const normalizeModality'));
   const mr = ler('domain/modalityRules.ts');
   check('isHybridModality também usa canonicalModality', mr.includes("canonicalModality(m) === 'HIBRIDO'"));
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [16] HÍBRIDA SEM HORAS PRESENCIAIS NO EXCEL — Horas em branco, não o rateio
+ *
+ * O rateio (instructorHours) continua devolvendo as horas práticas: o
+ * Dashboard depende dele. Quem apaga as horas da LINHA DA PLANILHA é
+ * `applyHybridBlankHours`, pelo mesmo critério do painel (`horasInformadasDe`).
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[16] Híbrida sem horas presenciais informadas: Horas em branco no Excel');
+{
+  const T_HIB = { id: 'T-HIB', modality: 'HIBRIDO' };
+  const T_PRE = { id: 'T-PRE', modality: 'PRESENCIAL' };
+  const DEM_HIB: any = { id: 'D-HIB', tipo: 'cliente', trainingId: 'T-HIB', modality: 'PRESENCIAL', instructorId: 'TIT', dateMode: 'CONTINUO', startDate: '2026-07-06T08:00', endDate: '2026-07-07T18:00' };
+  const DEM_PRE: any = { ...DEM_HIB, id: 'D-PRE', trainingId: 'T-PRE' };
+  const DEM_INT: any = { id: 'D-INT', tipo: 'interna', modality: 'HIBRIDO', instructorId: 'TIT', dateMode: 'CONTINUO', startDate: '2026-07-06T08:00', endDate: '2026-07-06T18:00' };
+  const aloc = [
+    { id: 'a1', demandId: 'D-HIB', instructorId: 'TIT', startDate: '2026-07-06', endDate: '2026-07-06' },
+    { id: 'a2', demandId: 'D-HIB', instructorId: 'T2', startDate: '2026-07-07', endDate: '2026-07-07' },
+    { id: 'a3', demandId: 'D-PRE', instructorId: 'TIT', startDate: '2026-07-06', endDate: '2026-07-07' },
+  ];
+  const linha = (demandId: string, instructorId: string, horas: number) =>
+    ({ demandId, instructorId, horas, horasInformadas: true, dias: ['2026-07-06'], dividida: false });
+  const base = { demands: [DEM_HIB, DEM_PRE, DEM_INT], trainings: [T_HIB, T_PRE], instructorAllocations: aloc, participants: [], companions: [] };
+  const aplicar = (rows: any[], measurements: any[]) => applyHybridBlankHours(rows, { ...base, measurements });
+  const semHoras = (r: any) => r.horas === null && r.horasInformadas === false && r.motivoSemHoras === 'HIBRIDA';
+
+  /* --- sem medição salva: ninguém informou -> em branco --- */
+  {
+    const out = aplicar([linha('D-HIB', 'TIT', 4), linha('D-PRE', 'TIT', 16)], []);
+    check('híbrida sem medição: Horas em branco, motivo HIBRIDA', semHoras(out[0]));
+    eq('presencial: intacta (16h)', out[1].horas, 16);
+    eq('presencial: continua informada', out[1].horasInformadas, true);
+  }
+
+  /* --- v1: classHours informado vale para TODOS os titulares do rateio --- */
+  {
+    const v1Informada = { demandId: 'D-HIB', attachments: [], otherExpenses: [], expenses: { classHours: 8, hourRate: 100 } };
+    const out = aplicar([linha('D-HIB', 'TIT', 4), linha('D-HIB', 'T2', 4)], [v1Informada]);
+    eq('v1 com classHours: titular principal mantém o rateio (4h)', out[0].horas, 4);
+    eq('v1 com classHours: segundo titular também (o classHours é da demanda inteira)', out[1].horas, 4);
+
+    const v1Vazia = { demandId: 'D-HIB', attachments: [], otherExpenses: [], expenses: { hourRate: 100 } };
+    const out2 = aplicar([linha('D-HIB', 'TIT', 4), linha('D-HIB', 'T2', 4)], [v1Vazia]);
+    check('v1 sem classHours: os dois titulares em branco', semHoras(out2[0]) && semHoras(out2[1]));
+  }
+
+  /* --- v2: o bloco de CADA pessoa decide --- */
+  {
+    const v2 = {
+      demandId: 'D-HIB', attachments: [], otherExpenses: [],
+      expenses: { participantes: [{ instructorId: 'TIT', papel: 'TITULAR', horas: 6, valorHH: 100 }, { instructorId: 'T2', papel: 'TITULAR', valorHH: 100 }] },
+    };
+    const out = aplicar([linha('D-HIB', 'TIT', 6), linha('D-HIB', 'T2', 4)], [v2]);
+    eq('v2: quem digitou mantém (6h, já via override)', out[0].horas, 6);
+    check('v2: quem não digitou fica em branco', semHoras(out[1]));
+
+    const v2Zero = { ...v2, expenses: { participantes: [{ instructorId: 'TIT', papel: 'TITULAR', horas: 0, valorHH: 100 }] } };
+    const out2 = aplicar([linha('D-HIB', 'TIT', 0)], [v2Zero]);
+    eq('v2: zero digitado é informado — não vira branco', out2[0].horasInformadas, true);
+  }
+
+  /* --- fora do alcance: interna, acompanhante já sem horas --- */
+  {
+    const out = aplicar([linha('D-INT', 'TIT', 8)], []);
+    eq('interna nunca é híbrida para pagamento (8h intactas)', out[0].horas, 8);
+    const acomp: any = { demandId: 'D-HIB', instructorId: 'ACOMP', horas: null, horasInformadas: false, motivoSemHoras: 'ACOMPANHANTE', dias: [], dividida: true, papel: 'ACOMPANHANTE' };
+    eq('acompanhante sem horas mantém o motivo dele', aplicar([acomp], [])[0].motivoSemHoras, 'ACOMPANHANTE');
+    check('não muta a lista de entrada', (() => { const r = [linha('D-HIB', 'TIT', 4)]; aplicar(r, []); return r[0].horas === 4; })());
+  }
+
+  /* --- o critério é o do painel: isHibridaParaPagamento aceita as grafias --- */
+  eq('treinamento "Híbrido" (acento) é híbrida', isHibridaParaPagamento(DEM_HIB, { id: 'x', modality: 'Híbrido' }), true);
+  eq('treinamento manda sobre a demanda (demanda HIBRIDO, treinamento PRESENCIAL)', isHibridaParaPagamento({ ...DEM_HIB, modality: 'HIBRIDO' }, T_PRE), false);
+  eq('sem treinamento, vale a modalidade da demanda', isHibridaParaPagamento({ ...DEM_HIB, modality: 'HIBRIDO' }, undefined), true);
+
+  /* --- reconcile aceita a origem da híbrida (e só ela ou a do acompanhante) --- */
+  {
+    const excel = [{ instructorId: 'TIT', nome: 'Titular', linhas: [{ demandId: 'D-HIB', horas: null, horasInformadas: false }] }];
+    const row = (origemHoras: string, horasPagamento: number | null = null) => ({
+      demand: { id: 'D-HIB' }, instructorId: 'TIT', horasPagamento, origemHoras, diasPagamento: '06/07/2026', elegivelPagamento: true,
+    });
+    eq('origem "Híbrida sem horas presenciais informadas": sem-horas ok', compareExcelWithExport(excel, [row(ORIGEM_HIBRIDA_SEM_HORAS)], '2026-07-01', '2026-07-31').semHoras, 1);
+    eq('origem de rateio com Excel em branco: FALHA', compareExcelWithExport(excel, [row('Rateio da alocação', 4)], '2026-07-01', '2026-07-31').falhas, 1);
+  }
+
+  /* --- guardas de fonte --- */
+  const svc = ler('services/medicaoExportService.ts');
+  check('o service aplica applyHybridBlankHours sobre as linhas do override, antes do workbook',
+    svc.includes('...applyHybridBlankHours(') && svc.indexOf('applyHybridBlankHours(') < svc.indexOf('for (const row of linhasPagamento)'));
+  const ds = ler('domain/exports/datasets/medicoes.ts');
+  check('o dataset Medições usa o MESMO critério (horasInformadasDe) e a origem nova',
+    ds.includes('!horasInformadasDe(pessoa.instructorId)') && ds.includes("'Híbrida sem horas presenciais informadas'"));
+  const totals = ler('domain/measurementTotals.ts');
+  check('computeMeasurementTotals documenta que ignora hibrida de propósito (Dashboard = carga total)',
+    totals.includes('`ctx.hibrida` é IGNORADO aqui DE PROPÓSITO'));
 }
 
 console.log(

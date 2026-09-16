@@ -10,9 +10,10 @@
  *     sem medição aberta; escopo aprovado), não falha;
  *   • dias de pagamento atravessando a borda do mês → "borda (esperado)":
  *     o Excel rateia, o export não;
- *   • linha do Excel com `horasInformadas === false` (acompanhante sem horas):
- *     o Excel imprime a pessoa com Horas em branco; o export tem de dizer
- *     `Horas pagamento` em branco COM origem "Acompanhante sem horas
+ *   • linha do Excel com `horasInformadas === false` (acompanhante sem horas,
+ *     híbrida sem horas presenciais): o Excel imprime a pessoa com Horas em
+ *     branco; o export tem de dizer `Horas pagamento` em branco COM origem
+ *     "Acompanhante sem horas informadas" ou "Híbrida sem horas presenciais
  *     informadas". Qualquer outra combinação com horas em branco é FALHA;
  *   • o resto compara as horas com tolerância de 0,005.
  */
@@ -39,6 +40,9 @@ export interface ExportRowLike {
 }
 
 export const ORIGEM_ACOMPANHANTE_SEM_HORAS = 'Acompanhante sem horas informadas';
+export const ORIGEM_HIBRIDA_SEM_HORAS = 'Híbrida sem horas presenciais informadas';
+/** As únicas origens que justificam Horas em branco nos DOIS lados. */
+const ORIGENS_SEM_HORAS_OK: ReadonlySet<string> = new Set([ORIGEM_ACOMPANHANTE_SEM_HORAS, ORIGEM_HIBRIDA_SEM_HORAS]);
 
 export interface ReconcileResult {
   iguais: number;
@@ -91,12 +95,12 @@ export function compareExcelWithExport(
       // mas não tem horas a comparar. O export tem de concordar que não há
       // horas de pagamento E dizer o motivo certo — senão é divergência real.
       if (linha.horasInformadas === false) {
-        if (ex && ex.horasPagamento === null && ex.origemHoras === ORIGEM_ACOMPANHANTE_SEM_HORAS) {
+        if (ex && ex.horasPagamento === null && ORIGENS_SEM_HORAS_OK.has(ex.origemHoras)) {
           out.semHoras++;
-          out.log.push(`  sem-horas (ok)   ${k} — acompanhante sem horas informadas nos dois lados`);
+          out.log.push(`  sem-horas (ok)   ${k} — ${ex.origemHoras.toLowerCase()} nos dois lados`);
         } else if (!ex) {
           out.foraDoDataset++;
-          out.log.push(`  fora-do-dataset  ${k} — acompanhante sem horas em demanda sem linha em measurements`);
+          out.log.push(`  fora-do-dataset  ${k} — linha sem horas em demanda sem linha em measurements`);
         } else {
           out.falhas++;
           out.log.push(`  FALHA            ${k} — Excel imprime linha SEM horas × export ${ex.horasPagamento ?? 'EM BRANCO'} (${ex.origemHoras})`);

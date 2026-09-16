@@ -233,7 +233,7 @@ console.log('\n[4] Workbook gerado');
   const ana = lido.getWorksheet('Ana Maria');
   checkEq('Detalhe: linha 1 é o nome do instrutor', texto(ana, 'A1'), 'Ana Maria');
   checkEq('Detalhe: linha 2 traz o CPF do cadastro', `${texto(ana, 'A2')}=${texto(ana, 'B2')}`, 'CPF/CNPJ=123.456.789-09');
-  checkEq('Detalhe: e os dados bancários por fórmula a partir do Resumo (sem 0 quando vazio)', `${texto(ana, 'C2')}: ${formula(ana, 'D2')}`, 'Dados bancários: IF(Resumo!H3="","",Resumo!H3)');
+  checkEq('Detalhe: e os dados bancários por fórmula a partir do Resumo (sem 0 quando vazio)', `${texto(ana, 'C2')}: ${formula(ana, 'D2')}`, 'Dados bancários: IF(Resumo!I3="","",Resumo!I3)');
   checkEq('Detalhe: cabeçalho congelado até a linha 3', `${ana.views?.[0]?.state}/${ana.views?.[0]?.ySplit}`, 'frozen/3');
   checkEq(
     'Detalhe: cabeçalho na linha 3, despesas por categoria ANTES das horas',
@@ -281,20 +281,22 @@ console.log('\n[4] Workbook gerado');
   checkEq('Resumo: título traz o período', texto(resumo, 'A1'), 'MEDIÇÃO DE INSTRUTORES — 26/06/2026 a 25/07/2026');
   checkEq(
     'Resumo: cabeçalho com Hora/aula, Despesas a reembolsar, Total a pagar e Tarifas pendentes',
-    ['A2', 'B2', 'C2', 'D2', 'E2', 'F2', 'G2', 'H2'].map(a => texto(resumo, a)).join(' | '),
-    'Instrutor | Total de Horas — automático | Hora/aula (R$) — automático | Despesas a reembolsar (R$) — automático | Total a pagar (R$) — automático | Tarifas pendentes — automático | CPF/CNPJ | Dados Bancários'
+    ['A2', 'B2', 'C2', 'D2', 'E2', 'F2', 'G2', 'H2', 'I2'].map(a => texto(resumo, a)).join(' | '),
+    'Instrutor | Total de Horas — automático | Hora/aula (R$) — automático | Despesas a reembolsar (R$) — automático | Total a pagar (R$) — automático | Tarifas pendentes — automático | Horas pendentes — automático | CPF/CNPJ | Dados Bancários'
   );
   checkEq('Resumo: horas somam a coluna L da aba do instrutor', formula(resumo, 'B3'), "SUM('Ana Maria'!L4:L6)");
   checkEq('Resumo: hora/aula soma a coluna M da aba (não horas × tarifa)', formula(resumo, 'C3'), "SUM('Ana Maria'!M4:M6)");
   checkEq('Resumo: despesas a reembolsar somam a coluna K da aba', formula(resumo, 'D3'), "SUM('Ana Maria'!K4:K6)");
   checkEq('Resumo: total a pagar soma a coluna N da aba', formula(resumo, 'E3'), "SUM('Ana Maria'!N4:N6)");
   checkEq('Resumo: pendências contam tarifas em branco do instrutor', formula(resumo, 'F3'), 'COUNTIFS(Tarifas!$A:$A,"Ana Maria",Tarifas!$F:$F,"")');
-  checkEq('Resumo: CPF em G', texto(resumo, 'G3'), '123.456.789-09');
-  check('Resumo: dados bancários em H, destravados', resumo.getCell('H3').protection?.locked === false);
+  checkEq('Resumo: horas pendentes contam células de Horas em branco da aba', formula(resumo, 'G3'), "COUNTIF('Ana Maria'!L4:L6,\"\")");
+  checkEq('Resumo: CPF em H', texto(resumo, 'H3'), '123.456.789-09');
+  check('Resumo: dados bancários em I, destravados', resumo.getCell('I3').protection?.locked === false);
   checkEq('Resumo: TOTAL GERAL de hora/aula', formula(resumo, 'C5'), 'SUM(C3:C4)');
   checkEq('Resumo: TOTAL GERAL de despesas a reembolsar', formula(resumo, 'D5'), 'SUM(D3:D4)');
   checkEq('Resumo: TOTAL GERAL a pagar', formula(resumo, 'E5'), 'SUM(E3:E4)');
   checkEq('Resumo: TOTAL GERAL de pendências', formula(resumo, 'F5'), 'SUM(F3:F4)');
+  checkEq('Resumo: TOTAL GERAL de horas pendentes', formula(resumo, 'G5'), 'SUM(G3:G4)');
 
   /* ---- proteção ---- */
   let formulaDestravada = 0;
@@ -726,6 +728,8 @@ console.log('\n[4] Workbook gerado');
         instructorId: 'j2', nome: 'Elisa Semdespesa', cpf: '',
         linhas: [
           { demandId: 'DEM-302', empresa: 'VALE', trainingName: 'NR 10', dias: ['2026-07-07'], local: 'BH - MG', modalidade: 'Presencial', horas: 4, horasInformadas: true, reembolso: R({}), categoria: '', tipo: 'Treinamento', noturno: false, papel: 'Titular' },
+          // Híbrida sem horas presenciais informadas: linha normal, Horas em branco.
+          { demandId: 'DEM-303', empresa: 'VALE', trainingName: 'CIPA Mineração', dias: ['2026-07-09', '2026-07-10'], local: 'BH - MG', modalidade: 'Híbrido', horas: null, horasInformadas: false, motivoSemHoras: 'HIBRIDA', reembolso: R({}), categoria: '', tipo: 'Treinamento', noturno: false, papel: 'Titular' },
         ],
       },
     ] as any,
@@ -770,6 +774,21 @@ console.log('\n[4] Workbook gerado');
   );
   checkEq('totais da aba: uma linha abaixo dos dados', [formula(diego, 'K6'), formula(diego, 'L6'), formula(diego, 'M6'), formula(diego, 'N6')].join(' | '), 'SUM(K4:K5) | SUM(L4:L5) | SUM(M4:M5) | SUM(N4:N5)');
 
+  /* ---- híbrida sem horas presenciais: linha normal, Horas em branco, texto próprio ---- */
+  const l5e = elisa.getCell('L5');
+  checkEq('híbrida: a linha existe, com Modalidade Híbrido', texto(elisa, 'F5'), 'Híbrido');
+  check('híbrida: Horas em BRANCO (não o rateio)', l5e.value === null || l5e.value === undefined);
+  check('híbrida: Horas destravada e amarela', l5e.protection?.locked === false && l5e.fill?.fgColor?.argb === 'FFFFFF00');
+  checkEq(
+    'híbrida: hora/aula mostra o texto da híbrida (não o do acompanhante) até digitarem',
+    formula(elisa, 'M5'),
+    'IF(L5="","híbrida: informe as horas presenciais realizadas",L5*SUMIFS(Tarifas!$F:$F,Tarifas!$A:$A,"Elisa Semdespesa",Tarifas!$B:$B,B5,Tarifas!$C:$C,O5,Tarifas!$D:$D,Q5,Tarifas!$E:$E,R5))'
+  );
+  checkEq('híbrida: Total é SUM (texto não dá #VALUE!)', formula(elisa, 'N5'), 'SUM(K5,M5)');
+  checkEq('híbrida: Papel continua Titular', texto(elisa, 'R5'), 'Titular');
+  checkEq('Resumo: Horas pendentes = COUNTIF das células de Horas em branco', [formula(resD5, 'G3'), formula(resD5, 'G4'), formula(resD5, 'G5')].join(' | '),
+    "COUNTIF('Diego Reembolso'!L4:L5,\"\") | COUNTIF('Elisa Semdespesa'!L4:L5,\"\") | SUM(G3:G4)");
+
   /* ---- Resumo aponta para as colunas certas ---- */
   checkEq('Resumo: Diego na linha 3 com as quatro somas', [formula(resD5, 'B3'), formula(resD5, 'C3'), formula(resD5, 'D3'), formula(resD5, 'E3')].join(' | '),
     "SUM('Diego Reembolso'!L4:L5) | SUM('Diego Reembolso'!M4:M5) | SUM('Diego Reembolso'!K4:K5) | SUM('Diego Reembolso'!N4:N5)");
@@ -784,8 +803,9 @@ console.log('\n[4] Workbook gerado');
         if (cell.protection?.locked === false) { destravadasD5++; if (temFormula) formulaDestravadaD5++; }
       }));
     }
-    // 3 tarifas (Diego Titular, Diego Acompanhante, Elisa) + 2 dados bancários + 1 Horas do acompanhante
-    checkEq('destravadas = tarifas + dados bancários + Horas do acompanhante', destravadasD5, 6);
+    // 3 tarifas (Diego Titular, Diego Acompanhante, Elisa) + 2 dados bancários
+    // + 1 Horas do acompanhante + 1 Horas da híbrida
+    checkEq('destravadas = tarifas + dados bancários + Horas do acompanhante + Horas da híbrida', destravadasD5, 7);
     checkEq('nenhuma fórmula destravada', formulaDestravadaD5, 0);
   }
 
@@ -838,6 +858,18 @@ console.log('\n[4] Workbook gerado');
       return criarAvaliador(tarD5, ws).avaliarHorasVezesTarifa(m[3], tarifasD5);
     }
     if (/^L\d+\*SUMIFS\(/.test(f)) return criarAvaliador(tarD5, ws).avaliarHorasVezesTarifa(f, tarifasD5);
+    m = /^COUNTIF\((.+),""\)$/.exec(f);
+    if (m) {
+      // COUNTIF(range,""): células vazias do range (é a Horas pendentes do Resumo).
+      const [sheet, ref] = refToSheet(m[1].trim());
+      const rng = /^([A-Z])(\d+):([A-Z])(\d+)$/.exec(ref)!;
+      let vazias = 0;
+      for (let r = Number(rng[2]); r <= Number(rng[4]); r++) {
+        const x = evalCell(sheet ?? ws, rng[1] + r);
+        if (x === null || x === '') vazias++;
+      }
+      return vazias;
+    }
     if (/^COUNTIFS\(/.test(f)) return 0; // fora do escopo deste recálculo
     throw new Error('fórmula não suportada pelo avaliador do smoke: ' + f);
   };
@@ -857,11 +889,24 @@ console.log('\n[4] Workbook gerado');
   checkEq('recálculo: TOTAL GERAL E5 = Σ abas (1420)', evalCell(resD5, 'E5'), 1420);
   checkEq('recálculo: TOTAL GERAL fecha com C5 + D5', evalCell(resD5, 'E5'), Number(evalCell(resD5, 'C5')) + Number(evalCell(resD5, 'D5')));
 
+  checkEq('recálculo: híbrida M5 é o TEXTO da híbrida', evalCell(elisa, 'M5'), 'híbrida: informe as horas presenciais realizadas');
+  checkEq('recálculo: Elisa E4 continua 200 (a híbrida em branco não soma nem quebra)', evalCell(resD5, 'E4'), 200);
+  checkEq('recálculo: Horas pendentes do Diego = 1 (acompanhante)', evalCell(resD5, 'G3'), 1);
+  checkEq('recálculo: Horas pendentes da Elisa = 1 (híbrida)', evalCell(resD5, 'G4'), 1);
+  checkEq('recálculo: TOTAL GERAL de horas pendentes = 2', evalCell(resD5, 'G5'), 2);
+
   // E quando alguém DIGITA as horas do acompanhante, o texto some e o valor entra
   // com a tarifa DELE (60), não a do titular.
   diego.getCell('L5').value = 3;
   checkEq('recálculo: horas digitadas na célula amarela → 3h × 60 (tarifa de Acompanhante)', evalCell(diego, 'M5'), 180);
   checkEq('recálculo: e o Total a pagar do Diego passa a 1400', evalCell(resD5, 'E3'), 1400);
+  checkEq('recálculo: e as Horas pendentes do Diego caem a 0', evalCell(resD5, 'G3'), 0);
+
+  // Idem na híbrida: horas presenciais digitadas → tarifa de Titular (50).
+  elisa.getCell('L5').value = 6;
+  checkEq('recálculo: horas presenciais digitadas → 6h × 50', evalCell(elisa, 'M5'), 300);
+  checkEq('recálculo: Total a pagar da Elisa passa a 500', evalCell(resD5, 'E4'), 500);
+  checkEq('recálculo: TOTAL GERAL de horas pendentes zera', evalCell(resD5, 'G5'), 0);
 
   /* ======================================================================== */
   /* Item de despesa do Painel: nome/link do anexo                            */

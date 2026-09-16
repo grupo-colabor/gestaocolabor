@@ -133,6 +133,7 @@ export type OrigemHoras =
   | 'Não elegível: demanda não concluída'
   | 'Não elegível: sem dias na demanda'
   | 'Acompanhante sem horas informadas'
+  | 'Híbrida sem horas presenciais informadas'
   | 'Sem alocação em instructor_allocations'
   | 'Sem horas de pagamento (> 0)';
 
@@ -253,7 +254,7 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
 
     // Caminho v2 (o do painel) ou v1 — a decisão mora em
     // domain/measurementPersonBlocks.ts, compartilhada com o Excel de pagamento.
-    const { v2, paraNormalizar, blocoDe } = resolvePersonBlocks(m as any, demand, pessoas);
+    const { v2, paraNormalizar, blocoDe, horasInformadasDe } = resolvePersonBlocks(m as any, demand, pessoas);
 
     const base = {
       demand,
@@ -324,7 +325,14 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
       const pag = pagamentoPorChave.get(k);
       const doRateio = rateioPorChave.get(k);
 
+      // Híbrida sem as horas presenciais informadas: o Excel imprime a pessoa
+      // com Horas em branco (amarela), então aqui `Horas pagamento` fica em
+      // branco também — o rateio existe, mas não é o que a planilha paga.
+      // Mesmo critério do Excel (domain/paymentRows.ts): `horasInformadasDe`.
+      const hibridaSemHoras = !!pag && hibrida && !horasInformadasDe(pessoa.instructorId);
+
       const origemHoras: OrigemHoras = (() => {
+        if (hibridaSemHoras) return 'Híbrida sem horas presenciais informadas';
         if (pag) {
           if (horasInformadas !== null && v2) return 'Informada na medição';
           if (doRateio) return doRateio.dividida ? 'Rateio da alocação (dividida)' : 'Rateio da alocação';
@@ -340,7 +348,7 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
         return 'Sem horas de pagamento (> 0)';
       })();
 
-      const horasPagamento = pag ? round2(pag.horas) : null;
+      const horasPagamento = pag && !hibridaSemHoras ? round2(pag.horas) : null;
 
       rows.push({
         ...base,
@@ -359,7 +367,7 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
         valorHH,
         origemTarifa,
         horaAulaPainel,
-        horaAulaPagamento: pag && valorHH !== null ? round2(pag.horas * valorHH) : null,
+        horaAulaPagamento: pag && !hibridaSemHoras && valorHH !== null ? round2(pag.horas * valorHH) : null,
         despesas,
         naoReembolsavel,
         despesasReembolsaveis: round2(despesas.total - naoReembolsavel),

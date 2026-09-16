@@ -216,6 +216,27 @@ console.log('\n— Flag "pago pelo instrutor" NAO altera o custo');
   check('Dashboard.tsx nao le a flag (custo continua cego a quem pagou)', !dashboard.includes('pagoPeloInstrutor') && !dashboard.includes('isPagoPeloInstrutor'));
 }
 
+console.log('\n— Dashboard ignora "hibrida" de proposito (carga total)');
+{
+  // O Excel de pagamento e o painel zeram/deixam em branco a hibrida sem horas
+  // presenciais digitadas. O Dashboard NAO: ele trabalha com a carga total da
+  // demanda, e `computeMeasurementTotals` ignora `ctx.hibrida` de proposito.
+  const hibridaSemHoras = {
+    demandId: 'H1', otherExpenses: [],
+    expenses: { classHours: 40, participantes: [{ instructorId: 'T', papel: 'TITULAR', valorHH: 100 }] },
+    attachments: [att({ id: 'h1', cat: 'HOSPEDAGEM', v: 300 })],
+  };
+  const semCtx = computeMeasurementTotals(hibridaSemHoras as any);
+  const comHibrida = computeMeasurementTotals(hibridaSemHoras as any, { demandDefaultHours: 40, hibrida: true });
+  checkEq('hora/aula pela carga total (40 x 100), nao zero', semCtx.horaAula, 4000);
+  checkEq('passar hibrida: true nao muda nada', comHibrida.horaAula, semCtx.horaAula);
+  checkEq('total com hora/aula idem', comHibrida.totalComHoraAula, 4300);
+  const totalsSrc = fsCustos.readFileSync(pathCustos.join(process.cwd(), 'domain/measurementTotals.ts'), 'utf8');
+  const corpo = totalsSrc.slice(totalsSrc.indexOf('export function computeMeasurementTotals'), totalsSrc.indexOf('export interface MeasurementsAggregate'));
+  check('computeMeasurementTotals nao le ctx.hibrida no codigo', !/ctx\??\.hibrida/.test(corpo.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')));
+  check('e documenta que e intencional', corpo.includes('IGNORADO aqui DE PROPÓSITO'));
+}
+
 console.log('\n— Agregacao: contadores');
 {
   const semMarcado = { demandId: 'D1', otherExpenses: [], expenses: {}, attachments: [att({ id: 'p', cat: 'CAFE', v: 10 })] };

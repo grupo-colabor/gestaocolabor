@@ -23,12 +23,23 @@
  *      `blockExpenseBreakdown` com `isPagoPeloInstrutor` (o mesmo laço do
  *      painel). Nenhuma soma nova.
  *
+ *   3. A HÍBRIDA SEM HORAS PRESENCIAIS INFORMADAS. O rateio devolve as horas
+ *      práticas do treinamento (ou a carga cheia), mas o split presencial/
+ *      online varia por demanda e só quem mede sabe o que foi ministrado
+ *      presencialmente (DEM-1556: 40h de carga, 2 dias presenciais). O painel
+ *      já não herda default em híbrida; a planilha passa a fazer o mesmo:
+ *      linha normal, Horas em branco/amarela, hora/aula em texto até alguém
+ *      digitar. Vale para todo papel, v1 e v2, pelo MESMO critério do painel
+ *      (`horasInformadasDe`, domain/measurementPersonBlocks.ts). O rateio em
+ *      si (instructorHours.ts) não muda: o Dashboard continua com ele.
+ *
  * Sem import de React, Supabase ou ExcelJS: roda no smoke em Node.
  */
 import { getDemandDays } from './demandDays';
 import { companionDaysFromRows, type OverrideCompanionRowLike } from './measurementOverrides';
 import { resolveMeasurementPeople, type MeasurementPerson } from './measurementPeople';
 import { resolvePersonBlocks } from './measurementPersonBlocks';
+import { isHybridModality } from './modalityRules';
 import {
   blockExpenseBreakdown,
   isPagoPeloInstrutor,
@@ -36,6 +47,9 @@ import {
   type TotalizableMeasurement,
 } from './measurementTotals';
 import type { InstructorAllocationLike } from './demandInstructors';
+
+/** Por que uma linha da planilha está sem horas. Decide o texto da célula de hora/aula. */
+export type MotivoSemHoras = 'ACOMPANHANTE' | 'HIBRIDA';
 
 /** As despesas que a Colabor deve ao instrutor numa linha da planilha. */
 export interface MedicaoReembolso {
@@ -69,6 +83,7 @@ export interface CompanionRowWithoutHours {
   /** Sempre `null` aqui — a planilha imprime a célula vazia e amarela. */
   horas: null;
   horasInformadas: false;
+  motivoSemHoras: 'ACOMPANHANTE';
   dias: string[];
   dividida: true;
   papel: 'ACOMPANHANTE';
@@ -156,6 +171,7 @@ export function buildCompanionRowsWithoutHours(input: CompanionRowsInput): Compa
         demandId: demand.id,
         horas: null,
         horasInformadas: false,
+        motivoSemHoras: 'ACOMPANHANTE',
         dias,
         dividida: true,
         papel: 'ACOMPANHANTE',
@@ -164,6 +180,91 @@ export function buildCompanionRowsWithoutHours(input: CompanionRowsInput): Compa
   }
 
   return resultado;
+}
+
+/* ───────────────────────── híbrida sem horas presenciais ───────────────────────── */
+
+/** Só o que a regra de híbrida lê de um treinamento. */
+export interface PaymentTrainingLike {
+  id: string;
+  modality?: string | null;
+}
+
+/**
+ * A demanda é HÍBRIDA para efeito de pagamento? A mesma regra do painel
+ * (`isHibrida` em Measurement.tsx) e do dataset Medições: interna nunca é; a
+ * modalidade do TREINAMENTO prevalece sobre a da demanda.
+ */
+export function isHibridaParaPagamento(
+  demand: PaymentDemandLike & { trainingId?: string | null; modality?: string | null },
+  training: PaymentTrainingLike | undefined
+): boolean {
+  if (demand.tipo === 'interna') return false;
+  return isHybridModality(training?.modality ?? demand.modality);
+}
+
+/** Uma linha de horas já montada (rateio ou override), no que esta regra lê e altera. */
+export interface HoursRowForHybrid {
+  instructorId: string;
+  demandId: string;
+  horas: number | null;
+  horasInformadas: boolean;
+  motivoSemHoras?: MotivoSemHoras;
+}
+
+export interface HybridBlankHoursInput {
+  demands: (PaymentDemandLike & { trainingId?: string | null; modality?: string | null })[];
+  trainings: PaymentTrainingLike[];
+  instructorAllocations: InstructorAllocationLike[];
+  participants: { demandId: string; instructorId: string }[];
+  companions: { demandId: string; instructorId: string }[];
+  measurements: (TotalizableMeasurement & { demandId: string })[];
+}
+
+/**
+ * Apaga as horas das linhas de demanda HÍBRIDA cuja pessoa não teve as horas
+ * presenciais informadas na medição: `horas` vira `null`, `horasInformadas`
+ * `false`, `motivoSemHoras` 'HIBRIDA'. Linha já sem horas (acompanhante) e
+ * demanda não híbrida passam intactas. Devolve uma lista NOVA.
+ *
+ * Sem medição salva = ninguém informou = em branco. Zero digitado é informado
+ * (fica como o override deixou).
+ */
+export function applyHybridBlankHours<T extends HoursRowForHybrid>(
+  rows: T[],
+  input: HybridBlankHoursInput
+): T[] {
+  const demandById = new Map(input.demands.map(d => [d.id, d]));
+  const trainingById = new Map(input.trainings.map(t => [String(t.id), t]));
+  const measurementByDemand = new Map(input.measurements.map(m => [m.demandId, m]));
+  const cache = new Map<string, ((instructorId: string) => boolean) | null>();
+
+  // Por demanda: `null` = não é híbrida (nada a fazer); senão, o critério de
+  // horas informadas por pessoa — o mesmo do painel e do dataset.
+  const criterioDe = (demandId: string) => {
+    if (cache.has(demandId)) return cache.get(demandId)!;
+    const demand = demandById.get(demandId);
+    const training = demand ? trainingById.get(String(demand.trainingId ?? '')) : undefined;
+    let criterio: ((instructorId: string) => boolean) | null = null;
+    if (demand && isHibridaParaPagamento(demand, training)) {
+      const m = measurementByDemand.get(demandId);
+      if (!m) {
+        criterio = () => false;
+      } else {
+        const pessoas = resolveMeasurementPeople(demand, input.instructorAllocations, input.participants, input.companions);
+        criterio = resolvePersonBlocks(m, demand, pessoas).horasInformadasDe;
+      }
+    }
+    cache.set(demandId, criterio);
+    return criterio;
+  };
+
+  return rows.map(row => {
+    if (!row.horasInformadas) return row;
+    const criterio = criterioDe(row.demandId);
+    if (!criterio || criterio(row.instructorId)) return row;
+    return { ...row, horas: null, horasInformadas: false, motivoSemHoras: 'HIBRIDA' as const };
+  });
 }
 
 /**

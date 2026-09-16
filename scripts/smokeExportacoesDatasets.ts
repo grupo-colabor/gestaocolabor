@@ -17,6 +17,7 @@ import {
 } from '../domain/measurementTotals';
 import { computeInstructorHoursByDemand, eligibleDemandIdsForPayment } from '../domain/instructorHours';
 import { applyMeasurementOverrides } from '../domain/measurementOverrides';
+import { applyHybridBlankHours } from '../domain/paymentRows';
 import { formatDias } from '../services/medicaoWorkbook';
 import { formatDiasList } from '../domain/exports/shared';
 import { buildMedicoesRows, MEDICOES_DATASET, type MedicaoRow } from '../domain/exports/datasets/medicoes';
@@ -52,7 +53,9 @@ export function runDatasetChecks(t: SmokeTools): number {
     t.eq(nome, a, b);
   };
   const perto: SmokeTools['perto'] = (nome, a, b) => {
-    if (Math.abs(a - b) >= 1e-6) falhas++;
+    // `!(x < eps)` e não `x >= eps`: com NaN as duas comparações são falsas, e
+    // a forma antiga deixava passar um `?? NaN` sem contar a falha.
+    if (!(Math.abs(a - b) < 1e-6)) falhas++;
     t.perto(nome, a, b);
   };
 
@@ -111,7 +114,7 @@ export function runDatasetChecks(t: SmokeTools): number {
     otherExpenses: [],
   };
 
-  // M4 — HÍBRIDA v2 sem horas digitadas: painel 0; Excel paga as práticas (8h).
+  // M4 — HÍBRIDA v2 sem horas digitadas: painel 0; Excel com Horas em branco (amarela).
   const D_HIB = demandaCliente({ id: 'DEM-102', trainingId: 'T_HIB', modality: 'PRESENCIAL' });
   const M4: any = {
     id: 'MEA-DEM-102', demandId: 'DEM-102', status: 'LANCAMENTO', updatedAt: '2026-08-12',
@@ -274,13 +277,25 @@ export function runDatasetChecks(t: SmokeTools): number {
       companions,
       eligibleDemandIds: eligibleDemandIdsForPayment({ demands, trainings: TRAININGS } as any),
     });
-    const porChave = new Map(esperado.map(r => [`${r.demandId} ${r.instructorId}`, r]));
+    // O Excel ainda apaga as horas da híbrida sem horas presenciais informadas
+    // (domain/paymentRows.ts) — a MESMA função do service, aplicada aqui sobre o
+    // override, é o que o dataset tem de espelhar.
+    const linhasExcel = applyHybridBlankHours(
+      esperado.map(r => ({ ...r, horasInformadas: true as boolean, horas: r.horas as number | null })),
+      { demands, trainings: TRAININGS, instructorAllocations, participants, companions, measurements }
+    );
+    const porChave = new Map(linhasExcel.map(r => [`${r.demandId} ${r.instructorId}`, r]));
 
     for (const r of rows) {
       const k = `${r.demand.id} ${r.instructorId}`;
       const e = porChave.get(k);
-      if (e) {
-        perto(`${k}: horas pagamento = override`, r.horasPagamento ?? NaN, Math.round((e.horas + Number.EPSILON) * 100) / 100);
+      if (e && !e.horasInformadas) {
+        eq(`${k}: híbrida sem horas no Excel -> horas pagamento EM BRANCO`, r.horasPagamento, null);
+        eq(`${k}: e a origem é a da híbrida`, r.origemHoras, 'Híbrida sem horas presenciais informadas');
+        check(`${k}: elegível (a linha existe)`, r.elegivelPagamento);
+        eq(`${k}: dias = formatDias do Excel`, r.diasPagamento, formatDias(e.dias));
+      } else if (e) {
+        perto(`${k}: horas pagamento = override`, r.horasPagamento ?? NaN, Math.round(((e.horas ?? 0) + Number.EPSILON) * 100) / 100);
         check(`${k}: elegível`, r.elegivelPagamento);
         eq(`${k}: dias = formatDias do Excel`, r.diasPagamento, formatDias(e.dias));
       } else {
@@ -299,7 +314,18 @@ export function runDatasetChecks(t: SmokeTools): number {
     eq('acompanhante sem horas -> sem linha, origem explica', de('DEM-101', 'INS-A').origemHoras, 'Acompanhante sem horas informadas');
     eq('acompanhante: horas painel = 0 (manual obrigatório)', de('DEM-101', 'INS-A').horasPainel, 0);
     eq('híbrida sem digitar: painel 0', de('DEM-102', 'INS-T').horasPainel, 0);
-    perto('híbrida sem digitar: Excel paga as horas práticas do treinamento (8h)', de('DEM-102', 'INS-T').horasPagamento ?? NaN, 8);
+    // A planilha segue o painel: Horas em branco/amarela até digitarem — o
+    // rateio (8h práticas) existe, mas não é o que a planilha paga.
+    eq('híbrida sem digitar: Horas pagamento em BRANCO (não as 8h práticas do rateio)', de('DEM-102', 'INS-T').horasPagamento, null);
+    eq('híbrida sem digitar: origem explica', de('DEM-102', 'INS-T').origemHoras, 'Híbrida sem horas presenciais informadas');
+    check('híbrida sem digitar: continua elegível (a linha existe na planilha)', de('DEM-102', 'INS-T').elegivelPagamento);
+    eq('híbrida sem digitar: hora/aula por horas pagamento em branco', de('DEM-102', 'INS-T').horaAulaPagamento, null);
+    {
+      const comHoras = buildMedicoesRows({ ...src, measurements: [{ ...M4, expenses: { participantes: [{ instructorId: 'INS-T', papel: 'TITULAR', horas: 6, valorHH: 100 }] } }] });
+      const r = comHoras.find(x => x.demand.id === 'DEM-102' && x.instructorId === 'INS-T')!;
+      perto('híbrida COM horas digitadas: Horas pagamento = as digitadas (6h)', r.horasPagamento ?? NaN, 6);
+      eq('e a origem volta a ser a medição', r.origemHoras, 'Informada na medição');
+    }
     eq('demanda futura -> não elegível', de('DEM-103', 'INS-T').origemHoras, 'Não elegível: demanda não concluída');
     eq('sem ninguém -> sem alocação', de('DEM-104', '').origemHoras, 'Sem alocação em instructor_allocations');
     perto('hora/aula por horas pagamento = horas × valorHH', de('DEM-900', 'INS-2').horaAulaPagamento ?? NaN, 800);

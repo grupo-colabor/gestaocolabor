@@ -31,13 +31,13 @@
  * informadas" até alguém digitar, e as despesas dele. Nunca 0 silencioso.
  */
 
-import type { MedicaoReembolso } from '../domain/paymentRows';
+import type { MedicaoReembolso, MotivoSemHoras } from '../domain/paymentRows';
 
 /* ========================================================================== */
 /* Tipos públicos                                                             */
 /* ========================================================================== */
 
-export type { MedicaoReembolso } from '../domain/paymentRows';
+export type { MedicaoReembolso, MotivoSemHoras } from '../domain/paymentRows';
 
 export interface MedicaoDetailRow {
   /** Código da demanda (DEM-xxxx). */
@@ -62,6 +62,11 @@ export interface MedicaoDetailRow {
   horas: number | null;
   /** `false` quando `horas` é `null`. Redundante de propósito: é o que o reconcile lê. */
   horasInformadas: boolean;
+  /**
+   * Por que está sem horas — decide o texto da célula de hora/aula.
+   * Ausente com `horasInformadas: false` = 'ACOMPANHANTE' (compatibilidade).
+   */
+  motivoSemHoras?: MotivoSemHoras;
   /**
    * Despesas que a Colabor deve a ESTE instrutor nesta demanda: só os itens
    * marcados como "pago pelo instrutor" na medição (domain/paymentRows.ts).
@@ -250,15 +255,18 @@ const DETAIL_IDX = {
   horas: 12, horaAula: 13, total: 14,
 } as const;
 
-/** Texto que a célula de hora/aula mostra enquanto Horas estiver em branco. */
+/** Textos que a célula de hora/aula mostra enquanto Horas estiver em branco. */
 export const HORAS_NAO_INFORMADAS = 'horas não informadas';
+export const HIBRIDA_SEM_HORAS = 'híbrida: informe as horas presenciais realizadas';
+const textoSemHoras = (motivo: MotivoSemHoras | undefined) =>
+  motivo === 'HIBRIDA' ? HIBRIDA_SEM_HORAS : HORAS_NAO_INFORMADAS;
 
 /** Colunas do Resumo (1-based). */
 const RESUMO_IDX = {
-  instrutor: 1, horas: 2, horaAula: 3, reembolso: 4, totalPagar: 5, pendentes: 6, cpf: 7, banco: 8,
+  instrutor: 1, horas: 2, horaAula: 3, reembolso: 4, totalPagar: 5, pendentes: 6, horasPendentes: 7, cpf: 8, banco: 9,
 } as const;
-const RESUMO_COL_BANCO = 'H';
-const RESUMO_LAST_COL_IDX = 8;
+const RESUMO_COL_BANCO = 'I';
+const RESUMO_LAST_COL_IDX = 9;
 
 /**
  * Colunas da aba Tarifas. A tarifa deixou de ser uma por (instrutor, empresa):
@@ -489,8 +497,9 @@ export async function buildMedicaoWorkbook(
     { width: 30 }, // D Despesas a reembolsar (R$) — automático
     { width: 26 }, // E Total a pagar (R$) — automático
     { width: 26 }, // F Tarifas pendentes — automático
-    { width: 20 }, // G CPF/CNPJ
-    { width: 50 }, // H Dados Bancários
+    { width: 24 }, // G Horas pendentes — automático
+    { width: 20 }, // H CPF/CNPJ
+    { width: 50 }, // I Dados Bancários
   ];
 
   // Título: o período tem que viajar DENTRO do arquivo. O nome do arquivo se
@@ -508,10 +517,18 @@ export async function buildMedicaoWorkbook(
     'Despesas a reembolsar (R$) — automático',
     'Total a pagar (R$) — automático',
     'Tarifas pendentes — automático',
+    'Horas pendentes — automático',
     'CPF/CNPJ',
     'Dados Bancários',
   ]);
   styleHeaderRow(resumoHeader, RESUMO_LAST_COL_IDX);
+
+  resumoHeader.getCell(RESUMO_IDX.horasPendentes).note =
+    'Quantas linhas da aba deste instrutor estão com Horas em branco (célula ' +
+    'amarela): acompanhante sem horas informadas ou demanda híbrida sem as ' +
+    'horas presenciais digitadas na medição. Enquanto for maior que zero, o ' +
+    'Hora/aula e o Total a pagar estão incompletos. Preencha na aba (ou na ' +
+    'medição e exporte de novo).';
 
   resumoHeader.getCell(RESUMO_IDX.reembolso).note =
     'Despesas que a Colabor deve a este instrutor: só os itens marcados como ' +
@@ -595,7 +612,7 @@ export async function buildMedicaoWorkbook(
     const somaDaAba = (col: string) =>
       `SUM(${detalhe}!${col}${DETAIL_FIRST_DATA_ROW}:${col}${lastDetailRow})`;
 
-    const row = resumo.addRow([block.nome, null, null, null, null, null, block.cpf || '', '']);
+    const row = resumo.addRow([block.nome, null, null, null, null, null, null, block.cpf || '', '']);
 
     // B: horas somadas da aba do instrutor.
     const horasCell = row.getCell(RESUMO_IDX.horas);
@@ -632,15 +649,25 @@ export async function buildMedicaoWorkbook(
     pendentesCell.numFmt = '0';
     pendentesCell.alignment = { horizontal: 'center' };
 
-    // H: sem dados bancários no cadastro de instrutor — preenchimento manual.
+    // G: linhas da aba com Horas em branco (acompanhante sem horas, híbrida sem
+    // horas presenciais). COUNTIF(...,"") conta célula vazia — é o que a célula
+    // amarela é até alguém digitar.
+    const horasPendentesCell = row.getCell(RESUMO_IDX.horasPendentes);
+    horasPendentesCell.value = {
+      formula: `COUNTIF(${detalhe}!${DETAIL_COL_HORAS}${DETAIL_FIRST_DATA_ROW}:${DETAIL_COL_HORAS}${lastDetailRow},"")`,
+    };
+    horasPendentesCell.numFmt = '0';
+    horasPendentesCell.alignment = { horizontal: 'center' };
+
+    // I: sem dados bancários no cadastro de instrutor — preenchimento manual.
     // A aba do instrutor lê esta célula por fórmula (linha 2): digita-se uma vez.
     markAsInput(row.getCell(RESUMO_IDX.banco));
   }
 
   const lastResumoRow = RESUMO_FIRST_DATA_ROW + planned.length - 1;
-  const totalGeralRow = resumo.addRow(['TOTAL GERAL', null, null, null, null, null, '', '']);
+  const totalGeralRow = resumo.addRow(['TOTAL GERAL', null, null, null, null, null, null, '', '']);
   totalGeralRow.getCell(1).font = { bold: true };
-  for (const col of [RESUMO_IDX.horas, RESUMO_IDX.horaAula, RESUMO_IDX.reembolso, RESUMO_IDX.totalPagar, RESUMO_IDX.pendentes]) {
+  for (const col of [RESUMO_IDX.horas, RESUMO_IDX.horaAula, RESUMO_IDX.reembolso, RESUMO_IDX.totalPagar, RESUMO_IDX.pendentes, RESUMO_IDX.horasPendentes]) {
     const letra = String.fromCharCode(64 + col);
     const cell = totalGeralRow.getCell(col);
     cell.value = { formula: `SUM(${letra}${RESUMO_FIRST_DATA_ROW}:${letra}${lastResumoRow})` };
@@ -652,6 +679,8 @@ export async function buildMedicaoWorkbook(
   totalGeralRow.getCell(RESUMO_IDX.totalPagar).numFmt = FMT_MOEDA;
   totalGeralRow.getCell(RESUMO_IDX.pendentes).numFmt = '0';
   totalGeralRow.getCell(RESUMO_IDX.pendentes).alignment = { horizontal: 'center' };
+  totalGeralRow.getCell(RESUMO_IDX.horasPendentes).numFmt = '0';
+  totalGeralRow.getCell(RESUMO_IDX.horasPendentes).alignment = { horizontal: 'center' };
 
   await resumo.protect(undefined, SHEET_PROTECTION);
 
@@ -719,8 +748,9 @@ export async function buildMedicaoWorkbook(
       'A tarifa se preenche na aba Tarifas, na linha que cruza este instrutor ' +
       `com a empresa da coluna ${DETAIL_COL_EMPRESA}, o tipo da coluna ${DETAIL_COL_TIPO}, ` +
       `o noturno da coluna ${DETAIL_COL_NOTURNO} e o papel da coluna ${DETAIL_COL_PAPEL}.\n\n` +
-      `"${HORAS_NAO_INFORMADAS}" = acompanhante sem horas na medição; preencha a ` +
-      'célula amarela de Horas (ou informe na medição e exporte de novo).';
+      `"${HORAS_NAO_INFORMADAS}" = acompanhante sem horas na medição; ` +
+      `"${HIBRIDA_SEM_HORAS}" = demanda híbrida sem as horas presenciais digitadas. ` +
+      'Nos dois casos, preencha a célula amarela de Horas (ou informe na medição e exporte de novo).';
     detailHeader.getCell(DETAIL_IDX.total).note = 'Total despesas + Hora/aula desta linha.';
 
     const nomeCriterio = criteriaText(block.nome);
@@ -763,10 +793,14 @@ export async function buildMedicaoWorkbook(
       horasCell.numFmt = FMT_HORAS;
       if (!linha.horasInformadas) {
         markAsInput(horasCell);
-        horasCell.note =
-          'Acompanhante sem horas informadas na medição. Ninguém sabe quantas horas ' +
-          'ele fez, só quantos dias acompanhou — a planilha não inventa. Preencha ' +
-          'aqui, ou informe na medição e exporte de novo.';
+        horasCell.note = linha.motivoSemHoras === 'HIBRIDA'
+          ? 'Demanda híbrida sem as horas presenciais informadas na medição. A carga ' +
+            'do treinamento é a TOTAL (EAD + prática) e o split varia por demanda — a ' +
+            'planilha não inventa. Preencha aqui as horas presenciais realizadas, ou ' +
+            'informe na medição e exporte de novo.'
+          : 'Acompanhante sem horas informadas na medição. Ninguém sabe quantas horas ' +
+            'ele fez, só quantos dias acompanhou — a planilha não inventa. Preencha ' +
+            'aqui, ou informe na medição e exporte de novo.';
       }
 
       // M: a tarifa vem da combinação DESTA LINHA: o instrutor é literal (a aba
@@ -788,7 +822,7 @@ export async function buildMedicaoWorkbook(
         // mantêm a fórmula de sempre.
         formula: linha.horasInformadas
           ? horasVezesTarifa
-          : `IF(${DETAIL_COL_HORAS}${rowIdx}="","${HORAS_NAO_INFORMADAS}",${horasVezesTarifa})`,
+          : `IF(${DETAIL_COL_HORAS}${rowIdx}="","${textoSemHoras(linha.motivoSemHoras)}",${horasVezesTarifa})`,
       };
       horaAulaCell.numFmt = FMT_MOEDA;
 

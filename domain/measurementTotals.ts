@@ -199,6 +199,14 @@ export function computeMeasurementTotals(
   // painel grava `classHours` com a carga da demanda em toda abertura, então é
   // o MESMO número que ele usa para resolver o bloco na tela. `ctx` existe para
   // quem tiver a demanda em mãos e quiser ser explícito.
+  //
+  // ⚠️ `ctx.hibrida` é IGNORADO aqui DE PROPÓSITO. Esta função alimenta o
+  // Dashboard (custo das internas, custos), que trabalha com a CARGA TOTAL da
+  // demanda: a diferença presencial/online só importa no pagamento do
+  // instrutor — e lá quem decide é o painel (`blockPanelHours` com `hibrida`)
+  // e a planilha (`applyHybridBlankHours`). Passar `hibrida` para cá zeraria o
+  // custo de toda híbrida sem horas digitadas no Dashboard. Preso em
+  // smoke:custos.
   const horaAula = (() => {
     const temBlocos = (m?.expenses?.participantes ?? []).length > 0;
     if (!temBlocos) {
@@ -488,9 +496,9 @@ export function aggregatePanelExpenseBreakdown(
  *   | TITULAR      | carga padrão da demanda     | mantém o rateio da alocação       |
  *   | PARTICIPANTE | carga padrão da demanda     | `horas_previstas` (carga cheia)   |
  *   | ACOMPANHANTE | ZERO (manual obrigatório)   | não gera linha nenhuma            |
- *   | HÍBRIDA ×    | SEM DEFAULT: ZERO até       | sem linha de horas até digitar    |
- *   | qualquer     | digitar (mesma semântica do | (o rateio de allocations CONTINUA |
- *   | papel        | acompanhante)               | valendo para o titular, se houver)|
+ *   | HÍBRIDA ×    | SEM DEFAULT: ZERO até       | linha com Horas EM BRANCO         |
+ *   | qualquer     | digitar (mesma semântica do | (amarela) até digitar — o rateio  |
+ *   | papel        | acompanhante)               | não é o que a planilha paga       |
  *
  * A linha de HÍBRIDA (`PanelHoursContext.hibrida`) existe porque ali o default
  * é armadilha: `training.hours` é a carga TOTAL (ex.: 40h), mas o split
@@ -501,11 +509,12 @@ export function aggregatePanelExpenseBreakdown(
  * nenhum papel herda default: a carga total vira TEXTO informativo ao lado do
  * campo e o total da pessoa é só despesas até alguém digitar.
  *
- * ⚠️ Divergência conhecida, NÃO resolvida aqui de propósito: o titular de
- * híbrida com linha em `instructor_allocations` continua saindo no Excel pelo
- * rateio (`effectiveDemandHours`: `practicalHours` do treinamento, senão
- * `hours`), enquanto o painel mostra R$ 0,00 de hora/aula até digitarem. Quem
- * digita as horas presenciais no painel faz o override e alinha os dois.
+ * Divergência resolvida (09/2026): o titular de híbrida com linha em
+ * `instructor_allocations` saía no Excel pelo rateio (`effectiveDemandHours`:
+ * `practicalHours`, senão `hours`) enquanto o painel mostrava R$ 0,00. Agora a
+ * planilha segue o painel — Horas em branco/amarela até digitarem
+ * (domain/paymentRows.ts, `applyHybridBlankHours`). O rateio em si continua
+ * igual, porque o DASHBOARD trabalha com ele — ver `computeMeasurementTotals`.
  *
  * O painel PRECISA mostrar um número: uma medição de titular sem horas digitadas
  * exibindo "R$ 0,00" é a v1 quebrada — lá o valor sempre foi

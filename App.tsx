@@ -3870,11 +3870,11 @@ const renderContent = () => {
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex-shrink-0 bg-gray-900 shadow-xl transform transition-all duration-300 lg:static lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 flex flex-col flex-shrink-0 bg-gray-900 shadow-xl transform transition-all duration-300 lg:static lg:translate-x-0 ${
           isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
         } ${isSidebarCollapsed ? 'w-16' : 'w-64'}`}
       >
-        <div className={`flex items-center border-b border-gray-800 transition-all duration-300 ${isSidebarCollapsed ? 'justify-center p-4' : 'justify-between p-6'}`}>
+        <div className={`shrink-0 flex items-center border-b border-gray-800 transition-all duration-300 ${isSidebarCollapsed ? 'justify-center p-4' : 'justify-between p-6'}`}>
           {!isSidebarCollapsed && <span className="text-xl font-bold text-white">COLABOR</span>}
           <div className="flex items-center gap-1">
             <button
@@ -3890,7 +3890,7 @@ const renderContent = () => {
           </div>
         </div>
 
-        <nav className="mt-6 space-y-1">
+        <nav className="mt-6 space-y-1 flex-1 min-h-0 overflow-y-auto">
           {canAccessView(profile?.role, 'dashboard') && (
             <SidebarButton
               icon={LayoutDashboard}

@@ -14,8 +14,16 @@
  *
  * Os exports existentes (Excel de pagamento, Export Modal, DOCX) continuam
  * onde estavam. Esta aba é para análise, não substitui o pagamento.
+ *
+ * MODELOS SALVOS (migration 021, 17/09/2026): para os datasets de TABELA, a
+ * barra "Modelos" guarda filtros (sem período), colunas com ordem e opções
+ * com um nome, por usuário. Aplicar é UMA função (`aplicarModelo`): o domínio
+ * (domain/exports/presets.ts) valida e devolve o que aplicar mais os avisos;
+ * aqui só se atualiza o estado. O modelo padrão do módulo é aplicado ao abrir
+ * o módulo, uma vez por sessão. Medição Vale e BM ficam de fora da V1 (o
+ * estado de filtros deles mora em MedicaoTemplateView).
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, FileSpreadsheet, FileText, Loader2, RefreshCw } from 'lucide-react';
 
 import { canAccessView, useApp } from '../App';
@@ -34,8 +42,23 @@ import { buildTrainingsById } from '../domain/modalityOptions';
 import { loadExportData, type ExportSourceData } from '../services/exports/loadExportData';
 import { downloadXlsx } from '../services/exports/xlsxWriter';
 import { downloadCsv, buildExportFileName } from '../services/exports/csvWriter';
+import {
+  applyPreset,
+  buildPresetConfig,
+  defaultPresetOf,
+  definirPadrao,
+  excluirModelo,
+  presetsOf,
+  renomearModelo,
+  salvarModelo,
+  atualizarModelo,
+  visiblePresets,
+  type ExportPreset,
+} from '../domain/exports/presets';
+import { supabasePresetGateway } from '../services/exports/presets';
 
 import DatasetPicker from './exportacoes/DatasetPicker';
+import ModelosBar from './exportacoes/ModelosBar';
 import MedicaoTemplateView from './exportacoes/MedicaoTemplateView';
 import FiltrosExportacao from './exportacoes/FiltrosExportacao';
 import ColunasSelector from './exportacoes/ColunasSelector';
@@ -84,10 +107,83 @@ const Exportacoes: React.FC = () => {
   const [options, setOptions] = useState<ExportOptions>(DEFAULT_OPTIONS);
   const [selected, setSelected] = useState<Record<string, string[]>>({});
 
+  /* ───────── Modelos salvos ───────── */
+  const [presets, setPresets] = useState<ExportPreset[]>([]);
+  const [presetsCarregando, setPresetsCarregando] = useState(false);
+  const [presetsOcupado, setPresetsOcupado] = useState(false);
+  const [presetsErro, setPresetsErro] = useState<string | null>(null);
+  const [avisosModelo, setAvisosModelo] = useState<string[]>([]);
+  /** Módulos cujo modelo padrão já foi aplicado nesta sessão (uma vez por módulo). */
+  const padraoAplicado = useRef(new Set<string>());
+
+  useEffect(() => {
+    let vivo = true;
+    setPresetsCarregando(true);
+    supabasePresetGateway
+      .list()
+      .then(lista => { if (vivo) { setPresets(lista); setPresetsErro(null); } })
+      .catch((e: any) => { console.error('[Exportacoes] modelos', e); if (vivo) setPresetsErro(e?.message || String(e)); })
+      .finally(() => { if (vivo) setPresetsCarregando(false); });
+    return () => { vivo = false; };
+  }, []);
+
   // Colunas por dataset: nascem no default aprovado; a seleção sobrevive à
   // troca de módulo dentro da sessão.
   const selectedKeys = dataset && !isTemplateDataset(dataset) ? (selected[dataset.key] ?? defaultColumnKeys(dataset)) : [];
   const setSelectedKeys = (keys: string[]) => dataset && setSelected(prev => ({ ...prev, [dataset.key]: keys }));
+
+  // Modelo cujo módulo o perfil não vê não aparece (registry.visibleDatasets).
+  const presetsVisiveis = useMemo(() => visiblePresets(presets, new Set(datasets.map(d => d.key))), [presets, datasets]);
+  const presetsDoModulo = useMemo(() => (dataset ? presetsOf(presetsVisiveis, dataset.key) : []), [presetsVisiveis, dataset]);
+
+  /** A função única de "aplicar modelo": o domínio decide, a tela só grava o estado. */
+  const aplicarModelo = useCallback((p: ExportPreset) => {
+    if (!dataset || isTemplateDataset(dataset)) return;
+    const r = applyPreset(dataset, p.config, { filters, options });
+    setFilters(r.filters);
+    setOptions(r.options);
+    setSelected(prev => ({ ...prev, [dataset.key]: r.columns }));
+    setAvisosModelo(r.avisos);
+    setNotification({ message: r.avisos.length ? `Modelo "${p.name}" aplicado com ressalvas.` : `Modelo "${p.name}" aplicado.`, type: r.avisos.length ? 'info' : 'success' });
+  }, [dataset, filters, options, setNotification]);
+
+  // Padrão do módulo: aplicado ao abrir o módulo, uma vez por sessão.
+  useEffect(() => {
+    if (!dataset || isTemplateDataset(dataset) || presetsCarregando) return;
+    if (padraoAplicado.current.has(dataset.key)) return;
+    const padrao = defaultPresetOf(presetsVisiveis, dataset.key);
+    padraoAplicado.current.add(dataset.key);
+    if (padrao) aplicarModelo(padrao);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset, presetsVisiveis, presetsCarregando]);
+
+  /** Roda uma ação do domínio sobre os modelos; erro de banco vira banner e nada muda. */
+  const comModelos = async (acao: () => Promise<ExportPreset[]>, sucesso: string): Promise<boolean> => {
+    setPresetsOcupado(true);
+    try {
+      setPresets(await acao());
+      setPresetsErro(null);
+      setNotification({ message: sucesso, type: 'success' });
+      return true;
+    } catch (e: any) {
+      console.error('[Exportacoes] modelos', e);
+      const msg = e?.message || String(e);
+      // Erro de VALIDAÇÃO (nome) é aviso na notificação; erro de banco bloqueia a barra.
+      if (/nome|modelo não encontrado/i.test(msg)) setNotification({ message: msg, type: 'error' });
+      else setPresetsErro(msg);
+      return false;
+    } finally {
+      setPresetsOcupado(false);
+    }
+  };
+
+  const salvarComoModelo = (nome: string, isDefault: boolean) =>
+    !dataset || isTemplateDataset(dataset)
+      ? Promise.resolve(false)
+      : comModelos(
+          async () => (await salvarModelo(supabasePresetGateway, presets, { datasetId: dataset.key, name: nome, config: buildPresetConfig(filters, options, selectedKeys), isDefault })).presets,
+          `Modelo "${nome.trim()}" salvo.`
+        );
 
   const precisaLogistica = (!!datasetKey && COM_LOGISTICA.includes(datasetKey)) || !!templateDataset;
   const templateIds = templateDataset ? templateIdsOf(templateDataset) : [];
@@ -212,7 +308,24 @@ const Exportacoes: React.FC = () => {
       )}
 
       {datasetKey && (
-        <DatasetPicker datasets={datasets} value={datasetKey} onChange={k => { setDatasetKey(k); setErro(null); }} disabled={carregando} />
+        <DatasetPicker datasets={datasets} value={datasetKey} onChange={k => { setDatasetKey(k); setErro(null); setAvisosModelo([]); }} disabled={carregando} />
+      )}
+
+      {dataset && !isTemplateDataset(dataset) && (
+        <ModelosBar
+          dataset={dataset}
+          presets={presetsDoModulo}
+          carregando={presetsCarregando}
+          ocupado={presetsOcupado}
+          erro={presetsErro}
+          avisos={avisosModelo}
+          onAplicar={aplicarModelo}
+          onSalvar={salvarComoModelo}
+          onAtualizar={p => void comModelos(() => atualizarModelo(supabasePresetGateway, presets, p.id, buildPresetConfig(filters, options, selectedKeys)), `Modelo "${p.name}" regravado.`)}
+          onRenomear={(p, nome) => void comModelos(() => renomearModelo(supabasePresetGateway, presets, p.id, nome), 'Modelo renomeado.')}
+          onExcluir={p => void comModelos(() => excluirModelo(supabasePresetGateway, presets, p.id), `Modelo "${p.name}" excluído.`)}
+          onPadrao={(p, isDefault) => void comModelos(() => definirPadrao(supabasePresetGateway, presets, p.id, isDefault), isDefault ? `"${p.name}" é o padrão de ${dataset.label}.` : `"${p.name}" deixou de ser o padrão.`)}
+        />
       )}
 
       {!carga && !erro && !carregando && (

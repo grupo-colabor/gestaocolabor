@@ -22,6 +22,7 @@
     "smoke:exportacoes": "esbuild scripts/smokeExportacoes.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-exportacoes.cjs --log-level=error && node node_modules/.cache/smoke-exportacoes.cjs",
     "smoke:medicao-vale": "esbuild scripts/smokeMedicaoVale.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-medicao-vale.cjs --log-level=error && node node_modules/.cache/smoke-medicao-vale.cjs",
     "smoke:medicao-vale-bm": "esbuild scripts/smokeMedicaoValeBm.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-medicao-vale-bm.cjs --log-level=error && node node_modules/.cache/smoke-medicao-vale-bm.cjs",
+    "smoke:numeracao": "esbuild scripts/smokeNumeracaoDemanda.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-numeracao.cjs --log-level=error && node node_modules/.cache/smoke-numeracao.cjs",
     "smoke:grade-paginacao": "esbuild scripts/smokeGradePaginacao.tsx --bundle --platform=node --format=cjs --jsx=automatic --outfile=node_modules/.cache/smoke-grade-paginacao.cjs --log-level=error && node node_modules/.cache/smoke-grade-paginacao.cjs",
     "reconcile:exportacoes": "node scripts/runReconcileExportacoes.cjs"
   },

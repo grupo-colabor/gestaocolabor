@@ -89,8 +89,31 @@ export async function fetchDemands(): Promise<DemandRow[]> {
 }
 
 /**
+ * Próximo número de demanda, pela SEQUENCE do banco (migration 019, RPC
+ * `allocate_demand_number`). Nunca reaproveita número — nem após exclusão nem
+ * após insert que falhou. Erro sobe para o chamador: sem número não há
+ * cadastro (o app mostra o banner e bloqueia).
+ */
+export async function allocateDemandNumber(): Promise<number> {
+  const { data, error } = await supabase.rpc('allocate_demand_number');
+  if (error) {
+    console.error('allocate_demand_number error:', error);
+    throw error;
+  }
+  const n = Number(data);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`allocate_demand_number devolveu valor inválido: ${String(data)}`);
+  }
+  return n;
+}
+
+/**
  * Busca o maior número (number) existente no banco.
  * Retorna 0 se não houver registros.
+ *
+ * ⚠️ Desde a migration 019 NÃO é mais a fonte do próximo id (reaproveitava
+ * número após exclusão). Continua sendo lida só para o contador informativo
+ * do estado; o id vem de `allocateDemandNumber`.
  */
 export async function fetchMaxDemandNumber(): Promise<number> {
   const { data, error } = await supabase

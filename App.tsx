@@ -75,6 +75,7 @@ import Exportacoes from './components/Exportacoes';
 import { fetchTrainings, deleteTrainingById } from './services/trainings';
 import { fetchCompanies, insertCompany, updateCompanyById, CompanyRow } from './services/companies';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { formatDemandId } from './domain/demandNumbering';
 import { isDemandDay, getDemandDays } from './domain/demandDays';
 import { isEAD, requiresLogistics } from './domain/modalityRules';
 import { hasResourceOverlap } from './domain/resourceConflict';
@@ -96,6 +97,7 @@ import { fetchEvidences, upsertEvidenceByDemandId } from './services/evidences';
 import {
   fetchDemands,
   insertDemand,
+  allocateDemandNumber,
   updateDemandById,
   deleteDemandById,
   fetchMaxDemandNumber
@@ -1849,12 +1851,25 @@ const addDemand = useCallback(
     }
 
     try {
-      // Usa o valor atual do estado diretamente (evita race condition)
-      const seq = nextDemandNumber;
-      // Incrementa para a próxima demanda
-      setNextDemandNumber(prev => prev + 1);
+      // O número vem da SEQUENCE do banco (migration 019), nunca do "máximo +
+      // 1" local: uma demanda apagada não devolve o número, e dois navegadores
+      // não disputam o mesmo. Sem número não há cadastro — o erro sobe em
+      // banner e a função devolve null.
+      let seq: number;
+      try {
+        seq = await allocateDemandNumber();
+      } catch (e: any) {
+        console.error('Erro ao alocar número de demanda:', e);
+        setNotification({
+          message: `Não foi possível obter o número da demanda (${e?.message ?? 'erro na sequence'}). A migration 019 foi aplicada?`,
+          type: 'error'
+        });
+        return null;
+      }
+      // Contador informativo do estado acompanha (não é mais a fonte do id).
+      setNextDemandNumber(seq + 1);
 
-      const nextId = `DEM-${seq}`;
+      const nextId = formatDemandId(seq);
 
       const newDemand = sanitizeHybridPracticePeriod({
         ...d,
@@ -2121,6 +2136,15 @@ const addDemand = useCallback(
             await supabase.storage.from('measurement-attachments').remove(paths);
           }
         } catch (e) { console.error('[deleteDemand] erro ao limpar medições do storage:', e); }
+
+        // 🔥 Cinto e suspensório para o que NÃO tem ON DELETE CASCADE (ou não
+        // tinha até a migration 019, criada NOT VALID): a alocação de CTM em
+        // resource_allocations sobrevivia à demanda e era herdada por uma
+        // demanda nova com o mesmo id. 0 linhas é resultado válido; erro aqui
+        // não impede a exclusão da demanda (fica no console).
+        try {
+          await deleteResourceAllocationByDemandId(id);
+        } catch (e) { console.error('[deleteDemand] erro ao limpar resource_allocations:', e); }
 
         const { data, error } = await deleteDemandById(id);
 

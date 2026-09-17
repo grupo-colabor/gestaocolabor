@@ -33,6 +33,9 @@
  *       Locomoção, pendência de documento; XLSX das fixtures em C:\tmp.
  *   [I] Instrutores: três papéis, dias = assignmentDays, dias no período e
  *       total distinto por pessoa, guarda anti-sensível (tipo, fonte, colunas).
+ *   [D$] Despesas: uma linha por item; v1, v2, sem dono, dono removido, sem
+ *       pessoa, órfão; Σ por pessoa e bucket = blockExpenseBreakdown e Σ da
+ *       medição = computePanelExpenseBreakdown, com e sem itemFilter das flags.
  *
  * Sai com código 1 se qualquer asserção falhar.
  */

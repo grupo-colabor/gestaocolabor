@@ -345,6 +345,39 @@ const BUCKET_POR_CATEGORIA: Record<ExpenseCategoryKey, PanelExpenseBucket> = {
   OUTROS: 'outros',
 };
 
+/** Rótulos das seis categorias, como o painel as chama (sem o emoji). */
+export const EXPENSE_CATEGORY_LABELS: Record<ExpenseCategoryKey, string> = {
+  HOSPEDAGEM: 'Hospedagem',
+  LOCOMOCAO: 'Locomoção',
+  CAFE: 'Café da manhã',
+  ALMOCO: 'Almoço',
+  JANTAR: 'Jantar',
+  OUTROS: 'Outras despesas',
+};
+
+/**
+ * Bucket do painel de uma categoria. Desconhecida/ausente → 'outros' — a
+ * MESMA regra de `computePanelExpenseBreakdown`, exposta para o dataset
+ * Despesas rotular a linha sem copiar o mapa.
+ */
+export const panelBucketOf = (category: string | null | undefined): PanelExpenseBucket =>
+  Object.prototype.hasOwnProperty.call(BUCKET_POR_CATEGORIA, String(category ?? ''))
+    ? BUCKET_POR_CATEGORIA[category as ExpenseCategoryKey]
+    : 'outros';
+
+/**
+ * Órfão de OUTROS: anexo de Outros apontando para linha de `other_expenses`
+ * inexistente. É a exclusão de `computeMeasurementTotals`, repetida em
+ * `computePanelExpenseBreakdown` para a interna não divergir do painel — e
+ * agora num predicado só, que o dataset Despesas também lê (o item sai
+ * listado como órfão, fora do total).
+ */
+export const isOrfaoOutrosIds = (a: TotalizableAttachment, outrosIds: Set<string>): boolean =>
+  a?.category === 'OUTROS' && (!a.otherId || !outrosIds.has(a.otherId));
+
+export const isOrfaoOutros = (m: TotalizableMeasurement | null | undefined, a: TotalizableAttachment): boolean =>
+  isOrfaoOutrosIds(a, new Set((m?.otherExpenses ?? []).map(o => o.id)));
+
 /** Rótulos como aparecem no painel — a ordem é a de exibição no card. */
 export const PANEL_EXPENSE_LABELS: { key: PanelExpenseBucket; label: string }[] = [
   { key: 'hospedagem', label: 'Hospedagem' },
@@ -418,8 +451,9 @@ export function computePanelExpenseBreakdown(
     const conhecida = Object.prototype.hasOwnProperty.call(BUCKET_POR_CATEGORIA, cat);
 
     // Órfão de OUTROS: mesma exclusão de `computeMeasurementTotals`, para a
-    // interna não divergir do painel. Contado, não sumido.
-    if (conhecida && cat === 'OUTROS' && (!a.otherId || !outrosIds.has(a.otherId))) {
+    // interna não divergir do painel. Contado, não sumido. (`conhecida` é
+    // redundante para 'OUTROS', que está no mapa; o predicado é o único.)
+    if (isOrfaoOutrosIds(a, outrosIds)) {
       acc.itensOrfaos += 1;
       continue;
     }

@@ -41,7 +41,7 @@ export interface ColumnDef<Row> {
   get: (row: Row) => CellValue;
 }
 
-export type DatasetKey = 'medicoes' | 'demandas' | 'medicao-vale' | 'vale-bm' | 'logistica' | 'instrutores';
+export type DatasetKey = 'medicoes' | 'demandas' | 'medicao-vale' | 'vale-bm' | 'logistica' | 'instrutores' | 'despesas';
 
 export type FilterKey =
   | 'periodo'
@@ -61,7 +61,13 @@ export type FilterKey =
   /** Modo de transporte do bloco (Logística) — só linhas de Locomoção têm modo. */
   | 'modoTransporte'
   /** "Só com pendência de documento" (Logística). */
-  | 'pendenciaDoc';
+  | 'pendenciaDoc'
+  /** Categoria do item (Despesas): as seis do painel. */
+  | 'categoriaDespesa'
+  /** Flag "Vale não reembolsa" (Despesas): sim/não. */
+  | 'flagNaoReembolsa'
+  /** Flag "Pago pelo instrutor" (Despesas): sim/não. */
+  | 'flagPagoInstrutor';
 
 export const SEM_MEDICAO = 'SEM_MEDICAO';
 
@@ -80,6 +86,11 @@ export interface FilterableRow {
   modoTransporte?: string;
   /** A linha tem documento pendente (Logística). */
   pendenciaDoc?: boolean;
+  /** Chave crua da categoria do item (Despesas). */
+  categoriaDespesa?: string;
+  /** Flags do item (Despesas). */
+  naoReembolsa?: boolean;
+  pagoPeloInstrutor?: boolean;
 }
 
 export interface DatasetDef<Row extends FilterableRow> {
@@ -126,6 +137,11 @@ export interface ExportFilters {
   modoTransporte: string;
   /** Logística: só linhas com documento pendente. */
   somentePendenciaDoc: boolean;
+  /** Despesas: chave da categoria, ou ''. */
+  categoriaDespesa: string;
+  /** Despesas: '' = todas, 'sim' / 'nao'. */
+  naoReembolsa: '' | 'sim' | 'nao';
+  pagoPeloInstrutor: '' | 'sim' | 'nao';
 }
 
 export const EMPTY_FILTERS: ExportFilters = {
@@ -143,6 +159,9 @@ export const EMPTY_FILTERS: ExportFilters = {
   statusMedicao: [],
   modoTransporte: '',
   somentePendenciaDoc: false,
+  categoriaDespesa: '',
+  naoReembolsa: '',
+  pagoPeloInstrutor: '',
 };
 
 /** Cabeçalho + matriz, prontos para qualquer escritor. */

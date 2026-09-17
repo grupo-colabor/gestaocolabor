@@ -2,7 +2,7 @@
  * MOTOR DE EXPORTAÇÃO — registro dos datasets
  *
  * F1: Medições e Demandas. Etapa 2: Medição Vale e BM Vale (templates).
- * 17/09/2026: Logística e Instrutores. Módulos novos entram aqui, com `requiredView`.
+ * 17/09/2026: Logística, Instrutores e Despesas. Módulos novos entram aqui, com `requiredView`.
  *
  * ⚠️ ACESSO — DEFESA DE UI, NÃO DE BANCO
  * ---------------------------------------------------------------------------
@@ -23,6 +23,7 @@ import { MEDICOES_DATASET } from './datasets/medicoes';
 import { DEMANDAS_DATASET } from './datasets/demandas';
 import { LOGISTICA_DATASET } from './datasets/logistica';
 import { INSTRUTORES_DATASET } from './datasets/instrutores';
+import { DESPESAS_DATASET } from './datasets/despesas';
 import { VALE_TEMPLATE } from './templates/vale';
 import { VALE_BM_TEMPLATE } from './templates/vale-bm';
 import type { MeasurementTemplate } from './templates/types';
@@ -87,6 +88,7 @@ export const EXPORT_DATASETS: ExportDatasetEntry[] = [
   DEMANDAS_DATASET,
   LOGISTICA_DATASET,
   INSTRUTORES_DATASET,
+  DESPESAS_DATASET,
   MEDICAO_VALE_DATASET,
   VALE_BM_DATASET,
 ];

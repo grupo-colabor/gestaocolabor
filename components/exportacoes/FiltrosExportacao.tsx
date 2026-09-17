@@ -128,6 +128,15 @@ const FiltrosExportacao: React.FC<{
         {on('modoTransporte') && (
           <Select label="Modo de transporte (blocos de locomoção)" v={value.modoTransporte} onV={s => set({ modoTransporte: s })} items={options?.modosTransporte ?? []} />
         )}
+        {on('categoriaDespesa') && (
+          <Select label="Categoria da despesa" v={value.categoriaDespesa} onV={s => set({ categoriaDespesa: s })} items={options?.categoriasDespesa ?? []} todos="Todas" />
+        )}
+        {on('flagNaoReembolsa') && (
+          <Select label="Vale não reembolsa" v={value.naoReembolsa} onV={s => set({ naoReembolsa: s as ExportFilters['naoReembolsa'] })} items={options?.simNao ?? []} />
+        )}
+        {on('flagPagoInstrutor') && (
+          <Select label="Pago pelo instrutor" v={value.pagoPeloInstrutor} onV={s => set({ pagoPeloInstrutor: s as ExportFilters['pagoPeloInstrutor'] })} items={options?.simNao ?? []} />
+        )}
         {on('pendenciaDoc') && (
           <FilterField label="Documentos">
             <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer pt-2">

@@ -20,6 +20,7 @@ import { resolveCalculatedStatus, STATUS_ORDER, STATUS_LABELS } from './shared';
 import { DEFAULT_OPTIONS, type ExportOptions } from './options';
 import { SEM_MEDICAO, type ExportFilters, type FilterKey, type FilterableRow } from './types';
 import { transportLabel } from './datasets/demandas';
+import { CATEGORIA_DESPESA_OPTIONS } from './datasets/despesas';
 
 /** Rótulos dos estágios da medição — os mesmos de STAGE_LABELS em Measurement.tsx. */
 export const MEDICAO_STATUS_OPTIONS: { value: string; label: string }[] = [
@@ -109,6 +110,15 @@ export function matchesFilters(
   if (on('pendenciaDoc') && f.somentePendenciaDoc) {
     if (!row.pendenciaDoc) return false;
   }
+  if (on('categoriaDespesa') && f.categoriaDespesa) {
+    if ((row.categoriaDespesa ?? '') !== f.categoriaDespesa) return false;
+  }
+  if (on('flagNaoReembolsa') && f.naoReembolsa) {
+    if (!!row.naoReembolsa !== (f.naoReembolsa === 'sim')) return false;
+  }
+  if (on('flagPagoInstrutor') && f.pagoPeloInstrutor) {
+    if (!!row.pagoPeloInstrutor !== (f.pagoPeloInstrutor === 'sim')) return false;
+  }
   return true;
 }
 
@@ -138,6 +148,10 @@ export interface FilterOptions {
   statusMedicao: { value: string; label: string }[];
   /** Modos de transporte presentes nas linhas (chave crua + rótulo da tela). */
   modosTransporte: { value: string; label: string }[];
+  /** As seis categorias do painel (lista fechada). */
+  categoriasDespesa: { value: string; label: string }[];
+  /** Sim/Não para as flags de item. */
+  simNao: { value: string; label: string }[];
 }
 
 export const PAPEL_LABELS: Record<string, string> = {
@@ -202,5 +216,10 @@ export function buildFilterOptions<Row extends FilterableRow>(
     modosTransporte: [...modos]
       .map(value => ({ value, label: transportLabel(value) || value }))
       .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR')),
+    categoriasDespesa: CATEGORIA_DESPESA_OPTIONS,
+    simNao: [
+      { value: 'sim', label: 'Sim' },
+      { value: 'nao', label: 'Não' },
+    ],
   };
 }

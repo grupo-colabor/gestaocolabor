@@ -29,6 +29,7 @@ import { buildMedicoesRows } from '../domain/exports/datasets/medicoes';
 import { buildDemandasRows } from '../domain/exports/datasets/demandas';
 import { buildLogisticaRows } from '../domain/exports/datasets/logistica';
 import { buildInstrutoresRows } from '../domain/exports/datasets/instrutores';
+import { buildDespesasRows } from '../domain/exports/datasets/despesas';
 import { buildTrainingsById } from '../domain/modalityOptions';
 import { loadExportData, type ExportSourceData } from '../services/exports/loadExportData';
 import { downloadXlsx } from '../services/exports/xlsxWriter';
@@ -53,6 +54,7 @@ const BUILDERS: Record<string, (src: any) => any[]> = {
   demandas: buildDemandasRows,
   logistica: buildLogisticaRows,
   instrutores: buildInstrutoresRows,
+  despesas: buildDespesasRows,
 };
 
 type Carga = { data: ExportSourceData; comLogistica: boolean; templateKey: string };

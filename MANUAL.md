@@ -635,11 +635,14 @@ Gerenciamento de contas de acesso ao sistema.
 |--------|-----------|---------|
 | **Medições** | Uma linha por **pessoa × demanda** (titular, participante de interna, acompanhante) para toda demanda com medição aberta, em qualquer estágio: horas, valor HH, hora/aula e despesas por pessoa | Quem acessa a tela de Medição (Admin) |
 | **Demandas** | Uma linha por demanda: cadastro, status calculado, pessoas, logística primária, documentos, se há medição | Admin e Analista |
+| **Logística** | Uma linha por **bloco logístico** (locomoção ou hospedagem, por pessoa): datas do bloco, checklist do Controle Logístico e documentos da demanda | Quem acessa o Controle Logístico (Admin e Analista) |
+| **Instrutores** | Uma linha por **pessoa × demanda** (titular, participante de interna, acompanhante): dias alocados no período e carga do treinamento. **Sem valores, sem CPF** | Quem acessa a Agenda (Admin e Analista) |
+| **Despesas** | Uma linha por **item de despesa** da medição (notinha ou valor avulso): pessoa dona, categoria, valor, as duas flags, se há anexo | Quem acessa a tela de Medição (Admin) |
 
 **Passo a passo:**
 1. Escolha o módulo
 2. Clique em **Carregar dados** — a busca é sempre nova no banco; se algo falhar, aparece um aviso vermelho e nada é gerado
-3. Aplique os filtros (período, status, modalidade, tipo cliente/interna, UF, cliente; em Medições também pessoa e papel)
+3. Aplique os filtros (período, status, modalidade, tipo cliente/interna, UF, cliente; em Medições e Instrutores também pessoa e papel; em Logística modo de transporte e "só com pendência de documento"; em Despesas categoria e as duas flags)
 4. Ligue/desligue colunas e ordene com as setas ↑/↓ — **Padrão** volta à seleção inicial
 5. Confira a prévia e a contagem de linhas
 6. Clique em **XLSX** ou **CSV**
@@ -665,6 +668,43 @@ O **filtro de período** seleciona as demandas que têm ao menos um dia dentro d
 
 - **Usar Valor HH da medição** (ligada por padrão, só em Medições): desligada, as colunas *Valor HH*, *Hora/aula* e *Total geral* saem em branco. A coluna **Origem da tarifa** diz, linha a linha, se a tarifa veio da medição, se foi digitada como zero, se não existe na medição (o R$ 0,00 "por ausência") ou se a opção está desligada.
 - **Incluir canceladas** (desligada por padrão): demandas canceladas ficam fora, a menos que o filtro de status seja exatamente *Cancelada*, que força a inclusão.
+
+#### Logística (uma linha por bloco)
+
+Cada linha é um bloco de **locomoção** ou **hospedagem** de uma pessoa na demanda — os mesmos blocos do formulário da demanda. Não existe "ida/volta" como registro: as datas do bloco de locomoção são a **retirada** e a **devolução** do carro; as de hospedagem, o **check-in** e o **check-out**. A ordem do bloco (1 = primário) é coluna desligada.
+
+- **Instrutor do bloco**: pelo cadastro quando o bloco tem a pessoa vinculada; nos blocos antigos, o nome gravado. O **filtro** de instrutor só alcança blocos vinculados por cadastro.
+- **Checklist**: as cinco colunas do Controle Logístico (Carro, Hotel, Material, Liberação, Lista) e **Logística pronta**, pela mesma regra da tela — inclusive "Não se aplica" para Material e Lista na demanda interna. **Documentos pendentes** conta Liberação e Lista em Pendente. **Status gravado (controle)** (desligada) mostra o que está no banco, que só se atualiza quando alguém abre o Controle Logístico.
+- **Modo de transporte** (filtro): só linhas de locomoção têm modo; com o filtro ativo, as de hospedagem saem.
+- Demanda **sem bloco** não aparece aqui — está no módulo Demandas.
+
+#### Instrutores (uma linha por pessoa × demanda)
+
+Uma linha por vínculo: **Titular** (alocação, ou o instrutor principal quando não há alocação), **Participante** (demanda interna) e **Acompanhante** (demanda de cliente). Quem é titular não repete como acompanhante ou participante da mesma demanda.
+
+- **Dias alocados no período**: dos dias reais do vínculo (o vínculo cruzado com os dias da demanda, o mesmo cálculo do aviso de conflito da Agenda), quantos caem dentro do período filtrado; sem período, todos. As colunas *Dias do vínculo* e *Dias no período* (desligadas) listam as datas.
+- **Total de dias do instrutor no período** (desligada): dias distintos da pessoa em todas as demandas não canceladas, independentemente dos outros filtros; dois vínculos no mesmo dia contam um.
+- **Carga do treinamento**: horas do treinamento (cliente) ou horas previstas (interna). É informação, não rateio nem pagamento.
+- **UF do instrutor**: a UF de residência do cadastro. O **filtro** de UF é o da **demanda**.
+- Este módulo **não** traz CPF, e-mail, endereço, observações, tarifa ou valor — por construção, e o smoke confere.
+
+#### Despesas (uma linha por item)
+
+Cada linha é um item de despesa da medição (notinha anexada ou valor avulso), com a **pessoa dona** exatamente como o Painel de Medição atribui: o dono gravado no item; sem dono (ou dono que saiu do cadastro), o titular principal — a coluna *Dono — origem* (desligada) diz qual foi o caso. As somas por pessoa e por categoria fecham com o painel e com o módulo Medições.
+
+- **Categoria**: as seis do painel (Hospedagem, Locomoção, Café da manhã, Almoço, Jantar, Outras despesas); *Bucket* (desligada) mostra o agrupamento em quatro.
+- **Descrição**: em Outras despesas, a descrição da linha; nos demais, o nome do item. **Tem anexo**: há arquivo com referência; valor avulso e arquivo que perdeu a referência saem como Não (*Tipo do item* explica).
+- **Vale não reembolsa** e **Pago pelo instrutor**: as duas flags do item, também como filtros (Sim/Não).
+- **Órfão (fora do total)**: anexo de Outras despesas apontando para linha apagada — o painel não soma, e aqui sai listado para não sumir.
+
+#### Modelos salvos (filtros, colunas e opções com nome)
+
+Nos módulos de tabela (Medições, Demandas, Logística, Instrutores, Despesas), a barra **Modelos** guarda a escolha atual com um nome — filtros, colunas ligadas com a ordem e opções marcáveis — só para o seu usuário. Ações: **Aplicar**, **Padrão** (aplicado automaticamente ao abrir o módulo; um por módulo), **Regravar** com o que está na tela, **Renomear**, **Excluir** e **Salvar como modelo**.
+
+- **O período nunca entra no modelo**: ao aplicar, o período que está na tela é mantido. Um modelo com datas fixas envelheceria.
+- Modelo com coluna que **deixou de existir** aplica o restante e mostra um aviso amarelo dizendo qual coluna foi ignorada; filtro ou opção desconhecidos, idem. Nada é ignorado em silêncio.
+- Cada usuário vê só os próprios modelos (regra no banco, migration 021), e só dos módulos que o perfil pode ver.
+- **Seguimentos** (fora da V1): modelos para Medição Vale e BM Vale (quando o estado de filtros dessas telas subir para a aba) e período relativo "último mês fechado" (V1.1).
 
 #### Medição Vale (planilha no modelo do cliente)
 

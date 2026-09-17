@@ -41,11 +41,13 @@ import { VALE_TEMPLATE } from '../../domain/exports/templates/vale';
 import {
   indexTemplateValues,
   emptyTemplateValuesIndex,
+  planTemplateValueWrites,
   TEMPLATE_VALUE_SCOPES,
   type TemplateValuesIndex,
+  type TemplateValueKey,
 } from '../../domain/exports/templates/values';
 import { buildTrainingsById } from '../../domain/modalityOptions';
-import { saveTemplateValues, type TemplateValueRow } from '../../services/exports/templateValues';
+import { persistTemplateValueWrites, type TemplateValueRow } from '../../services/exports/templateValues';
 import {
   downloadTemplateXlsx,
   fetchTemplateBaseFile,
@@ -192,17 +194,32 @@ const MedicaoTemplateView: React.FC<{
         const id = e.templateId ?? turmasTemplate.id;
         porTemplate.set(id, [...(porTemplate.get(id) ?? []), e]);
       }
+      // Campo esvaziado que tinha valor salvo vira DELETE da linha; campo que
+      // nunca existiu e continua vazio não vai ao banco. A decisão é do
+      // domínio (planTemplateValueWrites), sobre o que está salvo DESTE template.
       const gravados: TemplateValueRow[] = [];
-      for (const [id, items] of porTemplate) gravados.push(...(await saveTemplateValues(id, items)));
+      const apagados: { templateId: string; key: TemplateValueKey }[] = [];
+      for (const [id, items] of porTemplate) {
+        const salvosDoTemplate = indexTemplateValues(valoresSalvos.filter(r => r.template_id === id));
+        const plan = planTemplateValueWrites(items, salvosDoTemplate);
+        const r = await persistTemplateValueWrites(id, plan);
+        gravados.push(...r.gravados);
+        apagados.push(...r.apagados.map(key => ({ templateId: id, key })));
+      }
       setValoresSalvos(prev => {
         const chave = (r: TemplateValueRow) => `${r.template_id}:${r.scope}:${r.training_id ?? r.demand_id ?? r.context_key}:${r.column_key}`;
         const porChave = new Map(prev.map(r => [chave(r), r]));
+        for (const a of apagados) porChave.delete(`${a.templateId}:${a.key.scope}:${a.key.refId}:${a.key.columnKey}`);
         for (const g of gravados) porChave.set(chave(g), g);
         return [...porChave.values()];
       });
       setPendentes(new Map());
       setResetKey(k => k + 1);
-      onNotify(`${gravados.length} valor(es) salvos.`, 'success');
+      const partes = [
+        gravados.length > 0 ? `${gravados.length} valor(es) salvos` : null,
+        apagados.length > 0 ? `${apagados.length} valor(es) apagados` : null,
+      ].filter(Boolean);
+      onNotify(partes.length > 0 ? `${partes.join(', ')}.` : 'Nada a gravar.', 'success');
     } catch (e: any) {
       setErro(`Falha ao salvar: ${e?.message || e}`);
     } finally {

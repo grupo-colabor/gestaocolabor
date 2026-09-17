@@ -198,6 +198,7 @@ console.log('\n[V] Template Vale');
 import { runValeDatasetChecks, buildValeContext } from './smokeMedicaoValeDatasets';
 import { runWriterChecks } from './smokeMedicaoValeWriter';
 import { runPanelChecks } from './smokeMedicaoValePanel';
+import { runValoresChecks } from './smokeMedicaoValeValores';
 
 (async () => {
   // Sequenciado de propósito (`falhas += f()` lê `falhas` ANTES de chamar f e
@@ -208,6 +209,8 @@ import { runPanelChecks } from './smokeMedicaoValePanel';
   falhas = Math.max(falhas, f2);
   const f3 = runPanelChecks({ ...tools, fixtures }, buildValeContext());
   falhas = Math.max(falhas, f3);
+  const f4 = await runValoresChecks({ ...tools, fixtures });
+  falhas = Math.max(falhas, f4);
 
   console.log(falhas === 0 ? '\n✅ SMOKE MEDICAO VALE: OK' : `\n❌ SMOKE MEDICAO VALE: ${falhas} falha(s)`);
   process.exit(falhas === 0 ? 0 : 1);

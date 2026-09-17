@@ -86,3 +86,99 @@ export function parseContextKey(key: string): { corredor: string; mina: string }
   if (i < 0) return { corredor: key, mina: '' };
   return { corredor: key.slice(0, i), mina: key.slice(i + 1) };
 }
+
+/* ───────────────────────── gravação: upsert × delete ─────────────────────────
+ *
+ * Campo esvaziado NÃO vira `value: null` gravado: a linha é APAGADA (mesma
+ * chave: template, escopo, coluna, treinamento/demanda/contexto). Campo que
+ * nunca teve valor e continua vazio não gera nada. Vale para os três escopos.
+ * A decisão é pura — recebe as edições pendentes e o índice do que está salvo
+ * — para o smoke provar as três situações sem banco.
+ */
+
+/** Vazio = ausente, null, ou texto só de espaços. 0 NÃO é vazio. */
+export const isTemplateValueEmpty = (v: unknown): boolean =>
+  v === null || v === undefined || (typeof v === 'string' && v.trim() === '');
+
+/** Uma edição vinda da tela (GradeEditavel / CabecalhoBm). */
+export interface TemplateValueEdit {
+  scope: TemplateValueScope;
+  refId: string;
+  columnKey: string;
+  value: TemplateValue;
+  templateId?: string;
+}
+
+/** A chave de uma linha em measurement_template_values, sem o valor. */
+export interface TemplateValueKey {
+  scope: TemplateValueScope;
+  refId: string;
+  columnKey: string;
+  templateId?: string;
+}
+
+export interface TemplateValueWritePlan {
+  /** Valores não vazios: upsert. */
+  upserts: TemplateValueEdit[];
+  /** Vazios que TINHAM linha salva: delete pela chave. */
+  deletes: TemplateValueKey[];
+  /** Vazios que nunca existiram: nada a fazer (contados para o smoke). */
+  ignorados: number;
+}
+
+/**
+ * Separa as edições em upserts e deletes olhando o índice do que está SALVO
+ * (`indexTemplateValues` das linhas do banco, do MESMO template).
+ *
+ * "Tinha linha salva" = a chave existe no índice, mesmo que com valor null
+ * (linha gravada assim antes desta regra) — apagar limpa o legado também.
+ */
+export function planTemplateValueWrites(
+  edits: TemplateValueEdit[],
+  saved: TemplateValuesIndex
+): TemplateValueWritePlan {
+  const plan: TemplateValueWritePlan = { upserts: [], deletes: [], ignorados: 0 };
+  for (const e of edits) {
+    if (!isTemplateValueEmpty(e.value)) {
+      plan.upserts.push(e);
+      continue;
+    }
+    const existe = saved[e.scope].get(e.refId)?.has(e.columnKey) === true;
+    if (existe) plan.deletes.push({ scope: e.scope, refId: e.refId, columnKey: e.columnKey, templateId: e.templateId });
+    else plan.ignorados += 1;
+  }
+  return plan;
+}
+
+/**
+ * Porta para o banco. O service (services/exports/templateValues.ts) implementa
+ * sobre o Supabase; o smoke, sobre um Map. Os dois lançam em erro — quem chama
+ * (o Salvar da grade) mostra o banner, igual para upsert e delete.
+ */
+export interface TemplateValueGateway<Row> {
+  upsert: (items: TemplateValueEdit[]) => Promise<Row[]>;
+  deleteByKey: (key: TemplateValueKey) => Promise<void>;
+}
+
+export interface TemplateValueWriteResult<Row> {
+  gravados: Row[];
+  apagados: TemplateValueKey[];
+}
+
+/**
+ * Executa o plano: upserts numa chamada, deletes um a um. Plano vazio não
+ * toca o gateway — é o que "limpar algo que nunca existiu" tem de garantir.
+ * O primeiro erro interrompe e sobe.
+ */
+export async function applyTemplateValueWrites<Row>(
+  plan: TemplateValueWritePlan,
+  gateway: TemplateValueGateway<Row>
+): Promise<TemplateValueWriteResult<Row>> {
+  const gravados = plan.upserts.length > 0 ? await gateway.upsert(plan.upserts) : [];
+  const apagados: TemplateValueKey[] = [];
+  for (const key of plan.deletes) {
+    await gateway.deleteByKey(key);
+    apagados.push(key);
+  }
+  return { gravados, apagados };
+}

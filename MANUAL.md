@@ -414,7 +414,20 @@ Cada notinha ou valor avulso tem dois botões à direita do valor. São independ
 
 O botão **Pago pelo instrutor** aparece também em demanda interna. Itens antigos nascem sem a marcação: nada vira reembolso ao instrutor sem alguém clicar.
 
-Na medição com seções por pessoa, o reembolso é de quem lançou o item. Item lançado **sem pessoa** (medição antiga, ou painel de uma pessoa só) vai para o **titular** — a linha do item avisa isso. Em demanda de cliente **dividida entre dois titulares** sem acompanhante o painel não tem seções por pessoa, e todo reembolso marcado vai para o titular principal da demanda; o painel mostra um aviso com o nome.
+Na medição com seções por pessoa, o reembolso é de quem lançou o item. Item lançado **sem pessoa** (medição antiga, ou painel de uma pessoa só) vai para o **titular principal** — a linha do item avisa isso.
+
+### Demanda dividida entre dois ou mais titulares
+
+Toda demanda com **mais de uma pessoa** abre em seções por pessoa — inclusive a demanda de cliente **dividida por dias entre dois titulares** sem acompanhante, que até setembro de 2026 abria no formato de uma pessoa só (despesas e reembolso inteiros no instrutor principal).
+
+- **Horas de cada titular**: o padrão é a fatia do rateio por dias, a mesma conta da planilha de pagamento (ex.: 2 de 4 dias de uma turma de 16 h = 8 h). A legenda mostra *"Rateio por dias: 2 de 4 (8h)"*. Conta sem ninguém digitar e aceita override individual. Em híbrida, cada bloco abre vazio com o aviso, como sempre.
+- **Despesas** são de quem lançou; item sem pessoa vai para o principal (`instructor_id`), com legenda no item.
+- **Valor HH e "Pago pelo instrutor"** por bloco.
+- **Medição antiga** (formato de uma pessoa) abre normalmente: o bloco antigo vira o bloco do titular principal, a tarifa antiga é copiada para os titulares, e só é gravada no novo formato ao salvar. Nenhum dado é migrado por trás.
+- **Planilha de pagamento**: sem horas digitadas, o resultado é **idêntico** ao de antes (rateio por dias). Com horas digitadas por pessoa, vale o digitado. As despesas vão para o dono do item.
+- **Medição Vale, BM e Dashboard**: os totais por demanda não mudam. O Dashboard passa a somar a fatia de cada titular, que fecha com a carga da demanda.
+
+⚠️ **Mudança de comportamento em híbrida dividida com medição antiga**: antes, a carga gravada na abertura contava como horas informadas e a planilha pagava o rateio. Agora, como toda híbrida, cada titular sai com Horas em branco e amarela até alguém digitar as horas presenciais. A lista de demandas afetadas está em `supabase/migrations/README_reembolso.md`.
 
 O total da pessoa e o rodapé mostram **"a reembolsar ao instrutor"** quando houver item marcado. O resumo do WhatsApp também.
 

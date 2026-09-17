@@ -74,9 +74,27 @@ select m.demand_id, a->>'category' as categoria, a->>'name' as item,
    ainda sobrescrevem um ao outro. O passo seguinte é o upsert condicionado ao
    `updated_at` lido na abertura (update … where updated_at = X, e aviso
    "alguém salvou antes de você" quando não afetar linha).
-2. **Seções por pessoa para toda demanda com mais de um titular.** Numa demanda
-   de cliente dividida por dias sem acompanhante o painel não tem seções por
-   pessoa, e todo item marcado como pago pelo instrutor vai para o titular de
-   `demands.instructor_id` (regra em domain/measurementPersonBlocks.ts). O
-   painel avisa com o nome; o certo é abrir seções sempre que houver 2+
-   titulares, para cada um lançar o que pagou.
+2. ~~**Seções por pessoa para toda demanda com mais de um titular.**~~ **Feito em
+   09/2026.** A cliente dividida entre titulares abre em v2: um bloco por
+   titular, default de horas = fatia do rateio por dias (`rateioDaDemanda`,
+   a mesma conta do Excel), gravada em `participantes[].horasRateio` ao salvar
+   (campo opcional no jsonb, sem migration; o Excel não o lê — sem horas
+   digitadas a planilha é idêntica à de antes). Item sem dono continua no
+   principal (`titularPrincipal`). Medição v1 aberta em v2 nasce com
+   `valorHH = hourRate` nos titulares. Dashboard soma as fatias (Σ = carga);
+   salvaguarda: 2+ titulares sem fatia gravada → carga ÷ n.
+
+   ⚠️ **Mudança de comportamento — híbrida dividida com medição v1.** No v1 o
+   `classHours` gravado na abertura contava como "horas informadas" e a
+   planilha pagava o rateio; no v2 ele é a carga da demanda, e cada titular
+   sai com Horas em branco/amarela até digitar as horas presenciais. Demandas
+   afetadas (consulta rodada pelo Bernardo em 09/2026 — colar o resultado
+   aqui):
+
+   ```sql
+   select d.id from demands d join trainings t on t.id = d.training_id
+    where upper(t.modality) = 'HIBRIDO' and d.status = 'CONCLUIDA'
+      and (select count(*) from instructor_allocations a where a.demand_id = d.id) > 1;
+   ```
+
+   Resultado: _(pendente de colagem)_.

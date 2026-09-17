@@ -26,15 +26,16 @@
  * demanda (a planilha mensal rateia pelos dias dentro do mês; este export não).
  *
  * PESSOAS: `resolveMeasurementPeople` (titulares do rateio + participantes ou
- * acompanhantes). O caminho v1/v2 dos blocos espelha o painel:
- *   • medição COM `participantes`, ou demanda com segunda categoria de pessoa
- *     → um bloco por pessoa da lista (gravado ?? bloco vazio), como
- *       `secoesPorPessoa` em Measurement.tsx;
- *   • senão → v1: UM bloco de titular (`demands.instructor_id`) com todos os
- *     anexos. Um segundo titular do rateio (cliente dividido por dias) ganha
- *     linha própria com as horas de pagamento dele, mas sem bloco: o painel
- *     atribui hora/aula e despesas da v1 a um titular só, e a soma por medição
- *     tem que continuar fechando com `computeMeasurementTotals`.
+ * acompanhantes, principal primeiro). O caminho v1/v2 dos blocos espelha o
+ * painel (domain/measurementPersonBlocks.ts):
+ *   • medição COM `participantes`, ou demanda com MAIS DE UMA pessoa (segunda
+ *     categoria, ou 2+ titulares de demanda dividida) → um bloco por pessoa da
+ *     lista (gravado ?? bloco vazio), como `secoesPorPessoa` em Measurement.tsx.
+ *     Medição v1 aberta assim: cada titular nasce com `valorHH = hourRate`
+ *     (tarifa legada) e a fatia VIVA do rateio por dias em `horasRateio`, para
+ *     "Horas (painel)" mostrar o que a tela mostra e Σ hora/aula fechar com
+ *     `computeMeasurementTotals` (v1: classHours × hourRate);
+ *   • senão → v1: UM bloco de titular com todos os anexos.
  *
  * DESPESAS por pessoa: os quatro buckets do painel (`blockExpenseBreakdown`);
  * `Não reembolsável` é um RECORTE (o item continua no total — regra de
@@ -55,6 +56,7 @@ import type {
 import {
   blockPanelHours,
   blockHoraAula,
+  countTitulares,
   blockExpenseBreakdown,
   isNaoReembolsavel,
   isPagoPeloInstrutor,
@@ -65,7 +67,7 @@ import {
 import { computeInstructorHoursByDemand, eligibleDemandIdsForPayment } from '../../instructorHours';
 import { applyMeasurementOverrides, type HoursRowLike } from '../../measurementOverrides';
 import { resolveMeasurementPeople, type MeasurementPerson } from '../../measurementPeople';
-import { resolvePersonBlocks } from '../../measurementPersonBlocks';
+import { resolvePersonBlocks, horasRateioPorTitular } from '../../measurementPersonBlocks';
 import { panelDefaultHours } from '../../demandDefaultHours';
 import { isHybridModality } from '../../modalityRules';
 import { buildTrainingsById } from '../../modalityOptions';
@@ -252,9 +254,19 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
     const pessoas = resolveMeasurementPeople(demand, src.instructorAllocations, src.participants, src.companions);
     const gravados = m.expenses?.participantes ?? [];
 
+    // Demanda dividida: a fatia VIVA do rateio por dias de cada titular, com a
+    // mesma conta do Excel sobre a carga do painel — é o que a coluna "Horas
+    // (painel)" mostra para quem não digitou, igual à tela.
+    const fatias = horasRateioPorTitular(
+      demand,
+      src.instructorAllocations.filter(a => a.demandId === demand.id),
+      ctx.demandDefaultHours
+    );
+
     // Caminho v2 (o do painel) ou v1 — a decisão mora em
     // domain/measurementPersonBlocks.ts, compartilhada com o Excel de pagamento.
-    const { v2, paraNormalizar, blocoDe, horasInformadasDe } = resolvePersonBlocks(m as any, demand, pessoas);
+    const { v2, paraNormalizar, blocos, blocoDe, horasInformadasDe } = resolvePersonBlocks(m as any, demand, pessoas, { horasRateio: fatias });
+    const ctxBlocos = { ...ctx, titularesNaMedicao: countTitulares(blocos) };
 
     const base = {
       demand,
@@ -288,13 +300,16 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
       const papel: MeasurementRole = pessoa.papel;
       const blocoComPapel = bloco ? { ...bloco, papel } : undefined;
 
-      const horasPainel = blocoComPapel ? blockPanelHours(blocoComPapel, ctx) : null;
+      const horasPainel = blocoComPapel ? blockPanelHours(blocoComPapel, ctxBlocos) : null;
 
       // Tarifa: o número vem do bloco; o "de onde veio" vem do JSON cru.
+      // v2 sem bloco gravado para um TITULAR = medição v1 aberta em v2: a
+      // tarifa é a `hourRate` legada, que `resolvePersonBlocks` semeia no bloco.
       const tarifaCrua = !blocoComPapel
         ? undefined
         : v2
-          ? gravados.find(g => g.instructorId === pessoa.instructorId)?.valorHH
+          ? (gravados.find(g => g.instructorId === pessoa.instructorId)?.valorHH
+              ?? (gravados.length === 0 && papel === 'TITULAR' ? (m.expenses as any)?.hourRate : undefined))
           : (m.expenses as any)?.hourRate;
       const origemTarifa: MedicaoRow['origemTarifa'] = !blocoComPapel
         ? ''
@@ -306,7 +321,7 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
               ? 'Tarifa zero (digitada)'
               : 'Tarifa da medição';
       const usarHH = opts.usarValorHH;
-      const horaAulaPainel = blocoComPapel && usarHH ? blockHoraAula(blocoComPapel, ctx) : null;
+      const horaAulaPainel = blocoComPapel && usarHH ? blockHoraAula(blocoComPapel, ctxBlocos) : null;
       const valorHH = blocoComPapel && usarHH ? blocoComPapel.valorHH : null;
       const horasInformadas =
         blocoComPapel && blocoComPapel.horasInformadas && blocoComPapel.horas !== undefined

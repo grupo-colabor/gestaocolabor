@@ -179,16 +179,21 @@ export function runDatasetChecks(t: SmokeTools): number {
     eq('sem ninguém: uma linha "(sem instrutor)"', daDemanda('DEM-104').map(r => r.instructorName), ['(sem instrutor)']);
     eq('e o vínculo dela é sem-pessoa', de('DEM-104', '').vinculo, 'sem-pessoa');
 
-    // v1: o bloco inteiro vai para o titular principal; o segundo titular não tem bloco.
+    // Cliente DIVIDIDA com medição v1 (sem blocos gravados): desde 09/2026 abre
+    // em v2 — cada titular tem bloco; o item sem dono fica com o principal; a
+    // tarifa legada vai para os dois; e cada um vale a FATIA do rateio por dias
+    // (1 de 2 dias de 16h = 8h), nunca a carga inteira.
     const t1 = de('DEM-100', 'INS-T');
     const t2 = de('DEM-100', 'INS-2');
-    check('v1: titular principal tem o bloco', t1.temBloco);
-    check('v1: segundo titular não tem bloco', !t2.temBloco);
-    eq('v1: horas informadas do titular = classHours', t1.horasInformadas, 16);
-    eq('v1: segundo titular sem horas informadas (null, não 0)', t2.horasInformadas, null);
-    eq('v1: hora/aula painel do segundo titular em branco', t2.horaAulaPainel, null);
-    perto('v1: despesas todas no titular', t1.despesas.total, 80);
-    perto('v1: segundo titular sem despesas', t2.despesas.total, 0);
+    check('dividida v1: titular principal tem bloco', t1.temBloco);
+    check('dividida v1: segundo titular TAMBÉM tem bloco', t2.temBloco);
+    eq('dividida v1: ninguém tem horas informadas (classHours é a carga da demanda, não de uma pessoa)', [t1.horasInformadas, t2.horasInformadas], [null, null]);
+    perto('dividida v1: horas painel do principal = fatia (8h)', t1.horasPainel ?? NaN, 8);
+    perto('dividida v1: horas painel do segundo = fatia (8h)', t2.horasPainel ?? NaN, 8);
+    perto('dividida v1: tarifa legada semeada nos dois (120)', (t1.valorHH ?? 0) + (t2.valorHH ?? 0), 240);
+    perto('dividida v1: Σ hora/aula painel = classHours × hourRate da v1 (1920)', (t1.horaAulaPainel ?? 0) + (t2.horaAulaPainel ?? 0), 1920);
+    perto('dividida v1: despesas sem dono ficam no principal', t1.despesas.total, 80);
+    perto('dividida v1: segundo titular sem despesas', t2.despesas.total, 0);
 
     // v2: partição — sem dono e dono removido caem no titular; órfão fora, contado.
     const i1 = de('DEM-900', 'INS-T');
@@ -503,7 +508,7 @@ export function runDatasetChecks(t: SmokeTools): number {
     eq('e o número continua 0 com a opção ligada (comportamento de hoje)', l('DEM-905', 'INS-T').valorHH, 0);
     eq('valorHH 0 digitado -> Tarifa zero (digitada)', l('DEM-905', 'INS-2').origemTarifa, 'Tarifa zero (digitada)');
     eq('v1 hourRate "" -> Sem tarifa na medição', l('DEM-906', 'INS-T').origemTarifa, 'Sem tarifa na medição');
-    eq('segundo titular v1 sem bloco -> origem em branco', l('DEM-100', 'INS-2').origemTarifa, '');
+    eq('segundo titular de dividida v1 herda a tarifa legada -> Tarifa da medição', l('DEM-100', 'INS-2').origemTarifa, 'Tarifa da medição');
     check('default da opção é ligada', DEFAULT_OPTIONS.usarValorHH === true);
 
     const desligada = buildMedicoesRows({ ...srcT, options: { ...DEFAULT_OPTIONS, usarValorHH: false } });

@@ -223,6 +223,13 @@ useEffect(() => {
   const [confirmAllocationCase, setConfirmAllocationCase] = useState<'unqualified' | 'exception' | 'qualified' | null>(null);
   const [pendingAllocationData, setPendingAllocationData] = useState<InstructorAllocation | null>(null);
   const [resourceError, setResourceError] = useState<string | null>(null);
+  /**
+   * Vale + local vazio/'N/A': o erro (borda vermelha + mensagem sob o campo)
+   * só aparece DEPOIS de o usuário tentar salvar — não ao selecionar a
+   * empresa. Zera ao abrir o modal (criação e edição). A regra em si não
+   * muda: o save continua recusado (domain/demandLocalRules.ts).
+   */
+  const [tentouSalvarLocal, setTentouSalvarLocal] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [confirmDateChange, setConfirmDateChange] = useState(false);
   const bypassDateWarning = useRef(false);
@@ -604,13 +611,15 @@ const markDocAsNA = async (docType: 'LISTA_TURMA' | 'LIBERACAO_INSTRUTOR') => {
     if (!hasStartTime || !hasEndTime) return false;
   }
 
-  // Local: obrigatório onde a modalidade exige logística e, para a Vale, em
-  // qualquer modalidade (vazio e 'N/A' recusados) — ver `localInvalido`.
-  if (localInvalido) return false;
+  // Local: obrigatório onde a modalidade exige logística — ver `localInvalido`.
+  // A regra da VALE (vazio e 'N/A' recusados em qualquer modalidade) NÃO
+  // desabilita o botão: ela é aplicada no handleSave, para o erro aparecer só
+  // depois de o usuário tentar salvar.
+  if (localInvalido && !isValeSelected) return false;
   if (!formDemand.demandState) return false;
 
   return true;
-}, [formDemand, localInvalido]);
+}, [formDemand, localInvalido, isValeSelected]);
 
 
     // ✅ Instrutor principal por demanda (menor startDate nas alocações)
@@ -1358,6 +1367,7 @@ useEffect(() => {
     setActiveDemand(null);
     setFormDemand(initialDemandState());
     setModalMode('CREATE');
+    setTentouSalvarLocal(false);
     setModalSubMode('FORM');
     setOpenSections({ geral: true, internos: true, locomocao: true, hospedagem: true, documentos: true });
     setConfirmDelete(false);
@@ -1374,6 +1384,7 @@ useEffect(() => {
   setActiveDemand(demand);
   setFormDemand({ ...demand });
   setModalMode('EDIT');
+  setTentouSalvarLocal(false);
   setPendingPdfs({ classList: null, instructorRelease: null });
   setDbDocs({});
   didSyncEditTimesRef.current = false;
@@ -1408,8 +1419,8 @@ const handleSave = async () => {
   // Vale sem local (ou 'N/A'): o botão já fica desabilitado por isFormValid;
   // esta guarda é a mensagem explícita se o save for acionado por outro caminho.
   if (isValeSelected && localInvalido) {
-    setResourceError(`${localInvalido}.`);
-    setTimeout(() => setResourceError(null), 4000);
+    // Só agora o campo ganha borda vermelha e a mensagem (ver tentouSalvarLocal).
+    setTentouSalvarLocal(true);
     return;
   }
   if (!isFormValid) return;
@@ -2912,12 +2923,12 @@ const companionInstructorIds = useMemo(() => {
                                   precisa de mina/site para a medição e o BM). */}
                               <input
                                 list="locais-treinamento-list"
-                                className={`w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isValeSelected && localInvalido ? 'border-red-300 bg-red-50/40' : 'border-gray-300'}`}
+                                className={`w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${tentouSalvarLocal && isValeSelected && localInvalido ? 'border-red-300 bg-red-50/40' : 'border-gray-300'}`}
                                 value={formDemand.trainingLocal || ''}
                                 onChange={(e) => handleTrainingLocalChange(e.target.value)}
                                 placeholder={isValeSelected ? 'Mina / site (obrigatório para a Vale)' : !requiresLogistics(formDemand.modality) ? 'N/A ou local de referência...' : 'Ex: Brucutu, Vitória...'}
                               />
-                              {isValeSelected && localInvalido && (
+                              {tentouSalvarLocal && isValeSelected && localInvalido && (
                                 <p className="text-[10px] font-bold text-red-600 mt-1">{localInvalido}.</p>
                               )}
                               {!isValeSelected && !requiresLogistics(formDemand.modality) && (

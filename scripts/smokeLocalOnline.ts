@@ -300,7 +300,7 @@ console.log('\n— GUARDAS DE FONTE (as reproduções acima ainda batem com o c�
   // bloco [V] abaixo prende isso caso a caso; aqui só que Demands.tsx a consome.
   check(
     'Demands: validação segue exigindo local só onde há logística (via motivoLocalInvalido)',
-    demands.includes('if (localInvalido) return false;') &&
+    demands.includes('if (localInvalido && !isValeSelected) return false;') &&
       motivoLocalInvalido('', 'ONLINE', false) === null &&
       motivoLocalInvalido('', 'PRESENCIAL', false) !== null
   );
@@ -366,8 +366,11 @@ console.log('\n[V] Local obrigatório para a Vale');
   // Demands.tsx consome a regra (criação e edição passam pelo mesmo isFormValid/handleSave)
   const demandsSrc = fs.readFileSync(path.join(process.cwd(), 'components/Demands.tsx'), 'utf8');
   check('isValeSelected usa o gate do domínio', demandsSrc.includes('isValeCompanyName(companies.find(c => c.id === formDemand.companyId)?.name)'));
-  check('isFormValid recusa pelo motivo do domínio', demandsSrc.includes('if (localInvalido) return false;') && demandsSrc.includes('motivoLocalInvalido(formDemand.trainingLocal, formDemand.modality, isValeSelected)'));
-  check('handleSave tem a mensagem explícita para a Vale', demandsSrc.includes('if (isValeSelected && localInvalido) {') && demandsSrc.includes('setResourceError(`${localInvalido}.`)'));
+  check('isFormValid recusa pelo motivo do domínio (demais empresas); a Vale é tratada no save', demandsSrc.includes('if (localInvalido && !isValeSelected) return false;') && demandsSrc.includes('motivoLocalInvalido(formDemand.trainingLocal, formDemand.modality, isValeSelected)'));
+  check('handleSave recusa a Vale sem local e marca a tentativa', demandsSrc.includes('if (isValeSelected && localInvalido) {') && demandsSrc.includes('setTentouSalvarLocal(true);'));
+  // O erro visual só aparece depois de tentar salvar, e some ao reabrir o modal.
+  check('borda vermelha e mensagem só depois de tentar salvar', (demandsSrc.match(/tentouSalvarLocal && isValeSelected && localInvalido/g) ?? []).length === 2);
+  check('a tentativa é zerada ao abrir o modal (criação e edição)', (demandsSrc.match(/setTentouSalvarLocal\(false\);/g) ?? []).length === 2);
   check('asterisco do rótulo segue localObrigatorio', demandsSrc.includes("Local do Treinamento {localObrigatorio(formDemand.modality, isValeSelected) ? '*' : ''}"));
   check('texto "Opcional para online" some quando é Vale', demandsSrc.includes('{!isValeSelected && !requiresLogistics(formDemand.modality) && ('));
   check("'N/A' sai do datalist para a Vale", demandsSrc.includes("localObrigatorio(formDemand.modality, isValeSelected) ? unique : ['N/A', ...unique]"));

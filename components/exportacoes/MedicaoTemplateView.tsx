@@ -4,9 +4,10 @@
  *
  *   • aba de linhas (Medição Vale, vale-v1): filtros → painel de pendências
  *     → campos manuais (Salvar) → prévia da planilha → download;
- *   • folha form (BM Vale, vale-bm-v1): filtros (corredor obrigatório) →
- *     painel → cabeçalho por (corredor, mina) (Salvar) → prévia por mina →
- *     gerar .xlsx (com mina) ou .zip (sem mina).
+ *   • folha form (BM Vale, vale-bm-v1): filtros (corredor opcional: "Todos"
+ *     agrupa por corredor) → painel → cabeçalho por (corredor, mina) (Salvar)
+ *     → prévia por mina → gerar .xlsx (quando fecha em UMA mina) ou .zip
+ *     (um .xlsx por mina; com "Todos", uma pasta por corredor).
  *
  * Regras da tela:
  *   • nada é gravado no download; as edições vão ao banco só no Salvar, cada
@@ -15,7 +16,7 @@
  *   • o download fica desabilitado enquanto houver edição não salva;
  *   • BM com cabeçalho incompleto pede confirmação ("gerar mesmo assim?");
  *   • turma sem local fica fora do BM, em destaque na barra e no painel —
- *     nunca silencioso;
+ *     nunca silencioso; com "Todos", turma sem corredor idem;
  *   • falha de banco (carga ou salvar) e falha no arquivo-base viram banner e
  *     bloqueiam a geração.
  */
@@ -33,6 +34,7 @@ import {
   bmRegionRows,
   bmFileName,
   bmZipName,
+  bmZipEntryName,
   periodoLabel as bmPeriodoLabel,
 } from '../../domain/exports/datasets/medicaoValeBm';
 import { buildPendencias, mergePendencias, type Pendencia } from '../../domain/exports/pendencias';
@@ -137,11 +139,14 @@ const MedicaoTemplateView: React.FC<{
   const elegiveis = useMemo(() => filtered.filter(r => r.elegivelTurmas), [filtered]);
 
   /* ───────── BM ───────── */
-  const corredorOk = !isBm || !!filters.corredor;
+  /** Corredor "Todos": um BM por (corredor, mina) do recorte; o zip ganha uma pasta por corredor. */
+  const todosCorredores = isBm && !filters.corredor;
   const bm = useMemo(
-    () => (isBm && filters.corredor ? buildBm(filtered, values, template, { corredor: filters.corredor, mina: filters.site || undefined }) : null),
+    () => (isBm ? buildBm(filtered, values, template, { corredor: filters.corredor || undefined, mina: filters.site || undefined }) : null),
     [isBm, filtered, values, template, filters.corredor, filters.site]
   );
+  /** Um .xlsx só quando o recorte fecha em UMA mina (corredor + mina); senão .zip. */
+  const saiXlsx = !!bm && !!filters.site && bm.minas.length === 1;
   const periodoLabel = bmPeriodoLabel(filters.dataInicio, filters.dataFim);
 
   const pendencias = useMemo(() => {
@@ -154,6 +159,7 @@ const MedicaoTemplateView: React.FC<{
     if (!bm) return base;
     const extras: { row: (typeof filtered)[number]; pendencia: Pendencia }[] = [];
     for (const r of bm.semLocal) extras.push({ row: r, pendencia: { tipo: 'aviso', texto: 'Sem local na demanda — fora do BM (corrija o local)' } });
+    for (const r of bm.semCorredor) extras.push({ row: r, pendencia: { tipo: 'aviso', texto: 'Sem corredor na demanda — fora do BM (informe o corredor)' } });
     for (const m of bm.minas) {
       if (m.cabecalhoIncompleto.length === 0) continue;
       for (const r of m.turmas) extras.push({ row: r, pendencia: { tipo: 'aviso', texto: `Cabeçalho do BM incompleto para ${m.corredor} | ${m.mina}` } });
@@ -169,7 +175,7 @@ const MedicaoTemplateView: React.FC<{
   const previa = useMemo(() => (isBm ? null : resolveRowsSheet(sheetTurmas, toRowsSheetInput(elegiveis), values)), [isBm, sheetTurmas, elegiveis, values]);
 
   const temPendente = pendentes.size > 0;
-  const podeGerar = !temPendente && !salvando && !gerando && !erro && corredorOk && (isBm ? !!bm && bm.minas.length > 0 : elegiveis.length > 0);
+  const podeGerar = !temPendente && !salvando && !gerando && !erro && (isBm ? !!bm && bm.minas.length > 0 : elegiveis.length > 0);
 
   const registrarEdicao = (e: EdicaoPendente) => {
     const salvo = baseIndex[e.scope].get(e.refId)?.get(e.columnKey);
@@ -238,6 +244,7 @@ const MedicaoTemplateView: React.FC<{
     setErro(null);
     try {
       if (isBm && bm) {
+        // Todas as minas incompletas de uma vez (com "Todos", de todos os corredores).
         const incompletas = bm.minas.filter(m => m.cabecalhoIncompleto.length > 0);
         if (incompletas.length > 0) {
           const lista = incompletas.map(m => `${m.corredor} | ${m.mina}`).join(', ');
@@ -252,15 +259,17 @@ const MedicaoTemplateView: React.FC<{
             periodoLabel,
             regionRows: bmRegionRows(m),
           });
-          entries.push({ name: bmFileName(template, m.corredor, m.mina, filters.dataInicio, filters.dataFim), data: await buildTemplateXlsxBuffer(template, sheets, base) });
+          // Com "Todos": "<corredor>/<mesmo nome de arquivo de hoje>"; senão, na raiz.
+          entries.push({ name: bmZipEntryName(template, m, filters.dataInicio, filters.dataFim, todosCorredores), data: await buildTemplateXlsxBuffer(template, sheets, base) });
         }
-        if (filters.site) {
-          triggerDownload(entries[0].data, entries[0].name, XLSX_MIME);
-          onNotify(`${entries[0].name} gerado (${bm.minas[0].turmas.length} turma(s)).`, 'success');
+        if (saiXlsx) {
+          const nome = bmFileName(template, bm.minas[0].corredor, bm.minas[0].mina, filters.dataInicio, filters.dataFim);
+          triggerDownload(entries[0].data, nome, XLSX_MIME);
+          onNotify(`${nome} gerado (${bm.minas[0].turmas.length} turma(s)).`, 'success');
         } else {
           const nome = bmZipName(template, filters.corredor, filters.dataInicio, filters.dataFim);
           await downloadZip(entries, nome);
-          onNotify(`${nome} gerado com ${entries.length} BM(s).`, 'success');
+          onNotify(`${nome} gerado com ${entries.length} BM(s)${todosCorredores ? ` em ${bm.corredores.length} pasta(s)` : ''}.`, 'success');
         }
         return;
       }
@@ -323,10 +332,6 @@ const MedicaoTemplateView: React.FC<{
           sem período: todas as turmas concluídas ({elegiveis.length})
         </p>
       )}
-      {isBm && !filters.corredor && (
-        <ExportBanner tipo="aviso">O BM é por <strong>corredor</strong>: escolha um corredor nos filtros para montar as minas.</ExportBanner>
-      )}
-
       {erro && <ExportBanner tipo="erro"><strong>Bloqueado.</strong> {erro}</ExportBanner>}
 
       <PainelPendencias pendencias={pendencias} totalNoRecorte={filtered.length} />
@@ -370,7 +375,7 @@ const MedicaoTemplateView: React.FC<{
             <div>
               <span className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Minas</span>
               <span className="text-xl font-black">{bm.minas.length}</span>
-              <span className="text-xs text-slate-400"> {filters.site ? '· 1 .xlsx' : '· .zip'}</span>
+              <span className="text-xs text-slate-400"> {saiXlsx ? '· 1 .xlsx' : todosCorredores ? `· .zip, ${bm.corredores.length} pasta(s) por corredor` : '· .zip'}</span>
             </div>
           )}
           <div>
@@ -383,16 +388,22 @@ const MedicaoTemplateView: React.FC<{
               {bm.semLocal.length} turma(s) sem local ficaram fora do BM — corrija o local na demanda
             </div>
           )}
+          {isBm && bm && bm.semCorredor.length > 0 && (
+            <div className="flex items-center gap-2 bg-amber-400 text-slate-900 rounded-xl px-3 py-2 text-xs font-black">
+              <AlertTriangle size={16} />
+              {bm.semCorredor.length} turma(s) sem corredor ficaram fora do BM — informe o corredor na demanda
+            </div>
+          )}
         </div>
         <button
           type="button"
           onClick={gerar}
           disabled={!podeGerar}
-          title={temPendente ? 'Salve antes de gerar' : !corredorOk ? 'Escolha um corredor' : undefined}
+          title={temPendente ? 'Salve antes de gerar' : undefined}
           className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {gerando ? <Loader2 size={16} className="animate-spin" /> : isBm && !filters.site ? <FolderArchive size={16} /> : <FileSpreadsheet size={16} />}
-          Gerar {template.label}{isBm ? (filters.site ? ' (.xlsx)' : ' (.zip)') : ''}
+          {gerando ? <Loader2 size={16} className="animate-spin" /> : isBm && !saiXlsx ? <FolderArchive size={16} /> : <FileSpreadsheet size={16} />}
+          Gerar {template.label}{isBm ? (saiXlsx ? ' (.xlsx)' : ' (.zip)') : ''}
         </button>
       </div>
       {temPendente && <ExportBanner tipo="aviso">Há edições não salvas. <strong>Salve antes de gerar</strong> — o download nunca grava.</ExportBanner>}

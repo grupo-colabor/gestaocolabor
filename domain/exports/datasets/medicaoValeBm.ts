@@ -3,8 +3,15 @@
  *
  * Entrada: as turmas ELEGÍVEIS da Medição Vale para o mesmo filtro
  * (datasets/medicaoVale, `elegivelTurmas`), já recortadas pela tela por
- * período (data de início), corredor obrigatório, mina opcional, status da
+ * período (data de início), corredor opcional, mina opcional, status da
  * medição e canceladas. Nada aqui refaz elegibilidade.
+ *
+ * Corredor: com um corredor no filtro, todas as turmas do recorte são dele
+ * (a tela já filtrou) e sai um BM por mina. Com "Todos" (`corredor` vazio),
+ * o corredor é lido de cada demanda e sai um BM por (corredor, mina); turma
+ * com corredor vazio na demanda fica em `semCorredor` — fora do BM, com
+ * aviso, como a turma sem local. O cabeçalho continua cadastrado por
+ * corredor|mina (escopo 'context'), então nada muda no cadastro.
  *
  * Os números de cada turma NÃO são recalculados: vêm da MESMA resolução da
  * aba "Turmas Realizadas" (`resolveRowsSheet` do template vale-v1 com os
@@ -61,14 +68,24 @@ export interface BmMina {
 }
 
 export interface BmResult {
+  /** Corredor do filtro, ou '' quando "Todos" (minas de vários corredores). */
   corredor: string;
+  /** Corredores presentes em `minas`, na ordem em que aparecem (pt-BR). */
+  corredores: string[];
+  /** Ordenadas por corredor e depois mina. */
   minas: BmMina[];
   semLocal: MedicaoValeRow[];
+  /** Só com "Todos": turmas com corredor vazio na demanda — fora do BM, nunca silencioso. */
+  semCorredor: MedicaoValeRow[];
   nomesDuplicados: { nome: string; trainingIds: string[] }[];
 }
 
 export interface BuildBmOptions {
-  corredor: string;
+  /**
+   * Corredor do filtro. Vazio/undefined = "Todos": um BM por (corredor, mina)
+   * do recorte, corredor lido da demanda.
+   */
+  corredor?: string;
   /** Só esta mina (filtro de site). Vazio = todas as minas do recorte. */
   mina?: string;
 }
@@ -153,8 +170,11 @@ export function buildBm(
     .filter(([, ids]) => ids.size > 1)
     .map(([nome, ids]) => ({ nome, trainingIds: [...ids].sort() }));
 
+  const corredorFiltro = (opts.corredor ?? '').trim();
+  const todos = corredorFiltro === '';
   const semLocal: MedicaoValeRow[] = [];
-  const porMina = new Map<string, MedicaoValeRow[]>();
+  const semCorredor: MedicaoValeRow[] = [];
+  const grupos = new Map<string, { corredor: string; mina: string; turmas: MedicaoValeRow[] }>();
   for (const r of elegiveis) {
     if (!r.elegivelTurmas) continue;
     const mina = r.input.local.trim();
@@ -163,17 +183,23 @@ export function buildBm(
       continue;
     }
     if (opts.mina && mina !== opts.mina.trim()) continue;
-    const l = porMina.get(mina) ?? [];
-    l.push(r);
-    porMina.set(mina, l);
+    const corredor = todos ? String(r.input.corredor ?? '').trim() : corredorFiltro;
+    if (!corredor) {
+      semCorredor.push(r);
+      continue;
+    }
+    const key = contextKey(corredor, mina);
+    const g = grupos.get(key) ?? { corredor, mina, turmas: [] };
+    g.turmas.push(r);
+    grupos.set(key, g);
   }
 
   const semDefault = new Set((template.contextFields ?? []).filter(f => f.defaultValue === undefined).map(f => f.key));
 
-  const minas: BmMina[] = [...porMina.entries()]
-    .sort(([a], [b]) => a.localeCompare(b, 'pt-BR'))
-    .map(([mina, turmas]) => {
-      const key = contextKey(opts.corredor, mina);
+  const minas: BmMina[] = [...grupos.values()]
+    .sort((a, b) => a.corredor.localeCompare(b.corredor, 'pt-BR') || a.mina.localeCompare(b.mina, 'pt-BR'))
+    .map(({ corredor, mina, turmas }) => {
+      const key = contextKey(corredor, mina);
       const contexto = values.context.get(key);
       const ctxValor = (k: string): string | number | null => {
         const v = contexto?.get(k);
@@ -223,10 +249,11 @@ export function buildBm(
       const totalTreinamentos = round2(linhasTreino.reduce((acc, l) => acc + (l.preco ?? 0) * l.quantidade, 0));
       const cabecalhoIncompleto = [...semDefault].filter(k => ctxValor(k) === null);
 
-      return { corredor: opts.corredor, mina, contextKey: key, contexto, cabecalhoIncompleto, turmas, linhas, totalTreinamentos, totalDespesas };
+      return { corredor, mina, contextKey: key, contexto, cabecalhoIncompleto, turmas, linhas, totalTreinamentos, totalDespesas };
     });
 
-  return { corredor: opts.corredor, minas, semLocal, nomesDuplicados };
+  const corredores = [...new Set(minas.map(m => m.corredor))];
+  return { corredor: corredorFiltro, corredores, minas, semLocal, semCorredor, nomesDuplicados };
 }
 
 /** As linhas de uma mina no formato da região da folha form. */
@@ -262,6 +289,24 @@ export function bmFileName(template: MeasurementTemplate, corredor: string, mina
   return `${template.fileNameBase}-${slug(corredor)}-${slug(mina)}-${periodoSlug(dataInicio, dataFim)}.xlsx`;
 }
 
+/** Nome do zip: por corredor, ou `-todos-` quando o corredor do filtro é "Todos". */
 export function bmZipName(template: MeasurementTemplate, corredor: string, dataInicio: string, dataFim: string): string {
-  return `${template.fileNameBase}-${slug(corredor)}-${periodoSlug(dataInicio, dataFim)}.zip`;
+  const trecho = String(corredor ?? '').trim() ? slug(corredor) : 'todos';
+  return `${template.fileNameBase}-${trecho}-${periodoSlug(dataInicio, dataFim)}.zip`;
+}
+
+/**
+ * Caminho de um BM dentro do zip. Com "Todos" (`pastaPorCorredor`), uma pasta
+ * por corredor (slug) e, dentro dela, o MESMO nome de arquivo de sempre
+ * (`bmFileName`); sem, o arquivo na raiz, como o zip de um corredor só.
+ */
+export function bmZipEntryName(
+  template: MeasurementTemplate,
+  mina: Pick<BmMina, 'corredor' | 'mina'>,
+  dataInicio: string,
+  dataFim: string,
+  pastaPorCorredor: boolean
+): string {
+  const arquivo = bmFileName(template, mina.corredor, mina.mina, dataInicio, dataFim);
+  return pastaPorCorredor ? `${slug(mina.corredor)}/${arquivo}` : arquivo;
 }

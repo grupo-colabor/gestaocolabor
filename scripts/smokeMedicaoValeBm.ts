@@ -11,10 +11,14 @@
  *       Turmas para o mesmo recorte; quantidade da linha 70 = Σ coluna P;
  *       agregação por nome normalizado + preço; turma sem local fora, com
  *       contagem; um BM por mina.
+ *   [T] Corredor "Todos": um BM por (corredor, mina), corredor lido da
+ *       demanda; turma sem corredor fora, contada; Σ dos totais dos BMs =
+ *       Σ (I + P) da Medição Vale do mesmo recorte; nomes de zip e de pasta.
  *   [X] Escritor: XLSX gerado do vale-bm.xlsx real e lido de volta — cabeçalho
  *       nos endereços do modelo, região, total, 30 treinamentos → linhas
  *       inseridas com mesclagens, assinaturas e imagens intactas.
- *   [Z] Zip: uma entrada por mina, nomes esperados.
+ *   [Z] Zip: uma entrada por mina, nomes esperados; com "Todos", uma pasta
+ *       por corredor e um .xlsx por mina, lidos de volta com Σ conferido.
  *
  * Sai com código 1 se qualquer asserção falhar.
  */

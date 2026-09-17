@@ -3,19 +3,22 @@
  * Chamado por smokeMedicaoValeBm.ts.
  */
 import { buildValeFixtureSource, demandaVale, medicao } from './smokeMedicaoValeDatasets';
-import { buildMedicaoValeRows } from '../domain/exports/datasets/medicaoVale';
+import { buildMedicaoValeRows, toRowsSheetInput, type MedicaoValeRow } from '../domain/exports/datasets/medicaoVale';
 import {
   buildBm,
   bmRegionRows,
   bmFileName,
   bmZipName,
+  bmZipEntryName,
   periodoLabel,
   normalizeTrainingName,
   slug,
   turmasNumeros,
 } from '../domain/exports/datasets/medicaoValeBm';
 import { VALE_BM_TEMPLATE, VALE_BM_CONSTANTS } from '../domain/exports/templates/vale-bm';
-import { indexTemplateValues, contextKey } from '../domain/exports/templates/values';
+import { VALE_TEMPLATE } from '../domain/exports/templates/vale';
+import { resolveRowsSheet } from '../domain/exports/templates/resolve';
+import { indexTemplateValues, contextKey, type TemplateValuesIndex } from '../domain/exports/templates/values';
 
 export interface BmSmokeTools {
   check: (nome: string, condicao: boolean, detalhe?: string) => void;
@@ -30,7 +33,13 @@ export interface BmSmokeTools {
  *     mesmo preço → agrega por nome, e o cadastro duplicado vira aviso;
  *   • DEM-112 em Brucutu com preço sobrescrito → linha separada;
  *   • DEM-113 sem local → fora, contado;
+ *   • DEM-114 no corredor Ferrovia/MG, mina Vitória → só entra com corredor
+ *     "Todos" (segunda pasta do zip, terceira mina);
+ *   • DEM-115 sem corredor na demanda → com "Todos", fora e contada;
  * e o cabeçalho cadastrado só para Sudeste|Brucutu.
+ *
+ * `recorte` = corredor Sudeste + agosto (o filtro de hoje); `recorteTodos` =
+ * agosto com corredor "Todos" (dois corredores, três minas).
  */
 export function buildBmFixture() {
   const base = buildValeFixtureSource();
@@ -44,12 +53,16 @@ export function buildBmFixture() {
     demandaVale({ id: 'DEM-111', trainingId: 'T_PRE2', trainingLocal: 'Timbopeba', startDate: '2026-08-14T08:00', endDate: '2026-08-14T17:00' }),
     demandaVale({ id: 'DEM-112', trainingLocal: 'Brucutu', startDate: '2026-08-15T08:00', endDate: '2026-08-16T17:00' }),
     demandaVale({ id: 'DEM-113', trainingLocal: '', startDate: '2026-08-17T08:00', endDate: '2026-08-18T17:00' }),
+    demandaVale({ id: 'DEM-114', corredor: 'Ferrovia/MG', trainingLocal: 'Vitória', startDate: '2026-08-19T08:00', endDate: '2026-08-20T17:00' }),
+    demandaVale({ id: 'DEM-115', corredor: '', trainingLocal: 'Itabira', startDate: '2026-08-24T08:00', endDate: '2026-08-25T17:00' }),
   ];
   const measurements = [
     ...base.measurements,
     medicao('DEM-110', { attachments: [{ id: 'x1', category: 'LOCOMOCAO', value: 100 }] }),
     medicao('DEM-111', { attachments: [{ id: 'x2', category: 'HOSPEDAGEM', value: 300 }, { id: 'x3', category: 'CAFE', value: 20, reembolsavel: false }] }),
     medicao('DEM-112'),
+    medicao('DEM-114', { attachments: [{ id: 'x4', category: 'ALMOCO', value: 60 }, { id: 'x5', category: 'LOCOMOCAO', value: 140 }] }),
+    medicao('DEM-115', { attachments: [{ id: 'x6', category: 'HOSPEDAGEM', value: 250 }] }),
   ];
   const instructorAllocations = [
     ...base.instructorAllocations,
@@ -57,6 +70,8 @@ export function buildBmFixture() {
     { id: 'B2', demandId: 'DEM-111', instructorId: 'INS-T', startDate: '2026-08-14T08:00', endDate: '2026-08-14T17:00' },
     { id: 'B3', demandId: 'DEM-112', instructorId: 'INS-2', startDate: '2026-08-15T08:00', endDate: '2026-08-16T17:00' },
     { id: 'B4', demandId: 'DEM-113', instructorId: 'INS-T', startDate: '2026-08-17T08:00', endDate: '2026-08-18T17:00' },
+    { id: 'B5', demandId: 'DEM-114', instructorId: 'INS-2', startDate: '2026-08-19T08:00', endDate: '2026-08-20T17:00' },
+    { id: 'B6', demandId: 'DEM-115', instructorId: 'INS-T', startDate: '2026-08-24T08:00', endDate: '2026-08-25T17:00' },
   ];
   const brucutu = contextKey('Sudeste', 'Brucutu');
   const templateValues = indexTemplateValues([
@@ -77,8 +92,37 @@ export function buildBmFixture() {
   const src = { ...base, trainings: TRAININGS, demands, measurements, instructorAllocations, templateValues };
   const rows = buildMedicaoValeRows(src);
   // Recorte da tela: corredor Sudeste, agosto (data de início), tudo o mais aberto.
-  const recorte = rows.filter(r => r.demand.corredor === 'Sudeste' && r.input.dataInicio >= '2026-08-01' && r.input.dataInicio <= '2026-08-31');
-  return { src, rows, recorte, brucutu };
+  const agosto = (r: MedicaoValeRow) => r.input.dataInicio >= '2026-08-01' && r.input.dataInicio <= '2026-08-31';
+  const recorte = rows.filter(r => r.demand.corredor === 'Sudeste' && agosto(r));
+  // O mesmo período com corredor "Todos" (o filtro de corredor não age).
+  const recorteTodos = rows.filter(agosto);
+  return { src, rows, recorte, recorteTodos, brucutu };
+}
+
+/**
+ * Σ (I + P) da Medição Vale para as turmas elegíveis de `rows`, lida da
+ * resolução da aba Turmas do vale-v1 (a mesma que vira XLSX) — independente
+ * do dataset do BM. Devolve também a parcela das turmas que o BM deixa fora
+ * (sem local ou, com "Todos", sem corredor).
+ */
+export function sigmaMedicaoVale(rows: MedicaoValeRow[], values: TemplateValuesIndex) {
+  const sheet = VALE_TEMPLATE.sheets[0];
+  const resolved = resolveRowsSheet(sheet, toRowsSheetInput(rows), values);
+  const idx = (key: string) => resolved.columns.findIndex(c => c.key === key);
+  const n = (v: unknown) => (v === null || v === undefined || v === '' ? 0 : Number(v) || 0);
+  const elegiveis = rows.filter(r => r.elegivelTurmas);
+  let noBm = 0;
+  let foraDoBm = 0;
+  resolved.rows.forEach((cells, i) => {
+    const r = elegiveis[i];
+    const I = n(cells[idx('cargaHoraria')].value) * n(cells[idx('precoHH')].value);
+    const despesas = ['locacao', 'combustivel', 'alimentacao', 'hospedagem', 'outros'].reduce((acc, k) => acc + n(cells[idx(k)].value), 0);
+    const P = despesas + despesas * n(cells[idx('pctDespesa')].value);
+    if (r.input.local.trim() && String(r.input.corredor ?? '').trim()) noBm += I + P;
+    else foraDoBm += I + P;
+  });
+  const r2 = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
+  return { noBm: r2(noBm), foraDoBm: r2(foraDoBm), turmas: elegiveis.length };
 }
 
 export async function runBmChecks(t: BmSmokeTools): Promise<number> {
@@ -87,7 +131,7 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
   const eq: BmSmokeTools['eq'] = (n, a, b) => { if (!(Object.is(a, b) || JSON.stringify(a) === JSON.stringify(b))) falhas++; t.eq(n, a, b); };
   const perto: BmSmokeTools['perto'] = (n, a, b) => { if (!(Math.abs(a - b) < 1e-6)) falhas++; t.perto(n, a, b); }; // NaN-safe
 
-  const { src, recorte, brucutu } = buildBmFixture();
+  const { src, recorte, recorteTodos, brucutu } = buildBmFixture();
 
   /* ──────────────────────────────────────────────────────────────────────
    * [Σ] Dataset BM
@@ -163,13 +207,57 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
     eq('slug', slug('Ferrovia/MG — Mina de Brucutu'), 'ferrovia-mg-mina-de-brucutu');
     eq('nome do xlsx', bmFileName(VALE_BM_TEMPLATE, 'Sudeste', 'Brucutu', '2026-08-01', '2026-08-31'), 'vale-bm-sudeste-brucutu-2026-08-01_2026-08-31.xlsx');
     eq('nome do zip', bmZipName(VALE_BM_TEMPLATE, 'Ferrovia/MG', '2026-08-01', '2026-08-31'), 'vale-bm-ferrovia-mg-2026-08-01_2026-08-31.zip');
+    eq('com corredor: resultado traz corredores = [o do filtro] e semCorredor vazio', [bm.corredor, bm.corredores, bm.semCorredor.length], ['Sudeste', ['Sudeste'], 0]);
+  }
+
+  /* ──────────────────────────────────────────────────────────────────────
+   * [T] Corredor "Todos"
+   * ──────────────────────────────────────────────────────────────────── */
+  console.log('\n[T] Corredor "Todos" — um BM por (corredor, mina)');
+  {
+    const soSudeste = buildBm(recorte, src.templateValues, VALE_BM_TEMPLATE, { corredor: 'Sudeste' });
+    const todos = buildBm(recorteTodos, src.templateValues, VALE_BM_TEMPLATE, {});
+    const [di, df] = ['2026-08-01', '2026-08-31'];
+
+    eq('recorte "Todos" tem mais turmas que o do Sudeste (DEM-114 e DEM-115 entram)', recorteTodos.length - recorte.length, 2);
+    eq('corredor vazio no resultado; corredores em ordem pt-BR', [todos.corredor, todos.corredores], ['', ['Ferrovia/MG', 'Sudeste']]);
+    eq('um BM por (corredor, mina): dois corredores, três minas, corredor antes de mina', todos.minas.map(m => `${m.corredor}|${m.mina}`), ['Ferrovia/MG|Vitória', 'Sudeste|Brucutu', 'Sudeste|Timbopeba']);
+    eq('turma sem corredor fica fora, contada', todos.semCorredor.map(r => r.demand.id), ['DEM-115']);
+    check('sem corredor não aparece em mina nenhuma', !todos.minas.some(m => m.turmas.some(r => r.demand.id === 'DEM-115')));
+    eq('turma sem local continua fora', todos.semLocal.map(r => r.demand.id), ['DEM-113']);
+    eq('contexto (cabeçalho) continua por corredor|mina', todos.minas.map(m => m.contextKey), [contextKey('Ferrovia/MG', 'Vitória'), brucutu, contextKey('Sudeste', 'Timbopeba')]);
+    eq('as minas do Sudeste em "Todos" são idênticas ao BM só do Sudeste (turmas, linhas, totais)',
+      todos.minas.filter(m => m.corredor === 'Sudeste').map(m => [m.mina, m.turmas.map(r => r.demand.id), m.linhas, m.totalTreinamentos, m.totalDespesas]),
+      soSudeste.minas.map(m => [m.mina, m.turmas.map(r => r.demand.id), m.linhas, m.totalTreinamentos, m.totalDespesas]));
+    // 16h × 120 = 1920; despesas (60 + 140) × 1,2 (% padrão) = 240.
+    eq('Vitória: só DEM-114, com o preço do cadastro e as despesas reembolsáveis', [todos.minas[0].turmas.map(r => r.demand.id), todos.minas[0].totalTreinamentos, todos.minas[0].totalDespesas], [['DEM-114'], 1920, 240]);
+    eq('cabeçalho incompleto lista TODAS as minas sem cadastro, de todos os corredores', todos.minas.filter(m => m.cabecalhoIncompleto.length > 0).map(m => `${m.corredor} | ${m.mina}`), ['Ferrovia/MG | Vitória', 'Sudeste | Timbopeba']);
+
+    // Σ dos totais dos BMs = Σ (I + P) da Medição Vale do mesmo recorte (turmas com local e corredor).
+    const sigma = sigmaMedicaoVale(recorteTodos, src.templateValues);
+    const sigmaBm = todos.minas.reduce((acc, m) => acc + m.totalTreinamentos + m.totalDespesas, 0);
+    perto('Σ dos totais dos BMs = Σ (I + P) da Medição Vale do recorte "Todos"', Math.round((sigmaBm + Number.EPSILON) * 100) / 100, sigma.noBm);
+    check('o que fica fora do BM (sem local / sem corredor) é exatamente DEM-113 + DEM-115, e não é zero', sigma.foraDoBm > 0 && sigma.turmas === todos.minas.reduce((a, m) => a + m.turmas.length, 0) + todos.semLocal.length + todos.semCorredor.length);
+    // O mesmo fecha para o recorte de um corredor só.
+    const sigmaSud = sigmaMedicaoVale(recorte, src.templateValues);
+    perto('Σ dos totais dos BMs do Sudeste = Σ (I + P) da Medição Vale do recorte Sudeste', Math.round((soSudeste.minas.reduce((acc, m) => acc + m.totalTreinamentos + m.totalDespesas, 0) + Number.EPSILON) * 100) / 100, sigmaSud.noBm);
+
+    // Todos + mina: a mesma mina pode existir em mais de um corredor — o BM filtra a mina e mantém o corredor de cada uma.
+    const soVitoria = buildBm(recorteTodos, src.templateValues, VALE_BM_TEMPLATE, { mina: 'Vitória' });
+    eq('"Todos" + mina Vitória: uma mina, no corredor da demanda', soVitoria.minas.map(m => `${m.corredor}|${m.mina}`), ['Ferrovia/MG|Vitória']);
+
+    // Nomes: zip "todos", pasta por corredor (slug) com o MESMO nome de arquivo de hoje dentro.
+    eq('nome do zip com "Todos"', bmZipName(VALE_BM_TEMPLATE, '', di, df), 'vale-bm-todos-2026-08-01_2026-08-31.zip');
+    eq('entrada com pasta por corredor', bmZipEntryName(VALE_BM_TEMPLATE, todos.minas[0], di, df, true), 'ferrovia-mg/vale-bm-ferrovia-mg-vitoria-2026-08-01_2026-08-31.xlsx');
+    eq('entrada sem pasta = nome de sempre', bmZipEntryName(VALE_BM_TEMPLATE, todos.minas[1], di, df, false), bmFileName(VALE_BM_TEMPLATE, 'Sudeste', 'Brucutu', di, df));
+    eq('corredor vazio explícito = "Todos"', buildBm(recorteTodos, src.templateValues, VALE_BM_TEMPLATE, { corredor: '' }).minas.length, 3);
   }
 
   // Sequenciado: `falhas += await f()` leria `falhas` antes da chamada e
   // perderia os incrementos do `check` local feitos dentro de f.
   const nw = await runBmWriterChecks({ check, eq, perto }, { src, recorte });
   falhas += nw;
-  const nz = await runBmZipChecks({ check, eq, perto }, { src, recorte });
+  const nz = await runBmZipChecks({ check, eq, perto }, { src, recorte, recorteTodos });
   falhas += nz;
   return falhas;
 }

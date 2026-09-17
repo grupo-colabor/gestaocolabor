@@ -707,7 +707,7 @@ Gera o XLSX **no layout do modelo da Vale**, a partir do próprio arquivo-modelo
 
 O BM é o documento que a Vale assina: a medição **agregada por treinamento**, no modelo da Vale (folha `BOLETIM MEDIÇÃO`), gerado a partir do próprio arquivo-modelo guardado no sistema. **Ele sai da mesma seleção da Medição Vale**: mesmas turmas (concluídas, com instrutor, data de início no período), mesmo preço HH (com sobrescrita por turma), mesma exclusão de item não reembolsável. Por isso o **Σ das linhas de treinamento do BM é igual ao Σ da coluna I** da aba Turmas, e a **quantidade da linha de despesas é igual ao Σ da coluna P** — batem por construção, e o sistema confere isso automaticamente.
 
-**Um BM por (corredor, mina).** Corredor é obrigatório nos filtros. Mina = *Local Treinamento* da demanda. Com o filtro de site/mina, sai um `.xlsx`; sem ele, sai um `.zip` com um `.xlsx` por mina do recorte. Turma **sem local** na demanda fica fora do BM — a tela mostra em destaque quantas ficaram e o painel de pendências lista cada uma; corrija o local na demanda.
+**Um BM por (corredor, mina).** Mina = *Local Treinamento* da demanda. Com corredor e site/mina nos filtros, sai um `.xlsx`; só com o corredor, sai um `.zip` com um `.xlsx` por mina do recorte; com corredor **Todos**, sai um `.zip` (`vale-bm-todos-<período>.zip`) com **uma pasta por corredor** e, dentro de cada uma, um `.xlsx` por mina com o mesmo nome de sempre. A prévia e o bloco Cabeçalho do BM ficam agrupados por corredor. Turma **sem local** na demanda fica fora do BM — a tela mostra em destaque quantas ficaram e o painel de pendências lista cada uma; corrija o local na demanda. Com **Todos**, turma **sem corredor** na demanda também fica fora, com o mesmo destaque.
 
 **O que o BM traz:**
 

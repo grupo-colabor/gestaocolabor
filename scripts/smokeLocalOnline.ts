@@ -371,6 +371,8 @@ console.log('\n[V] Local obrigatório para a Vale');
   // O erro visual só aparece depois de tentar salvar, e some ao reabrir o modal.
   check('borda vermelha e mensagem só depois de tentar salvar', (demandsSrc.match(/tentouSalvarLocal && isValeSelected && localInvalido/g) ?? []).length === 2);
   check('a tentativa é zerada ao abrir o modal (criação e edição)', (demandsSrc.match(/setTentouSalvarLocal\(false\);/g) ?? []).length === 2);
+  // Ao selecionar a Vale, só o asterisco muda: placeholder neutro (o mesmo das modalidades com logística), sem "obrigatório" no campo.
+  check('placeholder neutro para a Vale', demandsSrc.includes("placeholder={isValeSelected || requiresLogistics(formDemand.modality) ? 'Ex: Brucutu, Vitória...' : 'N/A ou local de referência...'}") && !demandsSrc.includes('obrigatório para a Vale)'));
   check('asterisco do rótulo segue localObrigatorio', demandsSrc.includes("Local do Treinamento {localObrigatorio(formDemand.modality, isValeSelected) ? '*' : ''}"));
   check('texto "Opcional para online" some quando é Vale', demandsSrc.includes('{!isValeSelected && !requiresLogistics(formDemand.modality) && ('));
   check("'N/A' sai do datalist para a Vale", demandsSrc.includes("localObrigatorio(formDemand.modality, isValeSelected) ? unique : ['N/A', ...unique]"));

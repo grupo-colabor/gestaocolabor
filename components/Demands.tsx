@@ -2926,7 +2926,7 @@ const companionInstructorIds = useMemo(() => {
                                 className={`w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${tentouSalvarLocal && isValeSelected && localInvalido ? 'border-red-300 bg-red-50/40' : 'border-gray-300'}`}
                                 value={formDemand.trainingLocal || ''}
                                 onChange={(e) => handleTrainingLocalChange(e.target.value)}
-                                placeholder={isValeSelected ? 'Mina / site (obrigatório para a Vale)' : !requiresLogistics(formDemand.modality) ? 'N/A ou local de referência...' : 'Ex: Brucutu, Vitória...'}
+                                placeholder={isValeSelected || requiresLogistics(formDemand.modality) ? 'Ex: Brucutu, Vitória...' : 'N/A ou local de referência...'}
                               />
                               {tentouSalvarLocal && isValeSelected && localInvalido && (
                                 <p className="text-[10px] font-bold text-red-600 mt-1">{localInvalido}.</p>

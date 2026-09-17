@@ -125,6 +125,22 @@ const FiltrosExportacao: React.FC<{
         {on('papel') && (
           <Select label="Papel" v={value.papel} onV={s => set({ papel: s as ExportFilters['papel'] })} items={options?.papel ?? []} />
         )}
+        {on('modoTransporte') && (
+          <Select label="Modo de transporte (blocos de locomoção)" v={value.modoTransporte} onV={s => set({ modoTransporte: s })} items={options?.modosTransporte ?? []} />
+        )}
+        {on('pendenciaDoc') && (
+          <FilterField label="Documentos">
+            <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer pt-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                checked={value.somentePendenciaDoc}
+                onChange={e => set({ somentePendenciaDoc: e.target.checked })}
+              />
+              Só com pendência de documento
+            </label>
+          </FilterField>
+        )}
         {on('statusMedicao') && (
           <FilterField label="Status da medição (vazio = todas)" className="lg:col-span-2">
             <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-1">

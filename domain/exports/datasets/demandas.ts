@@ -59,6 +59,8 @@ export interface LogisticBlockLike {
   block_type: string;
   block_order: number;
   instructor_name?: string | null;
+  /** Dono por id (migration 016); nulo nas linhas legadas. Lido pelo dataset Logística. */
+  instructor_id?: string | null;
   transport_mode?: string | null;
   transport_other_description?: string | null;
   rental_company?: string | null;
@@ -74,6 +76,7 @@ export interface LogisticBlockLike {
   hotel_check_in?: string | null;
   hotel_check_out?: string | null;
   hotel_payment?: string | null;
+  hotel_receipt_urls?: string[] | null;
 }
 
 /** Projeção de `demand_documents` (services/demandDocuments.ts, DemandDocumentFlagRow). */

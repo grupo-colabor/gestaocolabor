@@ -27,6 +27,7 @@ import { DEFAULT_OPTIONS, type ExportOptions } from '../domain/exports/options';
 import { buildTable, defaultColumnKeys } from '../domain/exports/buildRows';
 import { buildMedicoesRows } from '../domain/exports/datasets/medicoes';
 import { buildDemandasRows } from '../domain/exports/datasets/demandas';
+import { buildLogisticaRows } from '../domain/exports/datasets/logistica';
 import { buildTrainingsById } from '../domain/modalityOptions';
 import { loadExportData, type ExportSourceData } from '../services/exports/loadExportData';
 import { downloadXlsx } from '../services/exports/xlsxWriter';
@@ -41,6 +42,16 @@ import ExportBanner from './exportacoes/ExportBanner';
 
 /** Acima disto a prévia continua paginada, mas o aviso lembra que o arquivo vai ser grande. */
 const AVISO_LINHAS = 20_000;
+
+/** Datasets que leem logística e documentos (as 3 requisições a mais de `includeLogistics`). */
+const COM_LOGISTICA: DatasetKey[] = ['demandas', 'logistica'];
+
+/** Construtor de linhas por dataset de tabela — a mesma carga serve a todos. */
+const BUILDERS: Record<string, (src: any) => any[]> = {
+  medicoes: buildMedicoesRows,
+  demandas: buildDemandasRows,
+  logistica: buildLogisticaRows,
+};
 
 type Carga = { data: ExportSourceData; comLogistica: boolean; templateKey: string };
 
@@ -74,7 +85,7 @@ const Exportacoes: React.FC = () => {
   const selectedKeys = dataset && !isTemplateDataset(dataset) ? (selected[dataset.key] ?? defaultColumnKeys(dataset)) : [];
   const setSelectedKeys = (keys: string[]) => dataset && setSelected(prev => ({ ...prev, [dataset.key]: keys }));
 
-  const precisaLogistica = datasetKey === 'demandas' || !!templateDataset;
+  const precisaLogistica = (!!datasetKey && COM_LOGISTICA.includes(datasetKey)) || !!templateDataset;
   const templateIds = templateDataset ? templateIdsOf(templateDataset) : [];
   const templateKey = [...templateIds].sort().join(',');
   const cargaServe =
@@ -85,7 +96,7 @@ const Exportacoes: React.FC = () => {
     setCarregando(true);
     setErro(null);
     try {
-      const comLogistica = datasetKey === 'demandas' || !!templateKey;
+      const comLogistica = COM_LOGISTICA.includes(datasetKey) || !!templateKey;
       const data = await loadExportData({ includeLogistics: comLogistica, templateIds });
       setCarga({ data, comLogistica, templateKey });
     } catch (e: any) {
@@ -104,8 +115,9 @@ const Exportacoes: React.FC = () => {
   const rows = useMemo(() => {
     if (!dataset || !cargaServe || !carga || isTemplateDataset(dataset)) return null;
     const src = { ...carga.data, regionNameById, options };
-    if (dataset.key === 'medicoes') return buildMedicoesRows(src);
-    return buildDemandasRows(src);
+    const build = BUILDERS[dataset.key];
+    if (!build) throw new Error(`Dataset sem construtor de linhas: ${dataset.key}`);
+    return build(src);
   }, [dataset, carga, cargaServe, regionNameById, options]);
 
   const trainingsById = useMemo(

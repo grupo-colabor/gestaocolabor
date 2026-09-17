@@ -19,6 +19,7 @@ import { matchesModality, buildModalityOptions, type ModalityOption } from '../m
 import { resolveCalculatedStatus, STATUS_ORDER, STATUS_LABELS } from './shared';
 import { DEFAULT_OPTIONS, type ExportOptions } from './options';
 import { SEM_MEDICAO, type ExportFilters, type FilterKey, type FilterableRow } from './types';
+import { transportLabel } from './datasets/demandas';
 
 /** Rótulos dos estágios da medição — os mesmos de STAGE_LABELS em Measurement.tsx. */
 export const MEDICAO_STATUS_OPTIONS: { value: string; label: string }[] = [
@@ -101,6 +102,13 @@ export function matchesFilters(
   if (on('papel') && f.papel) {
     if (row.papel !== f.papel) return false;
   }
+  // Linha sem modo (bloco de Hospedagem) sai quando o filtro está ativo — decisão aprovada.
+  if (on('modoTransporte') && f.modoTransporte) {
+    if ((row.modoTransporte ?? '') !== f.modoTransporte) return false;
+  }
+  if (on('pendenciaDoc') && f.somentePendenciaDoc) {
+    if (!row.pendenciaDoc) return false;
+  }
   return true;
 }
 
@@ -128,6 +136,8 @@ export interface FilterOptions {
   /** Locais/sites presentes nos dados. */
   sites: string[];
   statusMedicao: { value: string; label: string }[];
+  /** Modos de transporte presentes nas linhas (chave crua + rótulo da tela). */
+  modosTransporte: { value: string; label: string }[];
 }
 
 export const PAPEL_LABELS: Record<string, string> = {
@@ -155,6 +165,7 @@ export function buildFilterOptions<Row extends FilterableRow>(
   const instructorIds = new Set<string>();
   const corredores = new Set<string>(corredoresBase.filter(Boolean));
   const sites = new Set<string>();
+  const modos = new Set<string>();
 
   for (const r of rows) {
     demandsSeen.set(r.demand.id, r.demand);
@@ -164,6 +175,7 @@ export function buildFilterOptions<Row extends FilterableRow>(
     if (r.instructorId) instructorIds.add(r.instructorId);
     if (r.demand.corredor) corredores.add(r.demand.corredor);
     if (r.demand.trainingLocal && r.demand.trainingLocal !== 'N/A') sites.add(r.demand.trainingLocal);
+    if (r.modoTransporte) modos.add(r.modoTransporte);
   }
 
   const nameOf = (list: { id: string; name: string }[], id: string) =>
@@ -187,5 +199,8 @@ export function buildFilterOptions<Row extends FilterableRow>(
     corredores: [...corredores].sort((a, b) => a.localeCompare(b, 'pt-BR')),
     sites: [...sites].sort((a, b) => a.localeCompare(b, 'pt-BR')),
     statusMedicao: MEDICAO_STATUS_OPTIONS,
+    modosTransporte: [...modos]
+      .map(value => ({ value, label: transportLabel(value) || value }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR')),
   };
 }

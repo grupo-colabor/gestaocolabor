@@ -447,7 +447,7 @@ export function runDatasetChecks(t: SmokeTools): number {
    * ──────────────────────────────────────────────────────────────────────── */
   console.log('\n[G] Registry');
   {
-    eq('registry: Medições, Demandas, Medição Vale e BM Vale', EXPORT_DATASETS.map(d => d.key), ['medicoes', 'demandas', 'medicao-vale', 'vale-bm']);
+    eq('registry: Medições, Demandas, Logística, Medição Vale e BM Vale', EXPORT_DATASETS.map(d => d.key), ['medicoes', 'demandas', 'logistica', 'medicao-vale', 'vale-bm']);
     const bmDs = EXPORT_DATASETS.find(d => d.key === 'vale-bm')!;
     check('BM Vale é template, exige measurement e carrega os valores do vale-v1 e do vale-bm-v1',
       isTemplateDataset(bmDs) && bmDs.requiredView === 'measurement' && JSON.stringify(bmDs.templateIds) === JSON.stringify(['vale-v1', 'vale-bm-v1']));
@@ -463,11 +463,12 @@ export function runDatasetChecks(t: SmokeTools): number {
       check(d.key + ': sem CPF', !keys.some(k => /cpf/i.test(k)) && !d.columns.some(c => /cpf/i.test(c.header)));
     }
     eq('Demandas exige a view demands', getDataset('demandas').requiredView, 'demands');
-    // Simula ROLE_PERMISSIONS: analista sem 'measurement'.
-    const analista = new Set(['dashboard', 'demands', 'internal-demands', 'exportacoes']);
-    eq('analista vê só Demandas', visibleDatasets(v => analista.has(v)).map(d => d.key), ['demandas']);
+    eq('Logística exige a view logistics-control (a do Controle Logístico)', getDataset('logistica').requiredView, 'logistics-control');
+    // Simula ROLE_PERMISSIONS (App.tsx): analista sem 'measurement'.
+    const analista = new Set(['dashboard', 'demands', 'internal-demands', 'calendar', 'logistics', 'logistics-control', 'exportacoes']);
+    eq('analista vê Demandas e Logística', visibleDatasets(v => analista.has(v)).map(d => d.key), ['demandas', 'logistica']);
     const admin = new Set([...analista, 'measurement']);
-    eq('admin vê os quatro', visibleDatasets(v => admin.has(v)).map(d => d.key), ['medicoes', 'demandas', 'medicao-vale', 'vale-bm']);
+    eq('admin vê os cinco', visibleDatasets(v => admin.has(v)).map(d => d.key), ['medicoes', 'demandas', 'logistica', 'medicao-vale', 'vale-bm']);
     eq('coordenador não vê nenhum', visibleDatasets(() => false).length, 0);
     let lancou = false;
     try { getDataset('nada' as any); } catch { lancou = true; }

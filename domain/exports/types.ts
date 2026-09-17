@@ -41,7 +41,7 @@ export interface ColumnDef<Row> {
   get: (row: Row) => CellValue;
 }
 
-export type DatasetKey = 'medicoes' | 'demandas' | 'medicao-vale' | 'vale-bm';
+export type DatasetKey = 'medicoes' | 'demandas' | 'medicao-vale' | 'vale-bm' | 'logistica';
 
 export type FilterKey =
   | 'periodo'
@@ -57,7 +57,11 @@ export type FilterKey =
   | 'corredor'
   | 'site'
   /** Status da medição, multi-seleção; 'SEM_MEDICAO' = demanda sem linha em measurements. */
-  | 'statusMedicao';
+  | 'statusMedicao'
+  /** Modo de transporte do bloco (Logística) — só linhas de Locomoção têm modo. */
+  | 'modoTransporte'
+  /** "Só com pendência de documento" (Logística). */
+  | 'pendenciaDoc';
 
 export const SEM_MEDICAO = 'SEM_MEDICAO';
 
@@ -72,6 +76,10 @@ export interface FilterableRow {
   papel?: MeasurementRole;
   /** Status da medição da demanda; vazio/ausente = sem medição aberta. */
   medicaoStatus?: string;
+  /** Chave crua do modo de transporte da linha (bloco de Locomoção); ausente = a linha não tem modo. */
+  modoTransporte?: string;
+  /** A linha tem documento pendente (Logística). */
+  pendenciaDoc?: boolean;
 }
 
 export interface DatasetDef<Row extends FilterableRow> {
@@ -114,6 +122,10 @@ export interface ExportFilters {
   site: string;
   /** Status da medição (multi). Vazio = todos. Aceita SEM_MEDICAO. */
   statusMedicao: string[];
+  /** Chave crua de `transport_mode` (Logística), ou ''. */
+  modoTransporte: string;
+  /** Logística: só linhas com documento pendente. */
+  somentePendenciaDoc: boolean;
 }
 
 export const EMPTY_FILTERS: ExportFilters = {
@@ -129,6 +141,8 @@ export const EMPTY_FILTERS: ExportFilters = {
   corredor: '',
   site: '',
   statusMedicao: [],
+  modoTransporte: '',
+  somentePendenciaDoc: false,
 };
 
 /** Cabeçalho + matriz, prontos para qualquer escritor. */

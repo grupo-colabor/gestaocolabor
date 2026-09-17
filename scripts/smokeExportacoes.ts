@@ -28,6 +28,9 @@
  *   [G] Registry/colunas: chave única por dataset, ordem da saída segue a
  *       seleção, chave desconhecida é erro, defaults aprovados (Horas
  *       pagamento e Elegível ligadas; Informadas/Painel/Origem desligadas).
+ *   [L] Logística (scripts/smokeExportacoesModulos.ts): uma linha por bloco,
+ *       checklist igual ao do Controle Logístico, filtro de transporte só em
+ *       Locomoção, pendência de documento; XLSX das fixtures em C:\tmp.
  *
  * Sai com código 1 se qualquer asserção falhar.
  */
@@ -309,5 +312,12 @@ import { runDatasetChecks } from './smokeExportacoesDatasets';
 const falhasDatasets = runDatasetChecks({ check, eq, perto, ler, semComentarios, fixtures });
 falhas = Math.max(falhas, falhasDatasets);
 
-console.log(falhas === 0 ? '\n✅ SMOKE EXPORTACOES: OK' : `\n❌ SMOKE EXPORTACOES: ${falhas} falha(s)`);
-process.exit(falhas === 0 ? 0 : 1);
+// Os módulos novos (Logística, ...) geram XLSX das fixtures, então o runner
+// deles é assíncrono. Mesmo contrato: devolve o nº de falhas do bloco.
+import { runModulosChecks } from './smokeExportacoesModulos';
+(async () => {
+  const n = await runModulosChecks({ check, eq, perto, ler, semComentarios, fixtures });
+  falhas += n;
+  console.log(falhas === 0 ? '\n✅ SMOKE EXPORTACOES: OK' : `\n❌ SMOKE EXPORTACOES: ${falhas} falha(s)`);
+  process.exit(falhas === 0 ? 0 : 1);
+})().catch(e => { console.error(e); process.exit(1); });

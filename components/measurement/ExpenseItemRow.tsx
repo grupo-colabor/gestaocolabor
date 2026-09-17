@@ -23,12 +23,20 @@ import { supabase } from '../../lib/supabase';
  * Outras Despesas em `w-80`, ~256px) o link era clipado a zero por
  * `overflow-hidden` + `truncate`. O `<a>` estava lá, com o href certo — invisível.
  *
- * Correção estrutural: `flex-wrap` + os controles agrupados num bloco só, e o
- * nome com `min-w-[7rem]`. Faltando espaço, os controles descem para a segunda
- * linha em vez de espremer o nome. Uma seção nova em coluna estreita não
- * reintroduz o bug.
+ * Correção estrutural: `flex-wrap` + os controles agrupados em blocos, e o
+ * nome com `min-w-[7rem]`. Faltando espaço, os blocos descem de linha em vez
+ * de espremer o nome. Uma seção nova em coluna estreita não reintroduz o bug.
  *
- * AS DUAS FLAGS (lado a lado, à direita do valor, rótulo diz o estado):
+ * SEGUNDA REGRESSÃO (09/2026): com as DUAS flags no mesmo bloco do valor, o
+ * bloco inteiro (valor + 2 botões + lixeira ≈ 340px) não cabia nos cartões de
+ * Café/Almoço/Jantar e Outras Despesas e estourava o cartão. Agora as flags
+ * são um bloco próprio com flex-wrap: no cartão largo ficam na linha do valor
+ * se couber; no estreito descem para a linha de baixo, alinhadas à esquerda,
+ * e quebram entre si se nem as duas juntas couberem. Nunca cortam texto nem
+ * saem do cartão — preso em `npm run smoke:layout-despesa` (Chromium
+ * headless mede os três cartões).
+ *
+ * AS DUAS FLAGS (rótulo diz o estado):
  *   • NÃO REEMBOLSA  — `reembolsavel === false`: o CLIENTE não reembolsa a
  *     Colabor; o item fica fora da Medição Vale / BM. Âmbar quando ativo.
  *   • PAGO PELO INSTRUTOR — `pagoPeloInstrutor === true`: o instrutor pagou do
@@ -74,7 +82,7 @@ const ExpenseItemRow: React.FC<ExpenseItemRowProps> = ({
   const pagoPeloInstrutor = isPagoPeloInstrutor(a);
   const avisoDono = pagoPeloInstrutor && !a.instructorId && donoPadraoNome;
 
-  const flagBase = 'shrink-0 px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest border transition-all';
+  const flagBase = 'shrink-0 whitespace-nowrap px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest border transition-all';
   const flagInativa = 'bg-white text-slate-300 border-slate-200';
 
   return (
@@ -113,8 +121,8 @@ const ExpenseItemRow: React.FC<ExpenseItemRowProps> = ({
         )}
       </div>
 
-      {/* Controles: um bloco só, para quebrarem juntos. */}
-      <div className="flex items-center gap-3 ml-auto">
+      {/* Valor + lixeira: um bloco só, encostado à direita da linha do nome. */}
+      <div className="flex items-center gap-2 ml-auto shrink-0">
         <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-md px-2 py-0.5 shadow-inner">
           <span className="text-[9px] font-bold text-slate-400">R$</span>
           <input
@@ -125,38 +133,49 @@ const ExpenseItemRow: React.FC<ExpenseItemRowProps> = ({
             onChange={e => onUpdateValue(a.id, e.target.value)}
           />
         </div>
-        {showReembolsavel && (
-          <button
-            type="button"
-            onClick={() => onToggleReembolsavel?.(a.id)}
-            title="Fica fora da medição da Vale (o cliente não reembolsa este item)."
-            className={`${flagBase} ${
-              naoReembolsa
-                ? 'bg-amber-100 text-amber-700 border-amber-300'
-                : `${flagInativa} hover:text-amber-600 hover:border-amber-200`
-            }`}
-          >
-            Não reembolsa
-          </button>
-        )}
-        {onTogglePagoPeloInstrutor && (
-          <button
-            type="button"
-            onClick={() => onTogglePagoPeloInstrutor(a.id)}
-            title="Entra no Excel de pagamento do instrutor (ele pagou; a Colabor reembolsa)."
-            className={`${flagBase} ${
-              pagoPeloInstrutor
-                ? 'bg-blue-100 text-blue-700 border-blue-300'
-                : `${flagInativa} hover:text-blue-600 hover:border-blue-200`
-            }`}
-          >
-            Pago pelo instrutor
-          </button>
-        )}
         <button onClick={() => onRemove(a.id)} className="p-1 text-slate-300 hover:text-red-500 transition-colors">
           <Trash2 size={14} />
         </button>
       </div>
+
+      {/* As duas flags: bloco próprio, com flex-wrap interno. No cartão largo
+          fica na linha do valor se couber; no estreito desce para a linha de
+          baixo, alinhado à esquerda, e os botões quebram entre si se preciso.
+          `max-w-full` + `min-w-0` garantem que o bloco nunca ultrapasse o
+          cartão — o texto de cada botão não é cortado (`whitespace-nowrap`),
+          é o botão inteiro que muda de linha. */}
+      {(showReembolsavel || onTogglePagoPeloInstrutor) && (
+        <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
+          {showReembolsavel && (
+            <button
+              type="button"
+              onClick={() => onToggleReembolsavel?.(a.id)}
+              title="Fica fora da medição da Vale (o cliente não reembolsa este item)."
+              className={`${flagBase} ${
+                naoReembolsa
+                  ? 'bg-amber-100 text-amber-700 border-amber-300'
+                  : `${flagInativa} hover:text-amber-600 hover:border-amber-200`
+              }`}
+            >
+              Não reembolsa
+            </button>
+          )}
+          {onTogglePagoPeloInstrutor && (
+            <button
+              type="button"
+              onClick={() => onTogglePagoPeloInstrutor(a.id)}
+              title="Entra no Excel de pagamento do instrutor (ele pagou; a Colabor reembolsa)."
+              className={`${flagBase} ${
+                pagoPeloInstrutor
+                  ? 'bg-blue-100 text-blue-700 border-blue-300'
+                  : `${flagInativa} hover:text-blue-600 hover:border-blue-200`
+              }`}
+            >
+              Pago pelo instrutor
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Item sem dono marcado como pago: diz para quem o reembolso vai, em vez
           de deixar a atribuição implícita na regra "sem dono → titular". */}

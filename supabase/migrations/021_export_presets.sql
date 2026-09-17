@@ -143,6 +143,12 @@ CREATE INDEX IF NOT EXISTS export_presets_user_idx
 -- ---------------------------------------------------------------------------
 ALTER TABLE public.export_presets ENABLE ROW LEVEL SECURITY;
 
+-- GRANT à role `authenticated` — aplicado em produção em 17/09/2026 junto com
+-- esta migration. RLS só filtra linhas; sem o privilégio na tabela a role
+-- nem chega às policies (permission denied). Idempotente: o Postgres aceita
+-- reexecutar o GRANT.
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.export_presets TO authenticated;
+
 DROP POLICY IF EXISTS "Dono pode ler export_presets"       ON public.export_presets;
 DROP POLICY IF EXISTS "Dono pode inserir export_presets"   ON public.export_presets;
 DROP POLICY IF EXISTS "Dono pode atualizar export_presets" ON public.export_presets;

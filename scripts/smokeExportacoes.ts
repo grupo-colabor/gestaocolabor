@@ -31,6 +31,8 @@
  *   [L] Logística (scripts/smokeExportacoesModulos.ts): uma linha por bloco,
  *       checklist igual ao do Controle Logístico, filtro de transporte só em
  *       Locomoção, pendência de documento; XLSX das fixtures em C:\tmp.
+ *   [I] Instrutores: três papéis, dias = assignmentDays, dias no período e
+ *       total distinto por pessoa, guarda anti-sensível (tipo, fonte, colunas).
  *
  * Sai com código 1 se qualquer asserção falhar.
  */

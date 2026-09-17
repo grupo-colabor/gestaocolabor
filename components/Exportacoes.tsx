@@ -28,6 +28,7 @@ import { buildTable, defaultColumnKeys } from '../domain/exports/buildRows';
 import { buildMedicoesRows } from '../domain/exports/datasets/medicoes';
 import { buildDemandasRows } from '../domain/exports/datasets/demandas';
 import { buildLogisticaRows } from '../domain/exports/datasets/logistica';
+import { buildInstrutoresRows } from '../domain/exports/datasets/instrutores';
 import { buildTrainingsById } from '../domain/modalityOptions';
 import { loadExportData, type ExportSourceData } from '../services/exports/loadExportData';
 import { downloadXlsx } from '../services/exports/xlsxWriter';
@@ -51,6 +52,7 @@ const BUILDERS: Record<string, (src: any) => any[]> = {
   medicoes: buildMedicoesRows,
   demandas: buildDemandasRows,
   logistica: buildLogisticaRows,
+  instrutores: buildInstrutoresRows,
 };
 
 type Carga = { data: ExportSourceData; comLogistica: boolean; templateKey: string };
@@ -111,14 +113,19 @@ const Exportacoes: React.FC = () => {
 
   const regionNameById = useMemo(() => new Map(regions.map(r => [r.id, r.name])), [regions]);
 
-  // Linhas do dataset (sem filtro): montadas uma vez por carga.
+  // Linhas do dataset (sem filtro): montadas uma vez por carga. O período do
+  // filtro entra como entrada só para quem o usa (Instrutores: "dias no
+  // período"); os demais o ignoram e a linha da demanda continua entrando
+  // por interseção no applyFilters.
+  const periodo = { dataInicio: filters.dataInicio, dataFim: filters.dataFim };
   const rows = useMemo(() => {
     if (!dataset || !cargaServe || !carga || isTemplateDataset(dataset)) return null;
-    const src = { ...carga.data, regionNameById, options };
+    const src = { ...carga.data, regionNameById, options, periodo };
     const build = BUILDERS[dataset.key];
     if (!build) throw new Error(`Dataset sem construtor de linhas: ${dataset.key}`);
     return build(src);
-  }, [dataset, carga, cargaServe, regionNameById, options]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset, carga, cargaServe, regionNameById, options, periodo.dataInicio, periodo.dataFim]);
 
   const trainingsById = useMemo(
     () => buildTrainingsById(carga?.data.trainings ?? []),

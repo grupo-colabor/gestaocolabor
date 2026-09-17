@@ -10,13 +10,18 @@
  *       tela monta, e comparada com a da linha); filtro de modo de transporte
  *       recorta só Locomoção; "só com pendência de documento"; instrutor por
  *       id ou por nome legado; bloco órfão fora.
+ *   [I] Instrutores — uma linha por vínculo (titular, participante de interna,
+ *       acompanhante), dias = assignmentDays, dias no período e total distinto
+ *       por pessoa; guarda anti-sensível no tipo da carga, na fonte e nas colunas.
  */
 import fs from 'fs';
 import path from 'path';
 
 import { buildLogisticsChecklist } from '../domain/demandLogisticsStatus';
 import { isInternalDemand } from '../domain/demandLabel';
+import { assignmentDays } from '../domain/personScheduleConflict';
 import { buildLogisticaRows, LOGISTICA_DATASET, type LogisticaRow } from '../domain/exports/datasets/logistica';
+import { buildInstrutoresRows, INSTRUTORES_DATASET, type InstrutorRow } from '../domain/exports/datasets/instrutores';
 import { buildTable, defaultColumnKeys } from '../domain/exports/buildRows';
 import { applyFilters, buildFilterOptions } from '../domain/exports/filters';
 import { EMPTY_FILTERS, type DatasetDef, type FilterableRow } from '../domain/exports/types';
@@ -152,6 +157,103 @@ export async function runModulosChecks(t: SmokeTools): Promise<number> {
       ['blocoOrdem', 'statusGravado', 'checkCarro', 'checkHotel', 'checkMaterial'].every(k => !chaves.includes(k)));
 
     const arquivo = await gravarXlsx(LOGISTICA_DATASET, rows, 'exportacao-logistica-fixtures.xlsx');
+    check(`XLSX das fixtures gravado${arquivo ? ` em ${arquivo}` : ' (C:\\tmp ausente — pulado)'}`, arquivo === null || fs.statSync(arquivo).size > 5_000);
+  }
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * [I] Instrutores
+   * ──────────────────────────────────────────────────────────────────────── */
+  console.log('\n[I] Instrutores — uma linha por vínculo, três papéis, dias no período');
+  {
+    // DEM-100 (10-11/08): dividida por dias entre INS-T (10) e INS-2 (11);
+    //   acompanhante INS-A com uma linha por dia (10, 10 repetido, 11) → 2 dias;
+    //   INS-T também gravado como acompanhante → não repete.
+    // DEM-101 (20-21/08): sem alocação → principal INS-T nos 2 dias.
+    // DEM-900 interna (03-04/08): titular INS-T (principal); participantes INS-2 só
+    //   no dia 03 e INS-T (== titular, ignorado); acompanhante em interna é ignorado.
+    // DEM-104 cancelada (10-11/08): INS-3 titular — sai pelo filtro e não conta no total.
+    const D100 = demandaCliente();
+    const D101 = demandaCliente({ id: 'DEM-101', startDate: '2026-08-20T08:00', endDate: '2026-08-21T17:00', demandState: 'ES', companyId: 'C1' });
+    const D900 = demandaInterna();
+    const D104 = demandaCliente({ id: 'DEM-104', status: 'CANCELADA', instructorId: 'INS-3' });
+    const demands = [D100, D101, D900, D104];
+    const alocs: any[] = [
+      { id: 'A1', demandId: 'DEM-100', instructorId: 'INS-T', startDate: '2026-08-10T08:00', endDate: '2026-08-10T17:00' },
+      { id: 'A2', demandId: 'DEM-100', instructorId: 'INS-2', startDate: '2026-08-11T08:00', endDate: '2026-08-11T17:00' },
+      { id: 'A3', demandId: 'DEM-104', instructorId: 'INS-3', startDate: '2026-08-10T08:00', endDate: '2026-08-11T17:00' },
+    ];
+    const comps: any[] = [
+      { id: 'C1', demandId: 'DEM-100', instructorId: 'INS-A', startDate: '2026-08-10T08:00', endDate: '2026-08-10T17:00' },
+      { id: 'C2', demandId: 'DEM-100', instructorId: 'INS-A', startDate: '2026-08-10T08:00', endDate: '2026-08-10T17:00' },
+      { id: 'C3', demandId: 'DEM-100', instructorId: 'INS-A', startDate: '2026-08-11T08:00', endDate: '2026-08-11T17:00' },
+      { id: 'C4', demandId: 'DEM-100', instructorId: 'INS-T', startDate: '2026-08-11T08:00', endDate: '2026-08-11T17:00' },
+      { id: 'C5', demandId: 'DEM-900', instructorId: 'INS-A', startDate: '2026-08-03T08:00', endDate: '2026-08-04T17:00' },
+    ];
+    const parts: any[] = [
+      { id: 'P1', demandId: 'DEM-900', instructorId: 'INS-2', startDate: '2026-08-03', endDate: '2026-08-03' },
+      { id: 'P2', demandId: 'DEM-900', instructorId: 'INS-T', startDate: '2026-08-03', endDate: '2026-08-04' },
+    ];
+    const instrutoresUf = INSTRUCTORS.map((i: any) => ({ ...i, uf: i.id === 'INS-T' ? 'MG' : i.id === 'INS-2' ? 'es' : '' }));
+    const periodo = { dataInicio: '2026-08-10', dataFim: '2026-08-20' };
+    const src = { demands, trainings: TRAININGS, instructors: instrutoresUf, companies: COMPANIES, instructorAllocations: alocs, participants: parts, companions: comps, now: HOJE, periodo };
+    const rows = buildInstrutoresRows(src);
+    const chave = (r: InstrutorRow) => `${r.instructorName}:${r.demand.id}:${r.papel}`;
+
+    eq('uma linha por vínculo, três papéis, sem repetir titular como acompanhante/participante; ordem por nome, primeiro dia, demanda',
+      rows.map(chave), [
+        'Acompanhante:DEM-100:ACOMPANHANTE',
+        'Segundo:DEM-900:PARTICIPANTE',
+        'Segundo:DEM-100:TITULAR',
+        'Terceiro:DEM-104:TITULAR',
+        'Titular:DEM-900:TITULAR',
+        'Titular:DEM-100:TITULAR',
+        'Titular:DEM-101:TITULAR',
+      ]);
+    const linha = (k: string) => rows.find(r => chave(r) === k)!;
+
+    // Dias = assignmentDays, o mesmo cálculo da checagem de conflito da agenda.
+    eq('titular dividido: só o dia da alocação', linha('Titular:DEM-100:TITULAR').dias, assignmentDays({ demandId: 'DEM-100', startDate: alocs[0].startDate, endDate: alocs[0].endDate }, D100));
+    eq('acompanhante: união das linhas por dia, sem duplicar', linha('Acompanhante:DEM-100:ACOMPANHANTE').dias, ['2026-08-10', '2026-08-11']);
+    eq('principal sem alocação: todos os dias da demanda; vínculo principal', [linha('Titular:DEM-101:TITULAR').dias, linha('Titular:DEM-101:TITULAR').vinculo], [['2026-08-20', '2026-08-21'], 'principal']);
+    eq('participante de interna: só o dia dele; vínculo participante', [linha('Segundo:DEM-900:PARTICIPANTE').dias, linha('Segundo:DEM-900:PARTICIPANTE').vinculo], [['2026-08-03'], 'participante']);
+    check('acompanhante gravado em interna é ignorado', !rows.some(r => r.demand.id === 'DEM-900' && r.papel === 'ACOMPANHANTE'));
+
+    // Dias no período e total distinto por pessoa (10-20/08).
+    eq('dias no período: DEM-100 inteira; DEM-101 só o dia 20; interna zero', [linha('Titular:DEM-100:TITULAR').diasNoPeriodo.length, linha('Titular:DEM-101:TITULAR').diasNoPeriodo.length, linha('Titular:DEM-900:TITULAR').diasNoPeriodo.length], [1, 1, 0]);
+    eq('total de dias do INS-T no período = 2 distintos (10/08 e 20/08), igual em todas as linhas dele', rows.filter(r => r.instructorId === 'INS-T').map(r => r.totalDiasInstrutorPeriodo), [2, 2, 2]);
+    eq('cancelada não conta no total (INS-3 = 0) e nem entra sem a opção', [linha('Terceiro:DEM-104:TITULAR').totalDiasInstrutorPeriodo, applyFilters(rows, EMPTY_FILTERS, INSTRUTORES_DATASET.filters, { trainingsById, now: HOJE }).some(r => r.demand.id === 'DEM-104')], [0, false]);
+    const semPeriodo = buildInstrutoresRows({ ...src, periodo: undefined });
+    eq('sem período: dias no período = todos os dias do vínculo', semPeriodo.map(r => r.diasNoPeriodo.length), semPeriodo.map(r => r.dias.length));
+    eq('UF do instrutor: do cadastro, maiúscula; vazia quando não há', [linha('Titular:DEM-100:TITULAR').instructorUf, linha('Segundo:DEM-100:TITULAR').instructorUf, linha('Acompanhante:DEM-100:ACOMPANHANTE').instructorUf], ['MG', 'ES', '']);
+    eq('carga: cliente = horas do treinamento; interna = horas previstas', [linha('Titular:DEM-100:TITULAR').cargaHoraria, linha('Titular:DEM-900:TITULAR').cargaHoraria], [16, 16]);
+
+    // Filtros: papel com a terceira opção; UF = da demanda; instrutor; período por interseção.
+    const ctx = { trainingsById, now: HOJE };
+    eq('filtro papel = Participante', applyFilters(rows, { ...EMPTY_FILTERS, papel: 'PARTICIPANTE' }, INSTRUTORES_DATASET.filters, ctx).map(chave), ['Segundo:DEM-900:PARTICIPANTE']);
+    eq('filtro UF é o da demanda (ES → DEM-101 e a interna), não o do instrutor', applyFilters(rows, { ...EMPTY_FILTERS, uf: 'ES' }, INSTRUTORES_DATASET.filters, ctx).map(r => r.demand.id), ['Segundo:DEM-900:PARTICIPANTE', 'Titular:DEM-900:TITULAR', 'Titular:DEM-101:TITULAR'].map(k => linha(k).demand.id));
+    eq('filtro de instrutor', applyFilters(rows, { ...EMPTY_FILTERS, instructorId: 'INS-2' }, INSTRUTORES_DATASET.filters, ctx).map(chave), ['Segundo:DEM-900:PARTICIPANTE', 'Segundo:DEM-100:TITULAR']);
+    const opts = buildFilterOptions(rows, TRAININGS, COMPANIES, instrutoresUf);
+    eq('opções de papel trazem os três', opts.papel.map(p => p.value), ['TITULAR', 'PARTICIPANTE', 'ACOMPANHANTE']);
+
+    // Guarda anti-sensível: tipo da fonte, código do dataset, mapeamento do loader e colunas.
+    const sensivel = /cpf|e-?mail|address|endere|observations|operationalNotes|tarifa|valorHH|hourRate|R\$/i;
+    const fonte = t.semComentarios(t.ler('domain/exports/datasets/instrutores.ts'));
+    check('dataset Instrutores não lê nenhum campo sensível do instrutor', !sensivel.test(fonte));
+    check('colunas de Instrutores sem chave/cabeçalho sensível', !INSTRUTORES_DATASET.columns.some(c => sensivel.test(c.key) || sensivel.test(c.header)));
+    check('nenhuma coluna de Instrutores é moeda', !INSTRUTORES_DATASET.columns.some(c => c.kind === 'currency'));
+    const loader = t.semComentarios(t.ler('services/exports/loadExportData.ts'));
+    check('loader: instructors da carga é só { id, name, uf } (tipo e mapeamento)',
+      loader.includes('instructors: { id: string; name: string; uf: string }[];') &&
+      loader.includes('return { id: i.id, name: i.name, uf: String((r as any).residence_location ?? \'\').trim() };'));
+    const chaves = defaultColumnKeys(INSTRUTORES_DATASET);
+    check('defaults: instrutor, papel, UF do instrutor, demanda, dias alocados no período e carga ligados; total por pessoa desligado',
+      ['instrutor', 'papel', 'instrutorUf', 'demandId', 'nDiasNoPeriodo', 'cargaHoraria'].every(k => chaves.includes(k)) && !chaves.includes('totalDiasInstrutorPeriodo'));
+
+    const table = buildTable(INSTRUTORES_DATASET, rows, INSTRUTORES_DATASET.columns.map(c => c.key));
+    const idx = (k: string) => table.columns.findIndex(c => c.key === k);
+    const ra = table.rows[0];
+    eq('célula: papel rotulado, dias do vínculo em dd/mm/yyyy a dd/mm/yyyy', [ra[idx('papel')], ra[idx('diasVinculo')]], ['Acompanhante', '10/08/2026 a 11/08/2026']);
+    const arquivo = await gravarXlsx(INSTRUTORES_DATASET, rows, 'exportacao-instrutores-fixtures.xlsx');
     check(`XLSX das fixtures gravado${arquivo ? ` em ${arquivo}` : ' (C:\\tmp ausente — pulado)'}`, arquivo === null || fs.statSync(arquivo).size > 5_000);
   }
 

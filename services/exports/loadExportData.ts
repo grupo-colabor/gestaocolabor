@@ -50,7 +50,13 @@ export interface ExportSourceData {
   demands: Demand[];
   measurements: Measurement[];
   trainings: Training[];
-  instructors: { id: string; name: string }[];
+  /**
+   * SÓ id, nome e UF de residência. O mapper do Excel de pagamento devolve
+   * também o CPF (mapInstructor) e ele é descartado AQUI de propósito: nenhum
+   * dataset da aba recebe CPF, e-mail, endereço, observações, tarifa ou valor
+   * do instrutor. O smoke prende este tipo e este mapeamento.
+   */
+  instructors: { id: string; name: string; uf: string }[];
   companies: { id: string; name: string }[];
   instructorAllocations: InstructorAllocation[];
   participants: DemandParticipant[];
@@ -128,7 +134,8 @@ export async function loadExportData(opts: LoadExportDataOptions): Promise<Expor
     trainings: (trainingRows ?? []).map(mapTraining),
     instructors: (instructorRows ?? []).map(r => {
       const i = mapInstructor(r);
-      return { id: i.id, name: i.name };
+      // residence_location é a UF de residência (domain/instructorRecommendation, isSameDemandState).
+      return { id: i.id, name: i.name, uf: String((r as any).residence_location ?? '').trim() };
     }),
     // Mesmo rótulo do Excel de pagamento: `name`, senão `razao_social`.
     companies: (companyRows ?? []).map(c => ({ id: c.id, name: (c.name || c.razao_social || '').trim() })),

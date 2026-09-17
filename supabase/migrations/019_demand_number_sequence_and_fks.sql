@@ -30,13 +30,14 @@
 --      limpos a partir de agora; o histórico fica. NÃO rodar
 --      `VALIDATE CONSTRAINT` sem antes decidir o destino dos órfãos.
 --
--- Órfãos existentes na data da migration (contagem rodada pelo Bernardo —
--- colar o resultado abaixo para quem ler saber que existem e por que ficaram):
---   resource_allocations : ____
---   measurements         : ____
---   logistic_allocations : ____
---   evidences            : ____
---   agenda_items         : ____
+--      Se a coluna da tabela alvo tiver tipo diferente de `demands.id`, o
+--      bloco daquela tabela é PULADO com NOTICE em vez de derrubar a
+--      migration — a FK fica para uma migration futura, depois de alinhar o
+--      tipo.
+--
+-- Órfãos existentes na data da migration: contagem NÃO registrada aqui por
+-- decisão (não serão apagados nem validados). Para obter, rodar a conferência
+-- prévia 4 abaixo.
 --
 -- Nenhuma linha existente é apagada ou alterada por esta migration. Nenhuma
 -- coluna nova. Idempotente: CREATE ... IF NOT EXISTS onde o Postgres aceita;
@@ -63,12 +64,21 @@
 --   --    passo 3 FALHA — corrigir à mão antes):
 --   select number, count(*) from public.demands group by number having count(*) > 1;
 --
---   -- 4) órfãos (só para registrar no cabeçalho; NÃO apagar):
+--   -- 4) órfãos (só para saber o tamanho; NÃO apagar):
 --   select 'resource_allocations' t, count(*) from public.resource_allocations r where not exists (select 1 from public.demands d where d.id = r.demand_id)
 --   union all select 'measurements', count(*) from public.measurements m where not exists (select 1 from public.demands d where d.id = m.demand_id)
 --   union all select 'logistic_allocations', count(*) from public.logistic_allocations l where not exists (select 1 from public.demands d where d.id = l.demand_id)
 --   union all select 'evidences', count(*) from public.evidences e where not exists (select 1 from public.demands d where d.id = e.demand_id)
 --   union all select 'agenda_items', count(*) from public.agenda_items a where a.related_demand_id is not null and not exists (select 1 from public.demands d where d.id = a.related_demand_id);
+--
+--   -- 5) tipo de demands.id e das colunas alvo (todas devem bater com demands.id):
+--   select table_name, column_name, data_type
+--     from information_schema.columns
+--    where table_schema = 'public'
+--      and ((table_name = 'demands' and column_name = 'id')
+--        or (table_name in ('resource_allocations','measurements','logistic_allocations','evidences') and column_name = 'demand_id')
+--        or (table_name = 'agenda_items' and column_name = 'related_demand_id'))
+--    order by 1, 2;
 
 
 -- ---------------------------------------------------------------------------
@@ -140,14 +150,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS demands_number_uq
 -- 4) FKs para demands que faltavam — NOT VALID (órfãos existentes ficam)
 -- ---------------------------------------------------------------------------
 -- Um bloco por tabela. Cada um só age se (a) a tabela existir, (b) a coluna
--- existir e (c) NÃO houver nenhuma FK partindo daquela coluna para demands —
--- assim a migration é segura seja qual for o resultado da conferência 1.
+-- existir, (c) o tipo da coluna for o mesmo de demands.id e (d) NÃO houver
+-- nenhuma FK partindo daquela coluna para demands — assim a migration é
+-- segura seja qual for o resultado das conferências 1 e 5.
 DO $$
 DECLARE
-  alvo record;
-  existe_fk boolean;
-  nome text;
+  alvo        record;
+  existe_fk   boolean;
+  tipo_alvo   text;
+  tipo_demand text;
+  nome        text;
 BEGIN
+  SELECT format_type(a.atttypid, a.atttypmod) INTO tipo_demand
+    FROM pg_attribute a
+   WHERE a.attrelid = 'public.demands'::regclass AND a.attname = 'id' AND NOT a.attisdropped;
+
   FOR alvo IN
     SELECT * FROM (VALUES
       ('resource_allocations', 'demand_id',         'CASCADE'),
@@ -162,11 +179,23 @@ BEGIN
       SELECT 1 FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = alvo.tabela AND column_name = alvo.coluna
     ) THEN
-      RAISE NOTICE '019: % .% não existe — bloco ignorado', alvo.tabela, alvo.coluna;
+      RAISE NOTICE '019: %.% não existe — bloco ignorado', alvo.tabela, alvo.coluna;
       CONTINUE;
     END IF;
 
-    -- (c) já existe FK desta coluna para demands?
+    -- (c) tipo bate com demands.id? Se não, PULA em vez de derrubar a migration.
+    SELECT format_type(a.atttypid, a.atttypmod) INTO tipo_alvo
+      FROM pg_attribute a
+     WHERE a.attrelid = format('public.%I', alvo.tabela)::regclass
+       AND a.attname = alvo.coluna AND NOT a.attisdropped;
+
+    IF tipo_alvo IS DISTINCT FROM tipo_demand THEN
+      RAISE WARNING '019: %.% é % e demands.id é % — FK NÃO criada; alinhar o tipo numa migration futura',
+        alvo.tabela, alvo.coluna, tipo_alvo, tipo_demand;
+      CONTINUE;
+    END IF;
+
+    -- (d) já existe FK desta coluna para demands?
     SELECT EXISTS (
       SELECT 1
         FROM pg_constraint c
@@ -193,7 +222,8 @@ END $$;
 
 
 -- ===========================================================================
--- CONFERÊNCIA PÓS-MIGRAÇÃO
+-- CONFERÊNCIA PÓS-MIGRAÇÃO (o SQL Editor do Supabase NÃO mostra NOTICE/WARNING;
+-- confie nestas consultas, não na ausência de mensagens)
 -- ===========================================================================
 --   -- 1) sequence posicionada (last_value = max(number), is_called = true):
 --   select last_value, is_called from public.demands_number_seq;
@@ -208,7 +238,9 @@ END $$;
 --   -- 3) índice único:
 --   select indexname, indexdef from pg_indexes where tablename = 'demands' and indexname = 'demands_number_uq';
 --
---   -- 4) FKs novas, NOT VALID (convalidated = false) — órfãos intocados:
+--   -- 4) FKs para demands: as novas com convalidated = false (órfãos intocados).
+--   --    Se alguma das cinco tabelas NÃO aparecer aqui, foi pulada por tipo
+--   --    diferente (conferência prévia 5) — anotar para migration futura:
 --   select c.conrelid::regclass, c.conname, c.convalidated, pg_get_constraintdef(c.oid)
 --     from pg_constraint c
 --    where c.contype = 'f' and c.confrelid = 'public.demands'::regclass

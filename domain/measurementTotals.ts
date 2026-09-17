@@ -93,6 +93,16 @@ export interface MeasurementParticipant {
   /** Ausente = não informado. NUNCA confundir com 0. */
   horas?: number | string | null;
   valorHH?: number | string | null;
+  /**
+   * A FATIA do rateio por dias deste titular numa demanda DIVIDIDA (cliente
+   * com 2+ titulares em `instructor_allocations`), gravada pelo painel ao
+   * salvar. É o que o titular vale SEM ninguém digitar — o mesmo número que o
+   * Excel paga pelo rateio. NÃO é "horas informadas": `horasInformadas`
+   * continua lendo só `horas`, e por isso o Excel não muda com este campo.
+   * Envelhece se os dias forem redivididos depois: o painel mostra sempre a
+   * fatia viva e regrava ao salvar; o Dashboard acompanha no próximo salvar.
+   */
+  horasRateio?: number | string | null;
 }
 
 /** Só o que a conta lê de uma medição. */
@@ -214,8 +224,12 @@ export function computeMeasurementTotals(
     }
     const demandDefaultHours =
       ctx?.demandDefaultHours ?? parseExpenseValue(m?.expenses?.classHours as any);
-    return normalizeMeasurementBlocks(m).reduce(
-      (acc, b) => acc + blockHoraAula(b, { demandDefaultHours }),
+    const blocos = normalizeMeasurementBlocks(m);
+    // Demanda dividida: cada titular vale a sua fatia (`horasRateio`); sem a
+    // fatia gravada, partes iguais — Σ dos titulares nunca passa da carga.
+    const titularesNaMedicao = countTitulares(blocos);
+    return blocos.reduce(
+      (acc, b) => acc + blockHoraAula(b, { demandDefaultHours, titularesNaMedicao }),
       0
     );
   })();
@@ -494,6 +508,9 @@ export function aggregatePanelExpenseBreakdown(
  *   | papel        | PAINEL (esta função)        | EXCEL (applyMeasurementOverrides) |
  *   |--------------|-----------------------------|-----------------------------------|
  *   | TITULAR      | carga padrão da demanda     | mantém o rateio da alocação       |
+ *   | TITULAR de   | a FATIA do rateio por dias  | mantém o rateio da alocação (o    |
+ *   | dividida     | (`horasRateio`, gravada ao  | mesmo número — `horasRateio` NÃO  |
+ *   | (2+ titul.)  | salvar; sem ela, carga ÷ n) | conta como horas informadas)      |
  *   | PARTICIPANTE | carga padrão da demanda     | `horas_previstas` (carga cheia)   |
  *   | ACOMPANHANTE | ZERO (manual obrigatório)   | não gera linha nenhuma            |
  *   | HÍBRIDA ×    | SEM DEFAULT: ZERO até       | linha com Horas EM BRANCO         |
@@ -543,6 +560,8 @@ export interface MeasurementPersonBlock {
   horas?: number;
   /** `false` quando o JSON não trazia `horas` — o chamador decide o fallback. */
   horasInformadas: boolean;
+  /** Fatia do rateio por dias (titular de demanda dividida). Ver `MeasurementParticipant`. */
+  horasRateio?: number;
   valorHH: number;
   /** Itens deste bloco: uma partição de `m.attachments`. */
   attachments: TotalizableAttachment[];
@@ -587,17 +606,20 @@ export function normalizeMeasurementBlocks(
 
   // ---- v2: um bloco por entrada ----
   //
-  // O bloco TITULAR é quem absorve os itens sem dono. Se nenhuma entrada for
-  // titular (dado torto, ou uma medição só de acompanhantes na F3), o primeiro
-  // bloco assume o papel — assim nenhum item de despesa evapora da conta, que é
-  // a propriedade que faz "soma dos blocos = total" valer sempre.
+  // O bloco TITULAR PRINCIPAL é quem absorve os itens sem dono. Com demanda
+  // dividida há DOIS blocos de papel TITULAR, então o id do principal
+  // (`demands.instructor_id`) decide PRIMEIRO; só sem ele vale o primeiro
+  // bloco de papel TITULAR; e se nenhuma entrada for titular (dado torto, ou
+  // uma medição só de acompanhantes na F3), o primeiro bloco assume o papel —
+  // assim nenhum item de despesa evapora da conta, que é a propriedade que faz
+  // "soma dos blocos = total" valer sempre.
   const idxTitular = (() => {
-    const porPapel = participantes.findIndex(p => p?.papel === 'TITULAR');
-    if (porPapel >= 0) return porPapel;
     if (titularInstructorId) {
       const porId = participantes.findIndex(p => p?.instructorId === titularInstructorId);
       if (porId >= 0) return porId;
     }
+    const porPapel = participantes.findIndex(p => p?.papel === 'TITULAR');
+    if (porPapel >= 0) return porPapel;
     return 0;
   })();
 
@@ -623,11 +645,17 @@ export function normalizeMeasurementBlocks(
       papel: (p?.papel as MeasurementRole) || (ehTitular ? 'TITULAR' : 'PARTICIPANTE'),
       horas: naoInformado(p?.horas) ? undefined : parseExpenseValue(p?.horas),
       horasInformadas: !naoInformado(p?.horas),
+      horasRateio: naoInformado(p?.horasRateio) ? undefined : parseExpenseValue(p?.horasRateio),
       valorHH: parseExpenseValue(p?.valorHH),
       attachments: doBloco,
       titular: ehTitular,
     };
   });
+}
+
+/** Quantos blocos de papel TITULAR há na lista — a salvaguarda de `blockPanelHours` lê isto. */
+export function countTitulares(blocos: { papel: MeasurementRole }[]): number {
+  return blocos.filter(b => b.papel === 'TITULAR').length;
 }
 
 /**
@@ -656,6 +684,14 @@ export interface PanelHoursContext {
    * Ausente = comportamento de sempre (PRESENCIAL / ONLINE: zero mudança).
    */
   hibrida?: boolean;
+  /**
+   * Quantos blocos de papel TITULAR a medição tem (demanda dividida = 2+).
+   * SALVAGUARDA: titular sem `horas` e sem `horasRateio` numa medição com 2+
+   * titulares recebe a carga dividida em partes iguais — nunca a carga
+   * inteira, que somaria duas cargas no Dashboard. Ausente ou 1 = titular
+   * único, carga cheia como sempre.
+   */
+  titularesNaMedicao?: number;
 }
 
 /**
@@ -663,7 +699,8 @@ export interface PanelHoursContext {
  * seção: o Excel resolve o mesmo ausente de outro jeito, e de propósito.
  *
  * Horas informadas sempre vencem — inclusive um 0 digitado, que é decisão de
- * alguém e não ausência.
+ * alguém e não ausência. Titular de demanda DIVIDIDA sem horas vale a fatia
+ * do rateio (`horasRateio`), o mesmo número que o Excel paga.
  */
 export function blockPanelHours(b: MeasurementPersonBlock, ctx: PanelHoursContext): number {
   if (b.horasInformadas && b.horas !== undefined) return b.horas;
@@ -673,6 +710,14 @@ export function blockPanelHours(b: MeasurementPersonBlock, ctx: PanelHoursContex
   // Híbrida: a mesma semântica do acompanhante para TODO papel — a carga total
   // do treinamento não é o que foi ministrado presencialmente.
   if (ctx.hibrida) return 0;
+  if (b.papel === 'TITULAR') {
+    // Demanda dividida: a fatia do rateio por dias, gravada pelo painel.
+    if (b.horasRateio !== undefined) return b.horasRateio;
+    // Salvaguarda: 2+ titulares e nenhuma fatia gravada (bloco de cliente
+    // antigo) → partes iguais, nunca a carga inteira para cada um.
+    const n = ctx.titularesNaMedicao ?? 1;
+    if (n > 1) return ctx.demandDefaultHours / n;
+  }
   return ctx.demandDefaultHours;
 }
 

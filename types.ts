@@ -368,6 +368,13 @@ export interface MeasurementParticipantBlock {
   /** Ausente = nao informado. NUNCA gravar o default aqui. */
   horas?: number;
   valorHH?: number;
+  /**
+   * Fatia do rateio por dias do titular de demanda DIVIDIDA (cliente com 2+
+   * titulares), gravada pelo painel ao salvar. Nao e "horas informadas": o
+   * Excel continua pagando o rateio, e este campo so alimenta painel e
+   * Dashboard. Ver domain/measurementTotals.ts (`MeasurementParticipant`).
+   */
+  horasRateio?: number;
 }
 
 export interface Measurement {

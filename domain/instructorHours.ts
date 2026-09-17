@@ -213,67 +213,127 @@ export function computeInstructorHoursByDemand(
     const allocsForDemand = allocationsByDemandId.get(demand.id);
     if (!allocsForDemand || allocsForDemand.length === 0) continue; // sem instructor_allocations: fonte é a tabela, não demand.instructor_id
 
-    const demandDaySetAll = new Set(getDemandDays(demand));
-    if (demandDaySetAll.size === 0) continue; // guarda contra divisão por zero
-
-    // Dias de cada instrutor, interseccionados com os dias reais do cadastro
-    // (ainda SEM recorte de período — precisamos disso para o denominador,
-    // que é a união entre todos os instrutores da demanda).
-    const diasPorInstrutorTotal = new Map<string, Set<string>>();
-    for (const alloc of allocsForDemand) {
-      if (!alloc.instructorId) continue;
-      const allocDays = getDemandDays({
-        dateMode: 'CONTINUO',
-        startDate: alloc.startDate,
-        endDate: alloc.endDate,
-      });
-      const set = diasPorInstrutorTotal.get(alloc.instructorId) ?? new Set<string>();
-      for (const day of allocDays) {
-        if (demandDaySetAll.has(day)) set.add(day);
-      }
-      diasPorInstrutorTotal.set(alloc.instructorId, set);
-    }
-
-    // Denominador = união dos dias EFETIVAMENTE alocados (a qualquer
-    // instrutor), não os dias do cadastro — ver comentário no topo do
-    // arquivo (caso DEM-359 / híbridos).
-    const unionAllocatedDays = new Set<string>();
-    for (const dias of diasPorInstrutorTotal.values()) {
-      for (const day of dias) unionAllocatedDays.add(day);
-    }
-    const totalDiasDemanda = unionAllocatedDays.size;
-    if (totalDiasDemanda === 0) continue; // guarda contra divisão por zero (nenhuma alocação cai em dia real)
-
     const horasTotais = effectiveDemandHours(demand, trainingsById, measurementByDemandId);
-    if (horasTotais <= 0) continue;
 
-    // Numerador (por instrutor): dias dele, recortados pela janela do
-    // período — uma demanda que atravessa a borda do filtro só contribui
-    // com a fração de dias que caem dentro dele.
-    const diasAlocadosNoPeriodo = new Set(clipToPeriod([...unionAllocatedDays], periodStart, periodEnd));
-    if (diasAlocadosNoPeriodo.size === 0) continue; // demanda inteira fora do período após recorte
+    // A conta em si (dias por instrutor, união como denominador, fração ×
+    // carga) mora em `rateioDaDemanda` — o painel e o dataset Medições usam a
+    // MESMA função para o default de horas do titular de demanda dividida.
+    const rateio = rateioDaDemanda(demand, allocsForDemand, horasTotais, periodStart, periodEnd);
+    if (!rateio) continue;
 
-    const participantes: Array<[string, string[]]> = [];
-    for (const [instructorId, diasTotal] of diasPorInstrutorTotal) {
-      const diasNoPeriodo = [...diasTotal].filter(d => diasAlocadosNoPeriodo.has(d)).sort();
-      if (diasNoPeriodo.length > 0) participantes.push([instructorId, diasNoPeriodo]);
-    }
-    if (participantes.length === 0) continue;
-
-    const dividida = participantes.length > 1;
-
-    for (const [instructorId, dias] of participantes) {
+    for (const linha of rateio.linhas) {
       rows.push({
-        instructorId,
+        instructorId: linha.instructorId,
         demandId: demand.id,
-        horas: (dias.length / totalDiasDemanda) * horasTotais,
-        dias,
-        dividida,
+        horas: linha.horas,
+        dias: linha.dias,
+        dividida: rateio.dividida,
       });
     }
   }
 
   return rows;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * RATEIO DE UMA DEMANDA — a conta, isolada
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/** Só o que o rateio lê de uma alocação. */
+export interface RateioAllocationLike {
+  instructorId?: string | null;
+  startDate: string;
+  endDate: string;
+}
+
+export interface RateioLinha {
+  instructorId: string;
+  /** Dias do instrutor dentro da demanda (e do período, se houver), ordenados. */
+  dias: string[];
+  /** dias / união dos dias alocados da demanda. */
+  fracao: number;
+  /** fracao × horasTotais. */
+  horas: number;
+}
+
+export interface RateioDaDemanda {
+  linhas: RateioLinha[];
+  /** Mais de um instrutor com dias no recorte. */
+  dividida: boolean;
+  /** O denominador: união dos dias efetivamente alocados. */
+  totalDiasDemanda: number;
+}
+
+/**
+ * Rateia `horasTotais` entre os instrutores alocados numa demanda,
+ * proporcionalmente aos dias de cada um — a conta que sempre viveu dentro de
+ * `computeInstructorHoursByDemand`, extraída (09/2026) para o painel de
+ * Medição e o dataset Medições resolverem o default de horas do titular de
+ * demanda DIVIDIDA com a mesma fórmula do Excel, sem duplicar a conta.
+ *
+ * Denominador = união dos dias EFETIVAMENTE alocados (a qualquer instrutor),
+ * não os dias do cadastro — ver comentário no topo do arquivo (caso DEM-359 /
+ * híbridos). `periodStart`/`periodEnd` recortam o numerador: demanda que
+ * atravessa a borda do filtro só contribui com a fração de dias dentro dele.
+ *
+ * Devolve `null` quando não há o que ratear (sem dias reais, sem alocação em
+ * dia real, carga zero, tudo fora do período) — os mesmos `continue` que a
+ * função chamadora sempre teve, na mesma ordem.
+ *
+ * Não filtra por status: quem chama decide (o Excel só usa CONCLUÍDA; o painel
+ * precisa da fatia antes disso).
+ */
+export function rateioDaDemanda(
+  demand: Parameters<typeof getDemandDays>[0],
+  allocations: RateioAllocationLike[],
+  horasTotais: number,
+  periodStart?: string,
+  periodEnd?: string
+): RateioDaDemanda | null {
+  const demandDaySetAll = new Set(getDemandDays(demand));
+  if (demandDaySetAll.size === 0) return null; // guarda contra divisão por zero
+
+  // Dias de cada instrutor, interseccionados com os dias reais do cadastro
+  // (ainda SEM recorte de período — precisamos disso para o denominador,
+  // que é a união entre todos os instrutores da demanda).
+  const diasPorInstrutorTotal = new Map<string, Set<string>>();
+  for (const alloc of allocations) {
+    if (!alloc.instructorId) continue;
+    const allocDays = getDemandDays({
+      dateMode: 'CONTINUO',
+      startDate: alloc.startDate,
+      endDate: alloc.endDate,
+    });
+    const set = diasPorInstrutorTotal.get(alloc.instructorId) ?? new Set<string>();
+    for (const day of allocDays) {
+      if (demandDaySetAll.has(day)) set.add(day);
+    }
+    diasPorInstrutorTotal.set(alloc.instructorId, set);
+  }
+
+  const unionAllocatedDays = new Set<string>();
+  for (const dias of diasPorInstrutorTotal.values()) {
+    for (const day of dias) unionAllocatedDays.add(day);
+  }
+  const totalDiasDemanda = unionAllocatedDays.size;
+  if (totalDiasDemanda === 0) return null; // nenhuma alocação cai em dia real
+
+  if (horasTotais <= 0) return null;
+
+  // Numerador (por instrutor): dias dele, recortados pela janela do período.
+  const diasAlocadosNoPeriodo = new Set(clipToPeriod([...unionAllocatedDays], periodStart, periodEnd));
+  if (diasAlocadosNoPeriodo.size === 0) return null; // demanda inteira fora do período após recorte
+
+  const linhas: RateioLinha[] = [];
+  for (const [instructorId, diasTotal] of diasPorInstrutorTotal) {
+    const diasNoPeriodo = [...diasTotal].filter(d => diasAlocadosNoPeriodo.has(d)).sort();
+    if (diasNoPeriodo.length === 0) continue;
+    const fracao = diasNoPeriodo.length / totalDiasDemanda;
+    linhas.push({ instructorId, dias: diasNoPeriodo, fracao, horas: fracao * horasTotais });
+  }
+  if (linhas.length === 0) return null;
+
+  return { linhas, dividida: linhas.length > 1, totalDiasDemanda };
 }
 
 export function computeInstructorHours(

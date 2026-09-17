@@ -16,7 +16,8 @@
  * Regras preservadas da tela:
  *   • TITULARES vêm de `resolveDemandInstructors` (linhas de
  *     instructor_allocations, com fallback para demands.instructor_id) —
- *     distintos, na ordem de início da alocação;
+ *     distintos, na ordem de início da alocação, com o PRINCIPAL
+ *     (`demands.instructor_id`) movido para a frente quando está na lista;
  *   • interna  → titulares + PARTICIPANTES (`demand_participants`) que não
  *     coincidam com um titular (dado torto não vira duas seções nem dois
  *     pagamentos);
@@ -69,6 +70,18 @@ export function resolveMeasurementPeople(
       papel: 'TITULAR',
       vinculo: t.source === 'allocation' ? 'alocacao' : 'principal',
     });
+  }
+
+  // PRINCIPAL PRIMEIRO. Demanda dividida tem 2+ titulares e quem absorve os
+  // itens sem dono é `demands.instructor_id`; a lista o põe na frente para a
+  // primeira seção do painel e o primeiro bloco gravado serem dele. Se ele não
+  // está entre as alocações, o primeiro por data de início fica onde está.
+  const idxPrincipal = demand.instructorId
+    ? lista.findIndex(p => p.instructorId === demand.instructorId)
+    : -1;
+  if (idxPrincipal > 0) {
+    const [principal] = lista.splice(idxPrincipal, 1);
+    lista.unshift(principal);
   }
 
   if (demand.tipo === 'interna') {

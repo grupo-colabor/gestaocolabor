@@ -33,11 +33,14 @@ import {
   blockExpenseBreakdown,
   computeMeasurementTotals,
   computePanelExpenseBreakdown,
+  countTitulares,
+  aggregateMeasurements,
   isNaoReembolsavel,
   isPagoPeloInstrutor,
   type TotalizableMeasurement,
 } from '../domain/measurementTotals';
-import { resolvePersonBlocks } from '../domain/measurementPersonBlocks';
+import { resolvePersonBlocks, horasRateioPorTitular } from '../domain/measurementPersonBlocks';
+import { resolveMeasurementPeople } from '../domain/measurementPeople';
 import { applyHybridBlankHours, buildCompanionRowsWithoutHours, isHibridaParaPagamento, reembolsoDaPessoa } from '../domain/paymentRows';
 import { compareExcelWithExport, ORIGEM_ACOMPANHANTE_SEM_HORAS, ORIGEM_HIBRIDA_SEM_HORAS } from './reconcileExportacoesCore';
 import {
@@ -47,7 +50,7 @@ import {
   type HoursRowLike,
 } from '../domain/measurementOverrides';
 import { isHybridModality } from '../domain/modalityRules';
-import { computeInstructorHoursByDemand } from '../domain/instructorHours';
+import { computeInstructorHoursByDemand, rateioDaDemanda } from '../domain/instructorHours';
 import fs from 'fs';
 import path from 'path';
 
@@ -1443,11 +1446,18 @@ console.log('\n[12] Pago pelo instrutor');
       { instructorId: 'T-PRINCIPAL', papel: 'TITULAR' as const },
       { instructorId: 'T-SEGUNDO', papel: 'TITULAR' as const },
     ];
+    // Desde 09/2026 a dividida entre dois titulares abre em v2: os dois têm
+    // bloco, e o item sem dono continua no PRINCIPAL.
     const r1 = resolvePersonBlocks(v1, { instructorId: 'T-PRINCIPAL' }, pessoasV1);
-    eq('v1: caminho mono-pessoa', r1.v2, false);
-    eq('v1: o titular principal tem o bloco', r1.blocoDe('T-PRINCIPAL')?.instructorId, 'T-PRINCIPAL');
-    eq('v1: o segundo titular NÃO tem bloco', r1.blocoDe('T-SEGUNDO'), undefined);
-    eq('v1: o reembolso do item sem dono vai para o titular principal', blockExpenseBreakdown(r1.paraNormalizar, r1.blocoDe('T-PRINCIPAL')!, { itemFilter: isPagoPeloInstrutor }).total, 55);
+    eq('dividida v1: caminho por pessoa (2 titulares)', r1.v2, true);
+    eq('dividida v1: o titular principal tem bloco', r1.blocoDe('T-PRINCIPAL')?.instructorId, 'T-PRINCIPAL');
+    eq('dividida v1: o segundo titular também tem bloco', r1.blocoDe('T-SEGUNDO')?.instructorId, 'T-SEGUNDO');
+    eq('dividida v1: o reembolso do item sem dono vai para o titular principal', blockExpenseBreakdown(r1.paraNormalizar, r1.blocoDe('T-PRINCIPAL')!, { itemFilter: isPagoPeloInstrutor }).total, 55);
+    eq('dividida v1: e nada para o segundo', blockExpenseBreakdown(r1.paraNormalizar, r1.blocoDe('T-SEGUNDO')!, { itemFilter: isPagoPeloInstrutor }).total, 0);
+    // Medição de UMA pessoa só continua v1.
+    const r1solo = resolvePersonBlocks(v1, { instructorId: 'T-PRINCIPAL' }, [pessoasV1[0]]);
+    eq('titular único: caminho mono-pessoa', r1solo.v2, false);
+    eq('titular único: o bloco é dele', r1solo.blocoDe('T-PRINCIPAL')?.instructorId, 'T-PRINCIPAL');
 
     // v2: cliente com acompanhante, sem nada gravado ainda — a segunda
     // categoria já força o caminho por pessoa.
@@ -1739,16 +1749,26 @@ console.log('\n[16] Híbrida sem horas presenciais informadas: Horas em branco n
     eq('presencial: continua informada', out[1].horasInformadas, true);
   }
 
-  /* --- v1: classHours informado vale para TODOS os titulares do rateio --- */
+  /* --- v1 de titular ÚNICO: classHours informado mantém o rateio --- */
+  {
+    const alocSolo = [{ id: 'a1', demandId: 'D-HIB', instructorId: 'TIT', startDate: '2026-07-06', endDate: '2026-07-07' }];
+    const v1Informada = { demandId: 'D-HIB', attachments: [], otherExpenses: [], expenses: { classHours: 8, hourRate: 100 } };
+    const out = applyHybridBlankHours([linha('D-HIB', 'TIT', 8)], { ...base, instructorAllocations: alocSolo, measurements: [v1Informada] });
+    eq('v1 titular único com classHours: mantém o rateio (8h)', out[0].horas, 8);
+
+    const v1Vazia = { demandId: 'D-HIB', attachments: [], otherExpenses: [], expenses: { hourRate: 100 } };
+    const out2 = applyHybridBlankHours([linha('D-HIB', 'TIT', 8)], { ...base, instructorAllocations: alocSolo, measurements: [v1Vazia] });
+    check('v1 titular único sem classHours: em branco', semHoras(out2[0]));
+  }
+
+  /* --- híbrida DIVIDIDA com medição v1: MUDANÇA DE COMPORTAMENTO (09/2026) --- */
+  // A dividida abre em v2, e no v2 o `classHours` é a carga da demanda, não as
+  // horas presenciais de alguém: os dois titulares saem em branco até digitar.
+  // Aceito no parecer; registrado no MANUAL e no README_reembolso.
   {
     const v1Informada = { demandId: 'D-HIB', attachments: [], otherExpenses: [], expenses: { classHours: 8, hourRate: 100 } };
     const out = aplicar([linha('D-HIB', 'TIT', 4), linha('D-HIB', 'T2', 4)], [v1Informada]);
-    eq('v1 com classHours: titular principal mantém o rateio (4h)', out[0].horas, 4);
-    eq('v1 com classHours: segundo titular também (o classHours é da demanda inteira)', out[1].horas, 4);
-
-    const v1Vazia = { demandId: 'D-HIB', attachments: [], otherExpenses: [], expenses: { hourRate: 100 } };
-    const out2 = aplicar([linha('D-HIB', 'TIT', 4), linha('D-HIB', 'T2', 4)], [v1Vazia]);
-    check('v1 sem classHours: os dois titulares em branco', semHoras(out2[0]) && semHoras(out2[1]));
+    check('híbrida dividida v1 (classHours gravado): os DOIS titulares em branco até digitar', semHoras(out[0]) && semHoras(out[1]));
   }
 
   /* --- v2: o bloco de CADA pessoa decide --- */
@@ -1800,6 +1820,142 @@ console.log('\n[16] Híbrida sem horas presenciais informadas: Horas em branco n
   const totals = ler('domain/measurementTotals.ts');
   check('computeMeasurementTotals documenta que ignora hibrida de propósito (Dashboard = carga total)',
     totals.includes('`ctx.hibrida` é IGNORADO aqui DE PROPÓSITO'));
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * [17] CLIENTE DIVIDIDA ENTRE DOIS TITULARES — seções por pessoa
+ *
+ *   • `rateioDaDemanda` extraída: as linhas de computeInstructorHoursByDemand
+ *     são a composição dela (DEM-359 e split), byte a byte;
+ *   • `horasRateio`: a fatia do titular sem horas; Σ blocos = total da v1 em
+ *     computeMeasurementTotals, aggregateMeasurements e a quebra de despesas;
+ *   • salvaguarda: 2 titulares sem fatia gravada → carga ÷ 2, nunca inteira;
+ *   • precedência do titular: id do principal ANTES do papel;
+ *   • Excel idêntico sem horas digitadas (o override não lê horasRateio);
+ *   • Vale e BM não leem horasRateio.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[17] Cliente dividida: fatia por titular, Σ blocos = v1, Excel idêntico');
+{
+  const DEM: any = { id: 'D-SPL', tipo: 'cliente', trainingId: 'T-PRE', modality: 'PRESENCIAL', instructorId: 'CLAYTON', dateMode: 'CONTINUO', startDate: '2026-03-09T08:00', endDate: '2026-03-12T17:00', status: 'CONCLUIDA' };
+  const T_PRE = { id: 'T-PRE', name: 'NR 35', hours: 16, practicalHours: null, modality: 'PRESENCIAL' };
+  const ALOC = [
+    // Ademilson começa antes: sem a regra do principal, ele seria o primeiro.
+    { id: 'a', demandId: 'D-SPL', instructorId: 'ADEMILSON', startDate: '2026-03-09', endDate: '2026-03-10' },
+    { id: 'b', demandId: 'D-SPL', instructorId: 'CLAYTON', startDate: '2026-03-11', endDate: '2026-03-12' },
+  ];
+  const V1: any = {
+    demandId: 'D-SPL', otherExpenses: [{ id: 'O1' }],
+    expenses: { classHours: 16, hourRate: 100 },
+    attachments: [
+      { category: 'HOSPEDAGEM', value: 300 },                                   // sem dono -> principal
+      { category: 'LOCOMOCAO', value: 120, pagoPeloInstrutor: true },           // sem dono -> principal
+      { category: 'OUTROS', value: 30, otherId: 'O1', instructorId: 'ADEMILSON', pagoPeloInstrutor: true },
+    ],
+  };
+
+  /* ---- rateioDaDemanda: identidade com computeInstructorHoursByDemand ---- */
+  {
+    const rows = computeInstructorHoursByDemand({ demands: [DEM], instructorAllocations: ALOC as any, trainings: [T_PRE] as any, measurements: [V1], periodStart: '2026-03-01', periodEnd: '2026-03-31' });
+    const r = rateioDaDemanda(DEM, ALOC, 16, '2026-03-01', '2026-03-31')!;
+    eq('split: 2 linhas nos dois', `${rows.length}/${r.linhas.length}`, '2/2');
+    for (const l of r.linhas) {
+      const row = rows.find(x => x.instructorId === l.instructorId)!;
+      eq(`split ${l.instructorId}: horas idênticas`, row.horas, l.horas);
+      eq(`split ${l.instructorId}: dias idênticos`, row.dias.join(','), l.dias.join(','));
+      eq(`split ${l.instructorId}: dividida`, row.dividida, r.dividida);
+    }
+    eq('split: 8h + 8h', soma(rows.map(x => x.horas)), 16);
+
+    // DEM-359: híbrido, 5 dias cadastrados, 1 alocado -> practicalHours inteiras.
+    const HIB: any = { id: 'D-359', trainingId: 'T-H', modality: 'HIBRIDO', dateMode: 'CONTINUO', startDate: '2026-03-02', endDate: '2026-03-06', status: 'CONCLUIDA' };
+    const T_H = { id: 'T-H', name: 'NR 20', hours: 12, practicalHours: 4, modality: 'HIBRIDO' };
+    const a359 = [{ id: 'x', demandId: 'D-359', instructorId: 'A', startDate: '2026-03-06', endDate: '2026-03-06' }];
+    const rows359 = computeInstructorHoursByDemand({ demands: [HIB], instructorAllocations: a359 as any, trainings: [T_H] as any, measurements: [], periodStart: '2026-03-01', periodEnd: '2026-03-31' });
+    const r359 = rateioDaDemanda(HIB, a359, 4, '2026-03-01', '2026-03-31')!;
+    eq('DEM-359: 4h nos dois', `${rows359[0]?.horas}/${r359.linhas[0]?.horas}`, '4/4');
+    eq('DEM-359: dia único nos dois', `${rows359[0]?.dias.join()}/${r359.linhas[0]?.dias.join()}`, '2026-03-06/2026-03-06');
+    eq('DEM-359: não dividida', `${rows359[0]?.dividida}/${r359.dividida}`, 'false/false');
+    eq('rateioDaDemanda: fora do período -> null', rateioDaDemanda(DEM, ALOC, 16, '2026-05-01', '2026-05-31'), null);
+    eq('rateioDaDemanda: carga zero -> null', rateioDaDemanda(DEM, ALOC, 0), null);
+    eq('rateioDaDemanda: sem status na conta (demanda não concluída também rateia)', rateioDaDemanda({ ...DEM, status: 'ALOCADA', endDate: '2099-01-01T17:00', startDate: '2099-01-01T08:00' }, [{ ...ALOC[0], startDate: '2099-01-01', endDate: '2099-01-01' }], 8)?.linhas[0]?.horas, 8);
+  }
+
+  /* ---- fatias por titular + pessoas com o principal primeiro ---- */
+  const pessoas = resolveMeasurementPeople(DEM, ALOC, [], []);
+  eq('pessoas: principal (Clayton) primeiro, mesmo alocado depois', pessoas.map(p => p.instructorId).join(','), 'CLAYTON,ADEMILSON');
+  const fatias = horasRateioPorTitular(DEM, ALOC, 16);
+  eq('fatias: 8h para cada', `${fatias.CLAYTON}/${fatias.ADEMILSON}`, '8/8');
+  eq('titular único: sem fatia (carga cheia é o default de sempre)', Object.keys(horasRateioPorTitular(DEM, [ALOC[1]], 16)).length, 0);
+
+  /* ---- v1 aberta em v2: tarifa semeada, fatia viva, Σ = v1 ---- */
+  const totalV1 = computeMeasurementTotals(V1);
+  eq('(cenário) v1: hora/aula = 16 × 100', totalV1.horaAula, 1600);
+  const r = resolvePersonBlocks(V1, DEM, pessoas, { horasRateio: fatias });
+  eq('v2: dois blocos, principal primeiro', r.blocos.map(b => b.instructorId).join(','), 'CLAYTON,ADEMILSON');
+  eq('v2: valorHH semeado da hourRate nos dois', r.blocos.map(b => b.valorHH).join(','), '100,100');
+  eq('v2: fatia viva nos dois', r.blocos.map(b => b.horasRateio).join(','), '8,8');
+  eq('v2: ninguém tem horas informadas', r.blocos.some(b => b.horasInformadas), false);
+  const ctx = { demandDefaultHours: 16, titularesNaMedicao: countTitulares(r.blocos) };
+  eq('painel: cada titular conta a fatia (8h), não a carga', r.blocos.map(b => blockPanelHours(b, ctx)).join(','), '8,8');
+  eq('Σ hora/aula dos blocos = v1 (1600)', soma(r.blocos.map(b => blockHoraAula(b, ctx))), 1600);
+  eq('despesas: item sem dono -> principal (300 + 120)', blockExpenseBreakdown(r.paraNormalizar, r.blocoDe('CLAYTON')!).total, 420);
+  eq('despesas: item com dono -> dono (30)', blockExpenseBreakdown(r.paraNormalizar, r.blocoDe('ADEMILSON')!).total, 30);
+  eq('Σ despesas dos blocos = total v1 (450)', soma(r.blocos.map(b => blockExpenseBreakdown(r.paraNormalizar, b).total)), computePanelExpenseBreakdown(V1).total);
+  eq('reembolso ao instrutor por dono: 120 no principal, 30 no Ademilson', r.blocos.map(b => blockExpenseBreakdown(r.paraNormalizar, b, { itemFilter: isPagoPeloInstrutor }).total).join(','), '120,30');
+
+  // O que o painel GRAVA ao salvar (blocos com fatia e tarifa, sem `horas`), lido de volta pelo Dashboard sem contexto.
+  const V2_SALVA: any = {
+    ...V1,
+    expenses: { classHours: 16, hourRate: 100, participantes: r.blocos.map(b => ({ instructorId: b.instructorId, papel: b.papel, valorHH: b.valorHH, horasRateio: b.horasRateio })) },
+  };
+  eq('Dashboard (sem contexto): hora/aula igual à v1 (1600)', computeMeasurementTotals(V2_SALVA).horaAula, 1600);
+  eq('Dashboard: total com hora/aula igual', computeMeasurementTotals(V2_SALVA).totalComHoraAula, totalV1.totalComHoraAula);
+  eq('aggregateMeasurements igual', aggregateMeasurements([V2_SALVA]).total, aggregateMeasurements([V1]).total);
+  eq('quebra de despesas igual', computePanelExpenseBreakdown(V2_SALVA).total, computePanelExpenseBreakdown(V1).total);
+  eq('itens preservados na conversão', V2_SALVA.attachments.length, V1.attachments.length);
+
+  /* ---- salvaguarda: 2 titulares SEM fatia gravada -> carga ÷ 2 ---- */
+  const V2_SEM_FATIA: any = { ...V1, expenses: { classHours: 16, participantes: [{ instructorId: 'CLAYTON', papel: 'TITULAR', valorHH: 100 }, { instructorId: 'ADEMILSON', papel: 'TITULAR', valorHH: 100 }] } };
+  eq('sem horasRateio: cada titular vale 8h (16 ÷ 2), nunca 16', normalizeMeasurementBlocks(V2_SEM_FATIA, 'CLAYTON').map(b => blockPanelHours(b, { demandDefaultHours: 16, titularesNaMedicao: 2 })).join(','), '8,8');
+  eq('sem horasRateio: Dashboard soma 1600, não 3200', computeMeasurementTotals(V2_SEM_FATIA).horaAula, 1600);
+  eq('titular único sem horasRateio: carga cheia (comportamento de sempre)', blockPanelHours(normalizeMeasurementBlocks({ expenses: { participantes: [{ instructorId: 'X', papel: 'TITULAR' }, { instructorId: 'A', papel: 'ACOMPANHANTE' }] } } as any, 'X')[0], { demandDefaultHours: 16, titularesNaMedicao: 1 }), 16);
+  eq('interna: participante continua valendo a carga cheia (não é titular)', blockPanelHours({ instructorId: 'P', papel: 'PARTICIPANTE', horasInformadas: false, valorHH: 0, attachments: [], titular: false }, { demandDefaultHours: 16, titularesNaMedicao: 1 }), 16);
+  eq('horas digitadas vencem a fatia', blockPanelHours({ instructorId: 'C', papel: 'TITULAR', horas: 3, horasInformadas: true, horasRateio: 8, valorHH: 0, attachments: [], titular: true }, ctx), 3);
+  eq('zero digitado vence a fatia (é decisão)', blockPanelHours({ instructorId: 'C', papel: 'TITULAR', horas: 0, horasInformadas: true, horasRateio: 8, valorHH: 0, attachments: [], titular: true }, ctx), 0);
+  eq('híbrida: fatia não entra (zero até digitar)', blockPanelHours({ instructorId: 'C', papel: 'TITULAR', horasInformadas: false, horasRateio: 8, valorHH: 0, attachments: [], titular: true }, { ...ctx, hibrida: true }), 0);
+
+  /* ---- precedência do titular: id do principal ANTES do papel ---- */
+  {
+    const m: any = { expenses: { participantes: [{ instructorId: 'ADEMILSON', papel: 'TITULAR' }, { instructorId: 'CLAYTON', papel: 'TITULAR' }] }, attachments: [{ category: 'CAFE', value: 7 }] };
+    const bs = normalizeMeasurementBlocks(m, 'CLAYTON');
+    eq('principal em SEGUNDO no array: o item sem dono vai para ele mesmo assim', bs.find(b => b.instructorId === 'CLAYTON')?.attachments.length, 1);
+    eq('e o primeiro do array (não principal) fica sem o item', bs.find(b => b.instructorId === 'ADEMILSON')?.attachments.length, 0);
+    eq('sem id do principal: vale o primeiro de papel TITULAR', normalizeMeasurementBlocks(m)[0].titular, true);
+  }
+
+  /* ---- Excel: idêntico sem horas digitadas; digitado em um deles muda só ele ---- */
+  {
+    const rateio = computeInstructorHoursByDemand({ demands: [DEM], instructorAllocations: ALOC as any, trainings: [T_PRE] as any, measurements: [V1], periodStart: '2026-03-01', periodEnd: '2026-03-31' });
+    const excelV1 = applyMeasurementOverrides({ rows: rateio, measurements: [V1], demands: [DEM] });
+    const excelV2 = applyMeasurementOverrides({ rows: rateio, measurements: [V2_SALVA], demands: [DEM] });
+    eq('Excel: mesmas linhas (id, horas, dias) com a v1 e com a v2 salva sem horas digitadas',
+      JSON.stringify(excelV2.map(x => [x.instructorId, x.horas, x.dias])),
+      JSON.stringify(excelV1.map(x => [x.instructorId, x.horas, x.dias])));
+    const V2_DIGITADA: any = { ...V2_SALVA, expenses: { ...V2_SALVA.expenses, participantes: V2_SALVA.expenses.participantes.map((p: any) => p.instructorId === 'ADEMILSON' ? { ...p, horas: 6 } : p) } };
+    const excelDig = applyMeasurementOverrides({ rows: rateio, measurements: [V2_DIGITADA], demands: [DEM] });
+    eq('Excel: horas digitadas no Ademilson valem (6h)', excelDig.find(x => x.instructorId === 'ADEMILSON')?.horas, 6);
+    eq('Excel: Clayton segue o rateio (8h)', excelDig.find(x => x.instructorId === 'CLAYTON')?.horas, 8);
+    const rb = resolvePersonBlocks(V2_DIGITADA, DEM, pessoas, { horasRateio: fatias });
+    eq('reembolso por pessoa no Excel: principal 120, Ademilson 30', pessoas.map(p => reembolsoDaPessoa(V2_DIGITADA, DEM, pessoas, p.instructorId).total).join(','), '120,30');
+    eq('painel com um digitado: 6h + 8h', rb.blocos.map(b => blockPanelHours(b, ctx)).join(','), '8,6');
+  }
+
+  /* ---- guardas de fonte ---- */
+  const ih = ler('domain/instructorHours.ts');
+  check('computeInstructorHoursByDemand chama rateioDaDemanda (uma conta só)', ih.includes('const rateio = rateioDaDemanda(demand, allocsForDemand, horasTotais, periodStart, periodEnd);'));
+  check('measurementOverrides não lê horasRateio (Excel só muda com horas digitadas)', !ler('domain/measurementOverrides.ts').includes('horasRateio'));
+  check('Medição Vale e BM não leem horasRateio',
+    !ler('domain/exports/datasets/medicaoVale.ts').includes('horasRateio') && !ler('domain/exports/datasets/medicaoValeBm.ts').includes('horasRateio'));
 }
 
 console.log(

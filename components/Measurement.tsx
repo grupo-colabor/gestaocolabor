@@ -13,10 +13,13 @@ import {
   computePanelExpenseBreakdown,
   normalizeMeasurementBlocks,
   blockExpenseBreakdown,
+  countTitulares,
   isPagoPeloInstrutor,
 } from '../domain/measurementTotals';
 import { blockPanelHours, blockHoraAula } from '../domain/measurementTotals';
-import { resolveDemandInstructors } from '../domain/demandInstructors';
+import { resolveMeasurementPeople } from '../domain/measurementPeople';
+import { resolvePersonBlocks, horasRateioPorTitular } from '../domain/measurementPersonBlocks';
+import { rateioDaDemanda } from '../domain/instructorHours';
 import { usePagination } from '../hooks/usePagination';
 import Pagination from './Pagination';
 import { 
@@ -461,12 +464,14 @@ const totals = useMemo(() => {
   // Híbrida: ninguém herda a carga total; ausente vale zero até digitar.
   const ctxPainel = { demandDefaultHours: cargaPadrao, hibrida: isHibrida(demandaDaMedicao) };
 
-  const hourClass = blocosDaMedicao.length
-    ? normalizeMeasurementBlocks(selectedMeasurement as any, demandaDaMedicao?.instructorId).reduce(
-        (acc: number, b) => acc + blockHoraAula(b, ctxPainel),
-        0
-      )
-    : classHours * hourRate;
+  const hourClass = (() => {
+    if (!blocosDaMedicao.length) return classHours * hourRate;
+    const blocos = normalizeMeasurementBlocks(selectedMeasurement as any, demandaDaMedicao?.instructorId);
+    // Dividida: cada titular vale a fatia (`horasRateio`, materializada na
+    // abertura); sem fatia, carga ÷ n — nunca N cargas.
+    const ctxBlocos = { ...ctxPainel, titularesNaMedicao: countTitulares(blocos) };
+    return blocos.reduce((acc: number, b) => acc + blockHoraAula(b, ctxBlocos), 0);
+  })();
 
   return {
     ...baseTotals,
@@ -491,77 +496,53 @@ const totals = useMemo(() => {
   // é o estado esperado, e o botão de restaurar traria a carga cheia de volta.
   const isClassHoursEdited = !!selectedMeasurement && !_selIsHibrida && classHours !== trainingDefaultHours;
 
-  /* ───────────────── MEDICAO POR PESSOA (F2 interna, F3 cliente) ─────────
+  /* ───────────────── MEDICAO POR PESSOA (F2 interna, F3 cliente, dividida) ─
    *
    * A lista de pessoas vem do CADASTRO, nunca do JSON da medicao — senao
-   * alguem adicionado depois do primeiro save nunca apareceria:
+   * alguem adicionado depois do primeiro save nunca apareceria. E vem do
+   * DOMINIO (resolveMeasurementPeople), a mesma lista do dataset Medicoes e do
+   * Excel de pagamento:
    *
-   *   • interna  → titular + participantes (`demand_participants`);
-   *   • cliente  → titulares (resolveDemandInstructors, que pode devolver mais
+   *   • interna  → titular + participantes (demand_participants);
+   *   • cliente  → titulares (instructor_allocations, principal primeiro; mais
    *                de um quando a demanda foi dividida por dias) + os
-   *                acompanhantes distintos de `companion_allocations`.
+   *                acompanhantes distintos de companion_allocations.
    *
-   * ⚠️ ITEM 7 DO ESCOPO: a lista sai VAZIA quando nao ha uma SEGUNDA CATEGORIA
-   * de pessoa — interna sem participante, cliente sem acompanhante. Tudo o que
-   * e novo na tela esta atras de `temBlocosPorPessoa`, entao esses casos
-   * renderizam exatamente o que renderizavam antes.
-   *
-   * O corte e por acompanhante/participante, e nao por `length > 1`, de
-   * proposito: demanda de cliente dividida entre dois titulares JA EXISTE aos
-   * montes e continua abrindo o painel de sempre. Trocar o painel dela seria
-   * mudar medicao de cliente sem acompanhante — exatamente o que o item 7
-   * proibe.
+   * O gate do que e novo na tela e `temBlocosPorPessoa` = mais de UMA pessoa.
+   * Desde 09/2026 isso inclui a cliente DIVIDIDA entre dois titulares sem
+   * acompanhante (antes ficava no formato de uma pessoa, com despesas e
+   * reembolso inteiros em instructor_id). Interna sem participante e cliente
+   * de um titular so continuam com o painel de sempre.
    */
   const pessoasDaMedicao = useMemo(() => {
     if (!_selDemand) return [];
-
-    const titulares = resolveDemandInstructors(
-      _selDemand.id,
-      _selDemand.instructorId,
-      instructorAllocations
-    )
-      .map(t => t.instructorId)
-      .filter(Boolean);
-
-    if (isInterna(_selDemand)) {
-      const participantes = demandParticipants.filter(p => p.demandId === _selDemand.id);
-      if (participantes.length === 0) return [];
-
-      // Interna continua com UM titular: ela nao tem split de dias.
-      const titularId = _selDemand.instructorId || titulares[0];
-
-      const lista: { instructorId: string; papel: 'TITULAR' | 'PARTICIPANTE' | 'ACOMPANHANTE' }[] = [];
-      if (titularId) lista.push({ instructorId: titularId, papel: 'TITULAR' });
-      for (const p of participantes) {
-        // Guarda contra dado torto: participante que coincide com o titular nao
-        // pode virar duas secoes (e dois pagamentos).
-        if (p.instructorId && p.instructorId !== titularId) {
-          lista.push({ instructorId: p.instructorId, papel: 'PARTICIPANTE' });
-        }
-      }
-      return lista;
-    }
-
-    // --- cliente (F3) ---
-    // Uma linha POR DIA em companion_allocations: a lista e de pessoas
-    // distintas, senao um acompanhante de 3 dias viraria 3 secoes.
-    const acompanhantes: string[] = [];
-    const vistos = new Set<string>(titulares);
-    for (const ca of companionAllocations || []) {
-      if (ca.demandId !== _selDemand.id || !ca.instructorId) continue;
-      // Quem ja e titular na demanda nao vira uma segunda secao (e um segundo
-      // pagamento) por tambem ter linha de acompanhante.
-      if (vistos.has(ca.instructorId)) continue;
-      vistos.add(ca.instructorId);
-      acompanhantes.push(ca.instructorId);
-    }
-    if (acompanhantes.length === 0) return [];
-
-    const lista: { instructorId: string; papel: 'TITULAR' | 'PARTICIPANTE' | 'ACOMPANHANTE' }[] = [];
-    for (const id of titulares) lista.push({ instructorId: id, papel: 'TITULAR' });
-    for (const id of acompanhantes) lista.push({ instructorId: id, papel: 'ACOMPANHANTE' });
-    return lista;
+    // A lista vem do DOMÍNIO (a mesma do dataset Medições e do Excel): titulares
+    // de instructor_allocations com o principal primeiro, mais participantes
+    // (interna) ou acompanhantes (cliente), deduplicados. Desde 09/2026 a
+    // cliente DIVIDIDA entre dois titulares sem acompanhante entra aqui com as
+    // duas pessoas — e por isso abre em seções (`temBlocosPorPessoa`).
+    return resolveMeasurementPeople(_selDemand, instructorAllocations, demandParticipants, companionAllocations)
+      .map(p => ({ instructorId: p.instructorId, papel: p.papel }));
   }, [_selDemand, demandParticipants, instructorAllocations, companionAllocations]);
+
+  /**
+   * O rateio VIVO por dias da demanda selecionada, com a MESMA conta do Excel
+   * (`rateioDaDemanda`), sobre a carga do painel. Só tem efeito com 2+
+   * titulares alocados (dividida): é a fatia que cada titular vale sem digitar,
+   * a legenda "Rateio por dias: X de Y" e o `horasRateio` regravado ao salvar.
+   */
+  const rateioVivo = useMemo(() => {
+    if (!_selDemand || isInterna(_selDemand)) return null;
+    const alocs = instructorAllocations.filter(a => a.demandId === _selDemand.id);
+    const r = rateioDaDemanda(_selDemand as any, alocs, classHours || trainingDefaultHours);
+    return r && r.dividida ? r : null;
+  }, [_selDemand, instructorAllocations, classHours, trainingDefaultHours]);
+
+  const fatiasVivas = useMemo(() => {
+    if (!_selDemand || isInterna(_selDemand)) return {};
+    const alocs = instructorAllocations.filter(a => a.demandId === _selDemand.id);
+    return horasRateioPorTitular(_selDemand as any, alocs, classHours || trainingDefaultHours);
+  }, [_selDemand, instructorAllocations, classHours, trainingDefaultHours]);
 
   /**
    * O default de horas de CADA pessoa — o placeholder do campo, nunca gravado.
@@ -579,6 +560,8 @@ const totals = useMemo(() => {
    */
   const horasPadraoDaPessoa = (instructorId: string, papel: string): number => {
     const cargaDaDemanda = classHours || trainingDefaultHours;
+    // Titular de demanda DIVIDIDA: a fatia do rateio por dias (a mesma do Excel).
+    if (papel === 'TITULAR' && fatiasVivas[instructorId] !== undefined) return fatiasVivas[instructorId];
     if (papel !== 'ACOMPANHANTE' || !_selDemand) return trainingDefaultHours;
     const diasDaDemanda = getDemandDays(_selDemand as any);
     const dias = companionDaysFromRows(
@@ -602,25 +585,20 @@ const totals = useMemo(() => {
    * saiu da demanda (os dois caem no titular).
    */
   const secoesPorPessoa = useMemo(() => {
-    if (!selectedMeasurement || !temBlocosPorPessoa) return [];
-
-    const titularId = pessoasDaMedicao.find(p => p.papel === 'TITULAR')?.instructorId;
+    if (!selectedMeasurement || !temBlocosPorPessoa || !_selDemand) return [];
 
     // Base para a particao: o que ja esta gravado, completado com as pessoas
-    // que ainda nao tem bloco (participante recem-adicionado).
-    const gravados = selectedMeasurement.expenses?.participantes ?? [];
-    const paraNormalizar = {
-      ...selectedMeasurement,
-      expenses: {
-        ...selectedMeasurement.expenses,
-        participantes: pessoasDaMedicao.map(p => {
-          const gravado = gravados.find(g => g.instructorId === p.instructorId);
-          return gravado ?? { instructorId: p.instructorId, papel: p.papel };
-        }),
-      },
-    };
-
-    const blocos = normalizeMeasurementBlocks(paraNormalizar as any, titularId);
+    // que ainda nao tem bloco (participante recem-adicionado; medição v1 aberta
+    // em v2, que nasce com valorHH = hourRate). A decisão de quem absorve o item
+    // sem dono e a fatia VIVA do titular da dividida vêm do domínio
+    // (resolvePersonBlocks) — a mesma regra do dataset Medições e do Excel.
+    const { paraNormalizar, blocos } = resolvePersonBlocks(
+      selectedMeasurement as any,
+      _selDemand,
+      pessoasDaMedicao,
+      { horasRateio: fatiasVivas }
+    );
+    const titularesNaMedicao = countTitulares(blocos);
 
     return blocos.map((b, i) => {
       const papel = pessoasDaMedicao[i]?.papel ?? b.papel;
@@ -640,16 +618,24 @@ const totals = useMemo(() => {
         horasPadrao: horasPadraoDaPessoa(b.instructorId, papel),
         // Híbrida: titular e participante NÃO herdam default (ver isHibrida).
         hibrida: _selIsHibrida,
+        // Legenda da dividida: "Rateio por dias: X de Y".
+        rateioLegenda: (() => {
+          if (papel !== 'TITULAR' || !rateioVivo) return null;
+          const linha = rateioVivo.linhas.find(l => l.instructorId === b.instructorId);
+          return linha ? { dias: linha.dias.length, total: rateioVivo.totalDiasDemanda } : null;
+        })(),
         // O que o painel CONTA: titular e participante valem o padrão da
-        // demanda sem ninguém digitar; acompanhante vale 0 até digitarem —
-        // e em híbrida TODO papel vale 0 até digitarem.
+        // demanda sem ninguém digitar (titular de dividida, a fatia do rateio);
+        // acompanhante vale 0 até digitarem — e em híbrida TODO papel vale 0
+        // até digitarem.
         horasContadas: blockPanelHours(comPapel, {
           demandDefaultHours: classHours || trainingDefaultHours,
           hibrida: _selIsHibrida,
+          titularesNaMedicao,
         }),
       };
     });
-  }, [selectedMeasurement, temBlocosPorPessoa, pessoasDaMedicao, instructors, companionAllocations, trainingDefaultHours, classHours, _selIsHibrida]);
+  }, [selectedMeasurement, temBlocosPorPessoa, pessoasDaMedicao, _selDemand, instructors, companionAllocations, trainingDefaultHours, classHours, _selIsHibrida, fatiasVivas, rateioVivo]);
 
   /**
    * Total a reembolsar ao instrutor na medicao inteira (rodape e WhatsApp).
@@ -661,23 +647,6 @@ const totals = useMemo(() => {
       : 0,
     [selectedMeasurement]
   );
-
-  /**
-   * Titulares da demanda (cadastro), sem o gate de `pessoasDaMedicao`: numa
-   * demanda de cliente dividida por dias sem acompanhante o painel nao tem
-   * secoes por pessoa, e todo reembolso marcado vai para o titular de
-   * `demands.instructor_id` (regra em domain/measurementPersonBlocks.ts). O
-   * aviso abaixo existe para isso nao ser implicito.
-   */
-  const titularesDaDemanda = useMemo(
-    () => _selDemand
-      ? resolveDemandInstructors(_selDemand.id, _selDemand.instructorId, instructorAllocations).map(t => t.instructorId).filter(Boolean)
-      : [],
-    [_selDemand, instructorAllocations]
-  );
-  const reembolsoAtribuidoA = !temBlocosPorPessoa && titularesDaDemanda.length > 1 && reembolsoInstrutorTotal > 0
-    ? getInstructorName(_selDemand?.instructorId || titularesDaDemanda[0])
-    : null;
 
   /**
    * Grava um campo do bloco de UMA pessoa no estado local.
@@ -816,6 +785,39 @@ const totals = useMemo(() => {
     hourRate: m.expenses?.hourRate ?? undefined
   }
 };
+
+  /**
+   * CONVERSÃO v1 → v2 NA ABERTURA (só no estado; grava no Salvar).
+   *
+   * Demanda com mais de uma pessoa (dividida entre titulares, acompanhante,
+   * participante) e medição sem blocos gravados: os blocos são materializados
+   * aqui pelo domínio — titular nasce com `valorHH = hourRate` (a tarifa da v1
+   * era dele) e com a fatia VIVA do rateio por dias em `horasRateio`. Sem isto,
+   * digitar a tarifa de um titular perdia a semeadura do outro no Salvar. Os
+   * itens não mudam: sem `instructorId` continuam do principal. Nenhuma
+   * migração de dados — quem nunca reabrir continua v1 no banco.
+   */
+  if (d) {
+    const pessoas = resolveMeasurementPeople(d, instructorAllocations, demandParticipants, companionAllocations);
+    const gravados = next.expenses?.participantes ?? [];
+    if (pessoas.length > 1 && gravados.length === 0) {
+      const carga = Number(next.expenses?.classHours) || getDemandDefaultHours(d);
+      const fatias = isInterna(d)
+        ? {}
+        : horasRateioPorTitular(d as any, instructorAllocations.filter(a => a.demandId === d.id), carga);
+      const { blocos } = resolvePersonBlocks(next as any, d, pessoas, { horasRateio: fatias });
+      next.expenses = {
+        ...next.expenses,
+        participantes: blocos.map(b => ({
+          instructorId: b.instructorId,
+          papel: b.papel,
+          ...(b.valorHH > 0 ? { valorHH: b.valorHH } : {}),
+          ...(b.horasRateio !== undefined ? { horasRateio: b.horasRateio } : {}),
+        })),
+      };
+    }
+  }
+
   setSelectedMeasurement(next);
   setIsModalOpen(true);
 };
@@ -868,6 +870,11 @@ const totals = useMemo(() => {
           const bloco: any = { instructorId: p.instructorId, papel: p.papel };
           if (g && g.horas !== undefined && g.horas !== null) bloco.horas = Number(g.horas);
           if (g && g.valorHH !== undefined && g.valorHH !== null) bloco.valorHH = Number(g.valorHH);
+          // Titular de dividida: regrava a fatia VIVA do rateio por dias (é o
+          // que o Dashboard lê sem conhecer as alocações). Não é `horas`: o
+          // Excel continua pagando o rateio, e `horasInformadas` não a lê.
+          const fatia = p.papel === 'TITULAR' ? fatiasVivas[p.instructorId] : undefined;
+          if (fatia !== undefined) bloco.horasRateio = fatia;
           return bloco;
         });
       })();
@@ -1452,6 +1459,8 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
 
   if (blocosDoDoc.length > 0) {
     const blocos = normalizeMeasurementBlocks(m as any, d.instructorId);
+    // Dividida: cada titular vale a fatia (`horasRateio`); sem fatia, carga ÷ n.
+    const ctxDocBlocos = { ...ctxDoc, titularesNaMedicao: countTitulares(blocos) };
 
     children.push(
       new Paragraph({ text: "💰 PAGAMENTO POR PESSOA", heading: HeadingLevel.HEADING_3, spacing: { before: 200 } })
@@ -1460,7 +1469,7 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
     for (const b of blocos) {
       const nomePessoa = getInstructorName(b.instructorId);
       const papel = b.papel === 'TITULAR' ? 'Titular' : b.papel === 'ACOMPANHANTE' ? 'Acompanhante' : 'Participante';
-      const horasDaPessoa = blockPanelHours(b, ctxDoc);
+      const horasDaPessoa = blockPanelHours(b, ctxDocBlocos);
       const horaAulaPessoa = horasDaPessoa * b.valorHH;
       const despesasPessoa = blockExpenseBreakdown(m as any, b);
 
@@ -1483,7 +1492,10 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
                   // Híbrida idem: a carga total do treinamento NUNCA sai como
                   // horas realizadas de ninguém.
                   ? 'não informado'
-                  : `${horasDaPessoa} (padrão da demanda)`
+                  : b.horasRateio !== undefined
+                    // Titular de dividida: a fatia do rateio por dias.
+                    ? `${horasDaPessoa} (rateio por dias)`
+                    : `${horasDaPessoa} (padrão da demanda)`
             ),
           ],
         }),
@@ -1734,8 +1746,9 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
     const hibridaMsg = isHibrida(d);
     const linhaPessoa = (x: (typeof secoesPorPessoa)[number]) => {
       const semHoras = hibridaMsg && x.papel !== 'ACOMPANHANTE' && !x.horasInformadas;
+      const rateio = !semHoras && !x.horasInformadas && x.rateioLegenda ? ' (rateio por dias)' : '';
       return `👤 ${x.nome}: ${formatCurrency(x.despesas.total + x.horasContadas * x.valorHH)}` +
-        (semHoras ? ' (horas: não informado)' : '') +
+        (semHoras ? ' (horas: não informado)' : '') + rateio +
         (x.reembolso > 0 ? ` · a reembolsar ao instrutor: ${formatCurrency(x.reembolso)}` : '');
     };
     const reembolsoMsg = reembolsoInstrutorTotal > 0
@@ -2261,6 +2274,10 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                                     ? 'Informe as horas (sugestão: ' + secao.horasPadrao + 'h, proporcional aos dias acompanhados)'
                                     : 'Informe as horas'}
                                 </span>
+                              : secao.rateioLegenda
+                              // Titular de demanda DIVIDIDA: a fatia do rateio por
+                              // dias, a mesma conta do Excel de pagamento.
+                              ? <span className="text-slate-400">Rateio por dias: {secao.rateioLegenda.dias} de {secao.rateioLegenda.total} ({secao.horasPadrao}h)</span>
                               : <span className="text-slate-400">Padrão da demanda ({secao.horasPadrao}h)</span>}
                         </p>
                       </div>
@@ -2353,15 +2370,6 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                   editando a mesma coisa. */}
               {!temBlocosPorPessoa && (
               <>
-              {reembolsoAtribuidoA && (
-                <div className="flex items-start gap-2 text-[11px] font-bold text-blue-800 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
-                  <Info size={14} className="mt-px flex-shrink-0" />
-                  <span>
-                    Medição sem seções por pessoa (demanda dividida entre {titularesDaDemanda.length} titulares) —
-                    reembolso atribuído a <strong>{reembolsoAtribuidoA}</strong> na planilha de pagamento.
-                  </span>
-                </div>
-              )}
               <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
               <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-4">
                 <DollarSign size={14} className="text-emerald-500" /> Hora/Aula

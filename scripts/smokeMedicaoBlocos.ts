@@ -462,25 +462,17 @@ console.log('\n[6] Painel: o novo fica atrás do gate');
     'o gate é a contagem de pessoas, não o tipo da demanda',
     painel.includes('const temBlocosPorPessoa = pessoasDaMedicao.length > 1;')
   );
-  // A F3 abriu o painel para CLIENTE COM ACOMPANHANTE. O corte deixou de ser
-  // "cliente nunca" e passou a ser "sem uma SEGUNDA CATEGORIA de pessoa" —
-  // interna sem participante e cliente sem acompanhante continuam do lado de
-  // fora, e é isso que mantém a medição de cliente de hoje intacta.
+  // Desde 09/2026 a lista de pessoas vem do DOMÍNIO (a mesma do dataset e do
+  // Excel) e o gate é só a contagem: a cliente DIVIDIDA entre dois titulares
+  // sem acompanhante abre em seções. Interna sem participante e cliente de um
+  // titular só têm uma pessoa e continuam com o painel de sempre.
   check(
-    'interna sem participante sai vazia',
-    /const participantes = demandParticipants\.filter[\s\S]{0,120}if \(participantes\.length === 0\) return \[\];/.test(painel)
+    'a lista de pessoas vem do domínio (resolveMeasurementPeople)',
+    painel.includes('return resolveMeasurementPeople(_selDemand, instructorAllocations, demandParticipants, companionAllocations)')
   );
   check(
-    'cliente sem acompanhante sai vazia',
-    /if \(acompanhantes\.length === 0\) return \[\];/.test(painel)
-  );
-  // O caso que NÃO pode mudar: cliente dividido entre dois titulares e sem
-  // acompanhante nenhum. Ele tem 2 pessoas e passaria no `length > 1` — o que o
-  // segura é a lista sair vazia antes disso.
-  check(
-    'e o corte vem ANTES de montar a lista de titulares do cliente',
-    painel.indexOf('if (acompanhantes.length === 0) return [];') <
-      painel.indexOf("for (const id of titulares) lista.push({ instructorId: id, papel: 'TITULAR' });")
+    'não existe mais corte por "sem acompanhante" — a dividida abre em seções',
+    !painel.includes('if (acompanhantes.length === 0) return [];') && !painel.includes('if (participantes.length === 0) return [];')
   );
 
   // As seções por pessoa e o bloco de uma pessoa são MUTUAMENTE exclusivos —
@@ -490,8 +482,9 @@ console.log('\n[6] Painel: o novo fica atrás do gate');
 
   // A partição vem do domínio, não de um filtro reescrito na tela.
   check(
-    'as seções usam a partição do domínio',
-    painel.includes('normalizeMeasurementBlocks(paraNormalizar as any, titularId)') &&
+    'as seções usam a partição do domínio (resolvePersonBlocks, com a fatia viva)',
+    painel.includes('} = resolvePersonBlocks(') &&
+      painel.includes('{ horasRateio: fatiasVivas }') &&
       painel.includes('blockExpenseBreakdown(paraNormalizar as any, b)')
   );
   check(
@@ -502,16 +495,13 @@ console.log('\n[6] Painel: o novo fica atrás do gate');
 
   // A lista de pessoas vem da DEMANDA, não do JSON — senão participante
   // adicionado depois do primeiro save nunca apareceria.
+  // Titulares (instructor_allocations com fallback e principal primeiro),
+  // acompanhantes deduplicados e participantes: tudo em resolveMeasurementPeople
+  // (domain/measurementPeople.ts), coberto pelos blocos [13] e [17].
   check(
-    'titular vem de demands.instructor_id com fallback de allocations',
-    /resolveDemandInstructors\(\s*_selDemand\.id,\s*_selDemand\.instructorId,\s*instructorAllocations\s*\)/.test(painel)
+    'a tela não reimplementa a lista (sem cópia de resolveDemandInstructors nem do laço de companionAllocations)',
+    !painel.includes('resolveDemandInstructors(') && !painel.includes('for (const ca of companionAllocations || []) {')
   );
-  check(
-    'e os acompanhantes, de companionAllocations (uma linha POR DIA, deduplicada)',
-    painel.includes('for (const ca of companionAllocations || []) {') &&
-      painel.includes('if (vistos.has(ca.instructorId)) continue;')
-  );
-  check('e os participantes, de demandParticipants', painel.includes('demandParticipants.filter(p => p.demandId === _selDemand.id)'));
 
   // O default de horas é PLACEHOLDER, nunca valor.
   // O placeholder passou a depender do PAPEL: titular e participante veem o
@@ -574,8 +564,8 @@ console.log('\n[6] Painel: o novo fica atrás do gate');
   // acompanhante, que é manual, continua saindo como "não informado" — e ali
   // isso é a verdade: ele não entra na planilha até alguém preencher.
   check(
-    'o recibo imprime o padrão para quem tem padrão',
-    painel.includes('(padrão da demanda)') && painel.includes('blockPanelHours(b, ctxDoc)')
+    'o recibo imprime o padrão para quem tem padrão (e a fatia para o titular de dividida)',
+    painel.includes('(padrão da demanda)') && painel.includes('(rateio por dias)') && painel.includes('blockPanelHours(b, ctxDocBlocos)')
   );
   check(
     'e diz "não informado" para o acompanhante, em vez de imprimir zero',
@@ -1181,7 +1171,9 @@ console.log('\n[10] Round-trip de valorHH e horas por bloco');
   check(
     'o total do painel resolve o ausente pelo domínio',
     painel.includes('const ctxPainel = { demandDefaultHours: cargaPadrao, hibrida: isHibrida(demandaDaMedicao) };') &&
-      painel.includes('blockHoraAula(b, ctxPainel)')
+      // ...acrescido de titularesNaMedicao (salvaguarda da dividida) antes de somar os blocos.
+      painel.includes('const ctxBlocos = { ...ctxPainel, titularesNaMedicao: countTitulares(blocos) };') &&
+      painel.includes('blockHoraAula(b, ctxBlocos)')
   );
   check(
     'e as seções também',
@@ -1675,8 +1667,22 @@ console.log('\n[14] Painel: "Pago pelo instrutor" ao lado de "Não reembolsa"');
   check('WhatsApp idem (por pessoa e total)', p.includes('a reembolsar ao instrutor: ${formatCurrency(x.reembolso)}') && p.includes('💸 A reembolsar ao instrutor:'));
   check('alerta do acompanhante sem horas diz que ele SAI na planilha (em branco), não que fica de fora',
     p.includes('Horas em branco (célula amarela)') && !p.includes('NÃO entra na planilha de pagamento'));
-  check('demanda dividida sem seções: aviso de a quem o reembolso é atribuído',
-    p.includes('reembolso atribuído a <strong>{reembolsoAtribuidoA}</strong>') && p.includes('titularesDaDemanda.length > 1'));
+  // A dividida passou a abrir em seções por pessoa (09/2026): o aviso "reembolso
+  // atribuído a X" saiu porque cada titular lança o que pagou na própria seção.
+  check('demanda dividida abre em seções: o aviso de atribuição ao principal saiu',
+    !p.includes('reembolsoAtribuidoA') && !p.includes('titularesDaDemanda'));
+  check('titular de dividida vê a legenda "Rateio por dias: X de Y"',
+    p.includes('Rateio por dias: {secao.rateioLegenda.dias} de {secao.rateioLegenda.total}'));
+  check('o placeholder do titular de dividida é a fatia (horasPadraoDaPessoa lê fatiasVivas)',
+    p.includes("if (papel === 'TITULAR' && fatiasVivas[instructorId] !== undefined) return fatiasVivas[instructorId];"));
+  check('abrir uma v1 em demanda com 2+ pessoas materializa os blocos (valorHH = hourRate, fatia viva) só no estado',
+    p.includes('if (pessoas.length > 1 && gravados.length === 0) {') && p.includes('const { blocos } = resolvePersonBlocks(next as any, d, pessoas, { horasRateio: fatias });'));
+  check('o salvar regrava a fatia viva em horasRateio (nunca em horas)',
+    p.includes('if (fatia !== undefined) bloco.horasRateio = fatia;') && !p.includes('bloco.horas = fatia'));
+  check('WhatsApp diz "(rateio por dias)" para o titular de dividida sem horas digitadas',
+    p.includes("x.rateioLegenda ? ' (rateio por dias)' : ''"));
+  check('totais do topo, seções e Word passam titularesNaMedicao (salvaguarda de N cargas)',
+    (p.match(/titularesNaMedicao/g) ?? []).length >= 4);
   check('o titular das seções recebe donoPadraoNome (aviso de item sem dono)', (p.match(/donoPadraoNome=\{secao\.titular \? secao\.nome : undefined\}/g) ?? []).length === 5);
 }
 

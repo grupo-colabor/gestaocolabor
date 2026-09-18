@@ -95,7 +95,12 @@ const MedicaoTemplateView: React.FC<{
   corredoresBase: string[];
   regionNameById: Map<string, string>;
   onNotify: (msg: string, type: 'success' | 'error' | 'info') => void;
-}> = ({ dataset, carga, options, onOptionsChange, corredoresBase, onNotify }) => {
+  /**
+   * Leitor do arquivo-base quando ele mora no Storage (modelos por empresa,
+   * migration 022). A Vale não usa: o dela é público e o caminho não muda.
+   */
+  baseFileLoader?: (bucket: string, path: string) => Promise<ArrayBuffer>;
+}> = ({ dataset, carga, options, onOptionsChange, corredoresBase, onNotify, baseFileLoader }) => {
   const template = dataset.template;
   const isBm = template.sheets.some(s => s.kind === 'form');
   /** O template da aba de linhas — no BM, as turmas continuam vindo do vale-v1. */
@@ -152,6 +157,10 @@ const MedicaoTemplateView: React.FC<{
   const pendencias = useMemo(() => {
     const base = buildPendencias(filtered, {
       sheet: sheetTurmas,
+      // O template vai junto: é ele que dá o cabeçalho e a letra de cada
+      // coluna aos textos. Para os de CÓDIGO (Vale) nada muda — ver
+      // NOMES_HISTORICOS em domain/exports/pendencias.ts.
+      template: turmasTemplate,
       templateValues: values,
       logisticAllocations: carga.logisticAllocations,
       logisticBlocks: carga.logisticBlocks,
@@ -250,7 +259,7 @@ const MedicaoTemplateView: React.FC<{
           const lista = incompletas.map(m => `${m.corredor} | ${m.mina}`).join(', ');
           if (!window.confirm(`Cabeçalho incompleto para ${lista} — gerar mesmo assim?`)) return;
         }
-        const base = await fetchTemplateBaseFile(template);
+        const base = await fetchTemplateBaseFile(template, baseFileLoader);
         const entries: { name: string; data: ArrayBuffer }[] = [];
         for (const m of bm.minas) {
           const sheets = resolveTemplate(template, [], values, {
@@ -275,7 +284,7 @@ const MedicaoTemplateView: React.FC<{
       }
       const sheets = resolveTemplate(template, toRowsSheetInput(elegiveis), values);
       const nome = buildExportFileName(template.fileNameBase, 'xlsx');
-      await downloadTemplateXlsx(template, sheets, nome);
+      await downloadTemplateXlsx(template, sheets, nome, baseFileLoader);
       onNotify(`${nome} gerado com ${elegiveis.length} turma(s).`, 'success');
     } catch (e: any) {
       setErro(`Falha ao gerar: ${e?.message || e}`);

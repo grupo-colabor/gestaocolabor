@@ -28,7 +28,7 @@ import { Download, FileSpreadsheet, FileText, Loader2, RefreshCw } from 'lucide-
 
 import { canAccessView, useApp } from '../App';
 import { useAuth } from '../contexts/AuthContext';
-import { visibleDatasets, getDataset, isTemplateDataset, templateIdsOf, type ExportDatasetEntry } from '../domain/exports/registry';
+import { buildRegistry, visibleDatasets, getDataset, isTemplateDataset, templateIdsOf, type ExportDatasetEntry } from '../domain/exports/registry';
 import { EMPTY_FILTERS, type DatasetKey, type ExportFilters, type ExportTable } from '../domain/exports/types';
 import { applyFilters, buildFilterOptions } from '../domain/exports/filters';
 import { DEFAULT_OPTIONS, type ExportOptions } from '../domain/exports/options';
@@ -56,6 +56,10 @@ import {
   type ExportPreset,
 } from '../domain/exports/presets';
 import { supabasePresetGateway } from '../services/exports/presets';
+import { fetchActiveMeasurementTemplates } from '../services/exports/templates';
+import { downloadTemplateBaseFile } from '../services/exports/templateStorage';
+import { loadTemplates } from '../domain/exports/templates/store';
+import type { MeasurementTemplate } from '../domain/exports/templates/types';
 
 import DatasetPicker from './exportacoes/DatasetPicker';
 import ModelosBar from './exportacoes/ModelosBar';
@@ -64,6 +68,7 @@ import FiltrosExportacao from './exportacoes/FiltrosExportacao';
 import ColunasSelector from './exportacoes/ColunasSelector';
 import PreviaTabela from './exportacoes/PreviaTabela';
 import ExportBanner from './exportacoes/ExportBanner';
+import ModelosMedicao from './exportacoes/modelos/ModelosMedicao';
 
 /** Acima disto a prévia continua paginada, mas o aviso lembra que o arquivo vai ser grande. */
 const AVISO_LINHAS = 20_000;
@@ -83,20 +88,51 @@ const BUILDERS: Record<string, (src: any) => any[]> = {
 type Carga = { data: ExportSourceData; comLogistica: boolean; templateKey: string };
 
 const Exportacoes: React.FC = () => {
-  const { regions, operationalBases, setNotification } = useApp();
+  const { regions, operationalBases, companies, setNotification } = useApp();
   const { profile } = useAuth();
   const role = profile?.role;
 
+  /**
+   * MODELOS POR EMPRESA — a lista de módulos vem daqui, NÃO da carga de dados.
+   * A pessoa precisa dos módulos para ESCOLHER um, e isso acontece antes de
+   * clicar em "Carregar dados"; amarrar a lista à carga deixaria a aba sem os
+   * módulos de empresa até alguém carregar.
+   *
+   * Falha ao buscar não derruba a aba: os sete módulos de código continuam de
+   * pé e o banner explica o que faltou.
+   */
+  const [modelosDoBanco, setModelosDoBanco] = useState<MeasurementTemplate[]>([]);
+  const [erroModelos, setErroModelos] = useState<string | null>(null);
+  const [recarregarModelos, setRecarregarModelos] = useState(0);
+
+  const podeVerModelos = !!canAccessView(role, 'measurement' as any);
+
+  useEffect(() => {
+    if (!podeVerModelos) return;
+    let vivo = true;
+    fetchActiveMeasurementTemplates()
+      .then(rows => { if (vivo) { setModelosDoBanco(loadTemplates(rows).map(m => m.template)); setErroModelos(null); } })
+      .catch(e => { if (vivo) setErroModelos(e?.message || String(e)); });
+    return () => { vivo = false; };
+  }, [podeVerModelos, recarregarModelos]);
+
+  const registro = useMemo(() => buildRegistry(modelosDoBanco), [modelosDoBanco]);
+
   const datasets = useMemo(
-    () => visibleDatasets(view => !!canAccessView(role, view as any)),
-    [role]
+    () => visibleDatasets(view => !!canAccessView(role, view as any), registro),
+    [role, registro]
   );
+
+  /** "Exportar" (o de sempre) ou "Modelos de medição" (a configuração). */
+  const [area, setArea] = useState<'exportar' | 'modelos'>('exportar');
 
   const [datasetKey, setDatasetKey] = useState<DatasetKey | null>(null);
   useEffect(() => {
     if (!datasetKey && datasets.length > 0) setDatasetKey(datasets[0].key);
   }, [datasets, datasetKey]);
-  const dataset: ExportDatasetEntry | null = datasetKey ? getDataset(datasetKey) : null;
+  const dataset: ExportDatasetEntry | null = datasetKey
+    ? registro.find(d => d.key === datasetKey) ?? null
+    : null;
   const templateDataset = dataset && isTemplateDataset(dataset) ? dataset : null;
 
   const [carga, setCarga] = useState<Carga | null>(null);
@@ -286,32 +322,69 @@ const Exportacoes: React.FC = () => {
         <div>
           <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Exportações</h1>
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">
-            Planilhas de análise por módulo — filtre, escolha as colunas e baixe
+            {area === 'exportar'
+              ? 'Planilhas de análise por módulo — filtre, escolha as colunas e baixe'
+              : 'Configure a planilha de medição que cada empresa exige'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={carregar}
-          disabled={carregando || !datasetKey}
-          className="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center gap-2 shadow-md disabled:opacity-60"
-        >
-          {carregando ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
-          <span>{carga ? 'Recarregar dados' : 'Carregar dados'}</span>
-        </button>
+        <div className="flex items-center gap-3">
+          {podeVerModelos && (
+            <div className="flex gap-1 bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
+              {([['exportar', 'Exportar'], ['modelos', 'Modelos de medição']] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setArea(id)}
+                  className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition ${
+                    area === id ? 'bg-slate-900 text-white' : 'text-slate-400 hover:text-slate-900'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {area === 'exportar' && (
+            <button
+              type="button"
+              onClick={carregar}
+              disabled={carregando || !datasetKey}
+              className="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center gap-2 shadow-md disabled:opacity-60"
+            >
+              {carregando ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
+              <span>{carga ? 'Recarregar dados' : 'Carregar dados'}</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      {erro && (
+      {erroModelos && (
+        <ExportBanner tipo="aviso">
+          Não foi possível carregar os modelos de medição por empresa ({erroModelos}). Os demais
+          módulos continuam funcionando.
+        </ExportBanner>
+      )}
+
+      {area === 'modelos' && (
+        <ModelosMedicao
+          companies={companies.map(c => ({ id: c.id, name: c.name }))}
+          onNotify={(message, type) => setNotification({ message, type })}
+          onModelosMudaram={() => setRecarregarModelos(n => n + 1)}
+        />
+      )}
+
+      {area === 'exportar' && erro && (
         <ExportBanner tipo="erro">
           <strong>Falha ao ler o banco.</strong> Nada foi gerado — a exportação fica bloqueada até uma
           carga completa. Detalhe: <code className="text-xs">{erro}</code>
         </ExportBanner>
       )}
 
-      {datasetKey && (
+      {area === 'exportar' && datasetKey && (
         <DatasetPicker datasets={datasets} value={datasetKey} onChange={k => { setDatasetKey(k); setErro(null); setAvisosModelo([]); }} disabled={carregando} />
       )}
 
-      {dataset && !isTemplateDataset(dataset) && (
+      {area === 'exportar' && dataset && !isTemplateDataset(dataset) && (
         <ModelosBar
           dataset={dataset}
           presets={presetsDoModulo}
@@ -328,21 +401,28 @@ const Exportacoes: React.FC = () => {
         />
       )}
 
-      {!carga && !erro && !carregando && (
+      {area === 'exportar' && !carga && !erro && !carregando && (
         <ExportBanner tipo="aviso">
           Clique em <strong>Carregar dados</strong> para buscar o cadastro completo no banco. A busca é
           refeita a cada clique, para o arquivo não sair de um estado antigo da tela.
         </ExportBanner>
       )}
 
-      {carga && !cargaServe && !carregando && (
+      {area === 'exportar' && carga && !cargaServe && !carregando && (
         <ExportBanner tipo="aviso">
           Este módulo precisa de dados que a última carga não trouxe (logística, documentos ou os
           valores do template). Clique em <strong>Recarregar dados</strong>.
         </ExportBanner>
       )}
 
-      {templateDataset && carga && cargaServe && (
+      {area === 'exportar' && templateDataset && templateDataset.indisponivel && (
+        <ExportBanner tipo="aviso">
+          <strong>Este módulo ainda não pode gerar.</strong> {templateDataset.indisponivel} Abra
+          <strong> Modelos de medição</strong>, no alto desta tela, para concluir.
+        </ExportBanner>
+      )}
+
+      {area === 'exportar' && templateDataset && !templateDataset.indisponivel && carga && cargaServe && (
         <MedicaoTemplateView
           dataset={templateDataset}
           carga={carga.data}
@@ -351,10 +431,11 @@ const Exportacoes: React.FC = () => {
           corredoresBase={operationalBases.corredores ?? []}
           regionNameById={regionNameById}
           onNotify={(message, type) => setNotification({ message, type })}
+          baseFileLoader={downloadTemplateBaseFile}
         />
       )}
 
-      {dataset && !isTemplateDataset(dataset) && rows && (
+      {area === 'exportar' && dataset && !isTemplateDataset(dataset) && rows && (
         <>
           <FiltrosExportacao
             allowed={dataset.filters}

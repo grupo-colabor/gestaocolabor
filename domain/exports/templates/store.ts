@@ -29,6 +29,7 @@ import {
   type TemplateRecord,
 } from './mapping';
 import type { MeasurementTemplate } from './types';
+import { bloqueiosDe, validarTemplate } from './validate';
 
 /** Um modelo carregado: o template pronto mais o que houve de errado ao ler. */
 export interface LoadedTemplate {
@@ -217,6 +218,19 @@ export async function renomearModelo(
   return { modelos: await recarregar(g, atual.companyId), mensagem: 'Modelo renomeado.' };
 }
 
+/**
+ * O que impede ESTE mapeamento de ser salvo. Lista vazia = pode gravar.
+ *
+ * A validação roda no SALVAR, não só no gerar: um modelo que já nasce com uma
+ * conta apontando para coluna apagada seria gravado, viraria módulo e só
+ * quebraria semanas depois, no fechamento — quando quem o configurou não está
+ * mais com o assunto na cabeça. Barrar na hora custa um banner.
+ */
+export function bloqueiosParaSalvar(rec: TemplateRecord): string[] {
+  const { template } = templateFromRecord(rec);
+  return bloqueiosDe(validarTemplate(template)).map(p => p.texto);
+}
+
 export async function salvarMapeamento(
   g: TemplateStoreGateway,
   atuais: TemplateRecord[],
@@ -225,8 +239,32 @@ export async function salvarMapeamento(
 ): Promise<StoreResult> {
   const atual = atuais.find(r => r.id === id);
   if (!atual) throw new Error('Modelo não encontrado.');
+
+  // Valida o que SERIA gravado, não o que está no banco.
+  const bloqueios = bloqueiosParaSalvar({ ...atual, ...patchToRecord(atual, patch) });
+  if (bloqueios.length > 0) {
+    throw new Error(
+      `O mapeamento não pode ser salvo assim:\n• ${bloqueios.join('\n• ')}`
+    );
+  }
+
   await g.update(id, patch);
   return { modelos: await recarregar(g, atual.companyId), mensagem: 'Mapeamento salvo.' };
+}
+
+/** O patch aplicado sobre o registro, sem gravar — para validar antes. */
+function patchToRecord(atual: TemplateRecord, patch: ModeloPatch): Partial<TemplateRecord> {
+  const out: Partial<TemplateRecord> = {};
+  if (patch.name !== undefined) out.name = patch.name;
+  if (patch.mapping !== undefined) out.mapping = patch.mapping;
+  if (patch.sheetName !== undefined) out.sheetName = patch.sheetName;
+  if (patch.headerRow !== undefined) out.headerRow = patch.headerRow;
+  if (patch.firstDataRow !== undefined) out.firstDataRow = patch.firstDataRow;
+  if (patch.storageBucket !== undefined) out.storageBucket = patch.storageBucket ?? undefined;
+  if (patch.storagePath !== undefined) out.storagePath = patch.storagePath ?? undefined;
+  if (patch.baseFingerprint !== undefined) out.baseFingerprint = patch.baseFingerprint;
+  void atual;
+  return out;
 }
 
 /**

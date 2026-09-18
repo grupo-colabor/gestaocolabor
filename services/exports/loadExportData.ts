@@ -29,6 +29,8 @@ import { fetchAllLogisticBlocks } from '../logistics';
 import { fetchAllDemandDocumentFlags } from '../demandDocuments';
 import { fetchLogisticAllocations, type LogisticAllocationRow } from '../logisticAllocations';
 import { fetchTemplateValues, type TemplateValueRow } from './templateValues';
+import { fetchActiveMeasurementTemplates } from './templates';
+import { loadTemplates, type LoadedTemplate } from '../../domain/exports/templates/store';
 import {
   mapDemand,
   mapTraining,
@@ -69,6 +71,17 @@ export interface ExportSourceData {
   templateValues: TemplateValueRow[];
   /** Ordenados, para a tela comparar a carga com o dataset atual. */
   templateIds: string[];
+  /**
+   * Modelos de medição ATIVOS (migration 022), já lidos pelo domínio — com os
+   * avisos de quem tem mapeamento torto. Vazio quando não pedido.
+   *
+   * ⚠️ A LISTA DE MÓDULOS NÃO PODE DEPENDER DESTA CARGA. A aba precisa dos
+   * módulos para a pessoa ESCOLHER um, o que acontece antes de "Carregar
+   * dados". Isto aqui serve a quem já escolheu — e para a tela reconferir, na
+   * hora de gerar, que o modelo continua o mesmo do banco. Quem monta a lista
+   * busca os ativos por conta própria (`fetchActiveMeasurementTemplates`).
+   */
+  measurementTemplates: LoadedTemplate[];
   /** Quando os dados foram lidos — vai para o rodapé da tela. */
   loadedAt: Date;
 }
@@ -96,6 +109,8 @@ export interface LoadExportDataOptions {
   includeLogistics: boolean;
   /** Templates de medição cujos valores manuais devem vir junto (Etapa 2 / BM). */
   templateIds?: string[];
+  /** Trazer os modelos de medição ativos (migration 022) junto. */
+  includeMeasurementTemplates?: boolean;
 }
 
 export async function loadExportData(opts: LoadExportDataOptions): Promise<ExportSourceData> {
@@ -112,6 +127,7 @@ export async function loadExportData(opts: LoadExportDataOptions): Promise<Expor
     docRows,
     logisticAllocationRows,
     templateValueRows,
+    measurementTemplateRows,
   ] = await Promise.all([
     fetchDemands(),
     fetchMeasurements(),
@@ -126,6 +142,7 @@ export async function loadExportData(opts: LoadExportDataOptions): Promise<Expor
     // Pelo fetcher paginado existente (Controle Logístico), não por query nova.
     opts.includeLogistics ? fetchLogisticAllocations() : Promise.resolve([]),
     opts.templateIds && opts.templateIds.length ? fetchTemplateValues(opts.templateIds) : Promise.resolve([]),
+    opts.includeMeasurementTemplates ? fetchActiveMeasurementTemplates() : Promise.resolve([]),
   ]);
 
   return {
@@ -159,6 +176,7 @@ export async function loadExportData(opts: LoadExportDataOptions): Promise<Expor
     logisticAllocations: logisticAllocationRows ?? [],
     templateValues: templateValueRows ?? [],
     templateIds: [...(opts.templateIds ?? [])].sort(),
+    measurementTemplates: loadTemplates(measurementTemplateRows ?? []),
     loadedAt: new Date(),
   };
 }

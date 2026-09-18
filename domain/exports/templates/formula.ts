@@ -345,8 +345,13 @@ export function evaluateFormulaSpec(
     constantes?: Record<string, TemplateConstantValue>;
   }
 ): number | null {
+  // ⚠️ `null` de `valorDaColuna` PROPAGA, não vira 0. São duas coisas
+  // diferentes: célula vazia é 0 (é o que o Excel faz numa conta), e coluna
+  // que NÃO EXISTE é conta quebrada — e aí a prévia mostra em branco em vez de
+  // um número inventado. Quem implementa `valorDaColuna` devolve 0 para vazio
+  // e `null` só para o que não existe.
   const num = (r: FormulaRef): number | null => {
-    if (isColunaRef(r)) return ctx.valorDaColuna(r.coluna) ?? 0;
+    if (isColunaRef(r)) return ctx.valorDaColuna(r.coluna);
     const v = ctx.constantes?.[r.constante];
     return typeof v === 'number' ? v : null;
   };
@@ -356,7 +361,11 @@ export function evaluateFormulaSpec(
     const j = ctx.ordem.indexOf(ate);
     if (i < 0 || j < 0 || i > j) return null;
     let soma = 0;
-    for (const k of ctx.ordem.slice(i, j + 1)) soma += ctx.valorDaColuna(k) ?? 0;
+    for (const k of ctx.ordem.slice(i, j + 1)) {
+      const v = ctx.valorDaColuna(k);
+      if (v === null) return null;
+      soma += v;
+    }
     return soma;
   };
 

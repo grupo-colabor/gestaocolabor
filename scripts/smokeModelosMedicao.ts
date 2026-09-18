@@ -497,6 +497,7 @@ console.log('\n[E] Guarda de fonte — domain/exports/templates sem I/O');
 import { runArquivoChecks } from './smokeModelosMedicaoArquivo';
 import { runStoreChecks } from './smokeModelosMedicaoStore';
 import { runRegistryChecks, runSalvarChecks, runValeTextosChecks } from './smokeModelosMedicaoRegistry';
+import { runTelaChecks } from './smokeModelosMedicaoTela';
 
 (async () => {
   // Os blocos abaixo usam o MESMO `check`, que já soma em `falhas`.
@@ -505,6 +506,7 @@ import { runRegistryChecks, runSalvarChecks, runValeTextosChecks } from './smoke
   runRegistryChecks({ check, eq });
   await runSalvarChecks({ check, eq });
   runValeTextosChecks({ check, eq });
+  runTelaChecks({ check, eq });
 
   console.log(falhas === 0 ? '\n✅ SMOKE MODELOS MEDICAO: OK' : `\n❌ SMOKE MODELOS MEDICAO: ${falhas} falha(s)`);
   process.exit(falhas === 0 ? 0 : 1);

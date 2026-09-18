@@ -41,7 +41,16 @@ export interface ColumnDef<Row> {
   get: (row: Row) => CellValue;
 }
 
-export type DatasetKey = 'medicoes' | 'demandas' | 'medicao-vale' | 'vale-bm' | 'logistica' | 'instrutores' | 'despesas';
+/**
+ * Os módulos de CÓDIGO têm chave fixa; um módulo por empresa (migration 022)
+ * tem a chave do modelo dele, que é sempre `tpl:<uuid>` (mapping.ts,
+ * `templateIdOf`) — o prefixo é o que impede colisão com as fixas.
+ */
+export type DatasetKeyEstatica = 'medicoes' | 'demandas' | 'medicao-vale' | 'vale-bm' | 'logistica' | 'instrutores' | 'despesas';
+
+export type DatasetKey = DatasetKeyEstatica | `tpl:${string}`;
+
+export const isDatasetDeEmpresa = (k: DatasetKey): k is `tpl:${string}` => k.startsWith('tpl:');
 
 export type FilterKey =
   | 'periodo'

@@ -368,7 +368,15 @@ export function buildTemplateMapping(m: TemplateMapping): TemplateMapping {
 
 /* ────────────────────── mapeamento -> MeasurementTemplate ────────────────────── */
 
-/** A linha da tabela de modelos, sem nada de I/O. */
+/**
+ * A linha da tabela de modelos (migration 022), sem nada de I/O.
+ *
+ * ⚠️ `sheetName`, `headerRow` e `firstDataRow` existem TAMBÉM como colunas na
+ * tabela, para dar para consultar um modelo sem abrir o jsonb. A FONTE é o
+ * `mapping`: `templateFromRecord` lê de lá e ignora as colunas, e quem grava
+ * (services/exports/templates.ts) deriva as colunas do mapeamento na mesma
+ * escrita. Elas não podem divergir porque ninguém as escreve sozinhas.
+ */
 export interface TemplateRecord {
   /** uuid da linha. */
   id: string;
@@ -383,6 +391,74 @@ export interface TemplateRecord {
   /** O jsonb cru. */
   mapping: unknown;
   isActive: boolean;
+  /** Cópias derivadas do `mapping` — ver a nota acima. */
+  sheetName?: string | null;
+  headerRow?: number | null;
+  firstDataRow?: number | null;
+  /** Aba + linha do cabeçalho + textos dos cabeçalhos no momento do mapeamento. */
+  baseFingerprint?: unknown;
+}
+
+/**
+ * A impressão digital do arquivo-base: o que precisa continuar igual para o
+ * mapeamento seguir válido. Trocar o arquivo por um de colunas diferentes
+ * faria o modelo escrever na coluna errada sem reclamar de nada.
+ */
+export interface BaseFingerprint {
+  sheetName: string;
+  headerRow: number;
+  /** Os cabeçalhos EXATOS, na ordem das colunas do arquivo. */
+  headers: string[];
+}
+
+export function buildBaseFingerprint(m: TemplateMapping, headers: string[]): BaseFingerprint {
+  return { sheetName: m.sheetName, headerRow: m.headerRow, headers: [...headers] };
+}
+
+export function parseBaseFingerprint(v: unknown): BaseFingerprint | null {
+  if (!isRecord(v)) return null;
+  const sheetName = typeof v.sheetName === 'string' ? v.sheetName : null;
+  const headerRow = typeof v.headerRow === 'number' ? v.headerRow : null;
+  const headers = Array.isArray(v.headers) ? v.headers.filter((h): h is string => typeof h === 'string') : null;
+  if (sheetName === null || headerRow === null || !headers) return null;
+  return { sheetName, headerRow, headers };
+}
+
+/**
+ * O que mudou entre a planilha que gerou o mapeamento e a que está lá agora,
+ * em português. Lista vazia = pode seguir sem reconfirmar nada.
+ */
+export function compareBaseFingerprint(antes: BaseFingerprint, agora: BaseFingerprint): string[] {
+  const dif: string[] = [];
+  if (antes.sheetName !== agora.sheetName) {
+    dif.push(`A aba de dados era «${antes.sheetName}» e agora é «${agora.sheetName}».`);
+  }
+  if (antes.headerRow !== agora.headerRow) {
+    dif.push(`O cabeçalho estava na linha ${antes.headerRow} e agora está na linha ${agora.headerRow}.`);
+  }
+  const n = Math.max(antes.headers.length, agora.headers.length);
+  for (let i = 0; i < n; i++) {
+    const a = antes.headers[i];
+    const b = agora.headers[i];
+    if (a === b) continue;
+    const letra = columnLetterOfIndex(i);
+    if (a === undefined) dif.push(`A coluna ${letra} («${b}») não existia na planilha anterior.`);
+    else if (b === undefined) dif.push(`A coluna ${letra} («${a}») não existe mais na planilha nova.`);
+    else dif.push(`A coluna ${letra} era «${a}» e agora é «${b}».`);
+  }
+  return dif;
+}
+
+/** 0 -> 'A'. Local, para o domínio de mapeamento não depender do resolvedor. */
+function columnLetterOfIndex(index0: number): string {
+  let n = index0 + 1;
+  let s = '';
+  while (n > 0) {
+    const r = (n - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
 }
 
 /** 'tpl:<uuid>' — o que vai para measurement_template_values.template_id. */

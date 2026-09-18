@@ -22,6 +22,16 @@ export interface TemplateRowInput {
   trainingName: string;
   /** Carga horária contratada (training.hours; interna: horas previstas). */
   cargaHoraria: number | null;
+  /**
+   * Modalidade do TREINAMENTO (não a da demanda), já canônica
+   * (domain/modalityOptions). OPCIONAL de propósito: o campo entrou no
+   * catálogo na Fase 1 dos modelos por empresa (18/09/2026), e quem monta a
+   * linha (`datasets/medicaoVale.ts`) só passa a preenchê-lo na fase do
+   * dataset. Enquanto isso, uma coluna mapeada para "Modalidade" resolve em
+   * branco — e o smoke prende esse comportamento para ele não surpreender
+   * ninguém depois.
+   */
+  modalidade?: string;
   local: string;
   corredor: string;
   uf: string;
@@ -52,6 +62,7 @@ export type SourceField =
   | 'demand.statusCalculado'
   | 'company.name'
   | 'training.name'
+  | 'training.modalidade'
   | 'people.titulares'
   | 'expenses.locomocao'
   | 'expenses.alimentacao'
@@ -81,6 +92,7 @@ export const SOURCE_FIELDS: Record<SourceField, SourceFieldDef> = {
   'demand.statusCalculado': { label: 'Status (calculado)', get: r => r.statusCalculado },
   'company.name': { label: 'Empresa', get: r => r.companyName },
   'training.name': { label: 'Treinamento', get: r => r.trainingName },
+  'training.modalidade': { label: 'Modalidade', get: r => r.modalidade ?? null },
   'people.titulares': { label: 'Instrutor(es) titular(es)', get: r => r.titulares.join(TITULARES_SEPARATOR) },
   'expenses.locomocao': { label: 'Despesa: locomoção (reembolsável)', get: r => r.despesas.locomocao },
   'expenses.alimentacao': { label: 'Despesa: alimentação (reembolsável)', get: r => r.despesas.alimentacao },

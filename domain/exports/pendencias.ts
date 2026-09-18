@@ -149,6 +149,10 @@ export interface PendenciasContext {
  *      (o cabeçalho tem P maiúsculo)
  *   '…fora das colunas da Vale'               -> '…fora das colunas de Medição Vale'
  *
+ * ISTO É CONGELAMENTO DELIBERADO, NÃO O PADRÃO PARA MODELO NOVO. Um modelo
+ * configurado pela operação usa a derivação — cabeçalho e letra da posição — e
+ * é assim que ele deve ser. O que está congelado aqui é só o texto da Vale.
+ *
  * A Vale está gerando a medição real do mês e o smoke dela prende esses textos
  * caractere a caractere. Então a derivação vale para os modelos do BANCO, e o
  * template em CÓDIGO mantém os rótulos históricos. Não é exceção escondida: é

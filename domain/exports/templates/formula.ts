@@ -318,3 +318,72 @@ export function formulaLiteral(v: TemplateConstantValue): string {
   if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
   return '"' + String(v).replace(/"/g, '""') + '"';
 }
+
+/* ────────────────────── cálculo para a PRÉVIA da tela ────────────────────── */
+
+/**
+ * O valor que a conta daria para uma linha, para a tela mostrar o RESULTADO em
+ * vez da fórmula.
+ *
+ * Existe por um motivo de produto, não de engenharia: a prévia é para quem não
+ * escreve Excel. Mostrar "= G2*H2" ali é pedir para a pessoa conferir uma coisa
+ * que ela não sabe ler — e o objetivo da prévia é exatamente ela conferir. O
+ * que vai para o ARQUIVO continua sendo a fórmula viva; isto aqui só reproduz o
+ * que o Excel vai calcular.
+ *
+ * `valorDaColuna` devolve o número já resolvido de cada coluna da mesma linha
+ * (vazio = 0, como o Excel trata célula em branco numa conta). Devolve `null`
+ * quando a conta referencia algo que não existe — aí a tela mostra em branco, e
+ * o bloqueio de configuração (validate.ts) já explicou o motivo em outro lugar.
+ */
+export function evaluateFormulaSpec(
+  spec: FormulaSpec,
+  ctx: {
+    valorDaColuna: (key: string) => number | null;
+    /** Ordem das colunas, para resolver o intervalo `de..ate`. */
+    ordem: string[];
+    constantes?: Record<string, TemplateConstantValue>;
+  }
+): number | null {
+  const num = (r: FormulaRef): number | null => {
+    if (isColunaRef(r)) return ctx.valorDaColuna(r.coluna) ?? 0;
+    const v = ctx.constantes?.[r.constante];
+    return typeof v === 'number' ? v : null;
+  };
+
+  const intervalo = (de: string, ate: string): number | null => {
+    const i = ctx.ordem.indexOf(de);
+    const j = ctx.ordem.indexOf(ate);
+    if (i < 0 || j < 0 || i > j) return null;
+    let soma = 0;
+    for (const k of ctx.ordem.slice(i, j + 1)) soma += ctx.valorDaColuna(k) ?? 0;
+    return soma;
+  };
+
+  switch (spec.op) {
+    case 'multiplicar': {
+      const a = num(spec.a);
+      const b = num(spec.b);
+      return a === null || b === null ? null : a * b;
+    }
+    case 'subtrair': {
+      const a = num(spec.a);
+      const b = num(spec.b);
+      return a === null || b === null ? null : a - b;
+    }
+    case 'somarIntervalo':
+      return intervalo(spec.de, spec.ate);
+    case 'somarComPercentual': {
+      const soma = intervalo(spec.de, spec.ate);
+      const pct = num(spec.pct);
+      return soma === null || pct === null ? null : soma + soma * pct;
+    }
+    case 'somarConstante': {
+      const a = num(spec.a);
+      const c = ctx.constantes?.[spec.constante];
+      return a === null || typeof c !== 'number' ? null : a + c;
+    }
+    default:
+      return null;
+  }
+}

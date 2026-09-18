@@ -71,8 +71,27 @@ export type SourceField =
   | 'expenses.total'
   | 'measurement.status';
 
+/**
+ * Os grupos em que a TELA DE MAPEAMENTO oferece os campos. São rótulos de
+ * negócio: quem configura um modelo procura por "Despesas", não pelo prefixo
+ * `expenses.` da chave. Campo novo declara o grupo dele aqui — a tela não tem
+ * lista própria, para não existirem duas verdades sobre onde cada campo mora.
+ */
+export type SourceFieldGroup = 'Demanda' | 'Cliente' | 'Treinamento' | 'Pessoas' | 'Despesas' | 'Medição';
+
+/** Ordem em que os grupos aparecem na tela. */
+export const SOURCE_FIELD_GROUPS: SourceFieldGroup[] = [
+  'Demanda',
+  'Cliente',
+  'Treinamento',
+  'Pessoas',
+  'Despesas',
+  'Medição',
+];
+
 export interface SourceFieldDef {
   label: string;
+  grupo: SourceFieldGroup;
   get: (r: TemplateRowInput) => CellValue;
 }
 
@@ -80,26 +99,26 @@ export interface SourceFieldDef {
 export const TITULARES_SEPARATOR = ' / ';
 
 export const SOURCE_FIELDS: Record<SourceField, SourceFieldDef> = {
-  'demand.id': { label: 'Demanda (DEM-xxxx)', get: r => r.demandId },
-  'demand.clientDemandId': { label: 'ID SAP / Pedido Cliente', get: r => r.clientDemandId || null },
-  'demand.local': { label: 'Local do treinamento', get: r => r.local },
-  'demand.corredor': { label: 'Corredor', get: r => r.corredor },
-  'demand.uf': { label: 'UF', get: r => r.uf },
-  'demand.dataInicio': { label: 'Data de início', get: r => r.dataInicio },
-  'demand.horarioInicio': { label: 'Horário de início', get: r => r.horarioInicio },
-  'demand.nDias': { label: 'Nº de dias', get: r => r.nDias },
-  'demand.cargaHoraria': { label: 'Carga horária', get: r => r.cargaHoraria },
-  'demand.statusCalculado': { label: 'Status (calculado)', get: r => r.statusCalculado },
-  'company.name': { label: 'Empresa', get: r => r.companyName },
-  'training.name': { label: 'Treinamento', get: r => r.trainingName },
-  'training.modalidade': { label: 'Modalidade', get: r => r.modalidade ?? null },
-  'people.titulares': { label: 'Instrutor(es) titular(es)', get: r => r.titulares.join(TITULARES_SEPARATOR) },
-  'expenses.locomocao': { label: 'Despesa: locomoção (reembolsável)', get: r => r.despesas.locomocao },
-  'expenses.alimentacao': { label: 'Despesa: alimentação (reembolsável)', get: r => r.despesas.alimentacao },
-  'expenses.hospedagem': { label: 'Despesa: hospedagem (reembolsável)', get: r => r.despesas.hospedagem },
-  'expenses.outros': { label: 'Despesa: outros (reembolsável)', get: r => r.despesas.outros },
-  'expenses.total': { label: 'Despesa: total reembolsável', get: r => r.despesas.total },
-  'measurement.status': { label: 'Status da medição', get: r => r.medicaoStatus },
+  'demand.id': { label: 'Demanda (DEM-xxxx)', grupo: 'Demanda', get: r => r.demandId },
+  'demand.clientDemandId': { label: 'ID SAP / Pedido Cliente', grupo: 'Demanda', get: r => r.clientDemandId || null },
+  'demand.local': { label: 'Local do treinamento', grupo: 'Demanda', get: r => r.local },
+  'demand.corredor': { label: 'Corredor', grupo: 'Demanda', get: r => r.corredor },
+  'demand.uf': { label: 'UF', grupo: 'Demanda', get: r => r.uf },
+  'demand.dataInicio': { label: 'Data de início', grupo: 'Demanda', get: r => r.dataInicio },
+  'demand.horarioInicio': { label: 'Horário de início', grupo: 'Demanda', get: r => r.horarioInicio },
+  'demand.nDias': { label: 'Nº de dias', grupo: 'Demanda', get: r => r.nDias },
+  'demand.cargaHoraria': { label: 'Carga horária', grupo: 'Treinamento', get: r => r.cargaHoraria },
+  'demand.statusCalculado': { label: 'Status (calculado)', grupo: 'Demanda', get: r => r.statusCalculado },
+  'company.name': { label: 'Empresa', grupo: 'Cliente', get: r => r.companyName },
+  'training.name': { label: 'Treinamento', grupo: 'Treinamento', get: r => r.trainingName },
+  'training.modalidade': { label: 'Modalidade', grupo: 'Treinamento', get: r => r.modalidade ?? null },
+  'people.titulares': { label: 'Instrutor(es) titular(es)', grupo: 'Pessoas', get: r => r.titulares.join(TITULARES_SEPARATOR) },
+  'expenses.locomocao': { label: 'Despesa: locomoção (reembolsável)', grupo: 'Despesas', get: r => r.despesas.locomocao },
+  'expenses.alimentacao': { label: 'Despesa: alimentação (reembolsável)', grupo: 'Despesas', get: r => r.despesas.alimentacao },
+  'expenses.hospedagem': { label: 'Despesa: hospedagem (reembolsável)', grupo: 'Despesas', get: r => r.despesas.hospedagem },
+  'expenses.outros': { label: 'Despesa: outros (reembolsável)', grupo: 'Despesas', get: r => r.despesas.outros },
+  'expenses.total': { label: 'Despesa: total reembolsável', grupo: 'Despesas', get: r => r.despesas.total },
+  'measurement.status': { label: 'Status da medição', grupo: 'Medição', get: r => r.medicaoStatus },
 };
 
 export const isSourceField = (s: string): s is SourceField =>

@@ -173,6 +173,60 @@ function parseRef(ref: string): { col: number; row: number } | null {
 }
 
 /**
+ * As colunas para uma linha de cabeçalho ESCOLHIDA (1-based), sem heurística
+ * nenhuma.
+ *
+ * Existe separada de `suggestHeader` porque a tela deixa corrigir a linha: se a
+ * correção passasse de novo pela heurística, o app poderia "discordar" da
+ * pessoa e voltar para o palpite dele. Escolha manual é escolha manual.
+ *
+ * Coluna sem cabeçalho E sem nenhum dado abaixo não entra: é sobra de planilha,
+ * não coluna do cliente.
+ */
+export function columnsAt(sheet: SheetSnapshot, headerRow: number): SuggestedColumn[] {
+  const i = headerRow - 1;
+  const headerCells = sheet.rows[i] ?? [];
+  const abaixo = sheet.rows.slice(i + 1);
+  const largura = Math.max(headerCells.length, ...sheet.rows.slice(i).map(r => r.length), 0);
+
+  const usadas = new Set<string>();
+  const columns: SuggestedColumn[] = [];
+  for (let c = 0; c < largura; c++) {
+    const cell = headerCells[c];
+    const header = cell && PREENCHIDA.has(cell.type) ? cell.text : '';
+    const letter = columnLetterOf(c);
+    const temDado = abaixo.some(r => r[c] && PREENCHIDA.has(r[c].type));
+    if (!header && !temDado) continue;
+    columns.push({
+      index: c + 1,
+      letter,
+      header,
+      key: suggestColumnKey(header, letter, usadas),
+      semCabecalho: !header,
+    });
+  }
+  return columns;
+}
+
+/** O que merece ser dito sobre as colunas de uma linha de cabeçalho escolhida. */
+export function avisosDasColunas(columns: SuggestedColumn[]): string[] {
+  const avisos: string[] = [];
+  const repetidos = new Map<string, number>();
+  for (const c of columns) {
+    if (c.header) repetidos.set(c.header, (repetidos.get(c.header) ?? 0) + 1);
+  }
+  for (const [texto, n] of repetidos) {
+    if (n > 1) avisos.push(`O cabeçalho «${texto}» aparece ${n} vezes; as colunas foram diferenciadas pela letra.`);
+  }
+  const sem = columns.filter(c => c.semCabecalho);
+  if (sem.length > 0) {
+    avisos.push(`${sem.length} coluna(s) sem nome no arquivo (${sem.map(c => c.letter).join(', ')}) — dê um nome a elas.`);
+  }
+  if (columns.length === 0) avisos.push('Nenhuma coluna encontrada nessa linha de cabeçalho.');
+  return avisos;
+}
+
+/**
  * A linha do cabeçalho e as colunas, sugeridas. Ver a heurística no cabeçalho
  * do arquivo. Nunca lança: aba sem nada devolve confiança baixa e o motivo.
  */
@@ -236,37 +290,8 @@ export function suggestHeader(sheet: SheetSnapshot): HeaderSuggestion {
     avisos.push(`Entre o cabeçalho (linha ${headerRow}) e os dados (linha ${firstDataRow}) há linhas em branco.`);
   }
 
-  const headerCells = linhas[escolhida];
-  const largura = Math.max(headerCells.length, ...linhas.slice(escolhida).map(r => r.length), 0);
-
-  const usadas = new Set<string>();
-  const columns: SuggestedColumn[] = [];
-  const repetidos = new Map<string, number>();
-  for (let c = 0; c < largura; c++) {
-    const cell = headerCells[c];
-    const header = cell && PREENCHIDA.has(cell.type) ? cell.text : '';
-    const letter = columnLetterOf(c);
-    // Coluna sem cabeçalho E sem dado nenhum abaixo: é sobra da planilha, fora.
-    const temDado = linhas.slice(escolhida + 1).some(r => r[c] && PREENCHIDA.has(r[c].type));
-    if (!header && !temDado) continue;
-    if (header) repetidos.set(header, (repetidos.get(header) ?? 0) + 1);
-    columns.push({
-      index: c + 1,
-      letter,
-      header,
-      key: suggestColumnKey(header, letter, usadas),
-      semCabecalho: !header,
-    });
-  }
-
-  for (const [texto, n] of repetidos) {
-    if (n > 1) avisos.push(`O cabeçalho «${texto}» aparece ${n} vezes; as colunas foram diferenciadas pela letra.`);
-  }
-  const sem = columns.filter(c => c.semCabecalho);
-  if (sem.length > 0) {
-    avisos.push(`${sem.length} coluna(s) sem nome no arquivo (${sem.map(c => c.letter).join(', ')}) — dê um nome a elas.`);
-  }
-  if (columns.length === 0) avisos.push('Nenhuma coluna encontrada nessa linha de cabeçalho.');
+  const columns = columnsAt(sheet, headerRow);
+  avisos.push(...avisosDasColunas(columns));
 
   return { headerRow, firstDataRow, columns, confianca, avisos };
 }

@@ -327,11 +327,35 @@ export async function buildTemplateXlsxBuffer(
 }
 
 /**
- * Busca o arquivo-base do template (public/templates/…). Falha PROPAGA: sem o
- * modelo não há como garantir o layout, então não se gera nada.
+ * De onde vem o arquivo-base quando ele não é público: recebe bucket e caminho
+ * e devolve os bytes. Injetado para este arquivo não importar o Storage —
+ * quem o implementa é services/exports/templateFile.ts.
  */
-export async function fetchTemplateBaseFile(template: MeasurementTemplate): Promise<ArrayBuffer | null> {
+export type TemplateBaseLoader = (bucket: string, path: string) => Promise<ArrayBuffer>;
+
+/**
+ * Busca o arquivo-base do template. Falha PROPAGA: sem o modelo não há como
+ * garantir o layout, então não se gera nada.
+ *
+ * Dois caminhos, e o da VALE não muda: sem `baseFileFrom`, ou com 'public', é
+ * `fetch` no caminho servido pelo app, exatamente como sempre foi. Com
+ * 'storage' (modelos por empresa, migration 022) o `loader` baixa do bucket
+ * privado — a URL assinada expira, então ela não pode estar guardada no
+ * template e é resolvida na hora.
+ */
+export async function fetchTemplateBaseFile(
+  template: MeasurementTemplate,
+  loader?: TemplateBaseLoader
+): Promise<ArrayBuffer | null> {
   if (!template.baseFile) return null;
+  if (template.baseFileFrom === 'storage') {
+    if (!loader) {
+      throw new Error(
+        `O modelo "${template.label}" guarda a planilha-base no armazenamento, mas nenhum leitor foi informado.`
+      );
+    }
+    return loader(template.baseFileBucket ?? '', template.baseFile);
+  }
   const resp = await fetch(template.baseFile);
   if (!resp.ok) throw new Error(`Arquivo-base do template não encontrado (${template.baseFile}: HTTP ${resp.status}).`);
   return resp.arrayBuffer();
@@ -340,9 +364,10 @@ export async function fetchTemplateBaseFile(template: MeasurementTemplate): Prom
 export async function downloadTemplateXlsx(
   template: MeasurementTemplate,
   sheets: ResolvedSheet[],
-  fileName: string
+  fileName: string,
+  loader?: TemplateBaseLoader
 ): Promise<void> {
-  const base = await fetchTemplateBaseFile(template);
+  const base = await fetchTemplateBaseFile(template, loader);
   const buffer = await buildTemplateXlsxBuffer(template, sheets, base);
   triggerDownload(buffer, fileName, XLSX_MIME);
 }

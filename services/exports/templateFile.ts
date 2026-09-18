@@ -21,7 +21,18 @@
  * silenciosa que este repositório não faz.
  *
  * O ExcelJS entra por `import()` dinâmico, como em todos os exports do app.
- * Storage (upload, URL assinada) NÃO mora aqui — entra na fase do banco.
+ *
+ * STORAGE (bucket `measurement-templates`, privado — migration 022)
+ * ---------------------------------------------------------------------------
+ * Upload no padrão de services/demandDocuments.ts (`upsert: true` +
+ * `contentType`), caminho
+ * `templates/<company_id>/<template_id>/<nome-sanitizado>.xlsx`, e leitura por
+ * URL ASSINADA de 1 h — a URL expira, então ela NUNCA é guardada no modelo: o
+ * template guarda o CAMINHO e quem vai baixar assina na hora.
+ *
+ * A guarda de assinatura de bytes roda ANTES do upload, não só antes do parse:
+ * um .xls no bucket viraria um arquivo-base que falha toda vez que alguém
+ * gerar a medição, semanas depois de quem o subiu ter esquecido.
  */
 import {
   INSPECT_ROWS,
@@ -211,4 +222,48 @@ export async function readTemplateFile(
   }
 
   return { sheets };
+}
+
+/* ──────────────── nome e caminho do arquivo-base no Storage ──────────────── */
+/*
+ * Nome e caminho são STRING, não rede: moram aqui, junto da guarda de bytes,
+ * para o smoke poder exercitá-los sem tocar no Supabase. Quem fala com o
+ * bucket é services/exports/templateStorage.ts.
+ */
+
+/** O bucket da 022. Privado: o arquivo do cliente não fica em URL adivinhável. */
+export const TEMPLATE_BUCKET = 'measurement-templates';
+
+/**
+ * Nome de arquivo seguro para o Storage, preservando o que dá:
+ * "Modelo Medição — Vale (2027).xlsx" -> "modelo_medicao_vale_2027.xlsx".
+ *
+ * O Supabase Storage recusa/escapa acento, espaço e vários símbolos na key.
+ * Sem isto, um nome com acento vira 400 no upload — e o nome do arquivo é
+ * escolha de quem envia, não deve ser armadilha.
+ */
+export function sanitizeFileName(nome: string): string {
+  const cru = String(nome ?? '').trim();
+  const extMatch = /\.([A-Za-z0-9]{1,10})$/.exec(cru);
+  const ext = (extMatch ? extMatch[1] : 'xlsx').toLowerCase();
+  const base = extMatch ? cru.slice(0, -extMatch[0].length) : cru;
+
+  const slug = base
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase()
+    .slice(0, 80);
+
+  return `${slug || 'modelo'}.${ext}`;
+}
+
+/** `templates/<company_id>/<template_id>/<nome-sanitizado>.xlsx`. */
+export function buildTemplateStoragePath(companyId: string, templateId: string, fileName: string): string {
+  const empresa = String(companyId ?? '').trim();
+  const modelo = String(templateId ?? '').trim();
+  if (!empresa) throw new TemplateFileError('ilegivel', 'Modelo sem empresa: não dá para guardar o arquivo-base.');
+  if (!modelo) throw new TemplateFileError('ilegivel', 'Modelo sem identificação: não dá para guardar o arquivo-base.');
+  return `templates/${empresa}/${modelo}/${sanitizeFileName(fileName)}`;
 }

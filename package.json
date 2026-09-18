@@ -26,7 +26,8 @@
     "smoke:exportacoes-modelos": "esbuild scripts/smokeExportacoesModelos.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-exportacoes-modelos.cjs --log-level=error && node node_modules/.cache/smoke-exportacoes-modelos.cjs",
     "smoke:layout-despesa": "esbuild scripts/smokeLayoutDespesa.ts --bundle --platform=node --format=cjs --external:playwright --external:esbuild --outfile=node_modules/.cache/smoke-layout-despesa.cjs --log-level=error && node node_modules/.cache/smoke-layout-despesa.cjs",
     "smoke:grade-paginacao": "esbuild scripts/smokeGradePaginacao.tsx --bundle --platform=node --format=cjs --jsx=automatic --outfile=node_modules/.cache/smoke-grade-paginacao.cjs --log-level=error && node node_modules/.cache/smoke-grade-paginacao.cjs",
-    "reconcile:exportacoes": "node scripts/runReconcileExportacoes.cjs"
+    "reconcile:exportacoes": "node scripts/runReconcileExportacoes.cjs",
+    "smoke:modelos-medicao": "esbuild scripts/smokeModelosMedicao.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-modelos-medicao.cjs --log-level=error && node node_modules/.cache/smoke-modelos-medicao.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.89.0",

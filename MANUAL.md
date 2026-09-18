@@ -639,6 +639,8 @@ Gerenciamento de contas de acesso ao sistema.
 | **Instrutores** | Uma linha por **pessoa × demanda** (titular, participante de interna, acompanhante): dias alocados no período e carga do treinamento. **Sem valores, sem CPF** | Quem acessa a Agenda (Admin e Analista) |
 | **Despesas** | Uma linha por **item de despesa** da medição (notinha ou valor avulso): pessoa dona, categoria, valor, as duas flags, se há anexo | Quem acessa a tela de Medição (Admin) |
 
+Além desses, cada empresa cliente pode ter o **próprio módulo de medição**, chamado **Medição <Empresa>**, configurado pela equipe sem depender da TI — ver *Modelos de medição por empresa*, mais abaixo. Um modelo incompleto aparece na lista **apagado**, com o motivo, e não gera.
+
 **Passo a passo:**
 1. Escolha o módulo
 2. Clique em **Carregar dados** — a busca é sempre nova no banco; se algo falhar, aparece um aviso vermelho e nada é gerado
@@ -772,6 +774,93 @@ Os números das linhas do QQP (20 e 70) fazem parte do cabeçalho por corredor/m
 - **Período.** O dataset Medições pega toda demanda que *toca* o intervalo (interseção), porque é análise. A Medição Vale usa a **data de início**: cada turma tem uma data só na planilha e precisa cair num único mês — senão uma turma que atravessa o fechamento seria cobrada duas vezes.
 - **Não reembolsável.** Na medição, um item marcado como não reembolsável continua no total (foi gasto). Na planilha da Vale ele **não entra**: as colunas se chamam "despesa reembolsável" e a marca existe justamente para o que o cliente não paga. O painel avisa quanto ficou fora.
 - **Preço HH.** O sistema lembra o último preço salvo **por treinamento** e pré-preenche todas as turmas daquele treinamento; quando uma turma precisa de outro preço, sobrescreva só nela. A coluna "fonte do preço" na grade mostra de onde veio cada valor. Nada é gravado até o **Salvar**; o download nunca grava.
+#### Modelos de medição por empresa (configurar sem depender de TI)
+
+**Como acessar:** Exportações → botão **Modelos de medição**, no alto da tela (perfil com acesso à Medição).
+
+A Medição Vale e o BM Vale são feitos sob medida no código. Para **qualquer outro cliente**, você mesma cadastra a planilha que ele exige: envia o arquivo, diz o que cada coluna recebe, e aquela empresa passa a ter o próprio módulo de medição na aba Exportações, chamado **Medição <Empresa>**.
+
+Uma empresa pode ter vários modelos (para testar uma mudança, por exemplo), mas só **um ativo** — é o ativo que vira módulo.
+
+##### Passo a passo completo
+
+O exemplo abaixo é a Gerdau, que exige uma planilha com as colunas *Serviço Prestado*, *Horas*, *Tarifa Hora* e *Total*.
+
+**1. Criar o modelo.** Em **Modelos de medição**, clique em **Novo modelo**. Escolha a empresa (**Gerdau**) e dê um nome ao modelo (**Padrão 2027**). O nome é só para você se organizar nesta lista: na aba Exportações o módulo vai se chamar *Medição Gerdau*, e o cliente nunca vê esse nome.
+
+**2. Enviar a planilha.** Clique em **Escolher arquivo** e mande o **.xlsx em branco** que a Gerdau usa — o modelo oficial, não uma planilha já preenchida de outro mês.
+
+- Se o arquivo for **.xls** (formato antigo), o sistema recusa e explica: abra no Excel e salve como *Pasta de Trabalho do Excel (.xlsx)*.
+- Se você mandar um PDF ou uma imagem por engano, ele também diz isso.
+
+**3. Confirmar o que o sistema leu.** Ele mostra as abas do arquivo, sugere a de dados e diz: *"Achei o cabeçalho na linha 3, confere?"*. Abaixo aparecem as **5 primeiras linhas da planilha com o número da linha**, igual ao Excel.
+
+- Se o cabeçalho estiver em outra linha, clique em **é esta** na linha certa.
+- Se a aba estiver **oculta** ou **protegida** no arquivo, ele avisa em amarelo — dá para seguir assim mesmo.
+- As **outras abas do arquivo saem na medição exatamente como estão**; nada nelas é alterado.
+
+Clique em **Confirmar e mapear as colunas**.
+
+**4. Dizer o que cada coluna recebe.** Aparece uma linha por coluna da planilha, com o cabeçalho do jeito que está no arquivo. Clique numa coluna para abri-la e escolha:
+
+| Origem | Quando usar |
+|---|---|
+| **Campo do sistema** | A coluna recebe um dado que o app já tem. A lista vem agrupada por assunto: Demanda, Cliente, Treinamento, Pessoas, Despesas, Medição. |
+| **Digitado na hora** | Não existe no sistema e alguém digita na prévia todo mês. Escolha se é **um valor por treinamento** (serve para todas as turmas daquele treinamento — é o caso do preço da hora) ou **um valor por turma**. No primeiro caso, marque *Permitir sobrescrever nesta turma* se às vezes precisa mudar só numa. |
+| **Calculado** | Uma conta sobre outras colunas — ver o passo 5. |
+| **Valor fixo do modelo** | O mesmo valor em toda linha (número de contrato, por exemplo). Cadastre antes, em *Valores fixos*. |
+| **Deixar em branco** | A coluna existe no arquivo do cliente e ninguém preenche. |
+| **Numeração** | 1, 2, 3… na ordem das turmas. |
+
+Escolha também **como o valor aparece** (texto, horas, dinheiro, percentual, data). No exemplo: *Serviço Prestado* → campo **Treinamento**; *Horas* → campo **Carga horária**, formato *Horas*; *Tarifa Hora* → **digitado, um valor por treinamento**, formato *Dinheiro*, com *Avisar quando ficar em branco* marcado.
+
+No alto, o contador mostra **"3 de 4 colunas configuradas"**. Enquanto faltar alguma, o botão de salvar fica travado.
+
+**5. Montar a conta de uma coluna.** Em *Total*, escolha **Calculado**. Você **não digita fórmula**: escolhe a operação numa lista e depois as colunas, pelos nomes que elas têm na planilha.
+
+- *Multiplicar duas colunas* → **Horas** × **Tarifa Hora**.
+- Embaixo aparece a conta escrita em português: **"Horas × Tarifa Hora"**. É por aí que você confere.
+
+As operações disponíveis são cinco: multiplicar, somar um intervalo de colunas, somar um intervalo e acrescentar um percentual, subtrair, e somar com um valor fixo. Se o seu cliente precisar de algo que não está nessa lista, é pedido para a TI.
+
+**6. Valores fixos e totais (opcional).** Mais abaixo:
+
+- **Valores fixos do modelo**: dê um nome e um valor — por exemplo *percentual de despesa* = `20%`. Escrevendo com `%`, o sistema já entende. Eles servem nas contas e como valor de coluna. Apagar um que esteja em uso pergunta antes e diz onde ele é usado.
+- **Linha de totais**: marque as colunas que devem somar no fim da tabela. Só aparecem as colunas com valor numérico.
+
+**7. Conferir com turmas de verdade.** No fim da tela aparecem as **3 primeiras turmas reais** do período, com o valor que cada coluna vai receber e, embaixo de cada valor, **de onde ele veio** (*Treinamento → NR-35 Trabalho em Altura*).
+
+É aqui que erro de mapeamento aparece. Nenhuma validação pega "liguei a coluna Treinamento ao campo Local": os dois são texto, os dois preenchem, e a planilha sai bonita e errada. **Leia os três exemplos antes de salvar.**
+
+Se não houver turma concluída no período, ele diz isso e deixa salvar mesmo assim — o modelo fica pronto e você confere quando houver turma.
+
+**8. Salvar e ativar.** Clique em **Salvar mapeamento**. De volta à lista, clique em **Usar este** para ativar. Pronto: a aba Exportações passa a ter o módulo **Medição Gerdau**.
+
+**9. Gerar a medição.** Em Exportações, escolha **Medição Gerdau**, clique em **Carregar dados**, ajuste o período, preencha os campos digitados (a *Tarifa Hora*) e clique em **Salvar**. Confira o painel de pendências e a prévia, e clique em **Gerar**. O arquivo sai **em cima da planilha que você enviou**, com as contas como **fórmulas vivas** — o cliente abre no Excel e vê a conta, não só o número.
+
+##### O que o sistema não deixa passar
+
+- **Coluna sem origem escolhida**: o botão de salvar fica travado e o contador diz quantas faltam.
+- **Coluna ligada a um campo que não existe mais** (porque o sistema mudou): o modelo aparece na lista com o motivo, o botão *Usar este* fica desabilitado, e na aba Exportações o módulo aparece **apagado**, dizendo o que falta. Ele nunca aparece funcionando para falhar na hora de gerar.
+- **Conta que usa uma coluna que você apagou**: mesma coisa, dizendo o nome da coluna.
+- **Modelo sem planilha enviada**: aparece na lista com *"Falta enviar a planilha-base"*.
+
+##### Trocar a planilha-base de um modelo que já existe
+
+Clique em **Trocar planilha** e envie o arquivo novo. O sistema compara com o anterior:
+
+- **Colunas iguais**: troca direto, sem mexer no que você configurou.
+- **Colunas diferentes**: ele **bloqueia** e mostra exatamente o que mudou — *"A coluna B era «Horas» e agora é «Quantidade»"*, *"A coluna D («Observação») não existia na planilha anterior"*. O que tem o mesmo nome de cabeçalho mantém a configuração; o resto volta para *não configurada* e você reconfere antes de salvar.
+
+Isso existe porque uma planilha com colunas em outra ordem continuaria "funcionando": o sistema escreveria no lugar errado e ninguém perceberia até o cliente reclamar.
+
+##### Outras ações da lista
+
+- **Duplicar**: cria uma cópia (*"Padrão 2027 (cópia)"*), **desativada**, com o mesmo mapeamento e a mesma planilha. Serve para testar uma mudança sem mexer no modelo que está medindo o mês.
+- **Desativar**: a empresa fica **sem** módulo de medição até você ativar outro. A tela avisa.
+- **Excluir**: apaga o modelo. Se a planilha for compartilhada com uma cópia, o arquivo é mantido.
+- Trocar o modelo ativo **não muda as medições já geradas** — só o que for gerado daqui para a frente.
+
 ### Exportar Demanda para Word
 
 **Como acessar:** Abrir uma demanda → botão **Exportar para Word**

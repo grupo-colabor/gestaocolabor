@@ -31,23 +31,42 @@
  *      Plantas), linha do cabeçalho, primeira linha de dados, totais e, quando
  *      há arquivo-base, o trecho pré-formatado do arquivo (`file`).
  *
- * O QUE A ETAPA 3 VAI ACRESCENTAR (e só isso):
- *   • `origin: 'db'` com o template carregado de `measurement_templates`
- *     (json com este mesmo shape) — hoje só `'code'`;
- *   • `baseFile` apontando para o storage em vez de `public/templates/`;
- *   • FK `measurement_template_values.template_id -> measurement_templates`,
- *     com NOT VALID (os ids de código, ex. 'vale-v1', ganham linha na tabela
- *     antes da validação);
- *   • `rowScope: 'person'` quando algum cliente pedir linha por pessoa.
+ * ETAPA 3 — MODELOS POR EMPRESA (upload + mapeamento). Fases 1 e 2 entregues
+ * em 18/09/2026; as fases de banco, storage e tela ainda não.
+ *   • `formulaSpec` na coluna: a conta montada POR SELEÇÃO na tela (formula.ts),
+ *     compilada para o mesmo texto `{col:…}` de sempre. É ela que o jsonb
+ *     guarda — nunca o texto;
+ *   • `source: 'constant'` e `'blank'`, e `constantDefs` declarando as
+ *     constantes para a tela;
+ *   • `{const:nome}` nas fórmulas (resolve.ts), como LITERAL;
+ *   • `baseFileFrom: 'storage'` para o arquivo enviado pela equipe;
+ *   • `origin: 'db'` liga o MODO TOLERANTE do resolvedor: configuração velha
+ *     (campo extinto, fórmula sobre coluna removida) vira problema em
+ *     português que bloqueia a geração, não exceção. `'code'` continua
+ *     lançando, porque ali é bug de quem escreveu o template.
+ *
+ * FK `measurement_template_values.template_id -> measurement_templates`:
+ * DELIBERADAMENTE NÃO CRIADA (decisão de 18/09/2026, ver o cabeçalho da
+ * migration 022 quando ela existir). `template_id` segue TEXT solto, como
+ * desde a 017, e `vale-v1`/`vale-bm-v1` continuam existindo só em código, sem
+ * linha fantasma no banco.
+ *
+ * Ainda aberto, sem construir: `rowScope: 'person'` quando algum cliente pedir
+ * linha por pessoa; `rowScope: 'training'` na aba de linhas (a região do BM já
+ * o tem) quando alguém pedir agregação por treinamento.
  *
  * Este diretório não importa React, Supabase nem ExcelJS (guarda de fonte no
  * smoke:medicao-vale). O escritor é services/exports/templateXlsxWriter.ts.
  */
 import type { CellValue } from '../types';
+import type { FormulaSpec } from './formula';
 import type { SourceField } from './sourceFields';
 
 /** Valor de célula do template: o do motor mais Date (formato 'date' grava data de verdade). */
 export type TemplateCellValue = CellValue | Date;
+
+/** Valor de uma constante de modelo (`MeasurementTemplate.constants`). */
+export type TemplateConstantValue = string | number | boolean;
 
 export type TemplateFormat =
   | 'currency'
@@ -58,7 +77,23 @@ export type TemplateFormat =
   | 'integer'
   | 'text';
 
-export type TemplateColumnSource = SourceField | 'manual' | 'formula' | 'sequence';
+/**
+ * De onde a célula da coluna vem:
+ *   • SourceField — campo do app (catálogo `sourceFields.ts`);
+ *   • 'manual'    — digitado na prévia e persistido;
+ *   • 'formula'   — conta (texto com placeholders, ou `formulaSpec`);
+ *   • 'sequence'  — 1..n;
+ *   • 'constant'  — valor fixo do modelo, o mesmo em toda linha (`constantName`);
+ *   • 'blank'     — sempre em branco (a coluna existe no arquivo do cliente e
+ *                   ninguém preenche; é escolha, não esquecimento).
+ */
+export type TemplateColumnSource =
+  | SourceField
+  | 'manual'
+  | 'formula'
+  | 'sequence'
+  | 'constant'
+  | 'blank';
 
 export type TemplatePersistScope = 'training' | 'demand';
 
@@ -68,8 +103,20 @@ export interface TemplateColumn {
   /** Texto EXATO do cabeçalho no arquivo do cliente (inclusive espaços). */
   header: string;
   source: TemplateColumnSource;
-  /** Só com source 'formula'. Com placeholders — ver o cabeçalho. */
+  /**
+   * Só com source 'formula'. Com placeholders — ver o cabeçalho.
+   * Os templates em CÓDIGO escrevem este texto à mão; os do BANCO trazem
+   * `formulaSpec` e o texto é derivado (`compileFormulaSpec`). Quando os dois
+   * existem, `formulaSpec` vence — é ele que a tela reabre para editar.
+   */
   formula?: string;
+  /**
+   * Conta montada por seleção na tela de mapeamento (formula.ts). É o que o
+   * jsonb do modelo guarda; o texto de `formula` é derivado dela.
+   */
+  formulaSpec?: FormulaSpec;
+  /** Só com source 'constant': qual constante do modelo esta coluna emite. */
+  constantName?: string;
   format?: TemplateFormat;
   /** Valor quando ninguém digitou (ex.: 0.2 para o % de despesa; 0 para combustível). */
   defaultValue?: TemplateCellValue;
@@ -168,6 +215,16 @@ export interface TemplateRowRegion {
   clearCols?: string[];
 }
 
+/**
+ * Uma constante do modelo, como a tela de mapeamento a mostra: "percentual de
+ * despesa = 20%". O valor mora em `MeasurementTemplate.constants[name]`.
+ */
+export interface TemplateConstantDef {
+  name: string;
+  label: string;
+  format?: TemplateFormat;
+}
+
 /** Campo do cadastro por contexto que a tela oferece (bloco "Cabeçalho"). */
 export interface TemplateContextField {
   key: string;
@@ -216,16 +273,35 @@ export interface MeasurementTemplate {
   label: string;
   company: TemplateCompanyMatch;
   sheets: TemplateSheet[];
-  /** Caminho público do arquivo-base (fetch). Ausente = gera do zero. */
+  /**
+   * Onde está o arquivo-base. Ausente = gera do zero.
+   *   • origem 'public'  (default): caminho servido pelo app ('/templates/x.xlsx');
+   *   • origem 'storage': caminho DENTRO do bucket — a URL assinada expira, então
+   *     não pode ser guardada aqui; quem baixa resolve na hora.
+   */
   baseFile?: string;
+  baseFileFrom?: 'public' | 'storage';
+  /** Só com `baseFileFrom: 'storage'`. */
+  baseFileBucket?: string;
   fileNameBase: string;
   /** Texto fixo que a aba mostra (diferenças de regra, ex.: período por data de início). */
   notes?: string[];
   /**
    * Constantes de regra do template, trocáveis em uma linha (ex.:
    * `despesasComAcrescimo: true` no BM). Não são campos por demanda.
+   *
+   * Nos templates do BANCO são também os "valores fixos do modelo" que a
+   * equipe cadastra e as fórmulas usam (`{const:nome}`) — é o que a Vale
+   * resolve hoje com o `defaultValue: 0.2` da coluna de percentual.
    */
-  constants?: Record<string, string | number | boolean>;
+  constants?: Record<string, TemplateConstantValue>;
+  /**
+   * DECLARAÇÃO das constantes para a tela (rótulo e formato). Os VALORES
+   * continuam em `constants` — separado de propósito: mexer na forma de
+   * `constants` quebraria o BM, que lê o mapa direto
+   * (datasets/medicaoValeBm.ts). Ausente = a tela cai no nome da constante.
+   */
+  constantDefs?: TemplateConstantDef[];
   /** Campos do cadastro por contexto ("<corredor>|<mina>") que a tela oferece. */
   contextFields?: TemplateContextField[];
 }

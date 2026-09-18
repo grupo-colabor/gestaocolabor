@@ -495,10 +495,12 @@ console.log('\n[E] Guarda de fonte — domain/exports/templates sem I/O');
  * [A] Arquivo (I/O) — assinatura de bytes e fotografia
  * ────────────────────────────────────────────────────────────────────────── */
 import { runArquivoChecks } from './smokeModelosMedicaoArquivo';
+import { runStoreChecks } from './smokeModelosMedicaoStore';
 
 (async () => {
-  // O bloco de arquivo usa o MESMO `check`, que já soma em `falhas`.
+  // Os blocos abaixo usam o MESMO `check`, que já soma em `falhas`.
   await runArquivoChecks({ check, eq });
+  await runStoreChecks({ check, eq });
 
   console.log(falhas === 0 ? '\n✅ SMOKE MODELOS MEDICAO: OK' : `\n❌ SMOKE MODELOS MEDICAO: ${falhas} falha(s)`);
   process.exit(falhas === 0 ? 0 : 1);

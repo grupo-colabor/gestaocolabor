@@ -23,7 +23,8 @@ import { formatDiasList } from '../domain/exports/shared';
 import { buildMedicoesRows, MEDICOES_DATASET, type MedicaoRow } from '../domain/exports/datasets/medicoes';
 import { buildTable, defaultColumnKeys } from '../domain/exports/buildRows';
 import { buildDemandasRows, DEMANDAS_DATASET, transportLabel, lodgingLabel } from '../domain/exports/datasets/demandas';
-import { EXPORT_DATASETS, getDataset, visibleDatasets, isTemplateDataset } from '../domain/exports/registry';
+import { EXPORT_DATASETS, buildRegistry, getDataset, visibleDatasets, isTemplateDataset } from '../domain/exports/registry';
+import { VALE_TEMPLATE } from '../domain/exports/templates/vale';
 import { EMPTY_FILTERS } from '../domain/exports/types';
 import { applyFilters } from '../domain/exports/filters';
 import { DEFAULT_OPTIONS } from '../domain/exports/options';
@@ -478,6 +479,47 @@ export function runDatasetChecks(t: SmokeTools): number {
     const registry = t.ler('domain/exports/registry.ts');
     check('o registry documenta que é defesa de UI e que RLS por papel fica para a leva de segurança',
       registry.includes('DEFESA DE UI') && /RLS por[\s*]+papel/.test(registry));
+
+    /* Registro DINÂMICO (Fase 4 dos modelos por empresa, 18/09/2026).
+     * O que estas asserções protegem: ligar o mecanismo dos modelos do banco
+     * não pode mexer em NADA para quem ainda não cadastrou modelo nenhum — que
+     * é a situação de produção hoje. */
+    eq('buildRegistry([]) é idêntico a EXPORT_DATASETS', buildRegistry([]).map(d => d.key), EXPORT_DATASETS.map(d => d.key));
+    check('e devolve os MESMOS objetos, não cópias', buildRegistry([]).every((d, i) => d === EXPORT_DATASETS[i]));
+
+    const modeloDe = (id: string, empresa: string): any => ({
+      id: `tpl:${id}`, version: 1, origin: 'db', label: `Medição ${empresa}`,
+      company: { id }, fileNameBase: 'medicao', baseFile: 'templates/x/y.xlsx', baseFileFrom: 'storage',
+      sheets: [{
+        name: 'Dados', kind: 'rows', rowScope: 'demand', headerRow: 1, firstDataRow: 2,
+        columns: [{ key: 'trein', header: 'Treinamento', source: 'training.name', format: 'text' }],
+      }],
+    });
+
+    const comDois = buildRegistry([modeloDe('z1', 'Usiminas'), modeloDe('a1', 'CSN')]);
+    eq('modelos do banco entram DEPOIS dos de código', comDois.length, EXPORT_DATASETS.length + 2);
+    eq('os de código continuam na mesma ordem', comDois.slice(0, EXPORT_DATASETS.length).map(d => d.key), EXPORT_DATASETS.map(d => d.key));
+    eq('os do banco saem ordenados por empresa', comDois.slice(EXPORT_DATASETS.length).map(d => d.label), ['Medição CSN', 'Medição Usiminas']);
+    check('e exigem a view measurement', comDois.slice(EXPORT_DATASETS.length).every(d => d.requiredView === 'measurement'));
+    eq('modelo INATIVO não chega aqui: quem filtra é a busca, e template de código passado por engano é ignorado',
+      buildRegistry([{ ...VALE_TEMPLATE } as any]).length, EXPORT_DATASETS.length);
+
+    /* ⚠️ O laço acima (`for (const d of EXPORT_DATASETS)`) acessa `d.columns`
+     * depois de pular os de template. Com módulos do banco na lista, ele
+     * passaria a ver entradas `kind: 'template'` vindas de outro lugar — aqui
+     * se prova que continua pulando e não estoura em `undefined.map`. */
+    let estourou = false;
+    try {
+      for (const d of comDois) {
+        if (isTemplateDataset(d)) continue;
+        void (d as any).columns.map((c: any) => c.key);
+      }
+    } catch { estourou = true; }
+    check('o laço de colunas não estoura com módulo do banco na lista', !estourou);
+
+    eq('getDataset acha o módulo do banco quando recebe a lista', getDataset('tpl:a1', comDois).label, 'Medição CSN');
+    eq('visibleDatasets recorta a lista recebida, não a constante',
+      visibleDatasets(v => admin.has(v), comDois).map(d => d.key).slice(-2), ['tpl:a1', 'tpl:z1']);
   }
 
 

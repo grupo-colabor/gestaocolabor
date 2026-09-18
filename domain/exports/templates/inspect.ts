@@ -17,12 +17,25 @@
  *
  *   cabeçalho = a primeira linha que
  *     (1) tem 2+ células preenchidas          — uma célula só é título, não cabeçalho;
- *     (2) não tem célula COBERTA POR MESCLAGEM — "RELATÓRIO DE MEDIÇÃO" mesclado
- *         de A a E tem 5 células preenchidas e passaria por (1); é o que
- *         separa título de cabeçalho;
+ *     (2) não TOCA MESCLAGEM, de nenhum dos dois lados:
+ *           • não tem célula coberta por uma mesclagem, e
+ *           • não tem a ÂNCORA de uma mesclagem que abrange outras células.
+ *         Os dois importam. Num título mesclado de A1 a J1, A1 é a âncora e sai
+ *         como texto comum — só B1..J1 vêm cobertas. Uma linha cuja única
+ *         célula preenchida é uma âncora já cai em (1), mas quando o leitor
+ *         propaga o valor do mestre para as cobertas ela tem 10 células e
+ *         passaria; e o fallback, que não olhava mesclagem nenhuma, escolhia
+ *         justamente essa linha. Ver o bloco do fallback, abaixo.
  *     (3) tem todas as células preenchidas em TEXTO — cabeçalho não é número;
  *     (4) é seguida por uma linha de dados com ao menos um número ou data —
  *         senão duas linhas de título seguidas enganariam a regra.
+ *
+ * (4) É PREFERÊNCIA, NÃO EXIGÊNCIA — e o motivo é o uso real: o manual manda
+ * enviar a planilha EM BRANCO do cliente, que por definição não tem linha de
+ * dados nenhuma. Exigindo (4), nenhuma linha qualificava num modelo em branco e
+ * a sugestão caía no fallback. Então: vale a primeira linha que satisfaz (1) a
+ * (4); não havendo, a primeira que satisfaz (1) a (3), com um aviso dizendo que
+ * a planilha está vazia abaixo do cabeçalho e que é para conferir olhando.
  *
  * SUGESTÃO, NUNCA DECISÃO. O retorno traz `confianca` e os avisos; a tela
  * mostra as primeiras linhas e pede confirmação. Um palpite silencioso sobre
@@ -144,6 +157,32 @@ export function suggestColumnKey(header: string, letter: string, usadas: Set<str
   return key;
 }
 
+/**
+ * As colunas que são ÂNCORA de uma mesclagem que abrange mais de uma célula.
+ *
+ * A âncora é a superior esquerda: é ela que guarda o valor, e por isso ela NÃO
+ * aparece como célula coberta nem vem com o tipo 'mesclada'. Num título
+ * "RELATÓRIO DE MEDIÇÃO" mesclado de A1 a J1, A1 é texto comum — só B1..J1 são
+ * cobertas. Uma linha que contém uma âncora dessas é título, nunca cabeçalho.
+ */
+export function mergeAnchorColumns(merges: string[], row: number): Set<number> {
+  const out = new Set<number>();
+  for (const m of merges) {
+    const [de, ate] = m.split(':');
+    const a = parseRef(de);
+    const b = parseRef(ate);
+    if (!a || !b) continue;
+    const r1 = Math.min(a.row, b.row);
+    const r2 = Math.max(a.row, b.row);
+    const c1 = Math.min(a.col, b.col);
+    const c2 = Math.max(a.col, b.col);
+    // Mesclagem de uma célula só não diz nada sobre a linha.
+    if (c1 === c2 && r1 === r2) continue;
+    if (row === r1) out.add(c1);
+  }
+  return out;
+}
+
 /** As células que alguma mesclagem COBRE (sem contar a superior esquerda). */
 export function mergedCoveredColumns(merges: string[], row: number): Set<number> {
   const out = new Set<number>();
@@ -240,33 +279,67 @@ export function suggestHeader(sheet: SheetSnapshot): HeaderSuggestion {
   }
 
   const linhas = sheet.rows;
+
+  /** A linha toca alguma mesclagem — como coberta OU como âncora? */
+  const tocaMesclagem = (i: number): boolean => {
+    const linha1 = i + 1;
+    const cobertas = mergedCoveredColumns(sheet.merges, linha1);
+    const ancoras = mergeAnchorColumns(sheet.merges, linha1);
+    return linhas[i].some((c, j) => c.type === 'mesclada' || cobertas.has(j + 1) || ancoras.has(j + 1));
+  };
+
+  /** Candidata: 2+ células, nenhuma mesclagem, tudo texto. Condições 1 a 3. */
+  const ehCandidata = (i: number): boolean => {
+    const preenchidas = cheias(linhas[i]);
+    if (preenchidas.length < 2) return false;
+    if (tocaMesclagem(i)) return false;
+    return preenchidas.every(c => TEXTUAL.has(c.type));
+  };
+
   let escolhida = -1;
+  /** Candidata sem linha de dados abaixo — o caso do MODELO EM BRANCO. */
+  let semDados = -1;
 
   for (let i = 0; i < linhas.length; i++) {
-    const row = linhas[i];
-    const preenchidas = cheias(row);
-    if (preenchidas.length < 2) continue;
+    if (!ehCandidata(i)) continue;
 
-    const cobertas = mergedCoveredColumns(sheet.merges, i + 1);
-    const temMesclada = row.some((c, j) => c.type === 'mesclada' || cobertas.has(j + 1));
-    if (temMesclada) continue;
-
-    if (!preenchidas.every(c => TEXTUAL.has(c.type))) continue;
-
-    // A próxima linha com algum conteúdo tem de parecer dado.
+    // Condição 4: a próxima linha com algum conteúdo tem de parecer dado.
     let j = i + 1;
     while (j < linhas.length && vazia(linhas[j])) j++;
-    if (j >= linhas.length) continue;
-    if (!linhas[j].some(c => DADO.has(c.type))) continue;
+    const temDadoAbaixo = j < linhas.length && linhas[j].some(c => DADO.has(c.type));
 
-    escolhida = i;
-    break;
+    if (temDadoAbaixo) {
+      escolhida = i;
+      break;
+    }
+    if (semDados < 0) semDados = i;
   }
 
   let confianca: HeaderSuggestion['confianca'] = 'alta';
+
+  if (escolhida < 0 && semDados >= 0) {
+    // SEM LINHA DE DADOS — o caso NORMAL, não a exceção: o manual manda enviar
+    // a planilha vazia do cliente, e aí não existe dado para confirmar o
+    // cabeçalho. Sem este ramo, nenhuma linha qualificava e a sugestão caía no
+    // fallback, que apontava a linha 1 (a âncora do título mesclado).
+    //
+    // A confiança fica BAIXA de propósito, e não é pessimismo: é exatamente
+    // aqui que a pessoa mais precisa olhar, porque não houve dado nenhum para
+    // cruzar. Dizer "alta" numa suposição que ninguém conferiu seria mentir com
+    // a cor do banner.
+    escolhida = semDados;
+    confianca = 'baixa';
+    avisos.push(
+      `Não há linhas de dados abaixo da linha ${escolhida + 1} para confirmar o cabeçalho — o que é o normal num modelo em branco. Confira olhando as linhas acima.`
+    );
+  }
+
   if (escolhida < 0) {
     confianca = 'baixa';
-    escolhida = linhas.findIndex(r => cheias(r).length > 0);
+    // O fallback TAMBÉM pula linha mesclada: sem isso, um arquivo com título
+    // mesclado no topo sempre cairia nele — que é como este defeito apareceu.
+    escolhida = linhas.findIndex((r, i) => cheias(r).length > 0 && !tocaMesclagem(i));
+    if (escolhida < 0) escolhida = linhas.findIndex(r => cheias(r).length > 0);
     if (escolhida < 0) {
       return {
         headerRow: 1,

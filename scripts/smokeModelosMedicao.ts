@@ -57,7 +57,7 @@ import {
 import { SOURCE_FIELDS } from '../domain/exports/templates/sourceFields';
 import type { TemplateRowInput } from '../domain/exports/templates/sourceFields';
 import type { MeasurementTemplate, TemplateSheet } from '../domain/exports/templates/types';
-import { suggestHeader, suggestSheet, type SheetSnapshot } from '../domain/exports/templates/inspect';
+import { mergeAnchorColumns, suggestHeader, suggestSheet, type SheetSnapshot } from '../domain/exports/templates/inspect';
 
 let falhas = 0;
 function check(nome: string, condicao: boolean, detalhe = '') {
@@ -434,6 +434,69 @@ console.log('\n[I] Inspeção: onde está o cabeçalho');
   const semMerges: SheetSnapshot = { ...comTitulo, merges: [] };
   eq('sem o registro de mesclagem, o tipo da célula ainda salva', suggestHeader(semMerges).headerRow, 3);
 
+  /* ──────────────────────────────────────────────────────────────────────────
+   * O caso relatado em 18/09/2026: título mesclado A1:J1, subtítulo mesclado
+   * A2:J2, linha 3 vazia, cabeçalho na 4. Sugeria a linha 1.
+   *
+   * A causa NÃO era a mesclagem (com linha de dados a heurística já acertava a
+   * 4, em qualquer forma de mesclagem). Era a condição "a linha seguinte tem
+   * número ou data": num MODELO EM BRANCO — o que o manual manda enviar — não
+   * existe linha de dados, nenhuma linha qualificava, e o fallback pegava a
+   * primeira linha com conteúdo, que é a âncora do título. O fallback também
+   * não olhava mesclagem nenhuma.
+   * ────────────────────────────────────────────────────────────────────────── */
+  const cab = ['Item', 'Serviço', 'Qtd', 'Unid', 'Valor Unit', 'Total', 'Obs', 'Data', 'Resp', 'Status'].map(t);
+  const dez = <T,>(v: T) => Array(9).fill(v);
+  const tituloEsubtitulo = (cobertasComoTexto: boolean) => [
+    [t('RELATÓRIO DE MEDIÇÃO'), ...dez(cobertasComoTexto ? mesc('RELATÓRIO DE MEDIÇÃO') : vaz)],
+    [t('Contrato 4600012345 — competência 08/2026'), ...dez(cobertasComoTexto ? mesc('Contrato') : vaz)],
+    Array(10).fill(vaz),
+    cab,
+  ];
+  const baseDezColunas = {
+    name: 'Medição', hidden: false, locked: false, columnCount: 10,
+    merges: ['A1:J1', 'A2:J2'],
+  };
+
+  const emBranco: SheetSnapshot = { ...baseDezColunas, rowCount: 4, rows: tituloEsubtitulo(true) };
+  const s4 = suggestHeader(emBranco);
+  eq('modelo EM BRANCO com título e subtítulo mesclados -> cabeçalho na linha 4', s4.headerRow, 4);
+  eq('e as 10 colunas do cabeçalho', s4.columns.map(c => c.header), cab.map(c => c.text));
+  check('avisa que não houve dado para confirmar',
+    s4.avisos.some(a => a.includes('Não há linhas de dados') && a.includes('modelo em branco')), JSON.stringify(s4.avisos));
+  eq('e a confiança é BAIXA — é aqui que a pessoa mais precisa olhar', s4.confianca, 'baixa');
+
+  const comDados: SheetSnapshot = {
+    ...baseDezColunas, rowCount: 5,
+    rows: [...tituloEsubtitulo(true), [n(1), t('NR-35'), n(8), t('h'), n(150), n(1200), vaz, t('10/08/2026'), t('Ana'), t('OK')]],
+  };
+  eq('o mesmo arquivo COM uma linha de dados também dá 4', suggestHeader(comDados).headerRow, 4);
+  eq('e aí sem aviso de planilha vazia', suggestHeader(comDados).avisos, []);
+
+  // A âncora sozinha: o leitor não propagou o valor do mestre, então a linha 1
+  // tem UMA célula preenchida e nove vazias. Tem de continuar dando 4.
+  const ancoraSolta: SheetSnapshot = { ...baseDezColunas, rowCount: 4, rows: tituloEsubtitulo(false) };
+  eq('âncora de mesclagem sem as cobertas preenchidas -> ainda 4', suggestHeader(ancoraSolta).headerRow, 4);
+
+  // E o pior caso: as mesclagens NÃO foram lidas do arquivo. Sem `merges`, a
+  // regra da âncora não tem o que olhar — quem salva é a contagem de células.
+  eq('mesmo sem o registro de mesclagem -> ainda 4',
+    suggestHeader({ ...ancoraSolta, merges: [] }).headerRow, 4);
+
+  // A regra da âncora, isolada.
+  eq('âncora de A1:J1 é a coluna 1 da linha 1', [...mergeAnchorColumns(['A1:J1'], 1)], [1]);
+  eq('na linha 2 não há âncora dessa mesclagem', [...mergeAnchorColumns(['A1:J1'], 2)], []);
+  eq('mesclagem vertical também tem âncora na primeira linha', [...mergeAnchorColumns(['C3:C6'], 3)], [3]);
+  eq('mesclagem de uma célula só não conta', [...mergeAnchorColumns(['B2:B2'], 2)], []);
+
+  // E o fallback: uma planilha que SÓ tem título mesclado não pode devolver a
+  // linha do título como cabeçalho enquanto houver outra linha com conteúdo.
+  const soTitulos: SheetSnapshot = {
+    name: 'X', hidden: false, locked: false, rowCount: 2, columnCount: 3, merges: ['A1:C1'],
+    rows: [[t('TÍTULO'), mesc('TÍTULO'), mesc('TÍTULO')], [t('observação solta'), vaz, vaz]],
+  };
+  eq('fallback pula a linha mesclada e vai para a linha 2', suggestHeader(soTitulos).headerRow, 2);
+
   // Cabeçalho na linha 1 (o caso da Vale).
   const simples: SheetSnapshot = {
     name: 'Turmas', hidden: false, locked: false, rowCount: 3, columnCount: 3,
@@ -449,7 +512,8 @@ console.log('\n[I] Inspeção: onde está o cabeçalho');
   };
   const baixa = suggestHeader(soTexto);
   eq('sem linha de dados numérica -> confiança baixa', baixa.confianca, 'baixa');
-  check('e o motivo aparece', baixa.avisos.some(a => a.includes('não deu para identificar') || a.includes('Não deu para identificar')));
+  check('e o motivo aparece: não houve dado para confirmar',
+    baixa.avisos.some(a => a.includes('Não há linhas de dados')), JSON.stringify(baixa.avisos));
 
   const vazia: SheetSnapshot = { name: 'Vazia', hidden: false, locked: false, rowCount: 0, columnCount: 1, merges: [], rows: [] };
   check('aba vazia é dita, não adivinhada', suggestHeader(vazia).avisos.some(a => a.includes('nenhuma linha preenchida')));

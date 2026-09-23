@@ -76,7 +76,7 @@ export const MEDICAO_VALE_DATASET: TemplateDatasetDef = {
   key: 'medicao-vale',
   label: 'Medição Vale',
   description:
-    'Planilha no modelo da Vale: uma turma por demanda concluída, com preço HH, despesas reembolsáveis e a aba Plantas.',
+    'Planilha no modelo da Vale: uma turma por demanda concluída que termina no período, com preço HH, despesas reembolsáveis e a aba Plantas.',
   requiredView: 'measurement',
   filters: ['periodoFim', 'corredor', 'site', 'statusMedicao'],
   options: ['incluirCanceladas'],
@@ -163,7 +163,7 @@ function templateDataset(t: MeasurementTemplate): TemplateDatasetDef {
     label: t.label,
     description: indisponivel
       ? `Modelo de medição configurado para esta empresa. ${indisponivel}`
-      : 'Planilha de medição no modelo desta empresa: uma turma por demanda concluída, no recorte do período.',
+      : 'Planilha de medição no modelo desta empresa: uma turma por demanda concluída que termina no período (a mesma elegibilidade da Medição Vale).',
     // O mesmo gate dos módulos de medição em código: o analista não tem esta
     // view, então não vê modelo de empresa nenhum.
     requiredView: 'measurement',

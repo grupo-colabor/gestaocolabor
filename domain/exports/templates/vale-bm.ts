@@ -68,7 +68,7 @@ export const VALE_BM_TEMPLATE: MeasurementTemplate = {
   constants: { ...VALE_BM_CONSTANTS },
   contextFields: VALE_BM_CONTEXT_FIELDS,
   notes: [
-    'O BM sai da MESMA seleção da Medição Vale: mesmas turmas, mesmo preço HH, mesma exclusão de não reembolsável. Os totais dos dois documentos batem por construção.',
+    'O BM sai da MESMA seleção da Medição Vale: as turmas que TERMINAM no período (mesmo que tenham começado antes), mesmo preço HH, mesma exclusão de não reembolsável. Os totais dos dois documentos batem por construção.',
     'Um BM por (corredor, mina). Corredor é obrigatório; sem mina, sai um .zip com um .xlsx por mina do recorte.',
     'Turma sem local na demanda fica fora do BM — corrija o local na demanda.',
   ],

@@ -17,8 +17,8 @@ import { OPTION_LABELS, type ExportOptions, type OptionKey } from '../../domain/
  * (domain/exports/filters.buildFilterOptions). Primitivos visuais do painel
  * de filtros da demanda interna (components/demand-form/FilterPanel.tsx).
  *
- * `periodo` (interseção) e `periodoInicio` (data de início dentro do
- * intervalo) usam o mesmo par de datas — o rótulo diz qual regra vale.
+ * `periodo` (interseção) e `periodoFim` (a turma entra na medição do período
+ * em que TERMINA) usam o mesmo par de datas — o rótulo diz qual regra vale.
  */
 const FiltrosExportacao: React.FC<{
   allowed: FilterKey[];
@@ -86,7 +86,7 @@ const FiltrosExportacao: React.FC<{
         )}
         {on('periodoFim') && (
           <FilterDateRangeField
-            label="Período (data de início da turma)"
+            label="Período (data de término da turma)"
             from={value.dataInicio}
             to={value.dataFim}
             onFromChange={v => set({ dataInicio: v })}

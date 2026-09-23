@@ -17,6 +17,10 @@
  *   • BM com cabeçalho incompleto pede confirmação ("gerar mesmo assim?");
  *   • turma sem local fica fora do BM, em destaque na barra e no painel —
  *     nunca silencioso; com "Todos", turma sem corredor idem;
+ *   • turma que COMEÇOU antes do início do período e termina dentro dele é
+ *     avisada na barra e no painel. Não bloqueia nada: é o efeito esperado da
+ *     seleção pela data de término, e o aviso existe para quem compara com a
+ *     medição do mês passado saber por que a turma está aqui;
  *   • falha de banco (carga ou salvar) e falha no arquivo-base viram banner e
  *     bloqueiam a geração.
  */
@@ -28,7 +32,13 @@ import type { ExportSourceData } from '../../services/exports/loadExportData';
 import { applyFilters, buildFilterOptions } from '../../domain/exports/filters';
 import { EMPTY_FILTERS, type ExportFilters } from '../../domain/exports/types';
 import type { ExportOptions } from '../../domain/exports/options';
-import { buildMedicaoValeRows, toRowsSheetInput } from '../../domain/exports/datasets/medicaoVale';
+import {
+  buildMedicaoValeRows,
+  toRowsSheetInput,
+  turmasComecaramAntes,
+  avisoComecaramAntes,
+  avisoTurmaComecouAntes,
+} from '../../domain/exports/datasets/medicaoVale';
 import {
   buildBm,
   bmRegionRows,
@@ -142,6 +152,11 @@ const MedicaoTemplateView: React.FC<{
     [rows, carga, corredoresBase]
   );
   const elegiveis = useMemo(() => filtered.filter(r => r.elegivelTurmas), [filtered]);
+  /** Turmas herdadas do mês anterior: começaram antes do início e terminam aqui. */
+  const comecaramAntes = useMemo(
+    () => turmasComecaramAntes(filtered, filters.dataInicio || undefined),
+    [filtered, filters.dataInicio]
+  );
 
   /* ───────── BM ───────── */
   /** Corredor "Todos": um BM por (corredor, mina) do recorte; o zip ganha uma pasta por corredor. */
@@ -165,8 +180,9 @@ const MedicaoTemplateView: React.FC<{
       logisticAllocations: carga.logisticAllocations,
       logisticBlocks: carga.logisticBlocks,
     });
-    if (!bm) return base;
     const extras: { row: (typeof filtered)[number]; pendencia: Pendencia }[] = [];
+    for (const r of comecaramAntes) extras.push({ row: r, pendencia: { tipo: 'aviso', texto: avisoTurmaComecouAntes(r) } });
+    if (!bm) return extras.length > 0 ? mergePendencias(base, extras) : base;
     for (const r of bm.semLocal) extras.push({ row: r, pendencia: { tipo: 'aviso', texto: 'Sem local na demanda — fora do BM (corrija o local)' } });
     for (const r of bm.semCorredor) extras.push({ row: r, pendencia: { tipo: 'aviso', texto: 'Sem corredor na demanda — fora do BM (informe o corredor)' } });
     for (const m of bm.minas) {
@@ -179,7 +195,7 @@ const MedicaoTemplateView: React.FC<{
       }
     }
     return mergePendencias(base, extras);
-  }, [filtered, sheetTurmas, values, carga, bm]);
+  }, [filtered, sheetTurmas, values, carga, bm, comecaramAntes]);
 
   const previa = useMemo(() => (isBm ? null : resolveRowsSheet(sheetTurmas, toRowsSheetInput(elegiveis), values)), [isBm, sheetTurmas, elegiveis, values]);
 
@@ -401,6 +417,12 @@ const MedicaoTemplateView: React.FC<{
             <div className="flex items-center gap-2 bg-amber-400 text-slate-900 rounded-xl px-3 py-2 text-xs font-black">
               <AlertTriangle size={16} />
               {bm.semCorredor.length} turma(s) sem corredor ficaram fora do BM — informe o corredor na demanda
+            </div>
+          )}
+          {comecaramAntes.length > 0 && (
+            <div className="flex items-center gap-2 bg-slate-700 text-slate-100 rounded-xl px-3 py-2 text-xs font-bold">
+              <Info size={16} className="shrink-0" />
+              {avisoComecaramAntes(comecaramAntes.length, filters.dataInicio)}
             </div>
           )}
         </div>

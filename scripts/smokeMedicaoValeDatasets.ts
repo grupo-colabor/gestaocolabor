@@ -248,6 +248,31 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     eq('sem período no filtro não há aviso', turmasComecaramAntes(recorte, '').length, 0);
   }
 
+  /* ────────────────────────────────────────────────────────────────────────
+   * [RT] Tela e textos da regra do período (guarda de fonte)
+   * ────────────────────────────────────────────────────────────────────── */
+  console.log('\n[RT] Tela e textos da regra do período');
+  {
+    const filtros = t.ler('components/exportacoes/FiltrosExportacao.tsx');
+    check('rótulo do filtro fala em data de TÉRMINO', filtros.includes('label="Período (data de término da turma)"'));
+    check('e o campo é o do dataset (periodoFim)', filtros.includes("on('periodoFim')") && !filtros.includes("on('periodoInicio')"));
+
+    const nota = t.ler('domain/exports/templates/vale.ts');
+    check('nota da Medição Vale: entra onde TERMINA', /A turma entra na medição do período em que TERMINA/.test(nota));
+    check('nota da Medição Vale: e por isso nunca em duas', /nunca aparece em duas medições/.test(nota));
+    const notaBm = t.ler('domain/exports/templates/vale-bm.ts');
+    check('nota do BM: as turmas que TERMINAM no período', /as turmas que TERMINAM no período/.test(notaBm));
+
+    const view = t.ler('components/exportacoes/MedicaoTemplateView.tsx');
+    check('tela: conta as herdadas pelo domínio, com o início do período',
+      view.includes('turmasComecaramAntes(filtered, filters.dataInicio || undefined)'));
+    check('tela: aviso na barra com o texto do domínio',
+      view.includes('avisoComecaramAntes(comecaramAntes.length, filters.dataInicio)'));
+    check('tela: a mesma informação como aviso na turma, no painel',
+      view.includes("texto: avisoTurmaComecouAntes(r)") && view.includes("tipo: 'aviso'"));
+    check('tela: o aviso não bloqueia a geração', !/podeGerar[^\n]*comecaramAntes/.test(view));
+  }
+
   return falhas;
 }
 

@@ -99,7 +99,7 @@ export const VALE_TEMPLATE: MeasurementTemplate = {
   baseFile: '/templates/vale.xlsx',
   fileNameBase: 'medicao_vale',
   notes: [
-    'O período seleciona as turmas pela DATA DE INÍCIO dentro do intervalo — diferente do dataset Medições, que usa interseção. Uma turma que atravessa o fechamento entra num mês só.',
+    'A turma entra na medição do período em que TERMINA, mesmo que tenha começado antes — diferente do dataset Medições, que usa interseção. Como cada turma tem uma só data de fim, ela nunca aparece em duas medições.',
     'Itens marcados como não reembolsáveis na medição ficam fora das colunas de despesa.',
     'O preço unitário HH é lembrado por treinamento e pode ser sobrescrito na turma.',
   ],

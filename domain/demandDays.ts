@@ -54,6 +54,19 @@ export function getDemandDays(demand: DemandLike): string[] {
 }
 
 /**
+ * Último dia REAL da demanda ('YYYY-MM-DD') — o dia em que a turma TERMINA.
+ *
+ * Em DIAS_ESPECIFICOS é o maior dia da lista, que pode ser diferente de
+ * `endDate`: uma turma com dias 19, 20, 21 e 25/08 termina em 25/08. Por isso
+ * quem precisa da data de término passa por aqui, e não lê o campo direto.
+ * Sem dia nenhum, cai em `endDate` para nunca devolver vazio à toa.
+ */
+export function getDemandLastDay(demand: DemandLike): string {
+  const dias = getDemandDays(demand);
+  return dias.length > 0 ? dias[dias.length - 1] : toDateKey(demand.endDate);
+}
+
+/**
  * Retorna os limites min/max da demanda como { startKey, endKey } (strings 'YYYY-MM-DD').
  * Sempre derivados de startDate/endDate (que são auto-calculados no save).
  */

@@ -78,7 +78,7 @@ export const MEDICAO_VALE_DATASET: TemplateDatasetDef = {
   description:
     'Planilha no modelo da Vale: uma turma por demanda concluída, com preço HH, despesas reembolsáveis e a aba Plantas.',
   requiredView: 'measurement',
-  filters: ['periodoInicio', 'corredor', 'site', 'statusMedicao'],
+  filters: ['periodoFim', 'corredor', 'site', 'statusMedicao'],
   options: ['incluirCanceladas'],
   template: VALE_TEMPLATE,
 };
@@ -90,7 +90,7 @@ export const VALE_BM_DATASET: TemplateDatasetDef = {
   description:
     'Boletim de Medição no modelo da Vale: a mesma seleção da Medição Vale agregada por treinamento, um BM por (corredor, mina).',
   requiredView: 'measurement',
-  filters: ['periodoInicio', 'corredor', 'site', 'statusMedicao'],
+  filters: ['periodoFim', 'corredor', 'site', 'statusMedicao'],
   options: ['incluirCanceladas'],
   template: VALE_BM_TEMPLATE,
   templateIds: [VALE_TEMPLATE.id, VALE_BM_TEMPLATE.id],
@@ -167,7 +167,7 @@ function templateDataset(t: MeasurementTemplate): TemplateDatasetDef {
     // O mesmo gate dos módulos de medição em código: o analista não tem esta
     // view, então não vê modelo de empresa nenhum.
     requiredView: 'measurement',
-    filters: ['periodoInicio', 'corredor', 'site', 'statusMedicao'],
+    filters: ['periodoFim', 'corredor', 'site', 'statusMedicao'],
     options: ['incluirCanceladas'],
     template: t,
     ...(indisponivel ? { indisponivel } : {}),

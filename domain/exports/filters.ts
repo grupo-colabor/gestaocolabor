@@ -12,9 +12,16 @@
  * dia dela cai no intervalo. Não há rateio de horas pelos dias dentro do
  * período — isso é regra da planilha de pagamento (domain/instructorHours),
  * não deste export, e a aba avisa em texto fixo.
+ *
+ * PERÍODO FIM (`periodoFim`, Medição Vale e modelos por empresa) é outra
+ * regra: a turma entra na medição do período em que TERMINA. Como cada turma
+ * tem uma única data de fim, ela cai em exatamente uma medição — nunca em
+ * duas. A data de término vem de `getDemandLastDay`, que resolve os dias
+ * reais: em dias específicos, o último dia da lista pode não ser o campo de
+ * data fim.
  */
 import type { Demand } from '../../types';
-import { demandIntersectsRange, toDateKey } from '../demandDays';
+import { demandIntersectsRange, getDemandLastDay } from '../demandDays';
 import { matchesModality, buildModalityOptions, type ModalityOption } from '../modalityOptions';
 import { resolveCalculatedStatus, STATUS_ORDER, STATUS_LABELS } from './shared';
 import { DEFAULT_OPTIONS, type ExportOptions } from './options';
@@ -59,10 +66,10 @@ export function matchesFilters(
   if (on('periodo') && (f.dataInicio || f.dataFim)) {
     if (!demandIntersectsRange(d, f.dataInicio || undefined, f.dataFim || undefined)) return false;
   }
-  if (on('periodoInicio') && (f.dataInicio || f.dataFim)) {
-    const inicio = toDateKey(d.startDate);
-    if (f.dataInicio && inicio < f.dataInicio) return false;
-    if (f.dataFim && inicio > f.dataFim) return false;
+  if (on('periodoFim') && (f.dataInicio || f.dataFim)) {
+    const fim = getDemandLastDay(d);
+    if (f.dataInicio && fim < f.dataInicio) return false;
+    if (f.dataFim && fim > f.dataFim) return false;
   }
   if (on('corredor') && f.corredor) {
     if ((d.corredor ?? '') !== f.corredor) return false;

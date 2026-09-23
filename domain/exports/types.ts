@@ -54,8 +54,12 @@ export const isDatasetDeEmpresa = (k: DatasetKey): k is `tpl:${string}` => k.sta
 
 export type FilterKey =
   | 'periodo'
-  /** Período pela DATA DE INÍCIO dentro do intervalo (Medição Vale), não por interseção. */
-  | 'periodoInicio'
+  /**
+   * Período pela DATA DE TÉRMINO da turma dentro do intervalo (Medição Vale),
+   * não por interseção. Cada turma tem UMA data de fim, então cai em
+   * exatamente uma medição — nunca em duas.
+   */
+  | 'periodoFim'
   | 'status'
   | 'modalidade'
   | 'tipo'

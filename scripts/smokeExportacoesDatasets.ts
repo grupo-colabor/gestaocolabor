@@ -454,7 +454,7 @@ export function runDatasetChecks(t: SmokeTools): number {
       isTemplateDataset(bmDs) && bmDs.requiredView === 'measurement' && JSON.stringify(bmDs.templateIds) === JSON.stringify(['vale-v1', 'vale-bm-v1']));
     const vale = EXPORT_DATASETS.find(d => d.key === 'medicao-vale')!;
     check('Medição Vale é dataset de template e exige a view measurement', isTemplateDataset(vale) && vale.requiredView === 'measurement');
-    check('Medição Vale filtra por data de início, corredor, site e status da medição', isTemplateDataset(vale) && ['periodoInicio', 'corredor', 'site', 'statusMedicao'].every(f => vale.filters.includes(f as any)));
+    check('Medição Vale filtra por data de término, corredor, site e status da medição', isTemplateDataset(vale) && ['periodoFim', 'corredor', 'site', 'statusMedicao'].every(f => vale.filters.includes(f as any)));
     for (const d of EXPORT_DATASETS) {
       if (isTemplateDataset(d)) continue;
       const keys = d.columns.map(c => c.key);

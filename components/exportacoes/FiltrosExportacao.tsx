@@ -84,7 +84,7 @@ const FiltrosExportacao: React.FC<{
             onToChange={v => set({ dataFim: v })}
           />
         )}
-        {on('periodoInicio') && (
+        {on('periodoFim') && (
           <FilterDateRangeField
             label="Período (data de início da turma)"
             from={value.dataInicio}

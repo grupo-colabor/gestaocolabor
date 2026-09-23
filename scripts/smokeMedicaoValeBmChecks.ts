@@ -2,7 +2,10 @@
  * SMOKE — BM da Vale: blocos [Σ] dataset, [X] escritor, [Z] zip.
  * Chamado por smokeMedicaoValeBm.ts.
  */
-import { buildValeFixtureSource, demandaVale, medicao } from './smokeMedicaoValeDatasets';
+import { buildValeFixtureSource, demandaVale, medicao, HOJE } from './smokeMedicaoValeDatasets';
+import { applyFilters } from '../domain/exports/filters';
+import { EMPTY_FILTERS } from '../domain/exports/types';
+import { buildTrainingsById } from '../domain/modalityOptions';
 import { buildMedicaoValeRows, toRowsSheetInput, type MedicaoValeRow } from '../domain/exports/datasets/medicaoVale';
 import {
   buildBm,
@@ -38,8 +41,11 @@ export interface BmSmokeTools {
  *   • DEM-115 sem corredor na demanda → com "Todos", fora e contada;
  * e o cabeçalho cadastrado só para Sudeste|Brucutu.
  *
- * `recorte` = corredor Sudeste + agosto (o filtro de hoje); `recorteTodos` =
- * agosto com corredor "Todos" (dois corredores, três minas).
+ * `recorte` = corredor Sudeste + agosto; `recorteTodos` = agosto com corredor
+ * "Todos" (dois corredores, três minas). Os dois saem do FILTRO DE VERDADE da
+ * tela (`applyFilters` com `periodoFim`), não de um predicado escrito aqui:
+ * assim o BM prova que herda a regra do período da Medição Vale em vez de
+ * repeti-la por conta própria.
  */
 export function buildBmFixture() {
   const base = buildValeFixtureSource();
@@ -91,12 +97,14 @@ export function buildBmFixture() {
   ]);
   const src = { ...base, trainings: TRAININGS, demands, measurements, instructorAllocations, templateValues };
   const rows = buildMedicaoValeRows(src);
-  // Recorte da tela: corredor Sudeste, agosto (data de início), tudo o mais aberto.
-  const agosto = (r: MedicaoValeRow) => r.input.dataInicio >= '2026-08-01' && r.input.dataInicio <= '2026-08-31';
-  const recorte = rows.filter(r => r.demand.corredor === 'Sudeste' && agosto(r));
+  // Recorte da tela: agosto pela data de TÉRMINO, tudo o mais aberto.
+  const ctx = { trainingsById: buildTrainingsById(TRAININGS), now: HOJE };
+  const allowed: any = ['periodoFim', 'corredor', 'site', 'statusMedicao'];
+  const agosto = { ...EMPTY_FILTERS, dataInicio: '2026-08-01', dataFim: '2026-08-31' };
+  const recorte = applyFilters(rows, { ...agosto, corredor: 'Sudeste' }, allowed, ctx);
   // O mesmo período com corredor "Todos" (o filtro de corredor não age).
-  const recorteTodos = rows.filter(agosto);
-  return { src, rows, recorte, recorteTodos, brucutu };
+  const recorteTodos = applyFilters(rows, agosto, allowed, ctx);
+  return { src, rows, recorte, recorteTodos, brucutu, ctx, allowed, agosto };
 }
 
 /**
@@ -131,7 +139,7 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
   const eq: BmSmokeTools['eq'] = (n, a, b) => { if (!(Object.is(a, b) || JSON.stringify(a) === JSON.stringify(b))) falhas++; t.eq(n, a, b); };
   const perto: BmSmokeTools['perto'] = (n, a, b) => { if (!(Math.abs(a - b) < 1e-6)) falhas++; t.perto(n, a, b); }; // NaN-safe
 
-  const { src, recorte, recorteTodos, brucutu } = buildBmFixture();
+  const { src, recorte, recorteTodos, brucutu, ctx, allowed, agosto } = buildBmFixture();
 
   /* ──────────────────────────────────────────────────────────────────────
    * [Σ] Dataset BM
@@ -251,6 +259,36 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
     eq('entrada com pasta por corredor', bmZipEntryName(VALE_BM_TEMPLATE, todos.minas[0], di, df, true), 'ferrovia-mg/vale-bm-ferrovia-mg-vitoria-2026-08-01_2026-08-31.xlsx');
     eq('entrada sem pasta = nome de sempre', bmZipEntryName(VALE_BM_TEMPLATE, todos.minas[1], di, df, false), bmFileName(VALE_BM_TEMPLATE, 'Sudeste', 'Brucutu', di, df));
     eq('corredor vazio explícito = "Todos"', buildBm(recorteTodos, src.templateValues, VALE_BM_TEMPLATE, { corredor: '' }).minas.length, 3);
+  }
+
+  /* ──────────────────────────────────────────────────────────────────────
+   * [R] O BM herda o recorte pela data de término
+   *
+   * Fixture à parte (a do BM inteiro tem números conferidos à mão e turma
+   * nova mudaria todos): aqui só o que a herança precisa — uma turma que
+   * começa em julho e termina em agosto.
+   * ──────────────────────────────────────────────────────────────────── */
+  console.log('\n[R] BM herda o recorte pela data de término');
+  {
+    const atravessa = demandaVale({ id: 'DEM-116', trainingLocal: 'Brucutu', startDate: '2026-07-30T08:00', endDate: '2026-08-03T17:00' });
+    const srcR = {
+      ...src,
+      demands: [...src.demands, atravessa],
+      measurements: [...src.measurements, medicao('DEM-116', { attachments: [{ id: 'y1', category: 'LOCOMOCAO', value: 70 }] })],
+      instructorAllocations: [...src.instructorAllocations, { id: 'B7', demandId: 'DEM-116', instructorId: 'INS-T', startDate: atravessa.startDate, endDate: atravessa.endDate }],
+    };
+    const rowsR = buildMedicaoValeRows(srcR);
+    const recorteR = applyFilters(rowsR, { ...agosto, corredor: 'Sudeste' }, allowed, ctx);
+
+    check('turma de 30/07 a 03/08 entra no BM de agosto (termina em agosto)', recorteR.some(r => r.demand.id === 'DEM-116'));
+    check('e não entra no BM de julho', !applyFilters(rowsR, { ...EMPTY_FILTERS, dataInicio: '2026-07-01', dataFim: '2026-07-31', corredor: 'Sudeste' }, allowed, ctx).some(r => r.demand.id === 'DEM-116'));
+
+    const bmR = buildBm(recorteR, srcR.templateValues, VALE_BM_TEMPLATE, { corredor: 'Sudeste' });
+    check('a turma herdada aparece na mina dela', bmR.minas.some(m => m.turmas.some(r => r.demand.id === 'DEM-116')));
+    const sigmaR = sigmaMedicaoVale(recorteR, srcR.templateValues);
+    const sigmaBmR = bmR.minas.reduce((acc, m) => acc + m.totalTreinamentos + m.totalDespesas, 0);
+    perto('Σ BM = Σ Medição Vale com o critério novo', Math.round((sigmaBmR + Number.EPSILON) * 100) / 100, sigmaR.noBm);
+    check('e o Σ cresceu com a turma herdada (não passou à toa)', sigmaR.noBm > sigmaMedicaoVale(recorte, src.templateValues).noBm);
   }
 
   // Sequenciado: `falhas += await f()` leria `falhas` antes da chamada e

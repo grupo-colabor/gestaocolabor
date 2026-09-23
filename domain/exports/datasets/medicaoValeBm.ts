@@ -3,8 +3,9 @@
  *
  * Entrada: as turmas ELEGÍVEIS da Medição Vale para o mesmo filtro
  * (datasets/medicaoVale, `elegivelTurmas`), já recortadas pela tela por
- * período (data de início), corredor opcional, mina opcional, status da
- * medição e canceladas. Nada aqui refaz elegibilidade.
+ * período (data de TÉRMINO da turma), corredor opcional, mina opcional,
+ * status da medição e canceladas. Nada aqui refaz elegibilidade — inclusive
+ * a regra do período, que o BM herda inteira da Medição Vale.
  *
  * Corredor: com um corredor no filtro, todas as turmas do recorte são dele
  * (a tela já filtrou) e sai um BM por mina. Com "Todos" (`corredor` vazio),

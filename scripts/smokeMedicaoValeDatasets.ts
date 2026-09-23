@@ -3,7 +3,15 @@
  * Chamado por smokeMedicaoVale.ts.
  */
 import { computePanelExpenseBreakdown, isNaoReembolsavel } from '../domain/measurementTotals';
-import { buildMedicaoValeRows, toRowsSheetInput, matchesTemplateCompany } from '../domain/exports/datasets/medicaoVale';
+import {
+  buildMedicaoValeRows,
+  toRowsSheetInput,
+  matchesTemplateCompany,
+  turmasComecaramAntes,
+  avisoComecaramAntes,
+  avisoTurmaComecouAntes,
+} from '../domain/exports/datasets/medicaoVale';
+import { getDemandLastDay } from '../domain/demandDays';
 import { VALE_TEMPLATE } from '../domain/exports/templates/vale';
 import { resolveRowsSheet } from '../domain/exports/templates/resolve';
 import { indexTemplateValues, emptyTemplateValuesIndex } from '../domain/exports/templates/values';
@@ -158,8 +166,8 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
 
     // Filtros da tela.
     const ctx = { trainingsById: buildTrainingsById(TRAININGS), now: HOJE };
-    const allowed: any = ['periodoInicio', 'corredor', 'site', 'statusMedicao'];
-    eq('período por data de INÍCIO (agosto): 108 fora, 103 fora', applyFilters(rows, { ...EMPTY_FILTERS, dataInicio: '2026-08-01', dataFim: '2026-08-31' }, allowed, ctx).map(r => r.demand.id).sort(), ['DEM-100', 'DEM-101', 'DEM-102', 'DEM-105', 'DEM-107']);
+    const allowed: any = ['periodoFim', 'corredor', 'site', 'statusMedicao'];
+    eq('período pela data de TÉRMINO (agosto): 108 fora, 103 fora', applyFilters(rows, { ...EMPTY_FILTERS, dataInicio: '2026-08-01', dataFim: '2026-08-31' }, allowed, ctx).map(r => r.demand.id).sort(), ['DEM-100', 'DEM-101', 'DEM-102', 'DEM-105', 'DEM-107']);
     eq('corredor', applyFilters(rows, { ...EMPTY_FILTERS, corredor: 'Ferrovia/MG' }, allowed, ctx).map(r => r.demand.id), ['DEM-108']);
     eq('site', applyFilters(rows, { ...EMPTY_FILTERS, site: 'Timbopeba' }, allowed, ctx).map(r => r.demand.id), ['DEM-101']);
     eq('status da medição multi (pronta + sem medição)', applyFilters(rows, { ...EMPTY_FILTERS, statusMedicao: ['PRONTA_FATURAMENTO', SEM_MEDICAO] }, allowed, ctx).map(r => r.demand.id).sort(), ['DEM-100', 'DEM-103', 'DEM-105', 'DEM-107', 'DEM-108']);
@@ -169,6 +177,75 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     eq('corredores = base operacional ∪ dados', opts.corredores, ['Ferrovia/MG', 'S11D', 'Sudeste']);
     eq('sites presentes', opts.sites, ['Brucutu', 'Timbopeba']);
     eq('status da medição inclui Sem medição', opts.statusMedicao.map(o => o.value).includes(SEM_MEDICAO) && MEDICAO_STATUS_OPTIONS.length, 6);
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   * [R] Recorte pela DATA DE TÉRMINO (regra da Micaelle, 23/09/2026)
+   *
+   * Fixture PRÓPRIA, de propósito: a compartilhada alimenta o escritor, o
+   * painel e o BM, e encher ela de turmas de borda faria essas asserções
+   * falarem de outra coisa. Aqui só o que a regra do período precisa.
+   * ────────────────────────────────────────────────────────────────────── */
+  console.log('\n[R] Recorte pela data de término da turma');
+  {
+    const ctx = { trainingsById: buildTrainingsById(TRAININGS), now: HOJE };
+    const allowed: any = ['periodoFim', 'corredor', 'site', 'statusMedicao'];
+
+    const demands = [
+      // O caso real: dias 19, 20, 21 e 25/08. `endDate` fica em 21/08 DE
+      // PROPÓSITO — é o que prova que a seleção resolve os dias da demanda
+      // (getDemandDays / getDemandLastDay) em vez de ler o campo de data fim.
+      demandaVale({
+        id: 'DEM-1418', clientDemandId: '40840', trainingLocal: 'Vargem Grande',
+        dateMode: 'DIAS_ESPECIFICOS', startDate: '2026-08-19T08:00', endDate: '2026-08-21T17:00',
+        specificDates: [
+          { data: '2026-08-19', horarioInicio: '08:00', horarioFim: '17:00' },
+          { data: '2026-08-20', horarioInicio: '08:00', horarioFim: '17:00' },
+          { data: '2026-08-21', horarioInicio: '08:00', horarioFim: '17:00' },
+          { data: '2026-08-25', horarioInicio: '08:00', horarioFim: '17:00' },
+        ],
+      }),
+      // Começa e termina dentro do período — o caso de sempre, não pode regredir.
+      demandaVale({ id: 'DEM-2000', startDate: '2026-08-25T08:00', endDate: '2026-08-27T17:00' }),
+      // Começa no período e termina depois: vai para a PRÓXIMA medição.
+      demandaVale({ id: 'DEM-2001', startDate: '2026-09-18T08:00', endDate: '2026-09-25T17:00' }),
+      // Termina no último dia do período — a borda entra.
+      demandaVale({ id: 'DEM-2002', startDate: '2026-09-15T08:00', endDate: '2026-09-21T17:00' }),
+    ];
+    const rowsR = buildMedicaoValeRows({
+      ...src, demands,
+      instructorAllocations: demands.map((d, i) => ({ id: `R${i}`, demandId: d.id, instructorId: 'INS-T', startDate: d.startDate, endDate: d.endDate })),
+      measurements: [],
+    });
+    const ids = (di: string, df: string) =>
+      applyFilters(rowsR, { ...EMPTY_FILTERS, dataInicio: di, dataFim: df }, allowed, ctx).map(r => r.demand.id).sort();
+
+    eq('DEM-1418 termina em 25/08, não no campo endDate (21/08)', getDemandLastDay(demands[0]), '2026-08-25');
+    eq('ultimoDia na linha vem dos dias reais', rowsR.find(r => r.demand.id === 'DEM-1418')!.ultimoDia, '2026-08-25');
+    eq('a coluna Data continua sendo o primeiro dia', rowsR.find(r => r.demand.id === 'DEM-1418')!.input.dataInicio, '2026-08-19');
+
+    check('DEM-1418 entra em 20/08–21/09 (começou antes, termina dentro)', ids('2026-08-20', '2026-09-21').includes('DEM-1418'));
+    check('DEM-1418 NÃO entra em 20/07–19/08 (termina depois)', !ids('2026-07-20', '2026-08-19').includes('DEM-1418'));
+    check('DEM-1418 NÃO entra em 20/07–20/08 (termina depois)', !ids('2026-07-20', '2026-08-20').includes('DEM-1418'));
+
+    check('turma inteira dentro do período entra', ids('2026-08-20', '2026-09-21').includes('DEM-2000'));
+    check('turma que começa no período e termina depois NÃO entra', !ids('2026-08-20', '2026-09-21').includes('DEM-2001'));
+    check('e entra na medição seguinte, onde termina', ids('2026-09-22', '2026-10-21').includes('DEM-2001'));
+    check('turma que termina no último dia do período entra', ids('2026-08-20', '2026-09-21').includes('DEM-2002'));
+
+    // Uma turma nunca aparece em dois períodos consecutivos.
+    const mes1 = ids('2026-08-22', '2026-09-21');
+    const mes2 = ids('2026-09-22', '2026-10-21');
+    eq('dois meses seguidos: interseção de IDs vazia', mes1.filter(id => mes2.includes(id)), []);
+    check('e os dois meses não são vazios (o teste teria passado à toa)', mes1.length > 0 && mes2.length > 0);
+
+    // Aviso "começaram antes": só DEM-1418 no recorte de 20/08 a 21/09.
+    const recorte = applyFilters(rowsR, { ...EMPTY_FILTERS, dataInicio: '2026-08-20', dataFim: '2026-09-21' }, allowed, ctx);
+    const antes = turmasComecaramAntes(recorte, '2026-08-20');
+    eq('só DEM-1418 começou antes do início do período', antes.map(r => r.demand.id), ['DEM-1418']);
+    eq('texto da barra com a contagem certa', avisoComecaramAntes(antes.length, '2026-08-20'), '1 turma(s) começaram antes de 20/08 e terminam neste período — entram nesta medição');
+    eq('texto do painel, na linha da turma', avisoTurmaComecouAntes(antes[0]), 'Começou em 19/08, antes do início do período — entra nesta medição porque termina em 25/08');
+    eq('sem período no filtro não há aviso', turmasComecaramAntes(recorte, '').length, 0);
   }
 
   return falhas;

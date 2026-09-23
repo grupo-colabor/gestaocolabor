@@ -18,12 +18,22 @@
  *     `naoReembolsavelExcluido`, para o painel avisar. Órfãos de Outros fora,
  *     como no painel. Combustível não é inferido: coluna manual do template.
  *   • DATA = primeiro dia; HORÁRIO = hora de parede do primeiro dia
- *     (getDayHorarioInicio); CARGA = training.hours, inclusive híbrida.
+ *     (getDayHorarioInicio); CARGA = training.hours, inclusive híbrida. A
+ *     coluna "Data" da planilha continua sendo a de INÍCIO — o que mudou em
+ *     23/09/2026 foi só o critério de seleção do período (ver abaixo).
  *   • CONSULTOR = titulares do rateio (`resolveDemandInstructors`), nomes
  *     unidos por " / " quando a demanda foi dividida.
  *
- * O período (data de início dentro do intervalo), corredor, site, status da
- * medição e canceladas são FILTROS aplicados pela tela (filters.ts), não aqui.
+ * O período (data de TÉRMINO da turma dentro do intervalo), corredor, site,
+ * status da medição e canceladas são FILTROS aplicados pela tela (filters.ts),
+ * não aqui.
+ *
+ * REGRA DO PERÍODO (Micaelle, 23/09/2026): a turma entra na medição do mês em
+ * que TERMINA, mesmo que tenha começado antes. O caso que mostrou isso foi a
+ * DEM-1418 (dias 19, 20, 21 e 25/08), que sumia da medição 20/08–21/09 porque
+ * o critério antigo olhava a data de início. A garantia que motivou o critério
+ * antigo continua de pé: cada turma tem UMA data de fim, então cai em
+ * exatamente uma medição — nunca em duas.
  */
 import type {
   Demand,
@@ -36,7 +46,7 @@ import { computePanelExpenseBreakdown, isNaoReembolsavel } from '../../measureme
 import { resolveDemandInstructors } from '../../demandInstructors';
 import { buildTrainingsById } from '../../modalityOptions';
 import { getDemandTitle, isInternalDemand } from '../../demandLabel';
-import { getDemandDays, getDayHorarioInicio } from '../../demandDays';
+import { getDemandDays, getDayHorarioInicio, getDemandLastDay } from '../../demandDays';
 import { resolveCalculatedStatus, resolveCompanyLabel, statusLabel } from '../shared';
 import { DEFAULT_OPTIONS, type ExportOptions } from '../options';
 import { TITULARES_SEPARATOR, type TemplateRowInput } from '../templates/sourceFields';
@@ -72,6 +82,12 @@ export interface MedicaoValeRow extends FilterableRow {
   refs: ManualRefs;
   companyName: string;
   trainingId: string;
+  /**
+   * Último dia REAL da turma — é por ele que o filtro de período escolhe a
+   * medição (`periodoFim` em filters.ts). Em dias específicos pode ser
+   * diferente do campo de data fim, por isso vem de `getDemandLastDay`.
+   */
+  ultimoDia: string;
   titularIds: string[];
   statusCalculado: DemandStatus;
   cancelada: boolean;
@@ -176,6 +192,7 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
       refs: { trainingId: input.trainingId, demandId: demand.id },
       companyName: input.companyName,
       trainingId: input.trainingId,
+      ultimoDia: getDemandLastDay(demand),
       titularIds,
       statusCalculado,
       cancelada,
@@ -194,6 +211,36 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
     (a, b) => a.input.dataInicio.localeCompare(b.input.dataInicio) || a.demand.id.localeCompare(b.demand.id)
   );
   return rows;
+}
+
+/* ──────────────── turmas que vieram do período anterior ──────────────── */
+
+/**
+ * As turmas do recorte que COMEÇARAM antes do início do período e terminam
+ * dentro dele. Não é defeito nem bloqueio: é o efeito esperado da regra de
+ * seleção pela data de término. A tela mostra como aviso informativo para
+ * quem compara com a medição do mês passado entender por que a turma está
+ * aqui — e não some sem explicação.
+ */
+export function turmasComecaramAntes(rows: MedicaoValeRow[], dataInicio?: string): MedicaoValeRow[] {
+  if (!dataInicio) return [];
+  return rows.filter(r => r.input.dataInicio && r.input.dataInicio < dataInicio);
+}
+
+/** "dd/mm" — o formato curto que os avisos de período usam. */
+const diaMes = (iso: string): string => {
+  const [a, m, d] = String(iso ?? '').slice(0, 10).split('-');
+  return d && m ? `${d}/${m}` : String(iso ?? '');
+};
+
+/** O aviso da barra: uma linha para todas as turmas herdadas do mês anterior. */
+export function avisoComecaramAntes(quantas: number, dataInicio: string): string {
+  return `${quantas} turma(s) começaram antes de ${diaMes(dataInicio)} e terminam neste período — entram nesta medição`;
+}
+
+/** O mesmo fato, na linha da turma no painel de pendências. */
+export function avisoTurmaComecouAntes(row: MedicaoValeRow): string {
+  return `Começou em ${diaMes(row.input.dataInicio)}, antes do início do período — entra nesta medição porque termina em ${diaMes(row.ultimoDia)}`;
 }
 
 /** As linhas que entram na aba de turmas, no formato do resolvedor. */

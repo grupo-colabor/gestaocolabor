@@ -98,6 +98,15 @@
 -- bucket é criado no painel do Supabase — ver a conferência prévia 3).
 -- Tabela liberada não significa arquivo liberado, e vice-versa.
 --
+-- AS POLICIES DO BUCKET ESTÃO VERSIONADAS, EM OUTRO ARQUIVO:
+--   supabase/policies/022_measurement_templates_storage.sql
+-- São as quatro aplicadas em produção em 23/09/2026 pelo SQL Editor. Ficam
+-- fora desta migration porque vivem em `storage.objects`, do schema `storage`
+-- — juntá-las aqui faria a migration falhar por permissão onde quem aplica
+-- não é dono dessa tabela, e a tabela da aplicação nem chegaria a nascer.
+-- APLICAR A 022 NÃO BASTA: o arquivo de policies é o segundo passo, e a
+-- conferência prévia 4 abaixo é onde se descobre que ele falta.
+--
 --
 -- TIPO DE `companies.id`
 -- ---------------------------------------------------------------------------
@@ -143,11 +152,20 @@
 --   --    public = true: o arquivo-base de todo cliente ficaria acessível por
 --   --    URL adivinhável — torne-o privado antes de seguir.
 --
---   -- 4) as policies do bucket existem (o app lê por URL assinada e escreve
---   --    autenticado). Espera ao menos uma policy citando o bucket:
+--   -- 4) AS POLICIES DO BUCKET EXISTEM (o app lê por URL assinada e escreve
+--   --    autenticado). Espera 4 linhas — SELECT, INSERT, UPDATE e DELETE:
 --   select polname, polcmd from pg_policy
 --    where polrelid = 'storage.objects'::regclass
---      and pg_get_expr(polqual, polrelid) ilike '%measurement-templates%';
+--      and polname ilike '%measurement-templates%'
+--    order by polcmd;
+--   --    SE VOLTAR 0 POLICIES, PARE e aplique
+--   --    supabase/policies/022_measurement_templates_storage.sql ANTES.
+--   --    Sem elas a tabela nasce certa e o app continua quebrado: o envio da
+--   --    planilha falha com "new row violates row-level security policy", e
+--   --    todo modelo por empresa fica sem arquivo-base — isto é, sem gerar.
+--   --    (Filtrar pelo NOME e não pela expressão é de propósito: a policy de
+--   --    INSERT não tem USING, só WITH CHECK, e sumiria de uma busca por
+--   --    `polqual`.)
 --
 --   -- 5) a role `authenticated` existe (espera 1 linha):
 --   select rolname from pg_roles where rolname = 'authenticated';

@@ -714,7 +714,7 @@ Nos módulos de tabela (Medições, Demandas, Logística, Instrutores, Despesas)
 
 Gera o XLSX **no layout do modelo da Vale**, a partir do próprio arquivo-modelo guardado no sistema: aba **Turmas Realizadas** (uma turma por demanda) e aba **Plantas** (copiada do modelo, sem cruzamento com os dados do app).
 
-**Quem entra na aba Turmas:** demandas de **cliente** da Vale, **concluídas**, com instrutor titular, cuja **data de início** cai no período. Cancelada, não concluída, sem titular e demanda interna com empresa Vale ficam fora — e aparecem no painel de pendências. O **status da medição não bloqueia**: é filtro (Não iniciada, Em lançamento, Em conferência, Pronta para faturamento, Faturada, Sem medição), com "todas" por padrão.
+**Quem entra na aba Turmas:** demandas de **cliente** da Vale, **concluídas**, com instrutor titular, que **terminam** dentro do período. A turma entra na medição do mês em que **termina**, mesmo que tenha começado antes — e, como cada turma tem uma só data de fim, ela **nunca aparece em duas medições**. Em turma com **dias específicos**, o fim é o **último dia da lista**: a turma dos dias 19, 20, 21 e 25/08 termina em 25/08, não em 21/08. Quando o recorte traz turma que começou antes do início do período, a tela avisa quantas são ("N turma(s) começaram antes de dd/mm e terminam neste período") e o painel de pendências repete na linha de cada uma — é aviso, não bloqueio. Cancelada, não concluída, sem titular e demanda interna com empresa Vale ficam fora — e aparecem no painel de pendências. O **status da medição não bloqueia**: é filtro (Não iniciada, Em lançamento, Em conferência, Pronta para faturamento, Faturada, Sem medição), com "todas" por padrão.
 
 **Colunas e origem:**
 
@@ -722,7 +722,7 @@ Gera o XLSX **no layout do modelo da Vale**, a partir do próprio arquivo-modelo
 |---|---|
 | Número do anexo | sequência 1..n |
 | ID da Turma | campo *ID SAP / Pedido Cliente* da demanda (em branco e amarelo quando falta) |
-| Treinamento, Local, Data, Horário | cadastro da demanda (data e horário do primeiro dia) |
+| Treinamento, Local, Data, Horário | cadastro da demanda (data e horário do **primeiro** dia — a coluna *Data* continua sendo a de início; só a seleção do período olha o término) |
 | Carga horária | carga do treinamento, inclusive em híbrida |
 | Preço unitário HH | **digitado na prévia**; lembrado por treinamento, sobrescrevível na turma (em branco e amarelo quando falta) |
 | Valor total do treinamento | fórmula `=G×H` do modelo |
@@ -736,7 +736,7 @@ Gera o XLSX **no layout do modelo da Vale**, a partir do próprio arquivo-modelo
 
 **Passo a passo:**
 1. Escolha **Medição Vale** e clique em **Carregar dados**
-2. Filtre por período (data de início), corredor, site e status da medição
+2. Filtre por período (**data de término** da turma), corredor, site e status da medição
 3. Leia o painel **O que falta para fechar a medição** — ⛔ tira a demanda da planilha; ⚠ entra, mas confira. Dá para baixar em XLSX
 4. Preencha os campos manuais (preço HH por treinamento e, se preciso, por turma; combustível; %; observação) e clique em **Salvar**
 5. Confira a prévia e clique em **Gerar Medição Vale** — o botão fica travado enquanto houver edição não salva
@@ -747,7 +747,7 @@ Gera o XLSX **no layout do modelo da Vale**, a partir do próprio arquivo-modelo
 
 **Como acessar:** Exportações → módulo **BM Vale** (perfil com acesso à Medição).
 
-O BM é o documento que a Vale assina: a medição **agregada por treinamento**, no modelo da Vale (folha `BOLETIM MEDIÇÃO`), gerado a partir do próprio arquivo-modelo guardado no sistema. **Ele sai da mesma seleção da Medição Vale**: mesmas turmas (concluídas, com instrutor, data de início no período), mesmo preço HH (com sobrescrita por turma), mesma exclusão de item não reembolsável. Por isso o **Σ das linhas de treinamento do BM é igual ao Σ da coluna I** da aba Turmas, e a **quantidade da linha de despesas é igual ao Σ da coluna P** — batem por construção, e o sistema confere isso automaticamente.
+O BM é o documento que a Vale assina: a medição **agregada por treinamento**, no modelo da Vale (folha `BOLETIM MEDIÇÃO`), gerado a partir do próprio arquivo-modelo guardado no sistema. **Ele sai da mesma seleção da Medição Vale**: mesmas turmas (concluídas, com instrutor, que **terminam** no período), mesmo preço HH (com sobrescrita por turma), mesma exclusão de item não reembolsável. Por isso o **Σ das linhas de treinamento do BM é igual ao Σ da coluna I** da aba Turmas, e a **quantidade da linha de despesas é igual ao Σ da coluna P** — batem por construção, e o sistema confere isso automaticamente.
 
 **Um BM por (corredor, mina).** Mina = *Local Treinamento* da demanda. Com corredor e site/mina nos filtros, sai um `.xlsx`; só com o corredor, sai um `.zip` com um `.xlsx` por mina do recorte; com corredor **Todos**, sai um `.zip` (`vale-bm-todos-<período>.zip`) com **uma pasta por corredor** e, dentro de cada uma, um `.xlsx` por mina com o mesmo nome de sempre. A prévia e o bloco Cabeçalho do BM ficam agrupados por corredor. Turma **sem local** na demanda fica fora do BM — a tela mostra em destaque quantas ficaram e o painel de pendências lista cada uma; corrija o local na demanda. Com **Todos**, turma **sem corredor** na demanda também fica fora, com o mesmo destaque.
 
@@ -765,13 +765,13 @@ Os números das linhas do QQP (20 e 70) fazem parte do cabeçalho por corredor/m
 
 **Passo a passo:**
 1. Escolha **BM Vale** e **Carregar dados**
-2. Filtre por período (data de início), **corredor** (obrigatório), site/mina e status da medição
+2. Filtre por período (**data de término** da turma), **corredor** (obrigatório), site/mina e status da medição
 3. Leia o painel de pendências — além dos motivos da Medição Vale, o BM avisa: sem local, cabeçalho não cadastrado, cadastro de treinamento duplicado
 4. Na primeira vez em cada mina, preencha o **Cabeçalho do BM** e clique em **Salvar**; os preços HH são os mesmos da Medição Vale (grade *Campos manuais*)
 5. Confira a prévia por mina e clique em **Gerar BM Vale**. Se algum cabeçalho estiver incompleto, a tela pergunta antes de gerar; o BM sai com as células em branco em amarelo
 #### Nota rápida: por que a Medição Vale é diferente do dataset Medições
 
-- **Período.** O dataset Medições pega toda demanda que *toca* o intervalo (interseção), porque é análise. A Medição Vale usa a **data de início**: cada turma tem uma data só na planilha e precisa cair num único mês — senão uma turma que atravessa o fechamento seria cobrada duas vezes.
+- **Período.** O dataset Medições pega toda demanda que *toca* o intervalo (interseção), porque é análise. A Medição Vale usa a **data de término**: a turma entra na medição do mês em que acaba. Como cada turma tem uma só data de fim, ela cai num único mês — nunca seria cobrada duas vezes. Foi por isso que a regra mudou em 23/09/2026: antes a seleção era pela data de início, e uma turma que começava no fim de um mês e terminava no outro sumia da medição em que a operação a esperava.
 - **Não reembolsável.** Na medição, um item marcado como não reembolsável continua no total (foi gasto). Na planilha da Vale ele **não entra**: as colunas se chamam "despesa reembolsável" e a marca existe justamente para o que o cliente não paga. O painel avisa quanto ficou fora.
 - **Preço HH.** O sistema lembra o último preço salvo **por treinamento** e pré-preenche todas as turmas daquele treinamento; quando uma turma precisa de outro preço, sobrescreva só nela. A coluna "fonte do preço" na grade mostra de onde veio cada valor. Nada é gravado até o **Salvar**; o download nunca grava.
 #### Modelos de medição por empresa (configurar sem depender de TI)
@@ -836,7 +836,7 @@ Se não houver turma concluída no período, ele diz isso e deixa salvar mesmo a
 
 **8. Salvar e ativar.** Clique em **Salvar mapeamento**. De volta à lista, clique em **Usar este** para ativar. Pronto: a aba Exportações passa a ter o módulo **Medição Gerdau**.
 
-**9. Gerar a medição.** Em Exportações, escolha **Medição Gerdau**, clique em **Carregar dados**, ajuste o período, preencha os campos digitados (a *Tarifa Hora*) e clique em **Salvar**. Confira o painel de pendências e a prévia, e clique em **Gerar**. O arquivo sai **em cima da planilha que você enviou**, com as contas como **fórmulas vivas** — o cliente abre no Excel e vê a conta, não só o número.
+**9. Gerar a medição.** O módulo da empresa usa **a mesma elegibilidade da Medição Vale**, inclusive a regra do período: entram as turmas concluídas, com instrutor titular, que **terminam** dentro do intervalo. Em Exportações, escolha **Medição Gerdau**, clique em **Carregar dados**, ajuste o período, preencha os campos digitados (a *Tarifa Hora*) e clique em **Salvar**. Confira o painel de pendências e a prévia, e clique em **Gerar**. O arquivo sai **em cima da planilha que você enviou**, com as contas como **fórmulas vivas** — o cliente abre no Excel e vê a conta, não só o número.
 
 ##### O que o sistema não deixa passar
 

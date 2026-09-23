@@ -233,7 +233,13 @@ const Exportacoes: React.FC = () => {
     setErro(null);
     try {
       const comLogistica = COM_LOGISTICA.includes(datasetKey) || !!templateKey;
-      const data = await loadExportData({ includeLogistics: comLogistica, templateIds });
+      // As associações Local → Corredor só servem ao vínculo Site → Corredor
+      // dos módulos de medição por template, que são os que têm templateKey.
+      const data = await loadExportData({
+        includeLogistics: comLogistica,
+        templateIds,
+        includeLocationAssociations: !!templateKey,
+      });
       setCarga({ data, comLogistica, templateKey });
     } catch (e: any) {
       console.error('[Exportacoes] falha ao carregar', e);

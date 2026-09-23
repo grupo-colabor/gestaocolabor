@@ -109,6 +109,7 @@ import {
   type LogisticBlockRow
 } from '../services/logistics';
 import { fetchLocationAssociations, type LocationAssociation } from '../services/locationAssociations';
+import { findLocationAssociation } from '../domain/locationCorridor';
 import {
   buildDemandTextContent,
   downloadDemandWord,
@@ -315,8 +316,12 @@ useEffect(() => {
   // Local → Corredor + Estado + Região  (match exato)
   const handleTrainingLocalChange = (value: string) => {
     const isNA = value === 'N/A';
+    // A MESMA função do vínculo Site → Corredor dos filtros da medição
+    // (domain/locationCorridor): exato primeiro, depois ignorando caixa e
+    // acento. Antes era `a.local === value` aqui dentro, e o filtro da
+    // medição teria de copiar a regra para casar "Cauê" com "CAUE".
     const assoc = value && !isNA
-      ? locationAssociations.find(a => a.local === value)
+      ? findLocationAssociation(value, locationAssociations)
       : null;
     const region = assoc ? regions.find(r => r.name === assoc.regiao) : null;
 

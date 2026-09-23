@@ -28,6 +28,7 @@ import { fetchCompanionAllocations } from '../companionAllocations';
 import { fetchAllLogisticBlocks } from '../logistics';
 import { fetchAllDemandDocumentFlags } from '../demandDocuments';
 import { fetchLogisticAllocations, type LogisticAllocationRow } from '../logisticAllocations';
+import { fetchLocationAssociations, type LocationAssociation } from '../locationAssociations';
 import { fetchTemplateValues, type TemplateValueRow } from './templateValues';
 import { fetchActiveMeasurementTemplates } from './templates';
 import { loadTemplates, type LoadedTemplate } from '../../domain/exports/templates/store';
@@ -67,6 +68,14 @@ export interface ExportSourceData {
   documentFlags: DocFlagLike[];
   /** `logistic_allocations` (a linha do Controle Logístico) — só com includeLogistics. */
   logisticAllocations: LogisticAllocationRow[];
+  /**
+   * Associações Local → Corredor do conjunto 'cliente' (Cadastros →
+   * Associações → Locais — Demandas), pelo MESMO service que o formulário de
+   * demanda usa. Só com `includeLocationAssociations`; alimenta o vínculo
+   * Site → Corredor dos filtros da medição (domain/exports/siteCorredor.ts) e
+   * nada mais — nenhum dataset lê isto.
+   */
+  locationAssociations: LocationAssociation[];
   /** Valores manuais dos templates pedidos em `templateIds`; vazio quando não pedido. */
   templateValues: TemplateValueRow[];
   /** Ordenados, para a tela comparar a carga com o dataset atual. */
@@ -111,6 +120,11 @@ export interface LoadExportDataOptions {
   templateIds?: string[];
   /** Trazer os modelos de medição ativos (migration 022) junto. */
   includeMeasurementTemplates?: boolean;
+  /**
+   * Trazer as associações Local → Corredor ('cliente'). Só os módulos de
+   * medição por template usam — ver `locationAssociations` acima.
+   */
+  includeLocationAssociations?: boolean;
 }
 
 export async function loadExportData(opts: LoadExportDataOptions): Promise<ExportSourceData> {
@@ -128,6 +142,7 @@ export async function loadExportData(opts: LoadExportDataOptions): Promise<Expor
     logisticAllocationRows,
     templateValueRows,
     measurementTemplateRows,
+    locationAssociationRows,
   ] = await Promise.all([
     fetchDemands(),
     fetchMeasurements(),
@@ -143,6 +158,8 @@ export async function loadExportData(opts: LoadExportDataOptions): Promise<Expor
     opts.includeLogistics ? fetchLogisticAllocations() : Promise.resolve([]),
     opts.templateIds && opts.templateIds.length ? fetchTemplateValues(opts.templateIds) : Promise.resolve([]),
     opts.includeMeasurementTemplates ? fetchActiveMeasurementTemplates() : Promise.resolve([]),
+    // 'cliente' e só: o conjunto das demandas internas é outro (migration 014).
+    opts.includeLocationAssociations ? fetchLocationAssociations('cliente') : Promise.resolve([]),
   ]);
 
   return {
@@ -174,6 +191,7 @@ export async function loadExportData(opts: LoadExportDataOptions): Promise<Expor
     logisticBlocks: (logisticRows ?? []) as LogisticBlockLike[],
     documentFlags: (docRows ?? []) as DocFlagLike[],
     logisticAllocations: logisticAllocationRows ?? [],
+    locationAssociations: locationAssociationRows ?? [],
     templateValues: templateValueRows ?? [],
     templateIds: [...(opts.templateIds ?? [])].sort(),
     measurementTemplates: loadTemplates(measurementTemplateRows ?? []),

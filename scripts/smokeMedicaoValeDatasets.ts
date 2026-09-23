@@ -12,6 +12,15 @@ import {
   avisoTurmaComecouAntes,
 } from '../domain/exports/datasets/medicaoVale';
 import { getDemandLastDay } from '../domain/demandDays';
+import { normalizeLocationName, resolveCorredorDoLocal } from '../domain/locationCorridor';
+import {
+  aoEscolherSite,
+  aoEscolherCorredor,
+  gruposDeSite,
+  avisoSiteLimpo,
+  AVISO_LOCAL_SEM_CORREDOR,
+  GRUPO_SEM_ASSOCIACAO,
+} from '../domain/exports/siteCorredor';
 import { VALE_TEMPLATE } from '../domain/exports/templates/vale';
 import { resolveRowsSheet } from '../domain/exports/templates/resolve';
 import { indexTemplateValues, emptyTemplateValuesIndex } from '../domain/exports/templates/values';
@@ -271,6 +280,82 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     check('tela: a mesma informação como aviso na turma, no painel',
       view.includes("texto: avisoTurmaComecouAntes(r)") && view.includes("tipo: 'aviso'"));
     check('tela: o aviso não bloqueia a geração', !/podeGerar[^\n]*comecaramAntes/.test(view));
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   * [S] Site/Planta preenche o Corredor pelas Associações
+   *
+   * O corredor continua sendo quem recorta; o site só o preenche. Por isso o
+   * bloco testa as DECISÕES (o par corredor/site que sai de cada escolha),
+   * não a seleção de turmas — essa não muda.
+   * ────────────────────────────────────────────────────────────────────── */
+  console.log('\n[S] Site/Planta preenche o Corredor');
+  {
+    // Cadastro Locais — Demandas. A linha de 'interna' é isca: mesmo local,
+    // outro corredor. Se o conjunto errado vazar, "Brucutu" vira 'Interna/MG'.
+    const assocs: any[] = [
+      { local: 'Brucutu', corredor: 'Sudeste', uf: 'MG', regiao: 'Minas Gerais', contexto: 'cliente' },
+      { local: 'Cauê', corredor: 'Sudeste', uf: 'MG', regiao: 'Minas Gerais', contexto: 'cliente' },
+      { local: 'Vitória', corredor: 'Ferrovia/MG', uf: 'ES', regiao: 'Espírito Santo', contexto: 'cliente' },
+      { local: 'Brucutu', corredor: 'Interna/MG', uf: 'MG', regiao: 'Minas Gerais', contexto: 'interna' },
+    ];
+    const vazio = { corredor: '', site: '' };
+
+    // 1) Local associado preenche o corredor.
+    eq('site associado preenche o corredor', aoEscolherSite('Brucutu', vazio, assocs), { corredor: 'Sudeste', site: 'Brucutu', aviso: null });
+    eq('e troca o corredor que estava lá', aoEscolherSite('Vitória', { corredor: 'Sudeste', site: 'Brucutu' }, assocs), { corredor: 'Ferrovia/MG', site: 'Vitória', aviso: null });
+
+    // 2) Local sem associação: corredor como estava + aviso.
+    const semAssoc = aoEscolherSite('Timbopeba', { corredor: 'Sudeste', site: '' }, assocs);
+    eq('site sem associação mantém o corredor', [semAssoc.corredor, semAssoc.site], ['Sudeste', 'Timbopeba']);
+    eq('e mostra o aviso de cadastro', semAssoc.aviso, 'Este local não tem corredor associado — cadastre em Cadastros → Associações.');
+    eq('o aviso é a constante do domínio', semAssoc.aviso, AVISO_LOCAL_SEM_CORREDOR);
+
+    // 3) "Todos" no site não altera o corredor.
+    eq('"Todos" no site não mexe no corredor', aoEscolherSite('', { corredor: 'Sudeste', site: 'Brucutu' }, assocs), { corredor: 'Sudeste', site: '', aviso: null });
+
+    // 4) Caixa e acento: "Cauê" = "CAUE" = "  caue  ".
+    eq('acento e caixa ignorados no casamento', resolveCorredorDoLocal('CAUE', assocs), 'Sudeste');
+    eq('espaço das pontas e espaço repetido ignorados', normalizeLocationName('  Vargem   Grande '), 'vargem grande');
+    eq('site "CAUE" preenche o corredor de "Cauê"', aoEscolherSite('CAUE', vazio, assocs).corredor, 'Sudeste');
+    check('local fora do cadastro não casa por engano', resolveCorredorDoLocal('Timbopeba', assocs) === '');
+    eq('N/A nunca casa', resolveCorredorDoLocal('N/A', [{ local: 'N/A', corredor: 'X' }] as any), '');
+
+    // 5) O conjunto das INTERNAS não é usado.
+    eq('associação de contexto "interna" é ignorada', resolveCorredorDoLocal('Brucutu', assocs), 'Sudeste');
+    eq('e sozinha não casa com nada', resolveCorredorDoLocal('Brucutu', [assocs[3]]), '');
+
+    // 6) Trocar o corredor com site escolhido.
+    eq('corredor novo limpa o site de OUTRO corredor', aoEscolherCorredor('Ferrovia/MG', { corredor: 'Sudeste', site: 'Brucutu' }, assocs), { corredor: 'Ferrovia/MG', site: '', aviso: 'Site limpo: não pertence ao corredor Ferrovia/MG' });
+    eq('o aviso é o do domínio', aoEscolherCorredor('Ferrovia/MG', { corredor: '', site: 'Brucutu' }, assocs).aviso, avisoSiteLimpo('Ferrovia/MG'));
+    eq('site do MESMO corredor fica', aoEscolherCorredor('Sudeste', { corredor: '', site: 'Cauê' }, assocs), { corredor: 'Sudeste', site: 'Cauê', aviso: null });
+    eq('site SEM associação fica (falta de cadastro não é incompatibilidade)', aoEscolherCorredor('Sudeste', { corredor: '', site: 'Timbopeba' }, assocs), { corredor: 'Sudeste', site: 'Timbopeba', aviso: null });
+    eq('corredor "Todos" não limpa o site', aoEscolherCorredor('', { corredor: 'Sudeste', site: 'Brucutu' }, assocs), { corredor: '', site: 'Brucutu', aviso: null });
+
+    // 7) A lista de sites agrupa sem esconder ninguém.
+    const locais = ['Brucutu', 'Timbopeba', 'Cauê', 'Vitória'];
+    const g = gruposDeSite(locais, 'Sudeste', assocs);
+    eq('associados ao corredor vêm primeiro', g.associados, ['Brucutu', 'Cauê']);
+    eq('os demais ficam no grupo próprio', g.outros, ['Timbopeba', 'Vitória']);
+    eq('nenhum local some da lista', [...g.associados, ...g.outros].sort(), [...locais].sort());
+    eq('sem corredor escolhido não há grupo', gruposDeSite(locais, '', assocs), { associados: [], outros: locais });
+    eq('rótulo do segundo grupo', GRUPO_SEM_ASSOCIACAO, 'Sem associação a este corredor');
+
+    /* ── guarda de fonte: uma leitura só, uma regra só ── */
+    const carga = t.ler('services/exports/loadExportData.ts');
+    check('a carga lê o conjunto de CLIENTE, pelo service de sempre', carga.includes("fetchLocationAssociations('cliente')"));
+    check('e nunca o das internas', !carga.includes("fetchLocationAssociations('interna')"));
+
+    const form = t.semComentarios(t.ler('components/Demands.tsx'));
+    check('o formulário de demanda usa a MESMA função de casamento', form.includes('findLocationAssociation(value, locationAssociations)'));
+    check('e não sobrou o find por igualdade exata', !/locationAssociations\.find\(a => a\.local === value\)/.test(form));
+
+    const filtros = t.semComentarios(t.ler('components/exportacoes/FiltrosExportacao.tsx'));
+    check('o painel delega as duas decisões ao domínio',
+      filtros.includes('aoEscolherSite(site, par, vinculo)') && filtros.includes('aoEscolherCorredor(corredor, par, vinculo)'));
+    check('e agrupa a lista pelo domínio', filtros.includes('gruposDeSite(sites, value.corredor, vinculo)'));
+    const view = t.semComentarios(t.ler('components/exportacoes/MedicaoTemplateView.tsx'));
+    check('os módulos de medição passam as associações da carga', view.includes('locationAssociations={carga.locationAssociations}'));
   }
 
   return falhas;

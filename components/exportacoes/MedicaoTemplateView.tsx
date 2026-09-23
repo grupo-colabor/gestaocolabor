@@ -345,6 +345,7 @@ const MedicaoTemplateView: React.FC<{
         allowedOptions={dataset.options}
         optionValues={options}
         onOptionsChange={onOptionsChange}
+        locationAssociations={carga.locationAssociations}
         nota={
           <span className="flex items-start gap-2">
             <Info size={12} className="mt-0.5 shrink-0" />

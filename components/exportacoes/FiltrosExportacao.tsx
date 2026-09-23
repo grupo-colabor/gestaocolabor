@@ -10,6 +10,13 @@ import type { ExportFilters, FilterKey } from '../../domain/exports/types';
 import type { FilterOptions } from '../../domain/exports/filters';
 import { EMPTY_FILTERS } from '../../domain/exports/types';
 import { OPTION_LABELS, type ExportOptions, type OptionKey } from '../../domain/exports/options';
+import {
+  aoEscolherSite,
+  aoEscolherCorredor,
+  gruposDeSite,
+  GRUPO_SEM_ASSOCIACAO,
+} from '../../domain/exports/siteCorredor';
+import type { LocationAssociationLike } from '../../domain/locationCorridor';
 
 /**
  * Filtros da exportação. Só renderiza as chaves que o dataset declara
@@ -19,6 +26,13 @@ import { OPTION_LABELS, type ExportOptions, type OptionKey } from '../../domain/
  *
  * `periodo` (interseção) e `periodoFim` (a turma entra na medição do período
  * em que TERMINA) usam o mesmo par de datas — o rótulo diz qual regra vale.
+ *
+ * VÍNCULO SITE → CORREDOR: com `locationAssociations` (só os módulos de
+ * medição passam), escolher um Site/Planta preenche o Corredor pelo cadastro
+ * de Associações, e a lista de sites passa a vir agrupada pelo corredor
+ * escolhido. Quem decide o que fazer é o domínio
+ * (domain/exports/siteCorredor.ts); aqui só se grava o estado e se mostra o
+ * aviso. Sem a prop, os dois selects são independentes, como sempre foram.
  */
 const FiltrosExportacao: React.FC<{
   allowed: FilterKey[];
@@ -31,9 +45,36 @@ const FiltrosExportacao: React.FC<{
   onOptionsChange: (next: ExportOptions) => void;
   /** Texto fixo abaixo dos filtros (regra do período). */
   nota?: React.ReactNode;
-}> = ({ allowed, value, options, onChange, allowedOptions, optionValues, onOptionsChange, nota }) => {
+  /**
+   * Associações Local → Corredor ('cliente'). Presentes = o vínculo Site →
+   * Corredor liga. Ausentes = comportamento histórico (selects soltos).
+   */
+  locationAssociations?: LocationAssociationLike[];
+}> = ({ allowed, value, options, onChange, allowedOptions, optionValues, onOptionsChange, nota, locationAssociations }) => {
   const on = (k: FilterKey) => allowed.includes(k);
   const set = (patch: Partial<ExportFilters>) => onChange({ ...value, ...patch });
+
+  /* ── vínculo Site → Corredor (só quando as associações vêm) ── */
+  const vinculo = locationAssociations ?? null;
+  const [avisoVinculo, setAvisoVinculo] = React.useState<string | null>(null);
+  const par = { corredor: value.corredor, site: value.site };
+
+  const setSite = (site: string) => {
+    if (!vinculo) return set({ site });
+    const r = aoEscolherSite(site, par, vinculo);
+    setAvisoVinculo(r.aviso);
+    set({ site: r.site, corredor: r.corredor });
+  };
+
+  const setCorredor = (corredor: string) => {
+    if (!vinculo) return set({ corredor });
+    const r = aoEscolherCorredor(corredor, par, vinculo);
+    setAvisoVinculo(r.aviso);
+    set({ site: r.site, corredor: r.corredor });
+  };
+
+  const sites = options?.sites ?? [];
+  const grupos = vinculo && value.corredor ? gruposDeSite(sites, value.corredor, vinculo) : null;
 
   const Select: React.FC<{
     label: string;
@@ -67,7 +108,7 @@ const FiltrosExportacao: React.FC<{
         </h3>
         <button
           type="button"
-          onClick={() => onChange(EMPTY_FILTERS)}
+          onClick={() => { setAvisoVinculo(null); onChange(EMPTY_FILTERS); }}
           className="text-[10px] font-black text-slate-400 hover:text-red-500 uppercase tracking-widest flex items-center gap-1.5 transition-colors"
         >
           <RotateCcw size={12} /> Limpar Filtros
@@ -114,10 +155,34 @@ const FiltrosExportacao: React.FC<{
           <Select label="Cliente" v={value.companyId} onV={s => set({ companyId: s })} items={(options?.clientes ?? []).map(c => ({ value: c.id, label: c.name }))} />
         )}
         {on('corredor') && (
-          <Select label="Corredor" v={value.corredor} onV={s => set({ corredor: s })} items={(options?.corredores ?? []).map(c => ({ value: c, label: c }))} />
+          <Select label="Corredor" v={value.corredor} onV={setCorredor} items={(options?.corredores ?? []).map(c => ({ value: c, label: c }))} />
         )}
         {on('site') && (
-          <Select label="Site / planta (local)" v={value.site} onV={s => set({ site: s })} items={(options?.sites ?? []).map(c => ({ value: c, label: c }))} />
+          <FilterField label="Site / planta (local)">
+            <select className={FILTER_INPUT_CLASS} value={value.site} onChange={e => setSite(e.target.value)}>
+              <option value="">Todos</option>
+              {grupos ? (
+                <>
+                  {grupos.associados.length > 0 && (
+                    <optgroup label={`Associados ao corredor ${value.corredor}`}>
+                      {grupos.associados.map(s => <option key={s} value={s}>{s}</option>)}
+                    </optgroup>
+                  )}
+                  {/* Nenhum local some: o que não está associado vem aqui. */}
+                  {grupos.outros.length > 0 && (
+                    <optgroup label={GRUPO_SEM_ASSOCIACAO}>
+                      {grupos.outros.map(s => <option key={s} value={s}>{s}</option>)}
+                    </optgroup>
+                  )}
+                </>
+              ) : (
+                sites.map(s => <option key={s} value={s}>{s}</option>)
+              )}
+            </select>
+            {avisoVinculo && (
+              <p className="text-[11px] text-amber-600 font-semibold leading-snug">{avisoVinculo}</p>
+            )}
+          </FilterField>
         )}
         {on('instrutor') && (
           <Select label="Pessoa (instrutor)" v={value.instructorId} onV={s => set({ instructorId: s })} items={(options?.instrutores ?? []).map(i => ({ value: i.id, label: i.name }))} todos="Todas" />

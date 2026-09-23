@@ -160,6 +160,9 @@ console.log('\n[E] Guarda de fonte — domain/exports sem services, react ou exc
     ...listarTs('domain/exports'),
     'domain/measurementPeople.ts',
     'domain/demandDefaultHours.ts',
+    // A regra de casamento Local → Corredor, compartilhada com o formulário
+    // de demanda: mora fora de domain/exports, mas o motor depende dela.
+    'domain/locationCorridor.ts',
   ];
   check('há arquivos em domain/exports', arquivos.length >= 5);
   for (const rel of arquivos) {

@@ -347,6 +347,22 @@ console.log('\n[11] Clientes / Clientes mais Ativos: chave companyId, Qtd');
   const r = rankVolumeByPeriod({ periods, keyOf: d => d.companyId, labelOf: companyName, hoursOf, metric: 'count', limit: 8 });
   igualdadeCartaoKpi('Clientes mais Ativos', r, periods, (d, key) => d.companyId === key, 'count');
   checkEq('Vale 3/6, Samarco 2/2', r.items.map(x => [x.name, ...x.periods.map(p => p.count)]), [['Vale', 3, 6], ['Samarco', 2, 2]]);
+
+  // Toggle Horas: mesma chave, mesma fonte (o hours do mesmo VolumeTotals).
+  const rh = rankVolumeByPeriod({ periods, keyOf: d => d.companyId, labelOf: companyName, hoursOf, metric: 'hours', limit: 8 });
+  igualdadeCartaoKpi('Clientes mais Ativos (Horas)', rh, periods, (d, key) => d.companyId === key, 'hours');
+  checkEq('Vale 40h/80h, Samarco 80h/48h — em Horas a Samarco lidera P1', rh.items.map(x => [x.name, ...x.periods.map(p => p.hours)]), [['Samarco', 80, 48], ['Vale', 40, 80]]);
+  // Σ horas do ranking (itens + Outros) = "Total de Horas" com o filtro "Empresa = c", somado empresa a empresa.
+  const totalHorasPorEmpresa = (rec: any[]) => companies.reduce((s, c) => s + computeVolume(rec.filter(d => d.companyId === c.id), hoursOf).hours, 0);
+  const somaRanking = (rk: VolumeRanking, i: number) => rk.items.reduce((s, x) => s + x.periods[i].hours, 0) + (rk.others?.periods[i].hours ?? 0);
+  periods.forEach((rec, i) => {
+    checkEq(`P${i + 1}: Σ horas do ranking = Σ "Total de Horas" filtrado por empresa (${totalHorasPorEmpresa(rec)}h)`, somaRanking(rh, i), totalHorasPorEmpresa(rec));
+  });
+  const rh1 = rankVolumeByPeriod({ periods, keyOf: d => d.companyId, labelOf: companyName, hoursOf, metric: 'hours', limit: 1 });
+  periods.forEach((rec, i) => {
+    checkEq(`P${i + 1}: com limite 1, itens + "Outros" fecham a mesma soma`, somaRanking(rh1, i), totalHorasPorEmpresa(rec));
+  });
+  checkEq('...e tambem fecha com o KPI "Total de Horas" do periodo inteiro (toda demanda de cliente tem empresa)', periods.map(rec => computeVolume(rec, hoursOf).hours), periods.map((_, i) => somaRanking(rh, i)));
 }
 
 /* ========================================================================== */

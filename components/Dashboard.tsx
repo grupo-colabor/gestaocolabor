@@ -200,7 +200,7 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
     {
       section: 'Gráficos',
       items: [
-        { term: 'Clientes mais Ativos', desc: 'Empresas com maior volume de demandas no período filtrado. Exibe os 8 com mais demandas em P1; os demais somam em "Outros". Uma barra por período de comparação, com variação de P1 contra P2.' },
+        { term: 'Clientes mais Ativos', desc: 'Empresas com maior volume no período filtrado, em Qtd. Treinamentos ou Horas (toggle). Exibe as 8 maiores em P1; as demais somam em "Outros". Uma barra por período de comparação, com variação de P1 contra P2.' },
         { term: 'Treinamentos por Categoria', desc: 'Distribuição das demandas pelas categorias de treinamento (Segurança do Trabalho, Manutenção, Operações, etc.).' },
       ],
     },
@@ -505,6 +505,7 @@ const Dashboard: React.FC = () => {
   const [instructorHoursMetric, setInstructorHoursMetric] = useState<VolumeMetric>('hours');
   const [internaCategoriaMetric, setInternaCategoriaMetric] = useState<VolumeMetric>('hours');
   const [internaInstrutorMetric, setInternaInstrutorMetric] = useState<VolumeMetric>('hours');
+  const [clientView, setClientView] = useState<VolumeMetric>('count');
   /** Refs para captura de gráficos via html2canvas (um por aba) */
   const chartRefsMap = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -2126,7 +2127,9 @@ const pendingLogisticsDemands = useMemo(() => {
 
   const renderClientes = () => {
     // Clientes mais Ativos: a MESMA conta dos KPIs, por período; chave = companyId.
-    const clientRanking = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.companyId, labelOf: getCompanyName, hoursOf, metric: 'count', limit: 8 });
+    // O toggle Qtd/Horas troca a métrica (count/hours do mesmo VolumeTotals):
+    // Σ horas do ranking (com "Outros") = "Total de Horas" empresa a empresa.
+    const clientRanking = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.companyId, labelOf: getCompanyName, hoursOf, metric: clientView, limit: 8 });
 
     const trainingCategoryData: { name: string; value: number }[] = Object.entries(
       trainings.reduce((acc, t) => {
@@ -2175,7 +2178,8 @@ const pendingLogisticsDemands = useMemo(() => {
             icon={Building2}
             accent="blue"
             ranking={clientRanking}
-            metric="count"
+            metric={clientView}
+            onMetricChange={setClientView}
             periodLabels={periodLabels}
             unitLabel="empresas"
             emptyLabel="Sem demandas ativas"

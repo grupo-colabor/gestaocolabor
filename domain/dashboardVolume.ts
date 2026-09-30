@@ -142,13 +142,19 @@ const somaTotais = (a: VolumeTotals, b: VolumeTotals): VolumeTotals => ({
 /**
  * Ordem, limite, "Outros" e escala sobre linhas já prontas.
  *
- * - Linha com a métrica ZERO em todos os períodos sai: não há o que ranquear
- *   (um instrutor com demandas mas sem despesa não aparece em "por Custo").
+ * - Linha existe porque a chave apareceu em algum período; ela NÃO sai por
+ *   estar zerada — zero em P1 com valor em P2 fica, e zero em todos os
+ *   períodos também (um treinamento de 0h continua listado em Horas, como o
+ *   cartão sempre fez). A ÚNICA exceção é a métrica `cost`: linha com custo
+ *   zero em todos os períodos sai, como "Top Instrutores por Custo" sempre
+ *   fez (instrutor com demandas mas sem despesa não é um custo a ranquear).
  * - Ordem: métrica de P1 decrescente; empate pelo nome (pt-BR).
  * - `others` soma `othersDetail` período a período; `limit` infinito = sem "Outros".
  */
 export function rankVolumeRows(rows: readonly VolumeRankRow[], metric: VolumeMetric, limit = 10): VolumeRanking {
-  const vivas = rows.filter(r => r.periods.some(t => volumeValue(t, metric) !== 0));
+  const vivas = metric === 'cost'
+    ? rows.filter(r => r.periods.some(t => t.cost !== 0))
+    : [...rows];
   const p1 = (r: VolumeRankRow) => volumeValue(r.periods[0] ?? ZERO_VOLUME, metric);
   const ordenadas = [...vivas].sort((a, b) => (p1(b) - p1(a)) || a.name.localeCompare(b.name, 'pt-BR'));
 
@@ -238,7 +244,10 @@ export interface InstructorHoursRowsOptions {
  * período (P1 primeiro) — os mesmos mapas que dão "Horas Concluídas" e
  * "Produtividade Global". Adaptador SEM aritmética: `hours` é `horas`,
  * `count` é `nDemandas`, e a nota é o "N div." de P1. Um instrutor presente
- * em qualquer período vira linha; onde falta, ZERO_VOLUME.
+ * em qualquer período vira linha; onde falta, ZERO_VOLUME. Entrada zerada
+ * (0h e 0 demandas) em TODOS os períodos não vira linha: é o "horas > 0"
+ * que os dois cartões sempre aplicaram, e o equivalente a "a demanda não
+ * existe" dos rankings por demanda.
  */
 export function volumeRowsFromInstructorHours(
   mapsByPeriod: ReadonlyArray<ReadonlyMap<string, InstructorHoursEntry>>,
@@ -255,6 +264,7 @@ export function volumeRowsFromInstructorHours(
       const e = m.get(id);
       return e ? { count: e.nDemandas, hours: e.horas, cost: 0, distinct: 0 } : { ...ZERO_VOLUME };
     });
+    if (periods.every(t => t.hours === 0 && t.count === 0)) continue;
     const divididas = mapsByPeriod[0]?.get(id)?.nDivididas ?? 0;
     rows.push({ key: id, name: labelOf(id), periods, note: divididas > 0 ? `${divididas} div.` : undefined });
   }

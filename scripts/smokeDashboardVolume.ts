@@ -239,6 +239,11 @@ console.log('\n[4] Horas: mesma estrutura, empate em P1 desempata pelo nome');
   checkEq('Carajás: 40h / 8h', r.items[1].periods.map(p => p.hours), [40, 8]);
   checkEq('Itabira: 0h / 64h', r.items[2].periods.map(p => p.hours), [0, 64]);
   checkEq('max = 64 (Itabira em P2) — a escala e comum a todos os periodos', r.max, 64);
+  // Local presente só em P2 aparece com P1 = 0 também em Horas; e um local cujo
+  // treinamento tem 0h em todos os períodos continua listado (só Custo descarta).
+  checkEq('local so em P2 (Itabira): P1 = 0h, nao some', linha(r, 'Itabira')?.periods[0].hours, 0);
+  const comZeroHoras = rankVolumeByPeriod({ periods: [[dem('T0', '2026-09-03', { id: 'Z1', trainingLocal: 'Zerado' })], []], keyOf: d => d.trainingLocal, hoursOf, metric: 'hours' });
+  checkEq('local com treinamento de 0h em todos os periodos fica, com 0h', comZeroHoras.items.map(x => [x.name, ...x.periods.map(p => p.hours)]), [['Zerado', 0, 0]]);
   const nomesCount = local('count').items.map(x => x.name).sort();
   const nomesHours = r.items.map(x => x.name).sort();
   checkEq('toggle Qtd/Horas: mesmas linhas, so a metrica muda', nomesHours, nomesCount);
@@ -450,8 +455,9 @@ console.log('\n[15] Instrutores e Internas / horas ministradas: volumeRowsFromIn
   checkEq('a nota e o "N div." de P1', [byKey['I-A'].note, byKey['I-B'].note, byKey['I-C'].note], ['1 div.', undefined, undefined]);
   checkEq('sem labelOf o nome e o id', volumeRowsFromInstructorHours([P1map])[0].name, 'I-A');
 
+  checkEq('entrada zerada (0h, 0 demandas) em todos os periodos nao vira linha — o "horas > 0" de sempre, no adaptador', rows.some(x => x.key === 'I-D'), false);
   const r = rankVolumeRows(rows, 'hours', Number.POSITIVE_INFINITY);
-  checkEq('ranqueado por horas de P1: Ana, Bruno, Carla — e I-D (zero em tudo) some', r.items.map(x => x.key), ['I-A', 'I-B', 'I-C']);
+  checkEq('ranqueado por horas de P1: Ana, Bruno, Carla', r.items.map(x => x.key), ['I-A', 'I-B', 'I-C']);
   checkEq('max = 24.5', r.max, 24.5);
   checkEq('toggle Demandas: mesma lista, ordem por nDemandas', rankVolumeRows(rows, 'count', 8).items.map(x => x.periods[0].count), [2, 1, 0]);
   // `include` é o recorte "só instrutor ATIVO" do card da aba Instrutores.
@@ -478,10 +484,12 @@ console.log('\n[16] rankVolumeRows');
     { key: 'z', name: 'Zero', periods: [Z, Z] },
   ];
   const r = rankVolumeRows(rows, 'count');
-  checkEq('empate em P1 (2 e 2): ordem pelo nome', r.items.map(x => x.name), ['Alfa', 'Beta']);
-  checkEq('linha zerada em todos os periodos NA METRICA sai', r.items.some(x => x.key === 'z'), false);
-  checkEq('mas uma linha zerada so em P1 fica', rankVolumeRows([{ key: 'p2', name: 'P2', periods: [Z, T(1, 1)] }], 'count').items.length, 1);
-  checkEq('a regra e por metrica: Alfa some em "cost" (0 nos dois)', rankVolumeRows(rows, 'cost').items.length, 0);
+  checkEq('empate em P1 (2 e 2): ordem pelo nome; a zerada fica, por ultimo', r.items.map(x => x.name), ['Alfa', 'Beta', 'Zero']);
+  checkEq('linha zerada em TODOS os periodos NAO sai (a chave existe, entao aparece com 0)', r.items.some(x => x.key === 'z'), true);
+  checkEq('zero em P1 com valor em P2 fica', rankVolumeRows([{ key: 'p2', name: 'P2', periods: [Z, T(1, 1)] }], 'count').items.length, 1);
+  checkEq('idem em Horas: treinamento de 0h continua listado com 0h', rankVolumeRows(rows, 'hours').items.map(x => x.name), ['Alfa', 'Beta', 'Zero']);
+  checkEq('EXCECAO, so Custo: zero em todos os periodos sai (todas zeram → nenhuma)', rankVolumeRows(rows, 'cost').items.length, 0);
+  checkEq('Custo: zero em P1 com custo em P2 fica', rankVolumeRows([{ key: 'c', name: 'C', periods: [Z, T(1, 1, 10)] }], 'cost').items.length, 1);
   checkEq('limite infinito: sem Outros mesmo com muitas linhas', rankVolumeRows(rows, 'hours', Number.POSITIVE_INFINITY).others, null);
   checkEq('lista vazia', rankVolumeRows([], 'count'), { items: [], othersDetail: [], others: null, max: 0 });
 }

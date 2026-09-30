@@ -486,5 +486,55 @@ console.log('\n[16] rankVolumeRows');
   checkEq('lista vazia', rankVolumeRows([], 'count'), { items: [], othersDetail: [], others: null, max: 0 });
 }
 
+/* ========================================================================== */
+/* [17] Guardas de fonte: a tela chama o domínio, nenhum ranking soma no render */
+/* ========================================================================== */
+// A igualdade de [2] e [9]–[14] só vale na tela se a tela passar pela mesma
+// porta. Estas guardas leem o código e falham no dia em que alguém reescrever
+// um buildTop dentro do render ou fizer um cartão somar por conta própria.
+console.log('\n[17] Guardas de fonte');
+
+{
+  const ler = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8');
+  const dash = ler('components/Dashboard.tsx');
+  check('Dashboard importa computeVolume, rankVolumeByPeriod e rankVolumeRows de domain/dashboardVolume',
+    /import \{[^}]*computeVolume[^}]*rankVolumeByPeriod[^}]*rankVolumeRows[^}]*\} from '\.\.\/domain\/dashboardVolume'/.test(dash));
+
+  // Cada <VolumeRankingCard ranking={X}> tem que ter um `const X = rankVolumeByPeriod(` ou `rankVolumeRows(`.
+  const cartoes = [...dash.matchAll(/<VolumeRankingCard[\s\S]*?ranking=\{(\w+)\}/g)].map(m => m[1]);
+  checkEq('11 cartoes de ranking nas seis abas (3 Geral, 2 Operacional, 2 Instrutores, 1 Clientes, 1 Custos, 2 Internas)', cartoes.length, 11);
+  const semDominio = cartoes.filter(v => !new RegExp(`const ${v}\\s*=\\s*(rankVolumeByPeriod|rankVolumeRows)\\(`).test(dash));
+  check('todo ranking= vem de rankVolumeByPeriod/rankVolumeRows', semDominio.length === 0, semDominio.join(', '));
+  checkEq('cada aba tem os cartoes esperados (por titulo)',
+    ['Volume por Local', 'Volume por Corredor', 'Volume por Estado (UF)', 'Top Treinamentos', 'Demandas por Instrutor',
+      'Horas Ministradas por Instrutor', 'Reaproveitamento de Instrutores', 'Clientes mais Ativos (Volume)',
+      'Top Instrutores por Custo Gerado', 'Distribuição por Categoria', 'Top Instrutores em Horas Internas']
+      .filter(t => !dash.includes(`title="${t}"`)), []);
+
+  check('"Total de Demandas", "Total de Horas" e "Total em Despesas" leem computeVolume (a mesma funcao)',
+    /title="Total de Demandas"[^\n]*computeVolume\(/.test(dash) && /title="Total de Horas"[^\n]*computeVolume\(/.test(dash) && /title="Total em Despesas"[^\n]*computeVolume\(/.test(dash));
+  check('"Volume por Regiao" tambem', /regionalData[\s\S]{0,400}computeVolume\(filteredDemands\.filter\(d => d\.regionId === r\.id\)/.test(dash));
+  check('"Total em Despesas" e o cartao de custo usam o MESMO costOf', /const costOf = \(d: Demand\) => costByDemandId\.get\(d\.id\) \?\? 0;/.test(dash) && (dash.match(/costOf, metric: 'cost'/g) ?? []).length === 1);
+
+  const render = dash.slice(dash.indexOf('const renderGeral = () => {'), dash.indexOf('// ─── Excel Export'));
+  check('o render nao tem mais soma propria de ranking (RankedListChart, buildTop, counts[], Object.entries(...).sort)',
+    render.length > 0 && !/RankedListChart|buildTop|buildTrainingTop|buildInstructorTop|instructorCostItems|topReuseItems|clientData|counts\[|sums\[|Object\.entries\([a-zA-Z]+\)\.sort/.test(render));
+  check('o componente RankedListChart foi removido do arquivo', !dash.includes('RankedListChart'));
+
+  const card = ler('components/dashboard/VolumeRankingCard.tsx');
+  check('o cartao nao soma nada: so le volumeValue/volumeVariation do ranking pronto',
+    !/\.reduce\(/.test(card) && !/\.filter\(/.test(card) && card.includes('volumeValue(') && card.includes('volumeVariation('));
+  check('variacao so de P1 contra P2 — nunca contra P3/P4', card.includes('row.periods[1]') && !/row\.periods\[[2-9]\]/.test(card));
+  check('escala das barras e ranking.max (comum a todos os periodos)', card.includes('Math.max(ranking.max, 1)'));
+  check('altura maxima com rolagem: > 3 periodos ou > 8 linhas, lista rola e cabecalho fica',
+    card.includes('MAX_PERIODS_WITHOUT_CAP = 3') && card.includes('MAX_ROWS_WITHOUT_CAP = 8') && /capped \? 'max-h-\[24rem\]'/.test(card));
+  check('toggle de metrica so quando a tela passa onMetricChange', /\{onMetricChange && \(/.test(card));
+
+  const dominio = ler('domain/dashboardVolume.ts');
+  check('rankVolumeByPeriod termina em rankVolumeRows (um ranqueamento so)', /return rankVolumeRows\(rows, metric, opts\.limit \?\? 10\);/.test(dominio));
+  check('volumeRowsFromInstructorHours nao faz aritmetica (copia horas/nDemandas)',
+    /count: e\.nDemandas, hours: e\.horas, cost: 0, distinct: 0/.test(dominio) && !/horas\s*[+\-*\/]/.test(dominio.slice(dominio.indexOf('export function volumeRowsFromInstructorHours'))));
+}
+
 console.log(falhas === 0 ? '\n✅ Todos os checks passaram.' : `\n❌ ${falhas} check(s) falharam.`);
 process.exit(falhas === 0 ? 0 : 1);

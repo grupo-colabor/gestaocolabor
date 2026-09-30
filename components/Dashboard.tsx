@@ -31,7 +31,7 @@ import {
 } from '../domain/instructorAvailability';
 import { computeInstructorHours, InstructorHoursEntry } from '../domain/instructorHours';
 import { buildModalityOptions, buildTrainingsById, matchesModality } from '../domain/modalityOptions';
-import { computeVolume, rankVolumeByPeriod } from '../domain/dashboardVolume';
+import { computeVolume, rankVolumeByPeriod, rankVolumeRows, volumeRowsFromInstructorHours, type VolumeMetric } from '../domain/dashboardVolume';
 import VolumeRankingCard from './dashboard/VolumeRankingCard';
 import { PERIOD_COLORS } from './dashboard/periodColors';
 import Pagination from './Pagination';
@@ -86,104 +86,21 @@ const STATUS_LABELS: Record<string, string> = {
 
 type TabType = 'GERAL' | 'OPERACIONAL' | 'INSTRUTORES' | 'CLIENTES' | 'CUSTOS' | 'INTERNAS';
 
+/**
+ * Valor de um item de medição como número; inválido = 0. É a MESMA leitura
+ * que o KPI "Total em Despesas" e a aba Custos sempre fizeram (`toVal`), para
+ * o `costOf` de computeVolume somar exatamente o que o KPI soma.
+ */
+const attachmentValue = (v: any): number => {
+  const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v);
+  return Number(n) || 0;
+};
+
 interface ExtraPeriod {
   id: string;
   startDate: string;
   endDate: string;
 }
-
-type RankedItem = { name: string; value: number };
-
-/** Lista ranqueada com barras inline e expansão do grupo "Outros". Suporta modo de comparação com items2. */
-const RankedListChart: React.FC<{
-  items: RankedItem[];
-  othersDetail: RankedItem[];
-  barColor: string;
-  emptyLabel?: string;
-  valueFormatter?: (v: number) => string;
-  items2?: RankedItem[];
-}> = ({ items, othersDetail, barColor, emptyLabel = 'Sem dados', valueFormatter, items2 }) => {
-  const [expanded, setExpanded] = useState(false);
-  const isCompare = items2 !== undefined;
-
-  const allItems = expanded
-    ? [...items, ...othersDetail]
-    : othersDetail.length > 0
-      ? [...items, { name: `Outros (${othersDetail.length} locais)`, value: othersDetail.reduce((s, i) => s + i.value, 0), isOthers: true } as any]
-      : items;
-
-  const map2 = new Map((items2 ?? []).map(i => [i.name, i.value]));
-  const max = Math.max(...[...items, ...othersDetail].map(i => i.value), ...(items2 ?? []).map(i => i.value), 1);
-
-  if (items.length === 0 && othersDetail.length === 0) {
-    return (
-      <div className="h-full flex items-center justify-center text-slate-300 italic text-xs uppercase font-bold">
-        {emptyLabel}
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-1 overflow-y-auto flex-1 min-h-0 pr-0.5">
-      {allItems.map((item: any, idx: number) => {
-        const isOthersRow = item.isOthers;
-        const val2 = isCompare && !isOthersRow ? (map2.get(item.name) ?? 0) : undefined;
-        return (
-          <div key={item.name + idx}>
-            <div
-              className={`flex items-center gap-2 py-1 px-1.5 rounded-lg transition-colors ${isOthersRow ? 'cursor-pointer hover:bg-slate-50 group' : ''}`}
-              onClick={isOthersRow ? () => setExpanded(true) : undefined}
-              title={isOthersRow ? 'Clique para ver todos os locais' : item.name}
-            >
-              <span className="text-[9px] font-black text-slate-300 w-3.5 text-right shrink-0">
-                {isOthersRow ? '…' : idx + 1}
-              </span>
-              <span
-                className={`text-[10px] font-bold truncate shrink-0 w-28 ${isOthersRow ? 'text-blue-500 group-hover:underline' : 'text-slate-600'}`}
-              >
-                {item.name}
-              </span>
-              <div className="flex-1 flex flex-col gap-0.5">
-                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${isOthersRow ? 'bg-slate-300' : barColor}`}
-                    style={{ width: `${Math.round((item.value / max) * 100)}%` }}
-                  />
-                </div>
-                {isCompare && !isOthersRow && (
-                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all bg-emerald-400"
-                      style={{ width: `${Math.round(((Number(val2) || 0) / max) * 100)}%` }}
-                    />
-                  </div>
-                )}
-              </div>
-              <div className={`shrink-0 text-right ${valueFormatter ? 'w-20' : 'w-5'}`}>
-                <div className={`text-[10px] font-black ${isOthersRow ? 'text-slate-400' : 'text-slate-700'}`}>
-                  {valueFormatter ? valueFormatter(item.value) : item.value}
-                </div>
-                {isCompare && !isOthersRow && (
-                  <div className="text-[9px] font-bold text-emerald-600">
-                    {valueFormatter ? valueFormatter(val2 ?? 0) : (val2 ?? 0)}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })}
-      {expanded && othersDetail.length > 0 && (
-        <button
-          onClick={() => setExpanded(false)}
-          className="mt-1 text-[9px] font-black text-slate-400 uppercase tracking-widest hover:text-slate-600 transition-colors text-center"
-        >
-          ▲ Recolher
-        </button>
-      )}
-    </div>
-  );
-};
 
 /** Cor do chip de status. Módulo (não local do render) porque Operacional e Internas usam. */
 const STATUS_BADGE: Record<string, string> = {
@@ -246,8 +163,8 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
     {
       section: 'Gráficos e Blocos',
       items: [
-        { term: 'Top Treinamentos', desc: 'Ranking dos treinamentos com maior número de demandas no período. Clique em "Outros" para expandir e ver todos.' },
-        { term: 'Demandas por Instrutor', desc: 'Ranking dos instrutores com mais demandas alocadas no período. Mostra os 8 primeiros.' },
+        { term: 'Top Treinamentos', desc: 'Ranking dos treinamentos com maior número de demandas no período. Com períodos de comparação, uma barra por período (P1, P2…), ordem pelo valor de P1 e variação de P1 contra P2. Clique em "Outros" para expandir e ver todos.' },
+        { term: 'Demandas por Instrutor', desc: 'Ranking dos instrutores com mais demandas alocadas (instrutor do cadastro da demanda) no período. Mostra os 8 primeiros; os demais somam em "Outros". Compara por período como os demais rankings.' },
         { term: 'Modalidade', desc: 'Proporção das demandas por tipo: Presencial, Online/EAD e Híbrido.' },
         { term: 'Taxa de Execução (donut)', desc: 'Gráfico circular mostrando o percentual de conclusão com legenda de concluídas, em andamento e pendentes.' },
         { term: 'Agenda dos Próximos 7 Dias', desc: 'Demandas em execução ou com início previsto nos próximos 7 dias, ordenadas por data de início. A paginação exibe 15 linhas por vez.' },
@@ -273,7 +190,7 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
         { term: 'Risco de Dependência (lista)', desc: 'NRs e treinamentos onde apenas 1 ou nenhum instrutor tem nível ≥ 3. Risco: se esse instrutor ficar indisponível, a execução pode ser comprometida.' },
         { term: 'Disponíveis nos Próximos 30 Dias', desc: 'Lista nominal de instrutores sem alocação ativa prevista — candidatos para absorver novas demandas.' },
         { term: 'Sem Demanda no Período', desc: 'Instrutores sem nenhuma participação no filtro ativo. Pode indicar ociosidade ou escopo fora da região selecionada.' },
-        { term: 'Reaproveitamento de Instrutores', desc: 'Ranking pelo número de tipos distintos de treinamento ministrados no histórico completo. Quanto maior, mais versátil o instrutor.' },
+        { term: 'Reaproveitamento de Instrutores', desc: 'Ranking pelo número de tipos distintos de treinamento concluídos por instrutor NO PERÍODO filtrado (P1, P2…) — a mesma definição do card "Reaproveitamento". Quanto maior, mais versátil o instrutor. Antes olhava o histórico completo e por isso não comparava períodos.' },
         { term: 'Distribuição Geográfica', desc: 'Por região: barra azul = instrutores habilitados, barra verde = demandas no período. Identifica desequilíbrio entre oferta de instrutores e concentração de demandas.' },
         { term: 'Cobertura de Competências', desc: 'Por categoria de treinamento: instrutores aptos (nível ≥ 3) vs volume de demandas. Status OK (cobertura ≥ 50%), Alerta (< 50%) e Crítico (0 instrutores aptos).' },
       ],
@@ -283,7 +200,7 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
     {
       section: 'Gráficos',
       items: [
-        { term: 'Clientes mais Ativos', desc: 'Empresas com maior volume de demandas no período filtrado. Exibe os 8 com mais demandas.' },
+        { term: 'Clientes mais Ativos', desc: 'Empresas com maior volume de demandas no período filtrado. Exibe os 8 com mais demandas em P1; os demais somam em "Outros". Uma barra por período de comparação, com variação de P1 contra P2.' },
         { term: 'Treinamentos por Categoria', desc: 'Distribuição das demandas pelas categorias de treinamento (Segurança do Trabalho, Manutenção, Operações, etc.).' },
       ],
     },
@@ -307,7 +224,7 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
         { term: 'Mix de Despesas', desc: 'Gráfico de rosca com a proporção de cada categoria: Hospedagem, Locomoção, Café da Manhã, Almoço, Jantar e Outros.' },
         { term: 'Média por Categoria', desc: 'Para cada categoria: total gasto, número de medições com esse tipo (×), média por medição e percentual sobre o total.' },
         { term: 'Status das Medições', desc: 'Funil de progresso: Não Iniciada → Em Lançamento → Em Conferência → Pronta Faturamento → Faturada. Percentuais calculados sobre o total de demandas concluídas.' },
-        { term: 'Top Instrutores por Custo', desc: 'Ranking dos instrutores cujas demandas geraram o maior volume de despesas no período filtrado.' },
+        { term: 'Top Instrutores por Custo', desc: 'Ranking dos instrutores cujas demandas geraram o maior volume de despesas no período filtrado — a mesma soma de "Total em Despesas", recortada pelo instrutor da demanda. Compara por período.' },
         { term: 'Evolução Mensal de Custos', desc: 'Histórico dos últimos 6 meses de despesas registradas. Não é restrito pelo filtro de período — exibe o histórico completo para comparação de tendências.' },
       ],
     },
@@ -328,7 +245,7 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
       section: 'Gráficos e Blocos',
       items: [
         { term: 'Distribuição por Categoria', desc: 'Horas previstas e número de demandas por categoria interna, ordenado por horas. Demanda sem categoria cadastrada aparece agrupada em "Sem categoria".' },
-        { term: 'Top Instrutores em Horas Internas', desc: 'Ranking por horas internas MINISTRADAS (não previstas) — mesma fonte do card "Horas Ministradas por Instrutor" no toggle Internas. Top 8.' },
+        { term: 'Top Instrutores em Horas Internas', desc: 'Ranking por horas internas MINISTRADAS (não previstas) — mesma fonte do card "Horas Ministradas por Instrutor" no toggle Internas. Top 8, com toggle Horas/Demandas e uma barra por período.' },
         { term: 'Aviso de concluída sem alocação', desc: 'Aparece quando existe demanda interna concluída sem nenhuma alocação de instrutor. Essas demandas contam em "Demandas Internas" e em "Horas Previstas", mas ficam fora de "Horas Já Ministradas" e do ranking, porque a fonte de horas é instructor_allocations e não o instrutor do cadastro. É a explicação para ver demanda concluída e 0h ministradas ao mesmo tempo.' },
       ],
     },
@@ -581,9 +498,13 @@ const Dashboard: React.FC = () => {
   const [showReportModal, setShowReportModal] = useState(false);
 
   // --- Toggle de visualização nos rankings de Local/Corredor/UF ---
-  const [localView, setLocalView] = useState<'count' | 'hours'>('count');
-  const [corredorView, setCorredorView] = useState<'count' | 'hours'>('count');
-  const [ufView, setUfView] = useState<'count' | 'hours'>('count');
+  const [localView, setLocalView] = useState<VolumeMetric>('count');
+  const [corredorView, setCorredorView] = useState<VolumeMetric>('count');
+  const [ufView, setUfView] = useState<VolumeMetric>('count');
+  // --- Toggle de métrica dos rankings que já tinham duas grandezas ---
+  const [instructorHoursMetric, setInstructorHoursMetric] = useState<VolumeMetric>('hours');
+  const [internaCategoriaMetric, setInternaCategoriaMetric] = useState<VolumeMetric>('hours');
+  const [internaInstrutorMetric, setInternaInstrutorMetric] = useState<VolumeMetric>('hours');
   /** Refs para captura de gráficos via html2canvas (um por aba) */
   const chartRefsMap = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -811,6 +732,31 @@ const pendingLogisticsDemands = useMemo(() => {
   const hoursOf = (d: Demand) => getTrainingHours(d.trainingId);
   const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
   const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
+  const instructorName = (id: string) => instructors.find(i => i.id === id)?.name || id;
+  /** Duas primeiras palavras do nome — como os rankings compactos sempre mostraram. */
+  const instructorShortName = (id: string) => instructorName(id).split(' ').slice(0, 2).join(' ');
+
+  /**
+   * O custo de uma demanda: a soma dos itens de TODAS as medições dela, com a
+   * mesma leitura de valor do KPI "Total em Despesas". É o `costOf` que entra
+   * em computeVolume, para o KPI e "Top Instrutores por Custo" somarem a mesma
+   * coisa — o cartão é o KPI recortado pelo instrutor da demanda.
+   */
+  const costByDemandId = useMemo(() => {
+    const porDemanda = new Map<string, number>();
+    for (const m of measurements) {
+      const itens = m.attachments.reduce((s: number, a: any) => s + attachmentValue(a.value), 0);
+      porDemanda.set(m.demandId, (porDemanda.get(m.demandId) ?? 0) + itens);
+    }
+    return porDemanda;
+  }, [measurements]);
+  const costOf = (d: Demand) => costByDemandId.get(d.id) ?? 0;
+
+  /** Carga PLANEJADA de uma demanda interna (horasPrevistas) — o `hoursOf` da aba Internas. */
+  const horasPrevistasOf = (d: Demand) => {
+    const h = Number(d.horasPrevistas);
+    return Number.isFinite(h) && h > 0 ? h : 0;
+  };
 
   /** Formata horas com fração só quando necessário (ex.: 75.5, mas 88 em vez de 88.0). */
   const formatHoursValue = (v: number) => {
@@ -837,14 +783,7 @@ const pendingLogisticsDemands = useMemo(() => {
     });
   }, [filteredDemands, trainings]);
 
-  const totalCosts = useMemo(() => {
-    return filteredMeasurements.reduce((acc: number, m) => {
-      return acc + m.attachments.reduce((sum: number, att) => {
-        const val = typeof att.value === 'string' ? parseFloat(att.value.replace(',', '.')) : Number(att.value);
-        return sum + (Number(val) || 0);
-      }, 0);
-    }, 0);
-  }, [filteredMeasurements]);
+  const totalCosts = useMemo(() => computeVolume(filteredDemands, hoursOf, { costOf }).cost, [filteredDemands, costByDemandId]);
 
   const totalAllHours2 = useMemo(() => {
     if (extraPeriods.length === 0) return 0;
@@ -853,13 +792,8 @@ const pendingLogisticsDemands = useMemo(() => {
 
   const totalCosts2 = useMemo(() => {
     if (extraPeriods.length === 0) return 0;
-    return filteredMeasurements2.reduce((acc: number, m) => {
-      return acc + m.attachments.reduce((sum: number, att) => {
-        const val = typeof att.value === 'string' ? parseFloat(att.value.replace(',', '.')) : Number(att.value);
-        return sum + (Number(val) || 0);
-      }, 0);
-    }, 0);
-  }, [filteredMeasurements2, extraPeriods.length]);
+    return computeVolume(filteredDemands2, hoursOf, { costOf }).cost;
+  }, [filteredDemands2, costByDemandId, extraPeriods.length]);
 
   // --- Todos os períodos (P1…PN) para KPICards multi-período ---
   const allFilteredDemandsList = useMemo(() => {
@@ -895,6 +829,12 @@ const pendingLogisticsDemands = useMemo(() => {
     const p = extraPeriods[i - 1];
     return { start: p?.startDate || undefined, end: p?.endDate || undefined };
   };
+
+  /** Rótulo de cada período (P1…PN), para os tooltips de todos os rankings. */
+  const periodLabels = allFilteredDemandsList.map((_, i) => {
+    const { start, end } = getPeriodBounds(i);
+    return getPeriodLabel(start ?? '', end ?? '');
+  });
 
   /**
    * ✅ FONTE ÚNICA — Horas por Instrutor
@@ -1000,10 +940,7 @@ const pendingLogisticsDemands = useMemo(() => {
       porStatus.set(s, (porStatus.get(s) ?? 0) + 1);
     }
 
-    const horasDe = (d: Demand) => {
-      const h = Number(d.horasPrevistas);
-      return Number.isFinite(h) && h > 0 ? h : 0;
-    };
+    const horasDe = horasPrevistasOf;
 
     const porCategoria = new Map<string, { n: number; horas: number }>();
     for (const d of lista) {
@@ -1341,10 +1278,6 @@ const pendingLogisticsDemands = useMemo(() => {
     // célula, chama computeVolume sobre o sub-recorte — o que o KPI "Total de
     // Demandas" / "Total de Horas" mostraria com o filtro por essa chave ligado.
     // Não há soma própria aqui (scripts/smokeDashboardVolume.ts prende isso).
-    const periodLabels = allFilteredDemandsList.map((_, i) => {
-      const { start, end } = getPeriodBounds(i);
-      return getPeriodLabel(start ?? '', end ?? '');
-    });
     const localRanking    = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.trainingLocal, hoursOf, metric: localView });
     const corredorRanking = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.corredor,      hoursOf, metric: corredorView });
     const ufRanking       = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.demandState,   hoursOf, metric: ufView });
@@ -1591,28 +1524,11 @@ const pendingLogisticsDemands = useMemo(() => {
       })
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
-    // Top treinamentos no período
-    const buildTrainingTop = (src: Demand[], limit = 8) => {
-      const counts: Record<string, number> = {};
-      src.forEach(d => {
-        const name = trainings.find(t => t.id === d.trainingId)?.name;
-        if (name) counts[name] = (counts[name] || 0) + 1;
-      });
-      const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-      return { items: sorted.slice(0, limit).map(([name, value]) => ({ name, value })), others: sorted.slice(limit).map(([name, value]) => ({ name, value })) };
-    };
-    const { items: topTrainings, others: othersTrainings } = buildTrainingTop(filteredDemands);
-    const topTrainings2 = compareMode ? buildTrainingTop(filteredDemands2).items : undefined;
-
-    // Ranking instrutores por demandas no período
-    const buildInstructorTop = (src: Demand[], limit = 8) => {
-      const counts: Record<string, number> = {};
-      src.filter(d => d.instructorId).forEach(d => { counts[d.instructorId!] = (counts[d.instructorId!] || 0) + 1; });
-      return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, limit)
-        .map(([id, value]) => ({ name: instructors.find(i => i.id === id)?.name || id, value }));
-    };
-    const topInstructors  = buildInstructorTop(filteredDemands);
-    const topInstructors2 = compareMode ? buildInstructorTop(filteredDemands2) : undefined;
+    // Top Treinamentos / Demandas por Instrutor: a MESMA conta dos KPIs, por
+    // período (rankVolumeByPeriod → computeVolume em cada célula). A chave é o
+    // id — o que um filtro compararia —, o nome é só rótulo.
+    const trainingRanking = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.trainingId, labelOf: getTrainingName, hoursOf, metric: 'count', limit: 8 });
+    const instructorDemandRanking = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.instructorId, labelOf: instructorName, hoursOf, metric: 'count', limit: 8 });
 
     // Modalidade
     const modalTotal = filteredDemands.length || 1;
@@ -1664,23 +1580,30 @@ const pendingLogisticsDemands = useMemo(() => {
         {/* Top Treinamentos + Demandas por Instrutor + Perfil do Período */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-          {/* Top Treinamentos */}
-          <div className="lg:col-span-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '22rem' }}>
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between shrink-0">
-              <span>Top Treinamentos</span>
-              <Package size={13} className="text-slate-300" />
-            </h3>
-            <RankedListChart items={topTrainings} othersDetail={othersTrainings} barColor="bg-violet-500" emptyLabel="Sem treinamentos no período" items2={topTrainings2} />
-          </div>
-
-          {/* Demandas por Instrutor */}
-          <div className="lg:col-span-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '22rem' }}>
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between shrink-0">
-              <span>Demandas por Instrutor</span>
-              <UserCheck size={13} className="text-slate-300" />
-            </h3>
-            <RankedListChart items={topInstructors} othersDetail={[]} barColor="bg-blue-500" emptyLabel="Sem instrutores alocados" items2={topInstructors2} />
-          </div>
+          <VolumeRankingCard
+            className="lg:col-span-4"
+            minHeight="22rem"
+            title="Top Treinamentos"
+            icon={Package}
+            accent="violet"
+            ranking={trainingRanking}
+            metric="count"
+            periodLabels={periodLabels}
+            unitLabel="treinamentos"
+            emptyLabel="Sem treinamentos no período"
+          />
+          <VolumeRankingCard
+            className="lg:col-span-4"
+            minHeight="22rem"
+            title="Demandas por Instrutor"
+            icon={UserCheck}
+            accent="blue"
+            ranking={instructorDemandRanking}
+            metric="count"
+            periodLabels={periodLabels}
+            unitLabel="instrutores"
+            emptyLabel="Sem instrutores alocados"
+          />
 
           {/* Perfil do Período */}
           <div className="lg:col-span-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-5" style={{ minHeight: '22rem' }}>
@@ -1841,23 +1764,16 @@ const pendingLogisticsDemands = useMemo(() => {
     // e interna respondem a perguntas diferentes ("quanto entregou ao cliente"
     // vs "quanto gastou em trabalho interno") e misturá-las num número só
     // escondia as duas. Mesma função, mesmo layout, datasets separados.
-    const rankingMap = instructorRanking === 'INTERNAS'
-      ? (internaHoursMapsByPeriod[0] ?? new Map<string, InstructorHoursEntry>())
-      : (instructorHoursMapsByPeriod[0] ?? new Map<string, InstructorHoursEntry>());
-    const instructorHoursList = activeInstructors
-      .map(inst => {
-        const entry = rankingMap.get(inst.id);
-        return {
-          id: inst.id,
-          name: inst.name,
-          horas: entry?.horas ?? 0,
-          nDemandas: entry?.nDemandas ?? 0,
-          nDivididas: entry?.nDivididas ?? 0,
-        };
-      })
-      .filter(r => r.horas > 0)
-      .sort((a, b) => b.horas - a.horas);
-    const maxInstructorHours = Math.max(...instructorHoursList.map(r => r.horas), 1);
+    const activeIds = new Set(activeInstructors.map(i => i.id));
+    const instructorHoursRanking = rankVolumeRows(
+      volumeRowsFromInstructorHours(
+        instructorRanking === 'INTERNAS' ? internaHoursMapsByPeriod : instructorHoursMapsByPeriod,
+        { labelOf: instructorName, include: id => activeIds.has(id) },
+      ),
+      instructorHoursMetric,
+      Number.POSITIVE_INFINITY,
+    );
+    const instructorHoursCount = instructorHoursRanking.items.length;
 
     // --- Risco de dependência ---
     const dependencyRisk = trainings.filter(t => t.status === 'ATIVO').map(t => ({
@@ -1895,8 +1811,15 @@ const pendingLogisticsDemands = useMemo(() => {
     const reuseRate = activeInstructors.length > 0
       ? Math.round((reuseStats.filter(x => x.count >= 2).length / activeInstructors.length) * 100)
       : 0;
-    const topReuseItems    = reuseStats.slice(0, 8).map(x => ({ name: x.inst.name.split(' ').slice(0, 2).join(' '), value: x.count }));
-    const othersReuseItems = reuseStats.slice(8).map(x => ({ name: x.inst.name.split(' ').slice(0, 2).join(' '), value: x.count }));
+    // Ranking de reaproveitamento: treinamentos DISTINTOS concluídos por
+    // instrutor ativo em cada período — a definição do KPI "Reaproveitamento"
+    // logo acima, que já era por período (P1…PN). O ranking olhava o histórico
+    // completo e por isso não comparava. computeVolume conta os distintos
+    // (distinctOf = trainingId); o recorte é o mesmo do KPI: concluída e com
+    // instrutor.
+    const concludedByPeriod = allFilteredDemandsList.map(list =>
+      list.filter(d => d.instructorId && activeIds.has(d.instructorId) && getCalculatedStatus(d) === 'CONCLUIDA'));
+    const reuseRanking = rankVolumeByPeriod({ periods: concludedByPeriod, keyOf: d => d.instructorId, labelOf: instructorShortName, hoursOf, distinctOf: d => d.trainingId, metric: 'distinct', limit: 8 });
 
     // --- Distribuição geográfica: instrutores habilitados vs demandas por região ---
     const geoData = regions.map(r => ({
@@ -1968,12 +1891,23 @@ const pendingLogisticsDemands = useMemo(() => {
 
         {/* Horas Ministradas por Instrutor + Risco de Dependência */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-8 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '22rem' }}>
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center justify-between shrink-0">
-              <span>Horas Ministradas por Instrutor</span>
-              <span className="flex items-center gap-2">
+          <VolumeRankingCard
+            className="lg:col-span-8"
+            minHeight="22rem"
+            title="Horas Ministradas por Instrutor"
+            icon={Award}
+            accent={instructorRanking === 'INTERNAS' ? 'teal' : 'indigo'}
+            ranking={instructorHoursRanking}
+            metric={instructorHoursMetric}
+            onMetricChange={setInstructorHoursMetric}
+            metricLabels={{ hours: 'Horas', count: 'Demandas' }}
+            periodLabels={periodLabels}
+            unitLabel="instrutores"
+            emptyLabel={instructorRanking === 'INTERNAS' ? 'Sem horas internas concluídas no período' : 'Sem horas concluídas no período'}
+            headerExtra={(
+              <>
                 {/* Mesmo toggle do modal de export de medição (MedicaoExportModal):
-                    trilho cinza, pill branca na aba ativa. */}
+                    trilho cinza, pill branca na aba ativa. Troca o DATASET, não soma. */}
                 <span className="flex gap-1 bg-slate-100 p-0.5 rounded-lg">
                   {(['TREINAMENTOS', 'INTERNAS'] as const).map(modo => (
                     <button
@@ -1987,41 +1921,10 @@ const pendingLogisticsDemands = useMemo(() => {
                     </button>
                   ))}
                 </span>
-                <span className="text-[9px] font-black text-slate-300 normal-case tracking-normal">{instructorHoursList.length} instrutor{instructorHoursList.length !== 1 ? 'es' : ''}</span>
-                <Award size={13} className="text-slate-300" />
-              </span>
-            </h3>
-            <div className="flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar space-y-1">
-              {instructorHoursList.length > 0 ? instructorHoursList.map((row, idx) => {
-                const pct = Math.max(2, Math.round((row.horas / maxInstructorHours) * 100));
-                const tooltip = `${row.name} — ${formatHoursValue(row.horas)}h · ${row.nDemandas} ${instructorRanking === 'INTERNAS' ? 'demanda interna' : 'demanda'}${row.nDemandas !== 1 ? 's' : ''} concluída${row.nDemandas !== 1 ? 's' : ''}` +
-                  (row.nDivididas > 0 ? ` · ${row.nDivididas} dividida${row.nDivididas !== 1 ? 's' : ''} com outro instrutor` : '');
-                return (
-                  <div key={row.id} className="flex items-center gap-2 py-1 px-1.5 rounded-lg hover:bg-slate-50 transition-colors" title={tooltip}>
-                    <span className="text-[9px] font-black text-slate-300 w-5 text-right shrink-0">{idx + 1}</span>
-                    <span className="text-[10px] font-bold text-slate-600 truncate shrink-0 w-32" title={row.name}>{row.name}</span>
-                    <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full transition-all ${instructorRanking === 'INTERNAS' ? 'bg-teal-500' : 'bg-indigo-500'}`} style={{ width: `${pct}%` }} />
-                    </div>
-                    <div className="shrink-0 w-14 text-right text-[10px] font-black text-slate-700">{formatHoursValue(row.horas)}h</div>
-                    <div className="shrink-0 w-8 text-right text-[9px] font-bold text-slate-400">{row.nDemandas}d</div>
-                    {/* Coluna reservada sempre com a mesma largura, com ou sem badge, pra horas/dias não deslocarem entre linhas */}
-                    <div className="shrink-0 w-12 flex items-center justify-end">
-                      {row.nDivididas > 0 && (
-                        <span className="text-[8px] font-black text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-0.5 uppercase whitespace-nowrap">
-                          {row.nDivididas} div.
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              }) : (
-                <div className="h-full flex items-center justify-center text-slate-300 italic text-xs uppercase font-bold">
-                  {instructorRanking === 'INTERNAS' ? 'Sem horas internas concluídas no período' : 'Sem horas concluídas no período'}
-                </div>
-              )}
-            </div>
-          </div>
+                <span className="text-[9px] font-black text-slate-300 normal-case tracking-normal">{instructorHoursCount} instrutor{instructorHoursCount !== 1 ? 'es' : ''}</span>
+              </>
+            )}
+          />
 
           <div className="lg:col-span-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '22rem' }}>
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 shrink-0">Risco de Dependência</h3>
@@ -2109,14 +2012,18 @@ const pendingLogisticsDemands = useMemo(() => {
         {/* Reaproveitamento + Distribuição Geográfica */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-          <div className="lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center justify-between shrink-0">
-              <span>Reaproveitamento de Instrutores</span>
-              <TrendingUp size={13} className="text-slate-300" />
-            </h3>
-            <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest mb-3 shrink-0">Nº de treinamentos distintos ministrados (histórico completo)</p>
-            <RankedListChart items={topReuseItems} othersDetail={othersReuseItems} barColor="bg-violet-500" emptyLabel="Sem histórico de execuções" />
-          </div>
+          <VolumeRankingCard
+            className="lg:col-span-5"
+            title="Reaproveitamento de Instrutores"
+            subtitle="Nº de treinamentos distintos concluídos por instrutor, no período"
+            icon={TrendingUp}
+            accent="violet"
+            ranking={reuseRanking}
+            metric="distinct"
+            periodLabels={periodLabels}
+            unitLabel="instrutores"
+            emptyLabel="Sem treinamentos concluídos no período"
+          />
 
           <div className="lg:col-span-7 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center justify-between shrink-0">
@@ -2218,18 +2125,8 @@ const pendingLogisticsDemands = useMemo(() => {
   };
 
   const renderClientes = () => {
-    const clientData = companies.map(c => {
-      const row: any = {
-        name: c.name,
-        volume: filteredDemands.filter(d => d.companyId === c.id).length,
-      };
-      if (compareMode) {
-        allFilteredDemandsList.slice(1).forEach((dList, i) => {
-          row[`volume${i + 2}`] = dList.filter(d => d.companyId === c.id).length;
-        });
-      }
-      return row;
-    }).sort((a: any, b: any) => b.volume - a.volume).slice(0, 8).filter((c: any) => c.volume > 0);
+    // Clientes mais Ativos: a MESMA conta dos KPIs, por período; chave = companyId.
+    const clientRanking = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.companyId, labelOf: getCompanyName, hoursOf, metric: 'count', limit: 8 });
 
     const trainingCategoryData: { name: string; value: number }[] = Object.entries(
       trainings.reduce((acc, t) => {
@@ -2272,27 +2169,17 @@ const pendingLogisticsDemands = useMemo(() => {
           </div>
         )}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 h-96 shadow-sm flex flex-col">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Clientes mais Ativos (Volume)</h3>
-            <div className="flex-1 min-h-0">
-              {clientData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={clientData} layout="vertical" margin={{ left: 40, right: 40 }}>
-                    <XAxis type="number" hide />
-                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold' }} />
-                    <Tooltip />
-                    {compareMode && <Legend wrapperStyle={{ fontSize: '10px', fontWeight: 'bold', cursor: 'pointer' }} onClick={(e: any) => toggleSeries(`client-${e.dataKey}`)} />}
-                    <Bar dataKey="volume" name="P1" fill={PERIOD_COLORS[0]} radius={[0, 4, 4, 0]} barSize={compareMode ? Math.max(6, Math.floor(22 / allFilteredDemandsList.length)) : undefined} hide={hiddenSeries['client-volume']} />
-                    {compareMode && allFilteredDemandsList.slice(1).map((_, i) => (
-                      <Bar key={i + 2} dataKey={`volume${i + 2}`} name={`P${i + 2}`} fill={PERIOD_COLORS[(i + 1) % PERIOD_COLORS.length]} radius={[0, 4, 4, 0]} barSize={Math.max(6, Math.floor(22 / allFilteredDemandsList.length))} hide={hiddenSeries[`client-volume${i + 2}`]} />
-                    ))}
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem demandas ativas</div>
-              )}
-            </div>
-          </div>
+          <VolumeRankingCard
+            className="h-96"
+            title="Clientes mais Ativos (Volume)"
+            icon={Building2}
+            accent="blue"
+            ranking={clientRanking}
+            metric="count"
+            periodLabels={periodLabels}
+            unitLabel="empresas"
+            emptyLabel="Sem demandas ativas"
+          />
 
           <div className="bg-white p-6 rounded-2xl border border-slate-200 h-96 shadow-sm flex flex-col">
             <div className="flex items-center justify-between mb-4">
@@ -2423,14 +2310,9 @@ const pendingLogisticsDemands = useMemo(() => {
       { key: 'FATURADA',           label: 'Faturada',             count: filteredMeasurements.filter(m => m.status === 'FATURADA').length,           color: 'bg-emerald-400', textColor: 'text-emerald-600'},
     ];
 
-    // Top instrutores por custo gerado
-    const instructorCostItems: RankedItem[] = instructors.map(inst => {
-      const instDemandIds = new Set(filteredDemands.filter(d => d.instructorId === inst.id).map(d => d.id));
-      const cost = filteredMeasurements
-        .filter(m => instDemandIds.has(m.demandId))
-        .reduce((acc, m) => acc + m.attachments.reduce((s: number, a: any) => s + toVal(a.value), 0), 0);
-      return { name: inst.name.split(' ').slice(0, 2).join(' '), value: Math.round(cost * 100) / 100 };
-    }).filter(x => x.value > 0).sort((a, b) => b.value - a.value).slice(0, 8);
+    // Top Instrutores por Custo: a MESMA conta do KPI "Total em Despesas", por
+    // período — computeVolume(...).cost com o costOf da tela; chave = instructorId.
+    const instructorCostRanking = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.instructorId, labelOf: instructorShortName, hoursOf, costOf, metric: 'cost', limit: 8 });
 
     // Evolução mensal (últimos 6 meses — histórico completo, não filtrado)
     const months: { label: string; key: string }[] = [];
@@ -2517,7 +2399,7 @@ const pendingLogisticsDemands = useMemo(() => {
 
         {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <KPICard title="Total em Despesas" value={totalCosts} compareValue={compareMode ? totalCosts2 : undefined} isCurrency periods={mkPeriods((_d, m) => m.reduce((acc: number, x: any) => acc + x.attachments.reduce((s: number, a: any) => { const v = typeof a.value === 'string' ? parseFloat(a.value.replace(',', '.')) : Number(a.value); return s + (Number(v) || 0); }, 0), 0))} icon={DollarSign} colorClass="bg-amber-50 text-amber-600" />
+          <KPICard title="Total em Despesas" value={totalCosts} compareValue={compareMode ? totalCosts2 : undefined} isCurrency periods={mkPeriods(d => computeVolume(d, hoursOf, { costOf }).cost)} icon={DollarSign} colorClass="bg-amber-50 text-amber-600" />
           <KPICard title="Ticket Médio/Medição" value={ticketMedio} compareValue={ticketMedio2} isCurrency periods={mkPeriods((_d, m) => { const cost = m.reduce((acc: number, x: any) => acc + x.attachments.reduce((s: number, a: any) => { const v = typeof a.value === 'string' ? parseFloat(a.value.replace(',', '.')) : Number(a.value); return s + (Number(v) || 0); }, 0), 0); return m.length > 0 ? cost / m.length : 0; })} icon={Zap} colorClass="bg-blue-50 text-blue-600" subtext={`${filteredMeasurements.length} medições`} />
           <KPICard title="Não Iniciadas" value={naoIniciadaCount} compareValue={naoIniciada2} positiveIsGood={false} periods={mkPeriods((d, m) => { const conc = d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA'); return conc.filter((x: any) => !m.some((mx: any) => mx.demandId === x.id) || m.find((mx: any) => mx.demandId === x.id)?.status === 'NAO_INICIADA').length; })} icon={Clock} colorClass="bg-orange-50 text-orange-600" subtext="Demandas concluídas" />
           <KPICard title="Pronta Faturamento" value={filteredMeasurements.filter(m => m.status === 'PRONTA_FATURAMENTO').length} compareValue={compareMode ? filteredMeasurements2.filter(m => m.status === 'PRONTA_FATURAMENTO').length : undefined} periods={mkPeriods((_d, m) => m.filter((x: any) => x.status === 'PRONTA_FATURAMENTO').length)} icon={CheckCircle} colorClass="bg-violet-50 text-violet-600" />
@@ -2716,21 +2598,19 @@ const pendingLogisticsDemands = useMemo(() => {
             )}
           </div>
 
-          {/* Top Instrutores por Custo */}
-          <div className="lg:col-span-7 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '18rem' }}>
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center justify-between shrink-0">
-              <span>Top Instrutores por Custo Gerado</span>
-              <Users size={13} className="text-slate-300" />
-            </h3>
-            <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest mb-3 shrink-0">Soma de despesas das medições por instrutor no período</p>
-            <RankedListChart
-              items={instructorCostItems}
-              othersDetail={[]}
-              barColor="bg-amber-500"
-              emptyLabel="Sem despesas registradas"
-              valueFormatter={(v) => formatCurrency(v)}
-            />
-          </div>
+          <VolumeRankingCard
+            className="lg:col-span-7"
+            minHeight="18rem"
+            title="Top Instrutores por Custo Gerado"
+            subtitle="Soma de despesas das medições por instrutor no período"
+            icon={Users}
+            accent="amber"
+            ranking={instructorCostRanking}
+            metric="cost"
+            periodLabels={periodLabels}
+            unitLabel="instrutores"
+            emptyLabel="Sem despesas registradas"
+          />
         </div>
 
         {/* Evolução Mensal de Custos */}
@@ -2766,8 +2646,22 @@ const pendingLogisticsDemands = useMemo(() => {
    * listagem.
    */
   const renderInternas = () => {
-    const maxCategoriaHoras = Math.max(...internaKpis.categorias.map(c => c.horas), 1);
-    const maxInstrutorHoras = Math.max(...internaKpis.topInstrutores.map(r => r.horas), 1);
+    // Os dois rankings da aba, por período (P1…PN dos recortes de INTERNA):
+    //  - categorias: horas PREVISTAS (horasPrevistas da demanda) via computeVolume;
+    //  - instrutores: horas MINISTRADAS, direto dos mapas de computeInstructorHours
+    //    (a fonte única do rateio) — adaptador sem conta, só ranqueamento.
+    const categoriaRanking = rankVolumeByPeriod({
+      periods: filteredInternasByPeriod,
+      keyOf: d => (d.categoriaInterna || '').trim() || 'Sem categoria',
+      hoursOf: horasPrevistasOf,
+      metric: internaCategoriaMetric,
+      limit: Number.POSITIVE_INFINITY,
+    });
+    const internaInstrutorRanking = rankVolumeRows(
+      volumeRowsFromInstructorHours(internaHoursMapsByPeriod, { labelOf: instructorName }),
+      internaInstrutorMetric,
+      8,
+    );
 
     // --- Custo das Demandas Internas ---
     // Interna nao gera reembolso: o que a Colabor gasta nela e custo proprio,
@@ -3048,58 +2942,31 @@ const pendingLogisticsDemands = useMemo(() => {
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center justify-between shrink-0">
-              <span>Distribuição por Categoria</span>
-              <span className="text-[9px] font-black text-slate-300 normal-case tracking-normal">horas previstas</span>
-            </h3>
-            {internaKpis.categorias.length === 0 ? (
-              <div className="flex-1 flex items-center justify-center text-slate-300 italic text-xs uppercase font-bold">Sem demandas internas no período</div>
-            ) : (
-              <div className="flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar space-y-1">
-                {internaKpis.categorias.map(cat => {
-                  const pct = Math.max(2, Math.round((cat.horas / maxCategoriaHoras) * 100));
-                  return (
-                    <div key={cat.nome} className="flex items-center gap-2 py-1 px-1.5 rounded-lg hover:bg-slate-50 transition-colors" title={`${cat.nome} — ${cat.n} demanda${cat.n !== 1 ? 's' : ''} · ${formatHoursValue(cat.horas)}h previstas`}>
-                      <span className="text-[10px] font-bold text-slate-600 truncate shrink-0 w-32">{cat.nome}</span>
-                      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full bg-teal-500 transition-all" style={{ width: `${pct}%` }} />
-                      </div>
-                      <div className="shrink-0 w-14 text-right text-[10px] font-black text-slate-700">{formatHoursValue(cat.horas)}h</div>
-                      <div className="shrink-0 w-8 text-right text-[9px] font-bold text-slate-400">{cat.n}d</div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center justify-between shrink-0">
-              <span>Top Instrutores em Horas Internas</span>
-              <span className="text-[9px] font-black text-slate-300 normal-case tracking-normal">ministradas</span>
-            </h3>
-            {internaKpis.topInstrutores.length === 0 ? (
-              <div className="flex-1 flex items-center justify-center text-slate-300 italic text-xs uppercase font-bold text-center px-4">Nenhuma hora interna ministrada no período</div>
-            ) : (
-              <div className="flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar space-y-1">
-                {internaKpis.topInstrutores.map((row, idx) => {
-                  const pct = Math.max(2, Math.round((row.horas / maxInstrutorHoras) * 100));
-                  return (
-                    <div key={row.id} className="flex items-center gap-2 py-1 px-1.5 rounded-lg hover:bg-slate-50 transition-colors" title={`${row.nome} — ${formatHoursValue(row.horas)}h em ${row.nDemandas} demanda${row.nDemandas !== 1 ? 's' : ''} interna${row.nDemandas !== 1 ? 's' : ''} concluída${row.nDemandas !== 1 ? 's' : ''}`}>
-                      <span className="text-[9px] font-black text-slate-300 w-5 text-right shrink-0">{idx + 1}</span>
-                      <span className="text-[10px] font-bold text-slate-600 truncate shrink-0 w-32">{row.nome}</span>
-                      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full bg-teal-500 transition-all" style={{ width: `${pct}%` }} />
-                      </div>
-                      <div className="shrink-0 w-14 text-right text-[10px] font-black text-slate-700">{formatHoursValue(row.horas)}h</div>
-                      <div className="shrink-0 w-8 text-right text-[9px] font-bold text-slate-400">{row.nDemandas}d</div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          <VolumeRankingCard
+            title="Distribuição por Categoria"
+            icon={Tag}
+            accent="teal"
+            ranking={categoriaRanking}
+            metric={internaCategoriaMetric}
+            onMetricChange={setInternaCategoriaMetric}
+            metricLabels={{ hours: 'Horas previstas', count: 'Demandas' }}
+            periodLabels={periodLabels}
+            unitLabel="categorias"
+            emptyLabel="Sem demandas internas no período"
+          />
+          <VolumeRankingCard
+            title="Top Instrutores em Horas Internas"
+            subtitle="Horas ministradas (alocações), não previstas"
+            icon={Award}
+            accent="teal"
+            ranking={internaInstrutorRanking}
+            metric={internaInstrutorMetric}
+            onMetricChange={setInternaInstrutorMetric}
+            metricLabels={{ hours: 'Horas', count: 'Demandas' }}
+            periodLabels={periodLabels}
+            unitLabel="instrutores"
+            emptyLabel="Nenhuma hora interna ministrada no período"
+          />
         </div>
       </div>
     );

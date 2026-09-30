@@ -15,6 +15,8 @@
  *
  * Sai com código 1 se qualquer asserção falhar.
  */
+import fs from 'fs';
+import path from 'path';
 import { computeVolume, rankVolumeByPeriod, volumeValue, volumeVariation, type VolumeMetric } from '../domain/dashboardVolume';
 import { demandIntersectsRange } from '../domain/demandDays';
 
@@ -224,6 +226,33 @@ checkEq('0 contra 4: -4 (-100%) — o local que so existe em P2', volumeVariatio
 checkEq('5 contra 0: +5, sem percentual (base zero)', volumeVariation(5, 0), { delta: 5, pct: null });
 checkEq('0 contra 0: 0, sem percentual', volumeVariation(0, 0), { delta: 0, pct: null });
 checkEq('horas fracionadas: 12.5 contra 10', volumeVariation(12.5, 10), { delta: 2.5, pct: 25 });
+
+/* ========================================================================== */
+/* [9] Guardas de fonte: a tela chama a função do domínio, não soma sozinha    */
+/* ========================================================================== */
+// A igualdade de [2] só vale na tela se a tela passar pela mesma porta. Estas
+// guardas leem o código e falham no dia em que alguém reescrever um buildTop
+// dentro do render ou fizer o cartão somar por conta própria.
+console.log('\n[9] Guardas de fonte');
+
+{
+  const ler = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8');
+  const dash = ler('components/Dashboard.tsx');
+  check('Dashboard importa computeVolume e rankVolumeByPeriod de domain/dashboardVolume',
+    /import \{[^}]*computeVolume[^}]*rankVolumeByPeriod[^}]*\} from '\.\.\/domain\/dashboardVolume'/.test(dash));
+  checkEq('os tres cartoes (Local, Corredor, UF) passam por rankVolumeByPeriod sobre allFilteredDemandsList',
+    (dash.match(/rankVolumeByPeriod\(\{ periods: allFilteredDemandsList/g) ?? []).length, 3);
+  check('"Total de Demandas" e "Total de Horas" leem computeVolume (a mesma funcao)',
+    /title="Total de Demandas"[^\n]*computeVolume\(/.test(dash) && /title="Total de Horas"[^\n]*computeVolume\(/.test(dash));
+  check('"Volume por Regiao" tambem', /regionalData[\s\S]{0,400}computeVolume\(filteredDemands\.filter\(d => d\.regionId === r\.id\)/.test(dash));
+  check('nao sobrou soma propria (buildTop / buildTopHours) na aba Geral', !dash.includes('buildTop(') && !dash.includes('buildTopHours('));
+
+  const card = ler('components/dashboard/VolumeRankingCard.tsx');
+  check('o cartao nao soma nada: so le volumeValue/volumeVariation do ranking pronto',
+    !/\.reduce\(/.test(card) && !/\.filter\(/.test(card) && card.includes('volumeValue(') && card.includes('volumeVariation('));
+  check('variacao so de P1 contra P2 — nunca contra P3/P4', card.includes('row.periods[1]') && !/row\.periods\[[2-9]\]/.test(card));
+  check('escala das barras e ranking.max (comum a todos os periodos)', card.includes('Math.max(ranking.max, 1)'));
+}
 
 console.log(falhas === 0 ? '\n✅ Todos os checks passaram.' : `\n❌ ${falhas} check(s) falharam.`);
 process.exit(falhas === 0 ? 0 : 1);

@@ -31,6 +31,9 @@ import {
 } from '../domain/instructorAvailability';
 import { computeInstructorHours, InstructorHoursEntry } from '../domain/instructorHours';
 import { buildModalityOptions, buildTrainingsById, matchesModality } from '../domain/modalityOptions';
+import { computeVolume, rankVolumeByPeriod } from '../domain/dashboardVolume';
+import VolumeRankingCard from './dashboard/VolumeRankingCard';
+import { PERIOD_COLORS } from './dashboard/periodColors';
 import Pagination from './Pagination';
 import ReportModal from './ReportModal';
 import type { ReportInput } from '../utils/reportTypes';
@@ -82,8 +85,6 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 type TabType = 'GERAL' | 'OPERACIONAL' | 'INSTRUTORES' | 'CLIENTES' | 'CUSTOS' | 'INTERNAS';
-
-const PERIOD_COLORS = ['#378ADD', '#1D9E75', '#EF9F27', '#D85A30', '#7F77DD', '#D4537E'] as const;
 
 interface ExtraPeriod {
   id: string;
@@ -225,9 +226,9 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
       items: [
         { term: 'Volume por Status', desc: 'Distribuição de todas as demandas pelos seus status calculados: Nova, Pendente, Alocada, Em Andamento, Concluída, Cancelada.' },
         { term: 'Volume por Região', desc: 'Quantidade de demandas agrupadas pela região configurada em cada demanda.' },
-        { term: 'Volume por Local', desc: 'Demandas agrupadas pelo campo "Local de Treinamento". Itens com menor volume formam o grupo "Outros" — clique na linha para expandir e ver todos.' },
-        { term: 'Volume por Corredor', desc: 'Demandas agrupadas pelo campo "Corredor" — localidade ou rota logística da operação.' },
-        { term: 'Volume por UF', desc: 'Demandas agrupadas pela Unidade Federativa (estado) registrada no campo "Estado da Demanda".' },
+        { term: 'Volume por Local', desc: 'Demandas agrupadas pelo campo "Local de Treinamento". Itens com menor volume formam o grupo "Outros" — clique na linha para expandir e ver todos. Com períodos de comparação, cada linha mostra uma barra por período (P1, P2…), a ordem é pelo valor de P1 e a variação ao lado de P1 é contra P2.' },
+        { term: 'Volume por Corredor', desc: 'Demandas agrupadas pelo campo "Corredor" — localidade ou rota logística da operação. Compara por período como "Volume por Local".' },
+        { term: 'Volume por UF', desc: 'Demandas agrupadas pela Unidade Federativa (estado) registrada no campo "Estado da Demanda". Compara por período como "Volume por Local".' },
       ],
     },
   ],
@@ -801,6 +802,13 @@ const pendingLogisticsDemands = useMemo(() => {
 
   // --- Helpers de Cálculo ---
   const getTrainingHours = (trainingId: string) => trainings.find(t => t.id === trainingId)?.hours || 0;
+  /**
+   * A carga de uma demanda para "Total de Horas", "Volume por Região" e os
+   * cartões Local / Corredor / UF: a nominal do treinamento. É o `hoursOf`
+   * que entra em computeVolume / rankVolumeByPeriod (domain/dashboardVolume),
+   * para os três lugares somarem a mesma coisa.
+   */
+  const hoursOf = (d: Demand) => getTrainingHours(d.trainingId);
   const getTrainingName = (id: string) => trainings.find(t => t.id === id)?.name || 'N/A';
   const getCompanyName = (id: string) => companies.find(c => c.id === id)?.name || 'N/A';
 
@@ -810,9 +818,7 @@ const pendingLogisticsDemands = useMemo(() => {
     return Number.isInteger(r) ? String(r) : r.toFixed(1);
   };
 
-  const totalAllHours = useMemo(() => {
-    return filteredDemands.reduce((acc: number, d) => acc + getTrainingHours(d.trainingId), 0);
-  }, [filteredDemands, trainings]);
+  const totalAllHours = useMemo(() => computeVolume(filteredDemands, hoursOf).hours, [filteredDemands, trainings]);
 
   /**
    * ⚠️ Guarda de dados — demandas híbridas (não canceladas) cujo treinamento
@@ -842,7 +848,7 @@ const pendingLogisticsDemands = useMemo(() => {
 
   const totalAllHours2 = useMemo(() => {
     if (extraPeriods.length === 0) return 0;
-    return filteredDemands2.reduce((acc: number, d) => acc + getTrainingHours(d.trainingId), 0);
+    return computeVolume(filteredDemands2, hoursOf).hours;
   }, [filteredDemands2, trainings, extraPeriods.length]);
 
   const totalCosts2 = useMemo(() => {
@@ -1320,58 +1326,28 @@ const pendingLogisticsDemands = useMemo(() => {
     const regionalData = regions.map(r => {
       const row: any = {
         name: r.name,
-        value: filteredDemands.filter(d => d.regionId === r.id).length,
+        value: computeVolume(filteredDemands.filter(d => d.regionId === r.id), hoursOf).count,
       };
       if (compareMode) {
         allFilteredDemandsList.slice(1).forEach((dList, i) => {
-          row[`value${i + 2}`] = dList.filter(d => d.regionId === r.id).length;
+          row[`value${i + 2}`] = computeVolume(dList.filter(d => d.regionId === r.id), hoursOf).count;
         });
       }
       return row;
     }).sort((a: any, b: any) => b.value - a.value);
 
-    // --- Dados para insights Local/Corredor/UF ---
-    const buildTop = (src: Demand[], extract: (d: Demand) => string, limit = 10) => {
-      const counts: Record<string, number> = {};
-      src.forEach(d => {
-        const v = (extract(d) ?? '').trim();
-        if (!v) return;
-        counts[v] = (counts[v] || 0) + 1;
-      });
-      const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-      const items = sorted.slice(0, limit).map(([name, value]) => ({ name, value }));
-      const othersDetail = sorted.slice(limit).map(([name, value]) => ({ name, value }));
-      return { items, othersDetail };
-    };
-
-    const buildTopHours = (src: Demand[], extract: (d: Demand) => string, limit = 10) => {
-      const sums: Record<string, number> = {};
-      src.forEach(d => {
-        const v = (extract(d) ?? '').trim();
-        if (!v) return;
-        sums[v] = (sums[v] || 0) + getTrainingHours(d.trainingId);
-      });
-      const sorted = Object.entries(sums).sort((a, b) => b[1] - a[1]);
-      const items = sorted.slice(0, limit).map(([name, value]) => ({ name, value }));
-      const othersDetail = sorted.slice(limit).map(([name, value]) => ({ name, value }));
-      return { items, othersDetail };
-    };
-
-    const localData    = buildTop(filteredDemands, d => d.trainingLocal ?? '');
-    const corredorData = buildTop(filteredDemands, d => d.corredor ?? '');
-    const ufData       = buildTop(filteredDemands, d => d.demandState ?? '');
-
-    const localData2    = compareMode ? buildTop(filteredDemands2, d => d.trainingLocal ?? '') : null;
-    const corredorData2 = compareMode ? buildTop(filteredDemands2, d => d.corredor ?? '') : null;
-    const ufData2       = compareMode ? buildTop(filteredDemands2, d => d.demandState ?? '') : null;
-
-    const localDisplay    = localView    === 'hours' ? buildTopHours(filteredDemands, d => d.trainingLocal ?? '') : localData;
-    const corredorDisplay = corredorView === 'hours' ? buildTopHours(filteredDemands, d => d.corredor ?? '') : corredorData;
-    const ufDisplay       = ufView       === 'hours' ? buildTopHours(filteredDemands, d => d.demandState ?? '') : ufData;
-
-    const localDisplay2    = compareMode ? (localView    === 'hours' ? buildTopHours(filteredDemands2, d => d.trainingLocal ?? '') : localData2) : null;
-    const corredorDisplay2 = compareMode ? (corredorView === 'hours' ? buildTopHours(filteredDemands2, d => d.corredor ?? '') : corredorData2) : null;
-    const ufDisplay2       = compareMode ? (ufView       === 'hours' ? buildTopHours(filteredDemands2, d => d.demandState ?? '') : ufData2) : null;
+    // --- Rankings Local / Corredor / UF: a MESMA conta dos KPIs, por período ---
+    // rankVolumeByPeriod agrupa cada recorte P1…PN pela chave e, em cada
+    // célula, chama computeVolume sobre o sub-recorte — o que o KPI "Total de
+    // Demandas" / "Total de Horas" mostraria com o filtro por essa chave ligado.
+    // Não há soma própria aqui (scripts/smokeDashboardVolume.ts prende isso).
+    const periodLabels = allFilteredDemandsList.map((_, i) => {
+      const { start, end } = getPeriodBounds(i);
+      return getPeriodLabel(start ?? '', end ?? '');
+    });
+    const localRanking    = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.trainingLocal, hoursOf, metric: localView });
+    const corredorRanking = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.corredor,      hoursOf, metric: corredorView });
+    const ufRanking       = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.demandState,   hoursOf, metric: ufView });
 
     // REGRAS DE ALERTA OPERACIONAIS
     const noInstructorDemands = filteredDemands.filter(d => {
@@ -1419,8 +1395,8 @@ const pendingLogisticsDemands = useMemo(() => {
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-          <KPICard title="Total de Demandas" value={filteredDemands.length} compareValue={compareMode ? filteredDemands2.length : undefined} periods={mkPeriods(d => d.length)} icon={Briefcase} colorClass="bg-blue-50 text-blue-600" />
-          <KPICard title="Total de Horas" value={`${totalAllHours}h`} compareValue={compareMode ? `${totalAllHours2}h` : undefined} periods={mkPeriods(d => `${d.reduce((a: number, x: any) => a + getTrainingHours(x.trainingId), 0)}h`)} icon={Clock} colorClass="bg-violet-50 text-violet-600" subtext="Todas as Demandas" />
+          <KPICard title="Total de Demandas" value={computeVolume(filteredDemands, hoursOf).count} compareValue={compareMode ? computeVolume(filteredDemands2, hoursOf).count : undefined} periods={mkPeriods(d => computeVolume(d, hoursOf).count)} icon={Briefcase} colorClass="bg-blue-50 text-blue-600" />
+          <KPICard title="Total de Horas" value={`${totalAllHours}h`} compareValue={compareMode ? `${totalAllHours2}h` : undefined} periods={mkPeriods(d => `${computeVolume(d, hoursOf).hours}h`)} icon={Clock} colorClass="bg-violet-50 text-violet-600" subtext="Todas as Demandas" />
           <KPICard title="Horas Concluídas" value={`${formatHoursValue(totalHours)}h`} compareValue={compareMode ? `${formatHoursValue(totalHours2)}h` : undefined} periods={hoursConcluidasPeriods} icon={Clock} colorClass="bg-emerald-50 text-emerald-600" subtext="Execuções Finalizadas" />
           <KPICard title="Pendência de Alocação" value={noInstructorDemands.length} compareValue={compareMode ? noInstructorDemands2.length : undefined} positiveIsGood={false} periods={mkPeriods(d => d.filter((x: any) => { const s = getCalculatedStatus(x); if (s === 'CANCELADA' || s === 'CONCLUIDA') return false; if (isOnlineDemand(x)) return false; return !x.instructorId; }).length)} icon={AlertCircle} colorClass="bg-amber-50 text-amber-600" />
           <KPICard title="Treinamentos Concluídos" value={filteredDemands.filter(d => getCalculatedStatus(d) === 'CONCLUIDA').length} compareValue={compareMode ? filteredDemands2.filter(d => getCalculatedStatus(d) === 'CONCLUIDA').length : undefined} periods={mkPeriods(d => d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA').length)} icon={CheckCircle} colorClass="bg-indigo-50 text-indigo-600" />
@@ -1552,83 +1528,36 @@ const pendingLogisticsDemands = useMemo(() => {
           </div>
         )}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Volume por Local do Treinamento */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between shrink-0">
-              <span>Volume por Local</span>
-              <div className="flex items-center gap-1.5">
-                {localDisplay.othersDetail.length > 0 && (
-                  <span className="text-[9px] font-black bg-blue-50 text-blue-400 px-1.5 py-0.5 rounded-md">
-                    +{localDisplay.othersDetail.length} ocultos
-                  </span>
-                )}
-                <MapPin size={13} />
-              </div>
-            </h3>
-            <div className="flex gap-1 mb-3 shrink-0">
-              <button onClick={() => setLocalView('count')} className={`text-[9px] font-black px-2 py-0.5 rounded-md transition-colors ${localView === 'count' ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>Qtd. Treinamentos</button>
-              <button onClick={() => setLocalView('hours')} className={`text-[9px] font-black px-2 py-0.5 rounded-md transition-colors ${localView === 'hours' ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>Horas</button>
-            </div>
-            <RankedListChart
-              items={localDisplay.items}
-              othersDetail={localDisplay.othersDetail}
-              barColor="bg-blue-500"
-              items2={localDisplay2?.items}
-              valueFormatter={localView === 'hours' ? v => `${v}h` : undefined}
-            />
-          </div>
-
-          {/* Volume por Corredor */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between shrink-0">
-              <span>Volume por Corredor</span>
-              <div className="flex items-center gap-1.5">
-                {corredorDisplay.othersDetail.length > 0 && (
-                  <span className="text-[9px] font-black bg-emerald-50 text-emerald-400 px-1.5 py-0.5 rounded-md">
-                    +{corredorDisplay.othersDetail.length} ocultos
-                  </span>
-                )}
-                <Truck size={13} />
-              </div>
-            </h3>
-            <div className="flex gap-1 mb-3 shrink-0">
-              <button onClick={() => setCorredorView('count')} className={`text-[9px] font-black px-2 py-0.5 rounded-md transition-colors ${corredorView === 'count' ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>Qtd. Treinamentos</button>
-              <button onClick={() => setCorredorView('hours')} className={`text-[9px] font-black px-2 py-0.5 rounded-md transition-colors ${corredorView === 'hours' ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>Horas</button>
-            </div>
-            <RankedListChart
-              items={corredorDisplay.items}
-              othersDetail={corredorDisplay.othersDetail}
-              barColor="bg-emerald-500"
-              items2={corredorDisplay2?.items}
-              valueFormatter={corredorView === 'hours' ? v => `${v}h` : undefined}
-            />
-          </div>
-
-          {/* Volume por UF */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between shrink-0">
-              <span>Volume por Estado (UF)</span>
-              <div className="flex items-center gap-1.5">
-                {ufDisplay.othersDetail.length > 0 && (
-                  <span className="text-[9px] font-black bg-amber-50 text-amber-400 px-1.5 py-0.5 rounded-md">
-                    +{ufDisplay.othersDetail.length} ocultos
-                  </span>
-                )}
-                <Target size={13} />
-              </div>
-            </h3>
-            <div className="flex gap-1 mb-3 shrink-0">
-              <button onClick={() => setUfView('count')} className={`text-[9px] font-black px-2 py-0.5 rounded-md transition-colors ${ufView === 'count' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>Qtd. Treinamentos</button>
-              <button onClick={() => setUfView('hours')} className={`text-[9px] font-black px-2 py-0.5 rounded-md transition-colors ${ufView === 'hours' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>Horas</button>
-            </div>
-            <RankedListChart
-              items={ufDisplay.items}
-              othersDetail={ufDisplay.othersDetail}
-              barColor="bg-amber-500"
-              items2={ufDisplay2?.items}
-              valueFormatter={ufView === 'hours' ? v => `${v}h` : undefined}
-            />
-          </div>
+          <VolumeRankingCard
+            title="Volume por Local"
+            icon={MapPin}
+            accent="blue"
+            ranking={localRanking}
+            metric={localView}
+            onMetricChange={setLocalView}
+            periodLabels={periodLabels}
+            unitLabel="locais"
+          />
+          <VolumeRankingCard
+            title="Volume por Corredor"
+            icon={Truck}
+            accent="emerald"
+            ranking={corredorRanking}
+            metric={corredorView}
+            onMetricChange={setCorredorView}
+            periodLabels={periodLabels}
+            unitLabel="corredores"
+          />
+          <VolumeRankingCard
+            title="Volume por Estado (UF)"
+            icon={Target}
+            accent="amber"
+            ranking={ufRanking}
+            metric={ufView}
+            onMetricChange={setUfView}
+            periodLabels={periodLabels}
+            unitLabel="estados"
+          />
         </div>
 
       </div>

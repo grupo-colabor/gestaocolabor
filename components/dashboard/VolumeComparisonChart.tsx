@@ -25,13 +25,12 @@ import { Building2, ChevronDown, X } from 'lucide-react';
 import { findDominantRow, volumeVariation, type VolumeComparison, type VolumeMetric } from '../../domain/dashboardVolume';
 import { periodColor } from './periodColors';
 import { formatVolumeDelta, formatVolumeValue } from './VolumeRankingCard';
+import { formatShare, formatShareTick } from './volumeFormat';
 
 export type VolumeScale = 'abs' | 'share';
 
 const PILL_ON = 'bg-white text-slate-800 shadow-sm';
 const PILL_OFF = 'text-slate-400 hover:text-slate-600';
-
-const round1 = (v: number) => Math.round(v * 10) / 10;
 
 export interface VolumeComparisonChartProps {
   title: string;
@@ -66,12 +65,13 @@ const VolumeComparisonChart: React.FC<VolumeComparisonChartProps> = ({
 
   const data = rows.map(r => {
     const row: Record<string, any> = { name: r.name, key: r.key, isOthers: !!r.isOthers, values: r.values, shares: r.shares };
-    keys.forEach((k, i) => { row[k] = scale === 'share' ? round1(r.shares[i]) : r.values[i]; });
+    // Participação vai crua para a barra; quem arredonda é só o texto (formatShare).
+    keys.forEach((k, i) => { row[k] = scale === 'share' ? r.shares[i] : r.values[i]; });
     return row;
   });
 
   const fmt = (v: number) => formatVolumeValue(metric, v);
-  const fmtAxis = (v: number) => (scale === 'share' ? `${v}%` : metric === 'hours' ? `${v}h` : String(v));
+  const fmtAxis = (v: number) => (scale === 'share' ? formatShareTick(v) : metric === 'hours' ? `${v}h` : String(v));
   const barSize = Math.max(8, Math.floor(40 / Math.max(1, nPeriods)));
 
   // Quem concentra mais de DOMINANCE_THRESHOLD do P1 esmaga as outras em qualquer escala. O aviso
@@ -101,7 +101,7 @@ const VolumeComparisonChart: React.FC<VolumeComparisonChartProps> = ({
             <span className="text-slate-400">{periodLabels[i]}</span>
             <span className="font-black text-slate-800 ml-1">
               {scale === 'share'
-                ? `${round1(row.shares[i])}% (${fmt(row.values[i])} de ${fmt(totals[i])})`
+                ? `${fmt(row.values[i])} de ${fmt(totals[i])} — ${formatShare(row.shares[i])}`
                 : fmt(row.values[i])}
             </span>
             {i === 0 && variation && (
@@ -183,7 +183,7 @@ const VolumeComparisonChart: React.FC<VolumeComparisonChartProps> = ({
         <div className="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-100 text-[10px] font-bold text-slate-500 shrink-0">
           <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
           <span>
-            <span className="font-black text-slate-700 uppercase">{dominant.name}</span> concentra {Math.round(dominant.share)}% de P1
+            <span className="font-black text-slate-700 uppercase">{dominant.name}</span> concentra {formatShare(dominant.share)} de P1
           </span>
           <span className="text-slate-300">—</span>
           <button

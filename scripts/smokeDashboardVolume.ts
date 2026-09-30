@@ -40,6 +40,7 @@ import {
   type VolumeRanking,
 } from '../domain/dashboardVolume';
 import { demandIntersectsRange } from '../domain/demandDays';
+import { formatShare, formatShareTick } from '../components/dashboard/volumeFormat';
 
 let falhas = 0;
 
@@ -418,6 +419,19 @@ console.log('\n[11b] Clientes / Comparativo entre Empresas: barras = celulas do 
   // Depois do clique (só as demais selecionadas), a Vale some das linhas e o aviso também.
   checkEq('apos "ver as demais" nao ha mais dominante nas linhas', findDominantRow(buildVolumeComparison(rk, { metric: 'count', selectedKeys: ['E2'] }), 50), null);
 
+  // Participação: o domínio devolve o número CRU; só a tela formata, com uma casa e vírgula.
+  const vale171 = buildVolumeComparison(rankVolumeRows([
+    { key: 'VALE', name: 'Vale', periods: [T(164, 0)] },
+    { key: 'OUT', name: 'Outra', periods: [T(7, 0)] },
+  ], 'count'), { metric: 'count' });
+  checkEq('164 de 171: o dominio devolve 95,906… cru (16400/171), sem arredondar', vale171.rows[0].shares[0], 16400 / 171);
+  checkEq('findDominantRow repassa o mesmo numero cru', findDominantRow(vale171)?.share, 16400 / 171);
+  checkEq('a tela formata 164/171 como "95,9%" (uma casa, virgula)', formatShare(vale171.rows[0].shares[0]), '95,9%');
+  checkEq('98,4 nao vira "98%"', formatShare(98.4), '98,4%');
+  checkEq('inteiro ganha a casa: 60 → "60,0%"', formatShare(60), '60,0%');
+  checkEq('arredonda na casa, nao trunca: 95,96 → "96,0%"', formatShare(95.96), '96,0%');
+  checkEq('eixo Y: tick redondo curto (25%), tick quebrado com a casa (12,5%)', [formatShareTick(25), formatShareTick(12.5)], ['25%', '12,5%']);
+
   // Vazio e total zero.
   const vazio = buildVolumeComparison(rankVolumeByPeriod({ periods: [[], []], keyOf: (d: any) => d.companyId, hoursOf, metric: 'count' }), { metric: 'count' });
   checkEq('ranking vazio: sem linhas, sem totais', [vazio.rows, vazio.totals, vazio.available], [[], [], []]);
@@ -620,6 +634,14 @@ console.log('\n[17] Guardas de fonte');
   const chart = ler('components/dashboard/VolumeComparisonChart.tsx');
   check('o grafico nao soma: sem reduce, so le values/shares/totals do VolumeComparison', !/\.reduce\(/.test(chart) && chart.includes('r.shares[i]') && chart.includes('totals[i]'));
   check('participacao: eixo 0–100 e tooltip "x de total"', chart.includes("domain={scale === 'share' ? [0, 100]") && chart.includes('de ${fmt(totals[i])}'));
+  check('participacao formatada so na tela, por formatShare, no aviso, no tooltip e no eixo',
+    chart.includes('concentra {formatShare(dominant.share)}') && chart.includes('— ${formatShare(row.shares[i])}') && chart.includes('formatShareTick(v)') && !/Math\.round\([^)]*share/i.test(chart) && !chart.includes('round1('));
+  {
+    const src = ler('domain/dashboardVolume.ts');
+    const corpo = (nome: string) => { const a = src.indexOf(`export function ${nome}`); return src.slice(a, src.indexOf('\nexport ', a + 1)); };
+    check('o dominio nao arredonda participacao (buildVolumeComparison e findDominantRow sem Math.round/toFixed)',
+      !/Math\.round|toFixed/.test(corpo('buildVolumeComparison')) && !/Math\.round|toFixed/.test(corpo('findDominantRow')));
+  }
   check('aviso de concentracao: o grafico pergunta ao dominio (findDominantRow) e o link aplica otherKeys no seletor',
     chart.includes('findDominantRow(comparison)') && chart.includes('onSelectedKeysChange(dominant.otherKeys)') && !/>\s*80|80\s*</.test(chart));
 

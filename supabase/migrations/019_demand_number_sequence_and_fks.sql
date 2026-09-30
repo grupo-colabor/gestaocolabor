@@ -45,6 +45,28 @@
 -- 016/017/018). RLS de `demands` não muda: a função lê a sequence, não a tabela.
 --
 -- Numeração: a híbrida Nível 2, antes reservada como 019, passa a 020.
+--
+-- ===========================================================================
+-- OCORRIDO EM PRODUÇÃO (30/09/2026) — leia antes de reaplicar em outro banco
+-- ===========================================================================
+-- O setval inicial usava max(number). Em produção havia linhas cujo `number`
+-- NÃO acompanhava o id (demandas internas gravadas pela rota antiga, com
+-- número menor que o do próprio DEM-N): max(number) = 1720, mas o maior id
+-- era DEM-1759. A sequence ficou em 1720, o primeiro cadastro pediu 1721 e
+-- "DEM-1721" já existia → `duplicate key value violates unique constraint
+-- "demands_pkey"`. Corrigido à mão, uma vez, reposicionando a sequence no
+-- maior número DE ID:
+--
+--   select setval('public.demands_number_seq',
+--     (select max(substring(id from 5)::bigint) from public.demands
+--       where id ~ '^DEM-\d+$'),
+--     true);
+--
+-- O bloco 1 abaixo passou a usar greatest(max(number), max(número do id))
+-- para quem aplicar esta migration do zero. Em produção NÃO muda nada: a
+-- sequence já está em uso (is_called = true) e o bloco não roda de novo. O app
+-- também se defende (services/demands.allocateDemandId pula id ocupado), mas
+-- isso gasta um número por colisão — o setval acima é o conserto de verdade.
 
 
 -- ===========================================================================
@@ -56,8 +78,9 @@
 --    where c.contype = 'f' and c.confrelid = 'public.demands'::regclass
 --    order by 1;
 --
---   -- 2) maior número e existência da sequence (espera: número atual / 0 linhas):
---   select max(number) from public.demands;
+--   -- 2) maior número (coluna E id — se diferirem, é o caso do cabeçalho) e
+--   --    existência da sequence (espera: número atual / 0 linhas):
+--   select max(number), max(substring(id from 5)::bigint) from public.demands where id ~ '^DEM-\d+$';
 --   select 1 from pg_class where relkind = 'S' and relname = 'demands_number_seq';
 --
 --   -- 3) duplicatas de number (espera 0 linhas; se houver, o índice único do
@@ -82,7 +105,10 @@
 
 
 -- ---------------------------------------------------------------------------
--- 1) SEQUENCE — iniciada em max(number) (ou 0 se a tabela estiver vazia)
+-- 1) SEQUENCE — iniciada em greatest(max(number), max(número do id)), ou 0
+--    se a tabela estiver vazia. Só max(number) NÃO basta: ver "OCORRIDO EM
+--    PRODUÇÃO" no cabeçalho — linha com `number` menor que o número do id
+--    deixa a sequence atrás de um DEM-N existente.
 -- ---------------------------------------------------------------------------
 CREATE SEQUENCE IF NOT EXISTS public.demands_number_seq
   AS bigint
@@ -100,7 +126,14 @@ DECLARE
 BEGIN
   SELECT is_called INTO ja_usada FROM public.demands_number_seq;
   IF NOT ja_usada THEN
-    SELECT COALESCE(MAX(number), 0) INTO maior FROM public.demands;
+    -- O maior entre a coluna `number` e o número embutido no id (DEM-N):
+    -- os dois deveriam coincidir, mas não coincidem em toda linha antiga.
+    SELECT GREATEST(
+             COALESCE(MAX(number), 0),
+             COALESCE(MAX(CASE WHEN id ~ '^DEM-\d+$' THEN substring(id from 5)::bigint END), 0)
+           )
+      INTO maior
+      FROM public.demands;
     IF maior > 0 THEN
       -- is_called = true: o próximo nextval devolve maior + 1.
       PERFORM setval('public.demands_number_seq', maior, true);
@@ -225,9 +258,9 @@ END $$;
 -- CONFERÊNCIA PÓS-MIGRAÇÃO (o SQL Editor do Supabase NÃO mostra NOTICE/WARNING;
 -- confie nestas consultas, não na ausência de mensagens)
 -- ===========================================================================
---   -- 1) sequence posicionada (last_value = max(number), is_called = true):
+--   -- 1) sequence posicionada (last_value >= maior número de id, is_called = true):
 --   select last_value, is_called from public.demands_number_seq;
---   select max(number) from public.demands;
+--   select max(number), max(substring(id from 5)::bigint) from public.demands where id ~ '^DEM-\d+$';
 --
 --   -- 2) a função existe, é definer e o authenticated pode executar:
 --   select p.proname, p.prosecdef, pg_get_function_identity_arguments(p.oid)

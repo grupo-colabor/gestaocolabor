@@ -161,6 +161,12 @@ function sequenceFake(inicio: number) {
 
     check('migration: sequence IF NOT EXISTS', mig.includes('CREATE SEQUENCE IF NOT EXISTS public.demands_number_seq'));
     check('migration: setval só na primeira aplicação (is_called)', mig.includes('IF NOT ja_usada THEN') && mig.includes("setval('public.demands_number_seq', maior, true)"));
+    // O ocorrido de 30/09/2026: max(number) = 1720 com ids até DEM-1759. O
+    // setval inicial passa a olhar também o número embutido no id.
+    check('migration: setval inicial usa GREATEST(max(number), max(número do id))',
+      /GREATEST\(\s*COALESCE\(MAX\(number\), 0\),\s*COALESCE\(MAX\(CASE WHEN id ~ '\^DEM-\\d\+\$' THEN substring\(id from 5\)::bigint END\), 0\)\s*\)/.test(mig));
+    check('migration: cabeçalho documenta o ocorrido em produção e o SQL de correção à mão',
+      mig.includes('OCORRIDO EM PRODUÇÃO (30/09/2026)') && /select setval\('public\.demands_number_seq',\s*\n--\s*\(select max\(substring\(id from 5\)::bigint\) from public\.demands/.test(mig));
     check('migration: função security definer com search_path fixo', mig.includes('SECURITY DEFINER') && mig.includes('SET search_path = public, pg_temp'));
     check('migration: grant execute a authenticated', mig.includes('GRANT EXECUTE ON FUNCTION public.allocate_demand_number() TO authenticated;'));
     check('migration: índice único em number', mig.includes('CREATE UNIQUE INDEX IF NOT EXISTS demands_number_uq'));

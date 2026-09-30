@@ -32,6 +32,8 @@ import {
   findDominantRow,
   rankVolumeByPeriod,
   rankVolumeRows,
+  volumeByKey,
+  volumeCell,
   volumeRowsFromInstructorHours,
   volumeValue,
   volumeVariation,
@@ -41,6 +43,7 @@ import {
 } from '../domain/dashboardVolume';
 import { demandIntersectsRange } from '../domain/demandDays';
 import { formatShare, formatShareTick } from '../components/dashboard/volumeFormat';
+import { metricLabel } from '../components/dashboard/MetricToggle';
 
 let falhas = 0;
 
@@ -63,9 +66,9 @@ const T = (count: number, hours: number, cost = 0, distinct = 0) => ({ count, ho
 /* ========================================================================== */
 
 const trainings = [
-  { id: 'T8',  name: 'NR 10 Básico', hours: 8 },
-  { id: 'T16', name: 'NR 35 Altura', hours: 16 },
-  { id: 'T40', name: 'NR 33 Espaço Confinado', hours: 40 },
+  { id: 'T8',  name: 'NR 10 Básico', hours: 8, category: 'Segurança do Trabalho' },
+  { id: 'T16', name: 'NR 35 Altura', hours: 16, category: 'Segurança do Trabalho' },
+  { id: 'T40', name: 'NR 33 Espaço Confinado', hours: 40, category: 'Operação de Equipamentos' },
 ];
 const instructors = [
   { id: 'I-A', name: 'Ana Souza Lima', status: 'ATIVO' },
@@ -96,27 +99,29 @@ const dem = (trainingId: string, day: string, over: Record<string, any> = {}) =>
   companyId: 'E1',
   instructorId: 'I-A',
   status: 'CONCLUIDA',
+  regionId: 'R-SE',
+  modality: 'PRESENCIAL',
   ...over,
 });
 
 const demands: any[] = [
   // Brucutu — P1: 3 demandas (40h); P2: 2 demandas (16h)
   dem('T8',  '2026-09-02'),                                                   // 1  I-A E1
-  dem('T16', '2026-09-08'),                                                   // 2  I-A E1
+  dem('T16', '2026-09-08', { modality: 'ONLINE_AO_VIVO' }),                   // 2  I-A E1 (balde Online)
   dem('T16', '2026-09-15', { instructorId: 'I-B' }),                          // 3  I-B E1
   dem('T8',  '2026-08-05'),                                                   // 4  I-A E1
   dem('T8',  '2026-08-12'),                                                   // 5  I-A E1
   // Carajás — P1: 1 demanda (40h, empata em horas com Brucutu); P2: 1 (8h)
-  dem('T40', '2026-09-21', { trainingLocal: 'Carajás', corredor: 'Corredor Norte', demandState: 'PA', companyId: 'E2', instructorId: 'I-B' }), // 6
-  dem('T8',  '2026-08-19', { trainingLocal: 'Carajás', corredor: 'Corredor Norte', demandState: 'PA', companyId: 'E2', instructorId: 'I-C' }), // 7
+  dem('T40', '2026-09-21', { trainingLocal: 'Carajás', corredor: 'Corredor Norte', demandState: 'PA', companyId: 'E2', instructorId: 'I-B', regionId: 'R-N' }), // 6
+  dem('T8',  '2026-08-19', { trainingLocal: 'Carajás', corredor: 'Corredor Norte', demandState: 'PA', companyId: 'E2', instructorId: 'I-C', regionId: 'R-N' }), // 7
   // Itabira — SÓ em P2: 4 demandas (64h). É o maior valor em ambas as métricas.
   dem('T16', '2026-08-03', { trainingLocal: 'Itabira', corredor: 'N.A', instructorId: 'I-C' }),                        // 8
-  dem('T16', '2026-08-10', { trainingLocal: 'Itabira', corredor: 'N.A', instructorId: 'I-C' }),                        // 9
+  dem('T16', '2026-08-10', { trainingLocal: 'Itabira', corredor: 'N.A', instructorId: 'I-C', modality: 'HIBRIDO' }),   // 9
   dem('T16', '2026-08-17', { trainingLocal: 'Itabira', corredor: 'N.A', instructorId: 'I-B' }),                        // 10
   dem('T16', '2026-08-24', { trainingLocal: 'Itabira', corredor: 'N.A', instructorId: undefined, status: 'ALOCADA' }), // 11
   // Sem local — ficam fora do ranking de Local, mas CONTAM no total do período.
   dem('T40', '2026-09-28', { trainingLocal: '',    corredor: 'Corredor Sudeste', demandState: 'ES', companyId: 'E2', instructorId: undefined, status: 'PENDENTE' }), // 12
-  dem('T40', '2026-08-26', { trainingLocal: '   ', corredor: undefined,          demandState: 'ES', companyId: 'E2', status: 'ALOCADA' }),                           // 13 I-A
+  dem('T40', '2026-08-26', { trainingLocal: '   ', corredor: undefined,          demandState: 'ES', companyId: 'E2', status: 'ALOCADA', modality: 'TUTORIA' }),      // 13 I-A (fora dos 3 baldes de Modalidade)
 ];
 
 // Medições: duas na mesma demanda (DEM-2) para provar que o custo por demanda
@@ -585,6 +590,73 @@ console.log('\n[16] rankVolumeRows');
 }
 
 /* ========================================================================== */
+/* [18] Toggle Demandas / Horas nos gráficos de contagem                       */
+/* ========================================================================== */
+// Distribuição de Status, Volume por Região, Modalidade, Distribuição
+// Geográfica e Treinamentos por Categoria: cada balde é computeVolume sobre o
+// sub-recorte (volumeByKey / rankVolumeByPeriod) e o toggle só escolhe count
+// ou hours. Para cada um: Σ horas das barras = KPI "Total de Horas" do período
+// com o mesmo filtro.
+console.log('\n[18] Toggle Demandas / Horas: baldes = computeVolume; Σ horas = "Total de Horas"');
+
+{
+  const kpiHoras = periods.map(rec => computeVolume(rec, hoursOf).hours);
+  const kpiDemandas = periods.map(rec => computeVolume(rec, hoursOf).count);
+  const soma = (cells: Map<string, any[]>, i: number, campo: 'hours' | 'count') => [...cells.values()].reduce((s, p) => s + p[i][campo], 0);
+  const celulasBatem = (nome: string, cells: Map<string, any[]>, recortes: any[][], filtro: (d: any, key: string) => boolean) => {
+    const div: string[] = [];
+    for (const [key, ps] of cells) recortes.forEach((rec, i) => {
+      const kpi = computeVolume(rec.filter(d => filtro(d, key)), hoursOf);
+      if (kpi.count !== ps[i].count || kpi.hours !== ps[i].hours) div.push(`${key} P${i + 1}`);
+    });
+    check(`${nome}: cada balde = computeVolume do sub-recorte, em Demandas E em Horas`, cells.size > 0 && div.length === 0, div.join(', ') || 'sem baldes');
+  };
+
+  // Distribuição de Status (Geral)
+  const statusCells = volumeByKey({ periods, keyOf: d => d.status, hoursOf });
+  celulasBatem('Status', statusCells, periods, (d, k) => d.status === k);
+  checkEq('Status: Σ horas dos baldes = KPI "Total de Horas" (todo status conta)', periods.map((_, i) => soma(statusCells, i, 'hours')), kpiHoras);
+  checkEq('Status: Σ demandas dos baldes = KPI "Total de Demandas"', periods.map((_, i) => soma(statusCells, i, 'count')), kpiDemandas);
+  checkEq('Status: CONCLUIDA em P1 = 4 demandas / 80h; ALOCADA so em P2', [volumeCell(statusCells, 'CONCLUIDA', 0), volumeCell(statusCells, 'ALOCADA', 0).count, volumeCell(statusCells, 'ALOCADA', 1).count], [T(4, 80), 0, 2]);
+  checkEq('volumeCell de chave ausente = ZERO_VOLUME (balde vazio desenha 0, nao quebra)', volumeCell(statusCells, 'NAO_EXISTE', 0), Z);
+
+  // Volume por Região (Geral) e a barra de demandas da Distribuição Geográfica (Instrutores)
+  const regionCells = volumeByKey({ periods, keyOf: d => d.regionId, hoursOf });
+  celulasBatem('Região', regionCells, periods, (d, k) => d.regionId === k);
+  checkEq('Região: Σ horas = KPI', periods.map((_, i) => soma(regionCells, i, 'hours')), kpiHoras);
+  checkEq('Região: Sudeste 80h/120h, Norte 40h/8h', ['R-SE', 'R-N'].map(k => regionCells.get(k)!.map(p => p.hours)), [[80, 120], [40, 8]]);
+  checkEq('Região: em Demandas as mesmas celulas dao 4/7 e 1/1', ['R-SE', 'R-N'].map(k => regionCells.get(k)!.map(p => p.count)), [[4, 7], [1, 1]]);
+  const geoCells = volumeByKey({ periods: [P1], keyOf: d => d.regionId, hoursOf });
+  checkEq('Geográfica (so P1): as mesmas celulas de P1', [...geoCells.entries()].map(([k, ps]) => [k, ps[0]]), [...regionCells.entries()].map(([k, ps]) => [k, ps[0]]));
+
+  // Modalidade (Operacional): três baldes; TUTORIA fica fora, como sempre ficou.
+  const bucket = (d: any) => {
+    const m = String(d.modality ?? '').toUpperCase();
+    if (m === 'PRESENCIAL' || m === 'HIBRIDO') return m;
+    if (['ONLINE', 'EAD', 'ONLINE_AO_VIVO'].includes(m)) return 'ONLINE';
+    return null;
+  };
+  const modalityCells = volumeByKey({ periods, keyOf: bucket, hoursOf });
+  celulasBatem('Modalidade', modalityCells, periods, (d, k) => bucket(d) === k);
+  checkEq('Modalidade P1: Presencial 4 (104h), Online 1 (16h), Hibrido 0', ['PRESENCIAL', 'ONLINE', 'HIBRIDO'].map(k => volumeCell(modalityCells, k, 0)), [T(4, 104), T(1, 16), Z]);
+  checkEq('Modalidade: Σ horas dos baldes = KPI menos o que esta fora dos baldes (TUTORIA, 40h em P2)', periods.map((_, i) => soma(modalityCells, i, 'hours')), [120, 128 - 40]);
+  checkEq('...e o total da barra segue sendo o KPI do periodo inteiro (a fatia e sobre TODAS as demandas)', kpiHoras, [120, 128]);
+
+  // Treinamentos por Categoria (Clientes): ranking por categoria do treinamento.
+  const categoryOf = (d: any) => trainings.find(t => t.id === d.trainingId)?.category;
+  const cat = rankVolumeByPeriod({ periods: [P1], keyOf: categoryOf, hoursOf, metric: 'hours', limit: Number.POSITIVE_INFINITY });
+  igualdadeCartaoKpi('Treinamentos por Categoria (Horas)', cat, [P1], (d, key) => categoryOf(d) === key, 'hours');
+  checkEq('Categoria em Horas: Operação 80h (2 demandas), Segurança 40h (3)', cat.items.map(x => [x.name, x.periods[0].hours, x.periods[0].count]), [['Operação de Equipamentos', 80, 2], ['Segurança do Trabalho', 40, 3]]);
+  checkEq('Categoria: Σ horas = KPI de P1', cat.items.reduce((s, x) => s + x.periods[0].hours, 0), kpiHoras[0]);
+  const catQtd = rankVolumeByPeriod({ periods: [P1], keyOf: categoryOf, hoursOf, metric: 'count', limit: Number.POSITIVE_INFINITY });
+  checkEq('Categoria em Demandas: a ordem inverte (Segurança 3, Operação 2) — mesmas celulas, outra metrica', catQtd.items.map(x => [x.name, x.periods[0].count]), [['Segurança do Trabalho', 3], ['Operação de Equipamentos', 2]]);
+  checkEq('treinamento sem categoria (id desconhecido) fica fora, como antes', rankVolumeByPeriod({ periods: [[dem('T0', '2026-09-03', { id: 'Q1' })]], keyOf: categoryOf, hoursOf, metric: 'count' }).items.length, 0);
+
+  // Rótulo do eixo/tooltip: inteiro em Demandas, "h" sem decimal em Horas.
+  checkEq('metricLabel: 75.5h → "76h"; 3 → "3"; 0h → "0h"', [metricLabel('hours', 75.5), metricLabel('count', 3), metricLabel('hours', 0)], ['76h', '3', '0h']);
+}
+
+/* ========================================================================== */
 /* [17] Guardas de fonte: a tela chama o domínio, nenhum ranking soma no render */
 /* ========================================================================== */
 // A igualdade de [2] e [9]–[14] só vale na tela se a tela passar pela mesma
@@ -611,7 +683,8 @@ console.log('\n[17] Guardas de fonte');
 
   check('"Total de Demandas", "Total de Horas" e "Total em Despesas" leem computeVolume (a mesma funcao)',
     /title="Total de Demandas"[^\n]*computeVolume\(/.test(dash) && /title="Total de Horas"[^\n]*computeVolume\(/.test(dash) && /title="Total em Despesas"[^\n]*computeVolume\(/.test(dash));
-  check('"Volume por Regiao" tambem', /regionalData[\s\S]{0,400}computeVolume\(filteredDemands\.filter\(d => d\.regionId === r\.id\)/.test(dash));
+  check('"Volume por Regiao" tambem (volumeByKey por regionId → computeVolume por celula)',
+    dash.includes('regionCells = volumeByKey({ periods: allFilteredDemandsList, keyOf: d => d.regionId, hoursOf })') && /regionalData = regions\.map\(r => \{[\s\S]{0,200}volumeCell\(regionCells, r\.id, 0\)/.test(dash));
   check('"Total em Despesas" e o cartao de custo usam o MESMO costOf', /const costOf = \(d: Demand\) => costByDemandId\.get\(d\.id\) \?\? 0;/.test(dash) && (dash.match(/costOf, metric: 'cost'/g) ?? []).length === 1);
 
   const render = dash.slice(dash.indexOf('const renderGeral = () => {'), dash.indexOf('// ─── Excel Export'));

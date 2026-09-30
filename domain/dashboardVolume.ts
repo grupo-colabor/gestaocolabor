@@ -232,6 +232,39 @@ export function rankVolumeByPeriod<T>(opts: RankVolumeOptions<T>): VolumeRanking
   return rankVolumeRows(rows, metric, opts.limit ?? 10);
 }
 
+/**
+ * As células (um VolumeTotals por período) indexadas pela chave — para os
+ * gráficos de BALDES FIXOS, que não são ranking: "Distribuição de Status"
+ * (a ordem é a dos status), "Modalidade" (Presencial / Online / Híbrido),
+ * "Volume por Região" e "Distribuição Geográfica" (todas as regiões
+ * cadastradas, mesmo com zero). É rankVolumeByPeriod sem limite, virado num
+ * Map: a conta de cada célula continua sendo computeVolume sobre o
+ * sub-recorte, e o toggle Demandas / Horas do cartão só escolhe qual campo
+ * ler (volumeValue). Chave ausente = ZERO_VOLUME em todos os períodos
+ * (volumeCell).
+ *
+ * INVENTÁRIO DO TOGGLE DEMANDAS / HORAS (30/09/2026) — quem lê daqui:
+ *   Geral        Distribuição de Status        keyOf = status calculado
+ *   Geral        Volume por Região             keyOf = regionId
+ *   Operacional  Modalidade                    keyOf = PRESENCIAL | ONLINE | HIBRIDO
+ *   Instrutores  Distribuição Geográfica       keyOf = regionId (a barra de demandas; a de instrutores é cadastro)
+ *   Clientes     Treinamentos por Categoria    rankVolumeByPeriod, keyOf = categoria do treinamento
+ * Sem toggle, de propósito: Taxa de Execução (razão), Cobertura de
+ * Competências (razão instrutores/demandas), Reaproveitamento (distintos),
+ * Risco de Dependência / Disponíveis / Sem Demanda / Cobertura de Ociosidade
+ * (contagem de instrutores), tudo da aba Custos (R$), Status das Medições
+ * (situação da medição) e as listas (Agenda 7 dias).
+ */
+export function volumeByKey<T>(opts: Omit<RankVolumeOptions<T>, 'metric' | 'limit' | 'labelOf'>): Map<string, VolumeTotals[]> {
+  const ranking = rankVolumeByPeriod({ ...opts, metric: 'count', limit: Number.POSITIVE_INFINITY });
+  return new Map(ranking.items.map(row => [row.key, row.periods]));
+}
+
+/** A célula (chave, período) de um volumeByKey; ausente = ZERO_VOLUME. */
+export function volumeCell(cells: ReadonlyMap<string, VolumeTotals[]>, key: string, period: number): VolumeTotals {
+  return cells.get(key)?.[period] ?? ZERO_VOLUME;
+}
+
 export interface InstructorHoursRowsOptions {
   /** Nome do instrutor para a tela. Padrão: o próprio id. */
   labelOf?: (instructorId: string) => string;

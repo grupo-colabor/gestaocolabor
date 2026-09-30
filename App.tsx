@@ -75,7 +75,6 @@ import Exportacoes from './components/Exportacoes';
 import { fetchTrainings, deleteTrainingById } from './services/trainings';
 import { fetchCompanies, insertCompany, updateCompanyById, CompanyRow } from './services/companies';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { formatDemandId } from './domain/demandNumbering';
 import { isDemandDay, getDemandDays } from './domain/demandDays';
 import { isEAD, requiresLogistics } from './domain/modalityRules';
 import { hasResourceOverlap } from './domain/resourceConflict';
@@ -97,10 +96,9 @@ import { fetchEvidences, upsertEvidenceByDemandId } from './services/evidences';
 import {
   fetchDemands,
   insertDemand,
-  allocateDemandNumber,
+  allocateDemandId,
   updateDemandById,
-  deleteDemandById,
-  fetchMaxDemandNumber
+  deleteDemandById
 } from './services/demands';
 
 // ✅ Demandas (Supabase) — /services/agenda
@@ -850,6 +848,10 @@ useEffect(() => {
 }, [AUTH_MODE, user, loading]);
 
 
+  // ⚠️ SÓ MODO MOCK. Com Supabase o número de toda demanda (cliente e interna)
+  // vem da sequence do banco por services/demands.allocateDemandId — este
+  // contador não é lido nem atualizado lá. Fica para o mock (sem banco) e
+  // para o campo de Cadastros → Configurações, que só aparece no mock.
   const [nextDemandNumber, setNextDemandNumber] = useState<number>(6301);
 
   // ✅ Evidências (GLOBAL)
@@ -1395,16 +1397,10 @@ const syncDemandParticipantsFromDb = useCallback(async () => {
       const rows = await fetchDemands();
       const mapped = (rows || []).map(mapDemandFromDb);
       setDemands(mapped);
-
-      // Ajustar próximo número (DEM-xxxx)
-      try {
-        const max = await fetchMaxDemandNumber();
-        const next = (typeof max === 'number' ? max : 0) + 1;
-        if (next > 0) setNextDemandNumber(next);
-      } catch (e) {
-        // Não bloqueia a tela se falhar o max number
-        console.warn('Falha ao buscar max demand number:', e);
-      }
+      // O "maior number + 1" não é mais lido aqui: o número vem da sequence
+      // no momento do cadastro (allocateDemandId). Manter o contador local
+      // atualizado era só aparência — e era a conta que, sobre internas com
+      // número menor que o id, deixava a sequence atrás dos ids existentes.
     } catch (e) {
       console.error('Erro ao sincronizar demands:', e);
       setDemands([]);
@@ -1789,7 +1785,9 @@ useEffect(() => {
 
 const addDemand = useCallback(
   async (d: Demand): Promise<{ id: string } | null> => {
-    // ✅ MOCK MODE
+    // ✅ MOCK MODE — o ÚNICO lugar onde nextDemandNumber gera id. Sem banco
+    // não há sequence; o contador local faz as vezes dela (e o campo de
+    // Cadastros → Configurações permite ajustá-lo). Com Supabase, ver abaixo.
     if (AUTH_MODE !== 'supabase') {
       // Usa o valor atual do estado diretamente (evita race condition)
       const seq = nextDemandNumber;
@@ -1851,13 +1849,17 @@ const addDemand = useCallback(
     }
 
     try {
-      // O número vem da SEQUENCE do banco (migration 019), nunca do "máximo +
-      // 1" local: uma demanda apagada não devolve o número, e dois navegadores
-      // não disputam o mesmo. Sem número não há cadastro — o erro sobe em
-      // banner e a função devolve null.
+      // O número vem da SEQUENCE do banco (migration 019) pela ÚNICA porta de
+      // numeração do app, services/demands.allocateDemandId — a mesma para
+      // demanda de cliente (Demands.tsx) e interna (InternalDemands.tsx), que
+      // chegam aqui pelo mesmo addDemand. Nunca do "máximo + 1" local: uma
+      // demanda apagada não devolve o número, dois navegadores não disputam o
+      // mesmo, e id já existente é pulado. Sem número não há cadastro — o erro
+      // sobe em banner e a função devolve null.
       let seq: number;
+      let nextId: string;
       try {
-        seq = await allocateDemandNumber();
+        ({ id: nextId, number: seq } = await allocateDemandId());
       } catch (e: any) {
         console.error('Erro ao alocar número de demanda:', e);
         setNotification({
@@ -1866,10 +1868,6 @@ const addDemand = useCallback(
         });
         return null;
       }
-      // Contador informativo do estado acompanha (não é mais a fonte do id).
-      setNextDemandNumber(seq + 1);
-
-      const nextId = formatDemandId(seq);
 
       const newDemand = sanitizeHybridPracticePeriod({
         ...d,

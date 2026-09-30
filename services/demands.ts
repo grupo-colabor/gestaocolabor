@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import { deleteDemandDocumentsByDemandId } from './demandDocuments';
 import { fetchAllPaginated } from './pagination';
+import { allocateDemandId as allocateDemandIdPolicy, parseDemandNumber } from '../domain/demandNumbering';
 
 export type DemandRow = {
   id: string; // "DEM-6301"
@@ -107,28 +108,36 @@ export async function allocateDemandNumber(): Promise<number> {
   return n;
 }
 
-/**
- * Busca o maior número (number) existente no banco.
- * Retorna 0 se não houver registros.
- *
- * ⚠️ Desde a migration 019 NÃO é mais a fonte do próximo id (reaproveitava
- * número após exclusão). Continua sendo lida só para o contador informativo
- * do estado; o id vem de `allocateDemandNumber`.
- */
-export async function fetchMaxDemandNumber(): Promise<number> {
+/** "DEM-N já existe no banco?" — a consulta que allocateDemandId faz antes de aceitar um número. */
+export async function demandIdExists(id: string): Promise<boolean> {
   const { data, error } = await supabase
     .from('demands')
-    .select('number')
-    .order('number', { ascending: false })
+    .select('id')
+    .eq('id', id)
     .limit(1);
-
   if (error) {
-    console.error('fetchMaxDemandNumber error:', error);
+    console.error('demandIdExists error:', error);
     throw error;
   }
+  return (data?.length ?? 0) > 0;
+}
 
-  const max = data?.[0]?.number;
-  return typeof max === 'number' ? max : 0;
+/**
+ * A ÚNICA porta de numeração de demanda no app (cliente E interna): pede um
+ * número à sequence (allocateDemandNumber), monta "DEM-N" e confere que o id
+ * está livre; se estiver ocupado, pede outro. Devolve id e número para o
+ * insert. Erro (RPC indisponível, sequence esgotada em ids ocupados) sobe para
+ * o chamador — sem número não há cadastro, e o app mostra o banner.
+ *
+ * O "maior number + 1" local (fetchMaxDemandNumber) saiu daqui de vez: era o
+ * que reaproveitava número após exclusão e, com internas gravadas com número
+ * menor que o id, posicionava a sequence atrás de ids existentes.
+ */
+export async function allocateDemandId(): Promise<{ id: string; number: number }> {
+  const id = await allocateDemandIdPolicy(allocateDemandNumber, { isTaken: demandIdExists });
+  const number = parseDemandNumber(id);
+  if (number === null) throw new Error(`id de demanda inválido: ${id}`);
+  return { id, number };
 }
 
 /**

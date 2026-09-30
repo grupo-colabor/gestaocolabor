@@ -27,15 +27,41 @@ export function parseDemandNumber(id: string | null | undefined): number | null 
   return m ? Number(m[1]) : null;
 }
 
+export interface AllocateDemandIdOptions {
+  /**
+   * "Este id já existe?" — consultado a cada número que a sequence devolve.
+   * Se existir, o número é descartado e pede-se outro. É a defesa contra uma
+   * sequence posicionada ATRÁS de ids antigos: a migration 019 iniciou a
+   * sequence em max(number), e linha cujo `number` não acompanha o id (interna
+   * gravada com número menor que o do id, número nulo, carga por fora) deixa
+   * "DEM-N" ocupado com N acima da sequence — o insert seguinte estourava
+   * `demands_pkey`. Sem isso, a sequence é a única fonte.
+   */
+  isTaken?: (id: string) => Promise<boolean> | boolean;
+  /** Quantos números seguidos podem estar ocupados antes de desistir. Padrão 100. */
+  maxAttempts?: number;
+}
+
 /**
  * Aloca um número NOVO e devolve o id. Nunca reutiliza: se o chamador falhar
  * depois (insert recusado), o número fica consumido e o próximo cadastro pede
- * outro — é o que impede dois "DEM-1719".
+ * outro — é o que impede dois "DEM-1719". Com `isTaken`, números cujo id já
+ * existe são pulados (também consumidos: a sequence não volta).
  */
-export async function allocateDemandId(allocate: () => Promise<number>): Promise<string> {
-  const n = await allocate();
-  if (!Number.isInteger(n) || n <= 0) {
-    throw new Error(`Número de demanda inválido devolvido pela sequence: ${String(n)}`);
+export async function allocateDemandId(
+  allocate: () => Promise<number>,
+  opts: AllocateDemandIdOptions = {},
+): Promise<string> {
+  const maxAttempts = opts.maxAttempts ?? 100;
+  const pulados: string[] = [];
+  for (let tentativa = 0; tentativa < maxAttempts; tentativa++) {
+    const n = await allocate();
+    if (!Number.isInteger(n) || n <= 0) {
+      throw new Error(`Número de demanda inválido devolvido pela sequence: ${String(n)}`);
+    }
+    const id = formatDemandId(n);
+    if (opts.isTaken && (await opts.isTaken(id))) { pulados.push(id); continue; }
+    return id;
   }
-  return formatDemandId(n);
+  throw new Error(`Sequence de demandas atrás de ids existentes: ${maxAttempts} números seguidos já ocupados (${pulados[0]} … ${pulados[pulados.length - 1]}). Reposicione a sequence (ver migration 019).`);
 }

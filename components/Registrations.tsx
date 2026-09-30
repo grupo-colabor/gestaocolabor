@@ -1706,9 +1706,25 @@ const handleRemoveBaseItem = async (item: string) => {
                   </div>
                 </div>
 
+                {/* Com Supabase o número vem da SEQUENCE do banco (migration 019,
+                    allocate_demand_number) para cliente E interna; este contador
+                    só manda no modo mock. Mostrar o campo editável aqui era
+                    prometer um controle que não existe mais. */}
+                {AUTH_MODE === 'supabase' ? (
+                  <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 flex items-start gap-3">
+                    <AlertCircle size={18} className="text-blue-500 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-[10px] font-black text-blue-700 uppercase tracking-tight">Numeração automática</p>
+                      <p className="text-[11px] font-medium text-blue-600 leading-relaxed mt-1">
+                        O próximo número (<span className="font-bold">DEM-{"{número}"}</span>) é alocado pelo banco de dados no momento do cadastro,
+                        para demandas de cliente e internas, e nunca se repete — nem após exclusão. Não há controle manual.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
                 <div className="space-y-4">
                   <div className="max-w-xs">
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Próximo número da demanda</label>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Próximo número da demanda (modo mock)</label>
                     <input
                       type="number"
                       min="1"
@@ -1734,6 +1750,7 @@ const handleRemoveBaseItem = async (item: string) => {
                     </div>
                   </div>
                 </div>
+                )}
               </div>
             </div>
           </div>

@@ -72,6 +72,54 @@ function sequenceFake(inicio: number) {
     check('o consumido nunca volta', consumido !== seguinte);
   }
 
+  console.log('\n[3b] o caso do bug: internas com número MENOR que o maior de cliente, sequence atrás dos ids');
+  {
+    // Banco simulado. Clientes DEM-1700..1720 com number = id. Duas internas
+    // gravadas pela rota antiga (número = maior + 1 sobre a lista SÓ de
+    // internas): id DEM-1721 e DEM-1722 mas number 1 e 2. A migration 019
+    // posicionou a sequence em max(number) = 1720 → o próximo nextval é 1721,
+    // e "DEM-1721" JÁ EXISTE: era o `duplicate key ... demands_pkey`.
+    const banco = new Map<string, { number: number; tipo: string }>();
+    for (let n = 1700; n <= 1720; n++) banco.set(formatDemandId(n), { number: n, tipo: 'cliente' });
+    banco.set('DEM-1721', { number: 1, tipo: 'interna' });
+    banco.set('DEM-1722', { number: 2, tipo: 'interna' });
+    const maxNumber = Math.max(...[...banco.values()].map(r => r.number));
+    eq('fixture: max(number) = 1720 (as internas nao contam), mas o maior id e DEM-1722', maxNumber, 1720);
+    const seq = sequenceFake(maxNumber);
+    const isTaken = async (id: string) => banco.has(id);
+    const criar = async (tipo: string) => {
+      const id = await allocateDemandId(seq.nextval, { isTaken });
+      const n = parseDemandNumber(id)!;
+      if (banco.has(id)) throw new Error(`duplicate key value violates unique constraint "demands_pkey": ${id}`);
+      banco.set(id, { number: n, tipo });
+      return id;
+    };
+
+    // Sem isTaken, o primeiro cadastro repete o id da interna — o bug.
+    const semDefesa = await allocateDemandId(sequenceFake(maxNumber).nextval);
+    check('sem a defesa, a sequence devolve DEM-1721, que ja existe (o bug reproduzido)', semDefesa === 'DEM-1721' && banco.has(semDefesa));
+
+    // Com a porta única: interna e cliente em sequência, nunca repete.
+    const interna1 = await criar('interna');
+    const cliente1 = await criar('cliente');
+    const interna2 = await criar('interna');
+    const cliente2 = await criar('cliente');
+    eq('interna: pula 1721 e 1722 (ocupados) e sai DEM-1723', interna1, 'DEM-1723');
+    eq('cliente em seguida: DEM-1724', cliente1, 'DEM-1724');
+    eq('interna de novo: DEM-1725', interna2, 'DEM-1725');
+    eq('cliente de novo: DEM-1726', cliente2, 'DEM-1726');
+    const novos = [interna1, cliente1, interna2, cliente2];
+    check('os quatro ids sao distintos entre si e de tudo que ja existia', new Set(novos).size === 4);
+    eq('os numeros pulados foram consumidos (a sequence nao volta): last = 1726', seq.last, 1726);
+    eq('number gravado = numero do id, para cliente E interna', novos.map(id => banco.get(id)!.number), [1723, 1724, 1725, 1726]);
+    check('a partir daqui max(number) acompanha o maior id: a sequence nao fica mais atras', Math.max(...[...banco.values()].map(r => r.number)) === parseDemandNumber(cliente2));
+
+    // Limite: 100 ids ocupados seguidos e a alocacao desiste com erro claro (nao entra em loop).
+    let msg = '';
+    try { await allocateDemandId(sequenceFake(0).nextval, { isTaken: () => true, maxAttempts: 5 }); } catch (e: any) { msg = String(e?.message); }
+    check('sequence inteira atras dos ids: erro com instrucao de reposicionar, nao loop infinito', /5 números seguidos já ocupados/.test(msg) && /migration 019/.test(msg));
+  }
+
   console.log('\n[4] valor inválido da sequence é erro, não "DEM-NaN"');
   {
     let lancou = false;
@@ -90,13 +138,25 @@ function sequenceFake(inicio: number) {
 
     check('service chama a RPC allocate_demand_number', svc.includes("supabase.rpc('allocate_demand_number')"));
     check('service recusa valor inválido', svc.includes('allocate_demand_number devolveu valor inválido'));
-    check('App (supabase) pede o número à sequence antes do insert', app.includes('seq = await allocateDemandNumber();'));
-    check('App monta o id pelo domínio', app.includes('const nextId = formatDemandId(seq);'));
+    check('service: UMA porta de numeração, allocateDemandId, que usa a política do domínio com isTaken = demandIdExists',
+      svc.includes('export async function allocateDemandId(): Promise<{ id: string; number: number }>') &&
+      svc.includes('allocateDemandIdPolicy(allocateDemandNumber, { isTaken: demandIdExists })'));
+    check('service: fetchMaxDemandNumber (o "maior + 1") não existe mais', !svc.includes('function fetchMaxDemandNumber') && !svc.includes(".order('number', { ascending: false })\n    .limit(1)"));
+    check('App (supabase) pede id e número à porta única antes do insert', app.includes('({ id: nextId, number: seq } = await allocateDemandId());'));
+    check('App não monta DEM-N nem lê o máximo fora do mock', !app.includes('formatDemandId(') && !app.includes('fetchMaxDemandNumber'));
     check('erro da RPC sobe em banner e bloqueia o cadastro (return null)',
       /catch \(e: any\) \{[\s\S]{0,400}Não foi possível obter o número da demanda[\s\S]{0,200}return null;/.test(app));
-    // O "máximo + 1" continua só como contador informativo e no modo mock.
+    // O "máximo + 1" continua só no modo mock.
     const supabasePath = app.slice(app.indexOf('// ✅ SUPABASE MODE\n    if (!user) {\n    setNotification({\n        message: \'Aguarde a sessão carregar para salvar a demanda.\''), app.indexOf('const payload = mapDemandToDb(newDemand, { id: nextId, number: seq });'));
-    check('no caminho supabase o id NÃO vem mais de nextDemandNumber', supabasePath.length > 0 && !supabasePath.includes('const seq = nextDemandNumber;'));
+    check('no caminho supabase o id NÃO vem de nextDemandNumber, nem o contador é tocado', supabasePath.length > 0 && !supabasePath.includes('nextDemandNumber'));
+    const mockPath = app.slice(app.indexOf('// ✅ MOCK MODE — o ÚNICO lugar onde nextDemandNumber gera id'), app.indexOf('// ✅ SUPABASE MODE\n    if (!user) {\n    setNotification({\n        message: \'Aguarde a sessão carregar para salvar a demanda.\''));
+    check('nextDemandNumber gera id SÓ no modo mock, com comentário dizendo isso', mockPath.includes('const seq = nextDemandNumber;') && mockPath.includes('MOCK MODE — o ÚNICO lugar onde nextDemandNumber gera id'));
+    check('a única chamada de addDemand vem de Demands.tsx (cliente) e InternalDemands.tsx (interna) — mesma função',
+      ler('components/Demands.tsx').includes('await addDemand(') && ler('components/InternalDemands.tsx').includes('await addDemand(') &&
+      !/insertDemand\(|allocateDemandNumber|allocateDemandId|DEM-\$\{/.test(ler('components/InternalDemands.tsx') + ler('components/Demands.tsx') + ler('components/CalendarView.tsx')));
+    const reg = ler('components/Registrations.tsx');
+    check('Cadastros: o campo "Próximo número" só aparece no mock; com Supabase, aviso de numeração automática',
+      /AUTH_MODE === 'supabase' \? \([\s\S]{0,600}Numeração automática[\s\S]{0,900}Próximo número da demanda \(modo mock\)/.test(reg));
     check('deleteDemand limpa resource_allocations (sem FK até a 019)', app.includes('await deleteResourceAllocationByDemandId(id);'));
 
     check('migration: sequence IF NOT EXISTS', mig.includes('CREATE SEQUENCE IF NOT EXISTS public.demands_number_seq'));

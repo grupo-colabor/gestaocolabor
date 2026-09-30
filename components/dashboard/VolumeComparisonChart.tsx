@@ -22,7 +22,7 @@
 import React, { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Building2, ChevronDown, X } from 'lucide-react';
-import { volumeVariation, type VolumeComparison, type VolumeMetric } from '../../domain/dashboardVolume';
+import { findDominantRow, volumeVariation, type VolumeComparison, type VolumeMetric } from '../../domain/dashboardVolume';
 import { periodColor } from './periodColors';
 import { formatVolumeDelta, formatVolumeValue } from './VolumeRankingCard';
 
@@ -73,6 +73,12 @@ const VolumeComparisonChart: React.FC<VolumeComparisonChartProps> = ({
   const fmt = (v: number) => formatVolumeValue(metric, v);
   const fmtAxis = (v: number) => (scale === 'share' ? `${v}%` : metric === 'hours' ? `${v}h` : String(v));
   const barSize = Math.max(8, Math.floor(40 / Math.max(1, nPeriods)));
+
+  // Quem concentra mais de DOMINANCE_THRESHOLD do P1 esmaga as outras em qualquer escala. O aviso
+  // transforma a descoberta ("tire a Vale no seletor") num clique: o link
+  // aplica o seletor com todas as demais. A decisão é do domínio, sobre a
+  // participação já calculada.
+  const dominant = findDominantRow(comparison);
 
   const toggleKey = (key: string) =>
     onSelectedKeysChange(selectedKeys.includes(key) ? selectedKeys.filter(k => k !== key) : [...selectedKeys, key]);
@@ -172,6 +178,22 @@ const VolumeComparisonChart: React.FC<VolumeComparisonChartProps> = ({
           </span>
         </div>
       </div>
+
+      {dominant && (
+        <div className="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-100 text-[10px] font-bold text-slate-500 shrink-0">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+          <span>
+            <span className="font-black text-slate-700 uppercase">{dominant.name}</span> concentra {Math.round(dominant.share)}% de P1
+          </span>
+          <span className="text-slate-300">—</span>
+          <button
+            onClick={() => onSelectedKeysChange(dominant.otherKeys)}
+            className="font-black text-blue-500 hover:text-blue-700 underline underline-offset-2"
+          >
+            ver as demais
+          </button>
+        </div>
+      )}
 
       {/* Altura FIXA de propósito: o ResponsiveContainer do Recharts mede em
           porcentagem, e porcentagem de um pai com altura indefinida (só

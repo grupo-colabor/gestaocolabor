@@ -349,6 +349,31 @@ export function buildVolumeComparison(ranking: VolumeRanking, opts: VolumeCompar
   return { rows, totals, available: all.map(r => ({ key: r.key, name: r.name })) };
 }
 
+/** Acima disto (% de P1) uma linha "concentra" o período e o gráfico oferece "ver as demais". */
+export const DOMINANCE_THRESHOLD = 80;
+
+export interface DominantRow {
+  key: string;
+  name: string;
+  /** Participação em P1, em % (a mesma `shares[0]` da linha). */
+  share: number;
+  /** As chaves das demais linhas disponíveis — o que o link "ver as demais" seleciona. */
+  otherKeys: string[];
+}
+
+/**
+ * A linha que concentra mais de `threshold`% do P1, se houver. Lê a
+ * participação que buildVolumeComparison já calculou — nenhuma conta nova.
+ * Ignora "Outras" e só responde quando existe alguém além dela para mostrar.
+ */
+export function findDominantRow(comparison: VolumeComparison, threshold = DOMINANCE_THRESHOLD): DominantRow | null {
+  const dominante = comparison.rows.find(r => !r.isOthers && (r.shares[0] ?? 0) > threshold);
+  if (!dominante) return null;
+  const otherKeys = comparison.available.map(a => a.key).filter(k => k !== dominante.key);
+  if (otherKeys.length === 0) return null;
+  return { key: dominante.key, name: dominante.name, share: dominante.shares[0], otherKeys };
+}
+
 export interface VolumeVariation {
   /** P1 − P2. */
   delta: number;

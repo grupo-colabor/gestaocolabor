@@ -28,6 +28,8 @@ import path from 'path';
 import {
   buildVolumeComparison,
   computeVolume,
+  DOMINANCE_THRESHOLD,
+  findDominantRow,
   rankVolumeByPeriod,
   rankVolumeRows,
   volumeRowsFromInstructorHours,
@@ -405,6 +407,17 @@ console.log('\n[11b] Clientes / Comparativo entre Empresas: barras = celulas do 
   checkEq('chave desconhecida na selecao e ignorada; so desconhecidas = modo automatico', buildVolumeComparison(rk, { metric: 'count', selectedKeys: ['X'], limit: 1 }).rows.length, 2);
   checkEq('selecao fora de ordem sai na ordem do ranking', buildVolumeComparison(rk, { metric: 'count', selectedKeys: ['E2', 'E1'] }).rows.map(r => r.key), ['E1', 'E2']);
 
+  // Aviso "X concentra N% — ver as demais": decisão do domínio sobre a participação já calculada.
+  checkEq('Vale com 60% de P1 nao passa do limiar de 80%: sem aviso', findDominantRow(cmp), null);
+  checkEq('com limiar 50, Vale e a dominante e o link seleciona as demais (Samarco)', findDominantRow(cmp, 50), { key: 'E1', name: 'Vale', share: 60, otherKeys: ['E2'] });
+  checkEq('limiar e "mais de": 60% nao passa de 60', findDominantRow(cmp, 60), null);
+  checkEq('so responde quando ha alguem alem dela: ranking de uma empresa so → null', findDominantRow(buildVolumeComparison(rankVolumeByPeriod({ periods: [P1.filter(d => d.companyId === 'E1')], keyOf: d => d.companyId, hoursOf, metric: 'count' }), { metric: 'count' })), null);
+  checkEq('com limite 1 (Vale 60% + "Outras" 40%) e limiar 30, a dominante e a Vale e o link seleciona TODAS as demais disponiveis, nao "Outras"', findDominantRow(buildVolumeComparison(rk, { metric: 'count', limit: 1 }), 30), { key: 'E1', name: 'Vale', share: 60, otherKeys: ['E2'] });
+  checkEq('"Outras" nunca e a dominante: so ela acima do limiar → null', findDominantRow({ rows: [{ key: 'a', name: 'A', values: [1], shares: [10] }, { key: '__outras__', name: 'Outras', values: [9], shares: [90], isOthers: true }], totals: [10], available: [{ key: 'a', name: 'A' }, { key: 'b', name: 'B' }] }, 80), null);
+  checkEq('limiar padrao e 80', DOMINANCE_THRESHOLD, 80);
+  // Depois do clique (só as demais selecionadas), a Vale some das linhas e o aviso também.
+  checkEq('apos "ver as demais" nao ha mais dominante nas linhas', findDominantRow(buildVolumeComparison(rk, { metric: 'count', selectedKeys: ['E2'] }), 50), null);
+
   // Vazio e total zero.
   const vazio = buildVolumeComparison(rankVolumeByPeriod({ periods: [[], []], keyOf: (d: any) => d.companyId, hoursOf, metric: 'count' }), { metric: 'count' });
   checkEq('ranking vazio: sem linhas, sem totais', [vazio.rows, vazio.totals, vazio.available], [[], [], []]);
@@ -607,6 +620,8 @@ console.log('\n[17] Guardas de fonte');
   const chart = ler('components/dashboard/VolumeComparisonChart.tsx');
   check('o grafico nao soma: sem reduce, so le values/shares/totals do VolumeComparison', !/\.reduce\(/.test(chart) && chart.includes('r.shares[i]') && chart.includes('totals[i]'));
   check('participacao: eixo 0–100 e tooltip "x de total"', chart.includes("domain={scale === 'share' ? [0, 100]") && chart.includes('de ${fmt(totals[i])}'));
+  check('aviso de concentracao: o grafico pergunta ao dominio (findDominantRow) e o link aplica otherKeys no seletor',
+    chart.includes('findDominantRow(comparison)') && chart.includes('onSelectedKeysChange(dominant.otherKeys)') && !/>\s*80|80\s*</.test(chart));
 
   const dominio = ler('domain/dashboardVolume.ts');
   check('rankVolumeByPeriod termina em rankVolumeRows (um ranqueamento so)', /return rankVolumeRows\(rows, metric, opts\.limit \?\? 10\);/.test(dominio));

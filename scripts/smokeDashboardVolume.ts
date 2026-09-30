@@ -724,5 +724,29 @@ console.log('\n[17] Guardas de fonte');
     /count: e\.nDemandas, hours: e\.horas, cost: 0, distinct: 0/.test(dominio) && !/horas\s*[+\-*\/]/.test(dominio.slice(dominio.indexOf('export function volumeRowsFromInstructorHours'))));
 }
 
+/* ========================================================================== */
+/* [19] Guardas de fonte — toggle Demandas / Horas                             */
+/* ========================================================================== */
+console.log('\n[19] Guardas de fonte: os cinco graficos leem volumeByKey/rankVolumeByPeriod e nao somam no render');
+
+{
+  const ler = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8');
+  const dash = ler('components/Dashboard.tsx');
+  const render = dash.slice(dash.indexOf('const renderGeral = () => {'), dash.indexOf('// ─── Excel Export'));
+  checkEq('cinco MetricToggle no Dashboard (Status, Região, Modalidade, Geográfica, Categoria)', (dash.match(/<MetricToggle /g) ?? []).length, 5);
+  check('Status, Região, Modalidade e Geográfica leem volumeByKey; Categoria le rankVolumeByPeriod',
+    ['statusCells = volumeByKey(', 'regionCells = volumeByKey(', 'modalityCells = volumeByKey(', 'geoCells = volumeByKey(', 'categoryRanking = rankVolumeByPeriod('].every(s => render.includes(s)));
+  check('cada toggle tem estado proprio (por cartao, nao global)',
+    ['statusMetric', 'regionMetric', 'modalityMetric', 'geoMetric', 'categoryChartMode'].every(s => new RegExp(`const \\[${s}, set`).test(dash)));
+  check('as contagens antigas sairam do render (.length por status/regiao/modalidade, trainings.reduce)',
+    !/getCalculatedStatus\(d\) === key\)\.length|d\.regionId === r\.id\)\.length|getDemandModality\(d\) === 'PRESENCIAL'\)\.length|trainings\.reduce\(/.test(render));
+  check('eixo Y e tooltip mudam de unidade com o toggle (metricLabel na metrica do cartao)',
+    ['metricLabel(statusMetric', 'metricLabel(regionMetric', 'metricLabel(modalityMetric'].every(s => render.includes(s)) && render.includes("geoMetric === 'hours' ? metricLabel('hours'") && render.includes("categoryChartMode === 'count' ?"));
+  const card = ler('components/dashboard/VolumeRankingCard.tsx');
+  check('os cartoes de Volume usam o MESMO MetricToggle', card.includes('<MetricToggle ') && !card.includes('TOGGLE_OFF'));
+  const toggle = ler('components/dashboard/MetricToggle.tsx');
+  check('MetricToggle so desenha: sem estado interno, sem soma', !toggle.includes('useState') && !toggle.includes('.reduce('));
+}
+
 console.log(falhas === 0 ? '\n✅ Todos os checks passaram.' : `\n❌ ${falhas} check(s) falharam.`);
 process.exit(falhas === 0 ? 0 : 1);

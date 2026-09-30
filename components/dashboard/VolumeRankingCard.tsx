@@ -35,19 +35,9 @@ import {
   type VolumeRankRow,
 } from '../../domain/dashboardVolume';
 import { periodColor } from './periodColors';
+import { ACCENT, MetricToggle, type VolumeAccent } from './MetricToggle';
 
-export type VolumeAccent = 'blue' | 'emerald' | 'amber' | 'violet' | 'indigo' | 'teal';
-
-const ACCENT: Record<VolumeAccent, { bar: string; badge: string; toggleOn: string }> = {
-  blue:    { bar: 'bg-blue-500',    badge: 'bg-blue-50 text-blue-400',       toggleOn: 'bg-blue-500 text-white' },
-  emerald: { bar: 'bg-emerald-500', badge: 'bg-emerald-50 text-emerald-400', toggleOn: 'bg-emerald-500 text-white' },
-  amber:   { bar: 'bg-amber-500',   badge: 'bg-amber-50 text-amber-400',     toggleOn: 'bg-amber-500 text-white' },
-  violet:  { bar: 'bg-violet-500',  badge: 'bg-violet-50 text-violet-400',   toggleOn: 'bg-violet-500 text-white' },
-  indigo:  { bar: 'bg-indigo-500',  badge: 'bg-indigo-50 text-indigo-400',   toggleOn: 'bg-indigo-500 text-white' },
-  teal:    { bar: 'bg-teal-500',    badge: 'bg-teal-50 text-teal-400',       toggleOn: 'bg-teal-500 text-white' },
-};
-
-const TOGGLE_OFF = 'bg-slate-100 text-slate-400 hover:bg-slate-200';
+export type { VolumeAccent } from './MetricToggle';
 
 const DEFAULT_METRIC_LABELS: Partial<Record<VolumeMetric, string>> = { count: 'Qtd. Treinamentos', hours: 'Horas' };
 
@@ -182,7 +172,6 @@ const VolumeRankingCard: React.FC<VolumeRankingCardProps> = ({
   );
 
   const isEmpty = items.length === 0 && othersDetail.length === 0;
-  const toggleMetrics = Object.keys(metricLabels) as VolumeMetric[];
 
   return (
     <div className={`bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col ${className}`} style={{ minHeight }}>
@@ -202,17 +191,7 @@ const VolumeRankingCard: React.FC<VolumeRankingCardProps> = ({
         <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest mb-3 shrink-0">{subtitle}</p>
       )}
       {onMetricChange && (
-        <div className="flex gap-1 mb-3 shrink-0">
-          {toggleMetrics.map(m => (
-            <button
-              key={m}
-              onClick={() => onMetricChange(m)}
-              className={`text-[9px] font-black px-2 py-0.5 rounded-md transition-colors ${metric === m ? styles.toggleOn : TOGGLE_OFF}`}
-            >
-              {metricLabels[m]}
-            </button>
-          ))}
-        </div>
+        <MetricToggle metric={metric} onChange={onMetricChange} labels={metricLabels} accent={accent} className="mb-3 shrink-0" />
       )}
 
       {isEmpty ? (

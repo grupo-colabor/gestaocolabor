@@ -31,7 +31,8 @@ import {
 } from '../domain/instructorAvailability';
 import { computeInstructorHours, InstructorHoursEntry } from '../domain/instructorHours';
 import { buildModalityOptions, buildTrainingsById, matchesModality } from '../domain/modalityOptions';
-import { buildVolumeComparison, computeVolume, rankVolumeByPeriod, rankVolumeRows, volumeRowsFromInstructorHours, type VolumeMetric } from '../domain/dashboardVolume';
+import { buildVolumeComparison, computeVolume, rankVolumeByPeriod, rankVolumeRows, volumeByKey, volumeCell, volumeRowsFromInstructorHours, volumeValue, type VolumeMetric } from '../domain/dashboardVolume';
+import { MetricToggle, metricLabel } from './dashboard/MetricToggle';
 import VolumeRankingCard from './dashboard/VolumeRankingCard';
 import VolumeComparisonChart, { type VolumeScale } from './dashboard/VolumeComparisonChart';
 import { PERIOD_COLORS } from './dashboard/periodColors';
@@ -142,8 +143,8 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
     {
       section: 'Gráficos',
       items: [
-        { term: 'Volume por Status', desc: 'Distribuição de todas as demandas pelos seus status calculados: Nova, Pendente, Alocada, Em Andamento, Concluída, Cancelada.' },
-        { term: 'Volume por Região', desc: 'Quantidade de demandas agrupadas pela região configurada em cada demanda.' },
+        { term: 'Volume por Status', desc: 'Distribuição de todas as demandas pelos seus status calculados: Nova, Pendente, Alocada, Em Andamento, Concluída, Cancelada. Toggle Demandas / Horas no cabeçalho (horas = carga nominal do treinamento, a mesma de "Total de Horas").' },
+        { term: 'Volume por Região', desc: 'Demandas (ou horas, pelo toggle) agrupadas pela região configurada em cada demanda.' },
         { term: 'Volume por Local', desc: 'Demandas agrupadas pelo campo "Local de Treinamento". Itens com menor volume formam o grupo "Outros" — clique na linha para expandir e ver todos. Com períodos de comparação, cada linha mostra uma barra por período (P1, P2…), a ordem é pelo valor de P1 e a variação ao lado de P1 é contra P2.' },
         { term: 'Volume por Corredor', desc: 'Demandas agrupadas pelo campo "Corredor" — localidade ou rota logística da operação. Compara por período como "Volume por Local".' },
         { term: 'Volume por UF', desc: 'Demandas agrupadas pela Unidade Federativa (estado) registrada no campo "Estado da Demanda". Compara por período como "Volume por Local".' },
@@ -166,7 +167,7 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
       items: [
         { term: 'Top Treinamentos', desc: 'Ranking dos treinamentos com maior número de demandas no período. Com períodos de comparação, uma barra por período (P1, P2…), ordem pelo valor de P1 e variação de P1 contra P2. Clique em "Outros" para expandir e ver todos.' },
         { term: 'Demandas por Instrutor', desc: 'Ranking dos instrutores com mais demandas alocadas (instrutor do cadastro da demanda) no período. Mostra os 8 primeiros; os demais somam em "Outros". Compara por período como os demais rankings.' },
-        { term: 'Modalidade', desc: 'Proporção das demandas por tipo: Presencial, Online/EAD e Híbrido.' },
+        { term: 'Modalidade', desc: 'Proporção das demandas (ou das horas, pelo toggle) por tipo: Presencial, Online/EAD e Híbrido.' },
         { term: 'Taxa de Execução (donut)', desc: 'Gráfico circular mostrando o percentual de conclusão com legenda de concluídas, em andamento e pendentes.' },
         { term: 'Agenda dos Próximos 7 Dias', desc: 'Demandas em execução ou com início previsto nos próximos 7 dias, ordenadas por data de início. A paginação exibe 15 linhas por vez.' },
       ],
@@ -493,7 +494,14 @@ const Dashboard: React.FC = () => {
   const [hiddenSeries, setHiddenSeries] = useState<Record<string, boolean>>({});
 
   // --- Toggle gráfico Treinamentos por Categoria ---
-  const [categoryChartMode, setCategoryChartMode] = useState<'qty' | 'hours'>('qty');
+  // Toggle Demandas / Horas dos gráficos de contagem — POR CARTÃO (quem
+  // compara quer "quantidade aqui, horas ali"); o estado mora aqui, então cada
+  // cartão lembra a escolha enquanto o Dashboard estiver aberto.
+  const [categoryChartMode, setCategoryChartMode] = useState<VolumeMetric>('count');
+  const [statusMetric, setStatusMetric] = useState<VolumeMetric>('count');
+  const [regionMetric, setRegionMetric] = useState<VolumeMetric>('count');
+  const [modalityMetric, setModalityMetric] = useState<VolumeMetric>('count');
+  const [geoMetric, setGeoMetric] = useState<VolumeMetric>('count');
   const toggleSeries = (key: string) => setHiddenSeries(prev => ({ ...prev, [key]: !prev[key] }));
 
   // --- Geração de Relatório ---
@@ -1244,37 +1252,38 @@ const pendingLogisticsDemands = useMemo(() => {
   };
 
   const renderGeral = () => {
-    const statusData = Object.keys(STATUS_LABELS).map(key => ({
-      name: STATUS_LABELS[key],
-      value: filteredDemands.filter(d => getCalculatedStatus(d) === key).length,
-      color: (COLORS[key as keyof typeof COLORS] as string) || '#CBD5E1'
-    })).filter(d => d.value > 0);
+    // Distribuição de Status e Volume por Região: cada célula é computeVolume
+    // sobre o sub-recorte (volumeByKey); o toggle do cartão só escolhe count ou
+    // hours (volumeValue). Nenhuma soma no render.
+    const statusCells = volumeByKey({ periods: allFilteredDemandsList, keyOf: d => getCalculatedStatus(d), hoursOf });
+    const statusValue = (key: string, i: number) => volumeValue(volumeCell(statusCells, key, i), statusMetric);
+    const statusColor = (key: string) => (COLORS[key as keyof typeof COLORS] as string) || '#CBD5E1';
 
-    const statusData2 = compareMode ? Object.keys(STATUS_LABELS).map(key => ({
-      name: STATUS_LABELS[key],
-      value: filteredDemands2.filter(d => getCalculatedStatus(d) === key).length,
-      color: (COLORS[key as keyof typeof COLORS] as string) || '#CBD5E1'
-    })).filter(d => d.value > 0) : [];
+    const statusData = Object.keys(STATUS_LABELS)
+      .map(key => ({ name: STATUS_LABELS[key], value: statusValue(key, 0), color: statusColor(key) }))
+      .filter(d => d.value > 0);
+
+    const statusData2 = compareMode
+      ? Object.keys(STATUS_LABELS)
+          .map(key => ({ name: STATUS_LABELS[key], value: statusValue(key, 1), color: statusColor(key) }))
+          .filter(d => d.value > 0)
+      : [];
 
     // Para 3+ períodos: dados agrupados por status (barras agrupadas)
     const statusBarData = extraPeriods.length >= 2
       ? Object.keys(STATUS_LABELS).map(key => {
           const row: any = { name: STATUS_LABELS[key] };
-          allFilteredDemandsList.forEach((dList, i) => {
-            row[`P${i + 1}`] = dList.filter(d => getCalculatedStatus(d) === key).length;
-          });
+          allFilteredDemandsList.forEach((_, i) => { row[`P${i + 1}`] = statusValue(key, i); });
           return row;
         }).filter(row => allFilteredDemandsList.some((_, i) => (row[`P${i + 1}`] ?? 0) > 0))
       : [];
 
+    const regionCells = volumeByKey({ periods: allFilteredDemandsList, keyOf: d => d.regionId, hoursOf });
     const regionalData = regions.map(r => {
-      const row: any = {
-        name: r.name,
-        value: computeVolume(filteredDemands.filter(d => d.regionId === r.id), hoursOf).count,
-      };
+      const row: any = { name: r.name, value: volumeValue(volumeCell(regionCells, r.id, 0), regionMetric) };
       if (compareMode) {
-        allFilteredDemandsList.slice(1).forEach((dList, i) => {
-          row[`value${i + 2}`] = computeVolume(dList.filter(d => d.regionId === r.id), hoursOf).count;
+        allFilteredDemandsList.slice(1).forEach((_, i) => {
+          row[`value${i + 2}`] = volumeValue(volumeCell(regionCells, r.id, i + 1), regionMetric);
         });
       }
       return row;
@@ -1362,7 +1371,10 @@ const pendingLogisticsDemands = useMemo(() => {
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-80 flex flex-col">
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex justify-between">
               <span>Distribuição de Status (Real)</span>
-              <Target size={14} />
+              <span className="flex items-center gap-2">
+                <MetricToggle metric={statusMetric} onChange={setStatusMetric} accent="blue" />
+                <Target size={14} />
+              </span>
             </h3>
             <div className="flex-1 min-h-0">
               {compareMode && extraPeriods.length >= 2 ? (
@@ -1371,8 +1383,8 @@ const pendingLogisticsDemands = useMemo(() => {
                   <BarChart data={statusBarData} margin={{ top: 4 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
                     <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 'bold' }} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9 }} />
-                    <Tooltip cursor={{ fill: '#F8FAFC' }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9 }} tickFormatter={(v: number) => metricLabel(statusMetric, v)} />
+                    <Tooltip cursor={{ fill: '#F8FAFC' }} formatter={(v: number, name: string) => [metricLabel(statusMetric, v), name]} />
                     <Legend iconType="circle" wrapperStyle={{ fontSize: '9px', fontWeight: 'bold', cursor: 'pointer' }} onClick={(e: any) => toggleSeries(`status-${e.dataKey}`)} />
                     {allFilteredDemandsList.map((_, i) => (
                       <Bar key={i} dataKey={`P${i + 1}`} name={`P${i + 1}`} fill={PERIOD_COLORS[i % PERIOD_COLORS.length]} radius={[3, 3, 0, 0]} barSize={14} hide={hiddenSeries[`status-P${i + 1}`]} />
@@ -1390,7 +1402,7 @@ const pendingLogisticsDemands = useMemo(() => {
                           <Pie data={statusData} cx="50%" cy="50%" innerRadius={45} outerRadius={70} paddingAngle={4} dataKey="value">
                             {statusData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
                           </Pie>
-                          <Tooltip />
+                          <Tooltip formatter={(v: number, name: string) => [metricLabel(statusMetric, v), name]} />
                           <Legend verticalAlign="bottom" align="center" iconType="circle" wrapperStyle={{ fontSize: '9px', fontWeight: 'bold' }} />
                         </PieChart>
                       </ResponsiveContainer>
@@ -1405,7 +1417,7 @@ const pendingLogisticsDemands = useMemo(() => {
                           <Pie data={statusData2} cx="50%" cy="50%" innerRadius={45} outerRadius={70} paddingAngle={4} dataKey="value">
                             {statusData2.map((entry, index) => <Cell key={`cell2-${index}`} fill={entry.color} />)}
                           </Pie>
-                          <Tooltip />
+                          <Tooltip formatter={(v: number, name: string) => [metricLabel(statusMetric, v), name]} />
                           <Legend verticalAlign="bottom" align="center" iconType="circle" wrapperStyle={{ fontSize: '9px', fontWeight: 'bold' }} />
                         </PieChart>
                       </ResponsiveContainer>
@@ -1419,7 +1431,7 @@ const pendingLogisticsDemands = useMemo(() => {
                     <Pie data={statusData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={5} dataKey="value">
                       {statusData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
                     </Pie>
-                    <Tooltip />
+                    <Tooltip formatter={(v: number, name: string) => [metricLabel(statusMetric, v), name]} />
                     <Legend verticalAlign="bottom" align="center" iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
                   </PieChart>
                 </ResponsiveContainer>
@@ -1432,7 +1444,10 @@ const pendingLogisticsDemands = useMemo(() => {
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-80 flex flex-col">
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex justify-between">
               <span>Volume por Região</span>
-              <MapPin size={14} />
+              <span className="flex items-center gap-2">
+                <MetricToggle metric={regionMetric} onChange={setRegionMetric} accent="blue" />
+                <MapPin size={14} />
+              </span>
             </h3>
             <div className="flex-1 min-h-0">
               {filteredDemands.length > 0 ? (
@@ -1440,8 +1455,8 @@ const pendingLogisticsDemands = useMemo(() => {
                   <BarChart data={regionalData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
                     <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold' }} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
-                    <Tooltip cursor={{ fill: '#F8FAFC' }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} tickFormatter={(v: number) => metricLabel(regionMetric, v)} />
+                    <Tooltip cursor={{ fill: '#F8FAFC' }} formatter={(v: number, name: string) => [metricLabel(regionMetric, v), name]} />
                     {compareMode && <Legend wrapperStyle={{ fontSize: '10px', fontWeight: 'bold', cursor: 'pointer' }} onClick={(e: any) => toggleSeries(`regional-${e.dataKey}`)} />}
                     <Bar dataKey="value" name="P1" fill={PERIOD_COLORS[0]} radius={[4, 4, 0, 0]} barSize={compareMode ? Math.max(8, Math.floor(36 / allFilteredDemandsList.length)) : 40} hide={hiddenSeries['regional-value']} />
                     {compareMode && allFilteredDemandsList.slice(1).map((_, i) => (
@@ -1537,12 +1552,24 @@ const pendingLogisticsDemands = useMemo(() => {
     const trainingRanking = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.trainingId, labelOf: getTrainingName, hoursOf, metric: 'count', limit: 8 });
     const instructorDemandRanking = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.instructorId, labelOf: instructorName, hoursOf, metric: 'count', limit: 8 });
 
-    // Modalidade
-    const modalTotal = filteredDemands.length || 1;
+    // Modalidade: três baldes fixos, cada um computeVolume sobre o sub-recorte
+    // (volumeByKey); o toggle escolhe count/hours. O total da barra é o do
+    // período inteiro (o mesmo KPI do topo), como sempre foi.
+    const modalityCells = volumeByKey({
+      periods: [filteredDemands],
+      keyOf: d => {
+        const m = getDemandModality(d);
+        if (m === 'PRESENCIAL' || m === 'HIBRIDO') return m;
+        if (['ONLINE', 'EAD', 'ONLINE_AO_VIVO'].includes(m)) return 'ONLINE';
+        return null;
+      },
+      hoursOf,
+    });
+    const modalTotal = volumeValue(computeVolume(filteredDemands, hoursOf), modalityMetric) || 1;
     const modalities = [
-      { label: 'Presencial', value: filteredDemands.filter(d => getDemandModality(d) === 'PRESENCIAL').length, color: 'bg-blue-500' },
-      { label: 'Online / EAD', value: filteredDemands.filter(d => ['ONLINE','EAD','ONLINE_AO_VIVO'].includes(getDemandModality(d))).length, color: 'bg-emerald-500' },
-      { label: 'Híbrido', value: filteredDemands.filter(d => getDemandModality(d) === 'HIBRIDO').length, color: 'bg-violet-500' },
+      { label: 'Presencial',   value: volumeValue(volumeCell(modalityCells, 'PRESENCIAL', 0), modalityMetric), color: 'bg-blue-500' },
+      { label: 'Online / EAD', value: volumeValue(volumeCell(modalityCells, 'ONLINE', 0),     modalityMetric), color: 'bg-emerald-500' },
+      { label: 'Híbrido',      value: volumeValue(volumeCell(modalityCells, 'HIBRIDO', 0),    modalityMetric), color: 'bg-violet-500' },
     ].filter(m => m.value > 0);
 
     // Valores de comparação para Operacional
@@ -1619,7 +1646,10 @@ const pendingLogisticsDemands = useMemo(() => {
             <div>
               <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between">
                 <span>Modalidade</span>
-                <MousePointer2 size={13} className="text-slate-300" />
+                <span className="flex items-center gap-2">
+                  <MetricToggle metric={modalityMetric} onChange={setModalityMetric} accent="blue" />
+                  <MousePointer2 size={13} className="text-slate-300" />
+                </span>
               </h3>
               {modalities.length > 0 ? (
                 <div className="space-y-2.5">
@@ -1629,7 +1659,7 @@ const pendingLogisticsDemands = useMemo(() => {
                       <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                         <div className={`h-full rounded-full ${m.color}`} style={{ width: `${Math.round((m.value / modalTotal) * 100)}%` }} />
                       </div>
-                      <span className="text-[10px] font-black text-slate-700 w-6 text-right shrink-0">{m.value}</span>
+                      <span className="text-[10px] font-black text-slate-700 w-10 text-right shrink-0">{metricLabel(modalityMetric, m.value)}</span>
                     </div>
                   ))}
                 </div>
@@ -1829,10 +1859,13 @@ const pendingLogisticsDemands = useMemo(() => {
     const reuseRanking = rankVolumeByPeriod({ periods: concludedByPeriod, keyOf: d => d.instructorId, labelOf: instructorShortName, hoursOf, distinctOf: d => d.trainingId, metric: 'distinct', limit: 8 });
 
     // --- Distribuição geográfica: instrutores habilitados vs demandas por região ---
+    // A barra de demandas é computeVolume por região (volumeByKey), em
+    // Demandas ou Horas pelo toggle; a de instrutores é cadastro (regionIds).
+    const geoCells = volumeByKey({ periods: [filteredDemands], keyOf: d => d.regionId, hoursOf });
     const geoData = regions.map(r => ({
       region: r.name,
       instructors: activeInstructors.filter(i => i.regionIds?.includes(r.id)).length,
-      demands: filteredDemands.filter(d => d.regionId === r.id).length,
+      demands: volumeValue(volumeCell(geoCells, r.id, 0), geoMetric),
     })).filter(g => g.instructors > 0 || g.demands > 0).sort((a, b) => b.demands - a.demands);
     const geoMaxDemands = Math.max(...geoData.map(x => x.demands), 1);
     const geoMaxInstr   = Math.max(...geoData.map(x => x.instructors), 1);
@@ -2035,9 +2068,12 @@ const pendingLogisticsDemands = useMemo(() => {
           <div className="lg:col-span-7 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col" style={{ minHeight: '20rem' }}>
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center justify-between shrink-0">
               <span>Distribuição Geográfica</span>
-              <MapPin size={13} className="text-slate-300" />
+              <span className="flex items-center gap-2">
+                <MetricToggle metric={geoMetric} onChange={setGeoMetric} accent="emerald" />
+                <MapPin size={13} className="text-slate-300" />
+              </span>
             </h3>
-            <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest mb-4 shrink-0">Instrutores habilitados vs demandas por região (período filtrado)</p>
+            <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest mb-4 shrink-0">Instrutores habilitados vs {geoMetric === 'hours' ? 'horas' : 'demandas'} por região (período filtrado)</p>
             {geoData.length > 0 ? (
               <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1">
                 {geoData.map((g, idx) => (
@@ -2046,7 +2082,7 @@ const pendingLogisticsDemands = useMemo(() => {
                       <span className="text-[11px] font-black text-slate-700 truncate max-w-[200px]" title={g.region}>{g.region}</span>
                       <div className="flex items-center gap-3 shrink-0">
                         <span className="text-[10px] text-blue-600 font-black">{g.instructors} instr.</span>
-                        <span className="text-[10px] text-emerald-600 font-black">{g.demands} dem.</span>
+                        <span className="text-[10px] text-emerald-600 font-black">{geoMetric === 'hours' ? metricLabel('hours', g.demands) : `${g.demands} dem.`}</span>
                       </div>
                     </div>
                     <div className="flex flex-col gap-0.5">
@@ -2061,7 +2097,7 @@ const pendingLogisticsDemands = useMemo(() => {
                 ))}
                 <div className="flex items-center gap-4 pt-2 border-t border-slate-100">
                   <div className="flex items-center gap-1.5"><div className="w-3 h-1.5 rounded-full bg-blue-400" /><span className="text-[9px] font-bold text-slate-400 uppercase">Instrutores</span></div>
-                  <div className="flex items-center gap-1.5"><div className="w-3 h-1.5 rounded-full bg-emerald-400" /><span className="text-[9px] font-bold text-slate-400 uppercase">Demandas</span></div>
+                  <div className="flex items-center gap-1.5"><div className="w-3 h-1.5 rounded-full bg-emerald-400" /><span className="text-[9px] font-bold text-slate-400 uppercase">{geoMetric === 'hours' ? 'Horas' : 'Demandas'}</span></div>
                 </div>
               </div>
             ) : (
@@ -2146,29 +2182,19 @@ const pendingLogisticsDemands = useMemo(() => {
       : rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.companyId, labelOf: getCompanyName, hoursOf, metric: clientCompareMetric, limit: 8 });
     const clientComparison = buildVolumeComparison(clientCompareRanking, { metric: clientCompareMetric, selectedKeys: clientCompareSelected, limit: 8 });
 
-    const trainingCategoryData: { name: string; value: number }[] = Object.entries(
-      trainings.reduce((acc, t) => {
-        const count = filteredDemands.filter(d => d.trainingId === t.id).length;
-        acc[t.category] = (acc[t.category] || 0) + count;
-        return acc;
-      }, {} as Record<string, number>)
-    ).map(([name, value]) => ({
-      name: String(name),
-      value: value as number
-    })).sort((a, b) => b.value - a.value).filter(v => v.value > 0);
-
-    const trainingCategoryHoursData: { name: string; value: number }[] = Object.entries(
-      trainings.reduce((acc, t) => {
-        const hours = filteredDemands.filter(d => d.trainingId === t.id).length * getTrainingHours(t.id);
-        acc[t.category] = (acc[t.category] || 0) + hours;
-        return acc;
-      }, {} as Record<string, number>)
-    ).map(([name, value]) => ({
-      name: String(name),
-      value: value as number
-    })).sort((a, b) => b.value - a.value).filter(v => v.value > 0);
-
-    const activeCategoryData = categoryChartMode === 'qty' ? trainingCategoryData : trainingCategoryHoursData;
+    // Treinamentos por Categoria: já tinha o toggle Quantidade/Horas, mas com
+    // soma própria (trainings.reduce). Agora é rankVolumeByPeriod por categoria
+    // do treinamento — computeVolume em cada fatia — e o toggle padrão.
+    const categoryRanking = rankVolumeByPeriod({
+      periods: [filteredDemands],
+      keyOf: d => trainings.find(t => t.id === d.trainingId)?.category,
+      hoursOf,
+      metric: categoryChartMode,
+      limit: Number.POSITIVE_INFINITY,
+    });
+    const activeCategoryData: { name: string; value: number }[] = categoryRanking.items
+      .map(row => ({ name: row.name, value: volumeValue(row.periods[0], categoryChartMode) }))
+      .filter(v => v.value > 0);
 
     return (
       <div className="space-y-6 animate-fade-in" ref={(el) => { chartRefsMap.current['CLIENTES'] = el; }}>
@@ -2203,17 +2229,7 @@ const pendingLogisticsDemands = useMemo(() => {
           <div className="bg-white p-6 rounded-2xl border border-slate-200 h-96 shadow-sm flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Treinamentos por Categoria</h3>
-              <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
-                {(['qty', 'hours'] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    onClick={() => setCategoryChartMode(mode)}
-                    className={`px-2.5 py-1 text-[9px] font-black uppercase tracking-widest rounded-md transition-all ${categoryChartMode === mode ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                  >
-                    {mode === 'qty' ? 'Quantidade' : 'Horas'}
-                  </button>
-                ))}
-              </div>
+              <MetricToggle metric={categoryChartMode} onChange={setCategoryChartMode} accent="blue" />
             </div>
             <div className="flex-1 min-h-0">
               {activeCategoryData.length > 0 ? (
@@ -2222,7 +2238,7 @@ const pendingLogisticsDemands = useMemo(() => {
                     <Pie data={activeCategoryData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} dataKey="value" stroke="none">
                       {activeCategoryData.map((_, i) => <Cell key={i} fill={COLORS.CHART_PALETTE[i % COLORS.CHART_PALETTE.length]} />)}
                     </Pie>
-                    <Tooltip formatter={(v: number) => categoryChartMode === 'qty' ? [`${v} treinamentos`, ''] : [`${v}h ministradas`, '']} />
+                    <Tooltip formatter={(v: number) => categoryChartMode === 'count' ? [`${v} treinamentos`, ''] : [metricLabel('hours', v), '']} />
                     <Legend iconType="circle" wrapperStyle={{ fontSize: '9px', fontWeight: 'bold' }} />
                   </PieChart>
                 </ResponsiveContainer>

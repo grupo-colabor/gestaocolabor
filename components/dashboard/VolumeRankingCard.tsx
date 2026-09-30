@@ -71,6 +71,11 @@ const METRIC_FORMAT: Record<VolumeMetric, { value: (v: number) => string; delta:
   cost:     { value: v => formatCurrency(v),          delta: v => formatCurrency(v), valueWidth: 'w-20', variationWidth: 'w-32' },
 };
 
+/** O valor de uma métrica como o cartão o escreve (12, 75.5h, R$ 1.234,56) — compartilhado com o comparativo. */
+export const formatVolumeValue = (metric: VolumeMetric, v: number) => METRIC_FORMAT[metric].value(v);
+/** O delta da variação, sem unidade nas horas, como os KPIs do topo. */
+export const formatVolumeDelta = (metric: VolumeMetric, v: number) => METRIC_FORMAT[metric].delta(v);
+
 export interface VolumeRankingCardProps {
   title: string;
   /** Linha discreta sob o título (ex.: "Soma de despesas das medições por instrutor no período"). */

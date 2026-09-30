@@ -31,8 +31,9 @@ import {
 } from '../domain/instructorAvailability';
 import { computeInstructorHours, InstructorHoursEntry } from '../domain/instructorHours';
 import { buildModalityOptions, buildTrainingsById, matchesModality } from '../domain/modalityOptions';
-import { computeVolume, rankVolumeByPeriod, rankVolumeRows, volumeRowsFromInstructorHours, type VolumeMetric } from '../domain/dashboardVolume';
+import { buildVolumeComparison, computeVolume, rankVolumeByPeriod, rankVolumeRows, volumeRowsFromInstructorHours, type VolumeMetric } from '../domain/dashboardVolume';
 import VolumeRankingCard from './dashboard/VolumeRankingCard';
+import VolumeComparisonChart, { type VolumeScale } from './dashboard/VolumeComparisonChart';
 import { PERIOD_COLORS } from './dashboard/periodColors';
 import Pagination from './Pagination';
 import ReportModal from './ReportModal';
@@ -201,6 +202,7 @@ const HELP_CONTENT: Record<string, HelpSection[]> = {
       section: 'Gráficos',
       items: [
         { term: 'Clientes mais Ativos', desc: 'Empresas com maior volume no período filtrado, em Qtd. Treinamentos ou Horas (toggle). Exibe as 8 maiores em P1; as demais somam em "Outros". Uma barra por período de comparação, com variação de P1 contra P2.' },
+        { term: 'Comparativo entre Empresas', desc: 'As mesmas células do ranking, em barras agrupadas: eixo X = empresas, uma barra por período. Toggle Demandas/Horas e Escala absoluta ou participação (%) — em participação cada barra é a fatia da empresa no total do período (ex.: Vale 164 de 171 = 96%). Sem seleção mostra as 8 maiores em P1 e "Outras"; o seletor de empresas escolhe quais comparar. Clique na legenda para esconder um período.' },
         { term: 'Treinamentos por Categoria', desc: 'Distribuição das demandas pelas categorias de treinamento (Segurança do Trabalho, Manutenção, Operações, etc.).' },
       ],
     },
@@ -506,6 +508,10 @@ const Dashboard: React.FC = () => {
   const [internaCategoriaMetric, setInternaCategoriaMetric] = useState<VolumeMetric>('hours');
   const [internaInstrutorMetric, setInternaInstrutorMetric] = useState<VolumeMetric>('hours');
   const [clientView, setClientView] = useState<VolumeMetric>('count');
+  // --- "Comparativo entre Empresas" (aba Clientes) ---
+  const [clientCompareMetric, setClientCompareMetric] = useState<VolumeMetric>('count');
+  const [clientCompareScale, setClientCompareScale] = useState<VolumeScale>('abs');
+  const [clientCompareSelected, setClientCompareSelected] = useState<string[]>([]);
   /** Refs para captura de gráficos via html2canvas (um por aba) */
   const chartRefsMap = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -2131,6 +2137,15 @@ const pendingLogisticsDemands = useMemo(() => {
     // Σ horas do ranking (com "Outros") = "Total de Horas" empresa a empresa.
     const clientRanking = rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.companyId, labelOf: getCompanyName, hoursOf, metric: clientView, limit: 8 });
 
+    // "Comparativo entre Empresas": OUTRA VISTA do mesmo ranking (mesma chave,
+    // mesma função). Quando o toggle do gráfico coincide com o do cartão é o
+    // mesmo objeto; se diferem, a mesma chamada com a outra métrica — e o
+    // smoke prende que as barras batem célula a célula com o ranking.
+    const clientCompareRanking = clientCompareMetric === clientView
+      ? clientRanking
+      : rankVolumeByPeriod({ periods: allFilteredDemandsList, keyOf: d => d.companyId, labelOf: getCompanyName, hoursOf, metric: clientCompareMetric, limit: 8 });
+    const clientComparison = buildVolumeComparison(clientCompareRanking, { metric: clientCompareMetric, selectedKeys: clientCompareSelected, limit: 8 });
+
     const trainingCategoryData: { name: string; value: number }[] = Object.entries(
       trainings.reduce((acc, t) => {
         const count = filteredDemands.filter(d => d.trainingId === t.id).length;
@@ -2217,6 +2232,22 @@ const pendingLogisticsDemands = useMemo(() => {
             </div>
           </div>
         </div>
+
+        <VolumeComparisonChart
+          title="Comparativo entre Empresas"
+          subtitle="As mesmas células do ranking acima, lado a lado por período"
+          comparison={clientComparison}
+          metric={clientCompareMetric}
+          onMetricChange={setClientCompareMetric}
+          scale={clientCompareScale}
+          onScaleChange={setClientCompareScale}
+          selectedKeys={clientCompareSelected}
+          onSelectedKeysChange={setClientCompareSelected}
+          periodLabels={periodLabels}
+          unitLabel="empresas"
+          emptyLabel="Sem demandas ativas"
+          limit={8}
+        />
       </div>
     );
   };

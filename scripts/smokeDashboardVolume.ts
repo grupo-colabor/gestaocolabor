@@ -26,6 +26,7 @@
 import fs from 'fs';
 import path from 'path';
 import {
+  buildVolumeComparison,
   computeVolume,
   rankVolumeByPeriod,
   rankVolumeRows,
@@ -366,6 +367,52 @@ console.log('\n[11] Clientes / Clientes mais Ativos: chave companyId, Qtd');
 }
 
 /* ========================================================================== */
+/* [11b] CLIENTES — "Comparativo entre Empresas" = outra vista do mesmo ranking  */
+/* ========================================================================== */
+console.log('\n[11b] Clientes / Comparativo entre Empresas: barras = celulas do ranking; participacao = celula / total do periodo');
+
+{
+  for (const metric of ['count', 'hours'] as VolumeMetric[]) {
+    const rk = rankVolumeByPeriod({ periods, keyOf: d => d.companyId, labelOf: companyName, hoursOf, metric, limit: 8 });
+    const cmp = buildVolumeComparison(rk, { metric, limit: 8 });
+    const divergentes = cmp.rows.flatMap(row => {
+      const linhaRk = linha(rk, row.key);
+      return row.values.map((v, i) => (linhaRk && volumeValue(linhaRk.periods[i], metric) === v) ? null : `${row.name} P${i + 1}`);
+    }).filter(Boolean);
+    check(`[${metric}] cada barra e a celula do ranking (${cmp.rows.length} empresas × ${periods.length} periodos)`, divergentes.length === 0, divergentes.join(', '));
+    checkEq(`[${metric}] total do periodo = KPI do topo (toda demanda de cliente tem empresa)`, cmp.totals, periods.map(rec => volumeValue(computeVolume(rec, hoursOf), metric)));
+    const somaShares = periods.map((_, i) => Math.round(cmp.rows.reduce((s, r) => s + r.shares[i], 0)));
+    checkEq(`[${metric}] as participacoes de um periodo somam 100%`, somaShares, [100, 100]);
+  }
+  const rk = rankVolumeByPeriod({ periods, keyOf: d => d.companyId, labelOf: companyName, hoursOf, metric: 'count', limit: 8 });
+  const cmp = buildVolumeComparison(rk, { metric: 'count', limit: 8 });
+  checkEq('Vale 3 de 5 = 60% em P1; 6 de 8 = 75% em P2', cmp.rows.find(r => r.key === 'E1')?.shares, [60, 75]);
+  checkEq('ordem e a do ranking (por P1)', cmp.rows.map(r => r.name), ['Vale', 'Samarco']);
+  checkEq('sem "Outras" quando cabe tudo', cmp.rows.some(r => r.isOthers), false);
+  checkEq('available lista todas as empresas do ranking, na ordem', cmp.available, [{ key: 'E1', name: 'Vale' }, { key: 'E2', name: 'Samarco' }]);
+
+  // Top N + "Outras": limite 1 → Vale e "Outras" (= Samarco), somando por período.
+  const top1 = buildVolumeComparison(rk, { metric: 'count', limit: 1 });
+  checkEq('limite 1: Vale + "Outras"', top1.rows.map(r => [r.name, !!r.isOthers, ...r.values]), [['Vale', false, 3, 6], ['Outras', true, 2, 2]]);
+  checkEq('"Outras" tambem tem participacao (2 de 5 = 40%, 2 de 8 = 25%)', top1.rows[1].shares, [40, 25]);
+  checkEq('o total nao muda com o limite', top1.totals, cmp.totals);
+
+  // Seleção: só as escolhidas, na ordem do ranking, sem "Outras", e a fatia
+  // continua sendo sobre o total do período (escolher nao muda a fatia).
+  const sel = buildVolumeComparison(rk, { metric: 'count', selectedKeys: ['E2'], limit: 1 });
+  checkEq('selecionar Samarco: so ela, sem "Outras"', sel.rows.map(r => [r.name, !!r.isOthers]), [['Samarco', false]]);
+  checkEq('a fatia da Samarco segue sobre o total do periodo (2 de 5 = 40%)', sel.rows[0].shares, [40, 25]);
+  checkEq('chave desconhecida na selecao e ignorada; so desconhecidas = modo automatico', buildVolumeComparison(rk, { metric: 'count', selectedKeys: ['X'], limit: 1 }).rows.length, 2);
+  checkEq('selecao fora de ordem sai na ordem do ranking', buildVolumeComparison(rk, { metric: 'count', selectedKeys: ['E2', 'E1'] }).rows.map(r => r.key), ['E1', 'E2']);
+
+  // Vazio e total zero.
+  const vazio = buildVolumeComparison(rankVolumeByPeriod({ periods: [[], []], keyOf: (d: any) => d.companyId, hoursOf, metric: 'count' }), { metric: 'count' });
+  checkEq('ranking vazio: sem linhas, sem totais', [vazio.rows, vazio.totals, vazio.available], [[], [], []]);
+  const zeroTotal = buildVolumeComparison(rankVolumeByPeriod({ periods: [[dem('T0', '2026-09-03', { id: 'Z9' })], []], keyOf: d => d.companyId, hoursOf, metric: 'hours' }), { metric: 'hours' });
+  checkEq('total 0 no periodo: participacao 0, nao NaN', zeroTotal.rows[0].shares, [0, 0]);
+}
+
+/* ========================================================================== */
 /* [12] CUSTOS — Top Instrutores por Custo (chave: instructorId, métrica: custo) */
 /* ========================================================================== */
 console.log('\n[12] Custos / Top Instrutores por Custo: computeVolume(...).cost = "Total em Despesas" recortado');
@@ -553,6 +600,13 @@ console.log('\n[17] Guardas de fonte');
   check('altura maxima com rolagem: > 3 periodos ou > 8 linhas, lista rola e cabecalho fica',
     card.includes('MAX_PERIODS_WITHOUT_CAP = 3') && card.includes('MAX_ROWS_WITHOUT_CAP = 8') && /capped \? 'max-h-\[24rem\]'/.test(card));
   check('toggle de metrica so quando a tela passa onMetricChange', /\{onMetricChange && \(/.test(card));
+
+  // O comparativo é outra vista do MESMO ranking do cartão de clientes.
+  check('"Comparativo entre Empresas" nasce de buildVolumeComparison sobre o ranking de companyId da propria aba',
+    /const clientCompareRanking = clientCompareMetric === clientView\s*\?\s*clientRanking/.test(dash) && dash.includes('buildVolumeComparison(clientCompareRanking'));
+  const chart = ler('components/dashboard/VolumeComparisonChart.tsx');
+  check('o grafico nao soma: sem reduce, so le values/shares/totals do VolumeComparison', !/\.reduce\(/.test(chart) && chart.includes('r.shares[i]') && chart.includes('totals[i]'));
+  check('participacao: eixo 0–100 e tooltip "x de total"', chart.includes("domain={scale === 'share' ? [0, 100]") && chart.includes('de ${fmt(totals[i])}'));
 
   const dominio = ler('domain/dashboardVolume.ts');
   check('rankVolumeByPeriod termina em rankVolumeRows (um ranqueamento so)', /return rankVolumeRows\(rows, metric, opts\.limit \?\? 10\);/.test(dominio));

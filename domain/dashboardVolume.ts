@@ -271,6 +271,84 @@ export function volumeRowsFromInstructorHours(
   return rows;
 }
 
+export interface VolumeComparisonRow {
+  key: string;
+  name: string;
+  /** Valor absoluto da métrica por período (P1 primeiro) — a célula do ranking. */
+  values: number[];
+  /** Participação (%) no total do período: values[i] / totals[i] × 100; 0 quando o total é 0. */
+  shares: number[];
+  /** true na linha "Outras" (soma de quem não está no gráfico). */
+  isOthers?: boolean;
+}
+
+export interface VolumeComparison {
+  rows: VolumeComparisonRow[];
+  /** Total da métrica por período sobre TODAS as linhas do ranking — a base da participação. */
+  totals: number[];
+  /** As chaves disponíveis para seleção, na ordem do ranking (sem "Outras"). */
+  available: { key: string; name: string }[];
+}
+
+export interface VolumeComparisonOptions {
+  metric: VolumeMetric;
+  /** Chaves escolhidas pelo usuário. Vazio/ausente = as `limit` maiores em P1 + "Outras". */
+  selectedKeys?: readonly string[] | null;
+  /** Quantas entram antes de "Outras" no modo automático. Padrão 8. */
+  limit?: number;
+  /** Nome da linha agregada. Padrão "Outras". */
+  othersLabel?: string;
+}
+
+/**
+ * O gráfico "Comparativo entre Empresas" (e qualquer comparativo de barras
+ * agrupadas por período) como OUTRA VISTA do mesmo VolumeRanking do cartão:
+ * cada barra é a célula do ranking (values), e a participação é essa célula
+ * sobre o total do período. Nada aqui recomputa volume — só escolhe linhas
+ * e divide pelo total.
+ *
+ * - Sem seleção: as `limit` primeiras linhas do ranking (já ordenadas por P1)
+ *   e, se sobrar alguém, "Outras" com a soma das demais período a período.
+ * - Com seleção: só as escolhidas, na ordem do ranking, sem "Outras".
+ * - `totals` é sempre sobre TODAS as linhas do ranking, com ou sem seleção:
+ *   escolher Vale e Samarco não muda a fatia de cada uma no período.
+ */
+export function buildVolumeComparison(ranking: VolumeRanking, opts: VolumeComparisonOptions): VolumeComparison {
+  const { metric } = opts;
+  const limit = opts.limit ?? 8;
+  const all = [...ranking.items, ...ranking.othersDetail];
+  const nPeriods = all[0]?.periods.length ?? 0;
+
+  const totals = Array.from({ length: nPeriods }, (_, i) => all.reduce((s, r) => s + volumeValue(r.periods[i], metric), 0));
+  const toRow = (r: VolumeRankRow, isOthers = false): VolumeComparisonRow => {
+    const values = r.periods.map(t => volumeValue(t, metric));
+    return {
+      key: r.key,
+      name: r.name,
+      values,
+      shares: values.map((v, i) => (totals[i] ? (v / totals[i]) * 100 : 0)),
+      ...(isOthers ? { isOthers: true } : {}),
+    };
+  };
+
+  const selected = (opts.selectedKeys ?? []).filter(k => all.some(r => r.key === k));
+  let rows: VolumeComparisonRow[];
+  if (selected.length > 0) {
+    rows = all.filter(r => selected.includes(r.key)).map(r => toRow(r));
+  } else {
+    const top = all.slice(0, limit);
+    const rest = all.slice(limit);
+    rows = top.map(r => toRow(r));
+    if (rest.length > 0) {
+      const periods = Array.from({ length: nPeriods }, (_, i) =>
+        rest.reduce<VolumeTotals>((acc, r) => somaTotais(acc, r.periods[i] ?? ZERO_VOLUME), { ...ZERO_VOLUME }));
+      rows.push(toRow({ key: '__outras__', name: opts.othersLabel ?? 'Outras', periods }, true));
+    }
+  }
+
+  return { rows, totals, available: all.map(r => ({ key: r.key, name: r.name })) };
+}
+
 export interface VolumeVariation {
   /** P1 − P2. */
   delta: number;

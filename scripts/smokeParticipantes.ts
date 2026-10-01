@@ -1311,7 +1311,11 @@ console.log('\n[17] CompanionPicker');
 
   // 5) A convenção de gravação NÃO mudou em nenhuma das duas telas.
   check('drawer mantém T08:00/T18:00 literais', drawer.includes("startDate: `${day}T08:00`,"));
-  check('logística mantém horário da demanda com fallback 08/18', logistica.includes("buildDateTime(day, startTime, '08:00')"));
+  // A montagem da Logística foi para domain/companionRows.ts (o bloco
+  // Acompanhantes da visualização grava pela mesma função). A convenção em si —
+  // horário da demanda, 08/18 de fallback — é conferida contra o gabarito
+  // congelado em smoke:acompanhantes.
+  check('logística mantém horário da demanda com fallback 08/18', logistica.includes('...buildCompanionRow(selectedDemand, instructorId, day)'));
 
   // 6) As duas telas consomem o MESMO picker.
   check('drawer usa o picker', drawer.includes('<CompanionPicker'));

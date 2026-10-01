@@ -148,6 +148,16 @@ import { getDemandDays } from '../domain/demandDays';
 import { updateCompanionAllocationDates } from '../services/companionAllocations';
 import { updateDemandParticipantPeriod } from '../services/demandParticipants';
 import { useResourceAllocation } from '../hooks/useResourceAllocation';
+// Bloco ACOMPANHANTES da visualização: o seletor é o MESMO da Orquestração
+// Logística e do AllocationDrawer, e a linha gravada sai da mesma função.
+import CompanionPicker from './CompanionPicker';
+import AcompanhantesBlock from './demand-form/AcompanhantesBlock';
+import {
+  buildCompanionRow,
+  summarizeCompanions,
+  companionBlockMode,
+  type CompanionPersonSummary,
+} from '../domain/companionRows';
 
 // UUID v4 sem crypto.randomUUID() — compatível com HTTP e browsers antigos.
 // Necessário porque a coluna id da tabela logistic_blocks é do tipo uuid no PostgreSQL.
@@ -165,6 +175,7 @@ const Demands: React.FC = () => {
     demands: allDemands, companies, trainings, regions, instructors, operationalBases,
     measurements, agendaItems, instructorAllocations, resourceAllocations,companionAllocations,
     demandParticipants, removeCompanionAllocation, addCompanionAllocation,
+    ensureLogisticBlocksForPerson, releaseLogisticBlocksForPerson,
     updateDemand, addDemand, deleteDemand, deallocateInstructor, recommendInstructors,
     updateMeasurement, removeAgendaItem, hasResourceConflict,
     addInstructorAllocation, removeInstructorAllocation, updateInstructorAllocation, addResourceAllocation, removeResourceAllocation, hasScheduleConflict, setNotification,
@@ -278,6 +289,16 @@ useEffect(() => {
     endDate: ''
   });
   const [pendingConflictAllocation, setPendingConflictAllocation] = useState<InstructorAllocation | null>(null);
+
+  // Bloco Acompanhantes (visualização)
+  const [isCompanionPickerOpen, setIsCompanionPickerOpen] = useState(false);
+  /**
+   * Relê a logística do modal depois que o bloco Acompanhantes cria ou libera
+   * os blocos da pessoa. A leitura é o efeito "Carrega dados persistidos" lá
+   * embaixo — este contador só o dispara de novo, para não existir uma segunda
+   * cópia do mapeamento de `logistic_blocks`.
+   */
+  const [logisticsReloadKey, setLogisticsReloadKey] = useState(0);
 
   // Load location associations on mount
   useEffect(() => {
@@ -1067,7 +1088,7 @@ useEffect(() => {
   };
 
   run();
-}, [isModalOpen, modalMode, modalSubMode, formDemand.id]);
+}, [isModalOpen, modalMode, modalSubMode, formDemand.id, logisticsReloadKey]);
 
   const toggleSort = (key: SortKey) => {
     setSort(prev => {
@@ -1389,6 +1410,7 @@ useEffect(() => {
   setActiveDemand(demand);
   setFormDemand({ ...demand });
   setModalMode('EDIT');
+  setIsCompanionPickerOpen(false);
   setTentouSalvarLocal(false);
   setPendingPdfs({ classList: null, instructorRelease: null });
   setDbDocs({});
@@ -2336,6 +2358,138 @@ const companionInstructorIds = useMemo(() => {
 
   return unique;
 }, [formDemand.id, companionAllocations]);
+
+  /* ─────────────────── BLOCO ACOMPANHANTES (visualização) ───────────────────
+   *
+   * Terceiro card da seção de alocações. Até aqui acompanhante só entrava pela
+   * Orquestração Logística, que só lista demanda SEM instrutor: depois de
+   * alocada, a operação tirava o titular, punha o acompanhante e realocava.
+   *
+   * Nada de fluxo novo: o seletor é o CompanionPicker, a linha sai de
+   * buildCompanionRow (a mesma função da Logística) e a gravação é o
+   * addCompanionAllocation do App. `smoke:acompanhantes` prende que a linha
+   * gravada aqui é indistinguível da gravada lá.
+   */
+
+  // A demanda como está no estado do App — a mesma fonte que a Orquestração lê.
+  // O horário do acompanhante sai dela, não do formulário aberto.
+  const companionDemand = useMemo(
+    () => (formDemand.id ? demands.find(d => d.id === formDemand.id) ?? null : null),
+    [demands, formDemand.id]
+  );
+
+  const companionRowsOfDemand = useMemo(
+    () => (formDemand.id ? (companionAllocations || []).filter(c => c.demandId === formDemand.id) : []),
+    [companionAllocations, formDemand.id]
+  );
+
+  // Uma entrada por PESSOA (a tabela guarda uma linha por dia), com a cobertura
+  // frente aos dias reais da demanda — é dela que sai o aviso "fora do período".
+  const companionEntries = useMemo(() => {
+    const base = (companionDemand ?? formDemand) as Demand;
+    return summarizeCompanions(companionRowsOfDemand, getDemandDays(base as any)).sort((a, b) =>
+      getInstructorName(a.instructorId).localeCompare(getInstructorName(b.instructorId), 'pt-BR')
+    );
+  }, [
+    companionRowsOfDemand,
+    companionDemand,
+    formDemand.startDate,
+    formDemand.endDate,
+    formDemand.dateMode,
+    formDemand.specificDates,
+    instructors,
+  ]);
+
+  // Quem ministra a demanda (o principal e, em demanda dividida, os demais).
+  const companionTitularIds = useMemo(() => {
+    const ids = formDemand.id ? allInstructorsByDemandId[formDemand.id] ?? [] : [];
+    return [...new Set([...ids, formDemand.instructorId].filter(Boolean) as string[])];
+  }, [formDemand.id, formDemand.instructorId, allInstructorsByDemandId]);
+
+  // Fora da lista do picker: quem já acompanha e quem ministra — o titular não
+  // acompanha a própria demanda (e na medição ele contaria uma vez só).
+  const companionPickerExcludedIds = useMemo(
+    () => [...new Set([...companionRowsOfDemand.map(c => c.instructorId), ...companionTitularIds])],
+    [companionRowsOfDemand, companionTitularIds]
+  );
+
+  /**
+   * Grava o acompanhante nos dias escolhidos no CompanionPicker — o MESMO
+   * caminho de Logistics.handleConfirmCompanion: uma linha por dia, montada por
+   * buildCompanionRow (horário da demanda, 08/18 de fallback).
+   *
+   * O bloco de logística sai UMA VEZ por pessoa, fora do laço (regra da F1).
+   * Aqui ele é ESPERADO, e a logística do modal é relida em seguida: as seções
+   * de Locomoção/Hospedagem estão na mesma tela, e o save do formulário regrava
+   * os blocos a partir do que o formulário tem — com ele defasado, o bloco que
+   * acabou de nascer seria apagado no próximo "Salvar Alterações".
+   */
+  const handleConfirmCompanion = async (instructorId: string, dias: string[]) => {
+    if (!companionDemand || dias.length === 0) return;
+
+    if (companionRowsOfDemand.some(c => c.instructorId === instructorId)) {
+      setNotification({ type: 'error', message: 'Este instrutor já está como acompanhante nesta demanda.' });
+      return;
+    }
+
+    dias.forEach(day => {
+      addCompanionAllocation({
+        id: `CA-${Date.now()}-${day}`,
+        ...buildCompanionRow(companionDemand, instructorId, day),
+      });
+    });
+
+    const nome = getInstructorName(instructorId);
+    setIsCompanionPickerOpen(false);
+    logAction({
+      modulo: 'Demandas',
+      acao: 'Editar',
+      descricao: [
+        `Acompanhante adicionado à demanda ${companionDemand.id}`,
+        `Instrutor: ${nome}`,
+        `Dias: ${dias.join(', ')}`,
+      ].join(' | '),
+      dadosDepois: { demandId: companionDemand.id, instructorId, days: dias },
+    });
+    setNotification({ type: 'success', message: `Acompanhante ${nome} alocado em ${dias.length} dia(s).` });
+
+    await ensureLogisticBlocksForPerson(companionDemand.id, instructorId);
+    setLogisticsReloadKey(k => k + 1);
+  };
+
+  /**
+   * A lixeira remove a PESSOA: todas as linhas dela na demanda.
+   *
+   * Os blocos de logística VAZIOS dela são liberados em seguida (bloco com dado
+   * nunca é apagado). Só não libera quando a pessoa também ministra a demanda —
+   * aí os blocos são do titular, e o acompanhamento era só mais um vínculo.
+   */
+  const handleRemoveCompanion = async (entry: CompanionPersonSummary) => {
+    const demandId = formDemand.id;
+    if (!demandId) return;
+
+    const nome = getInstructorName(entry.instructorId);
+    const continuaVinculado = companionTitularIds.includes(entry.instructorId);
+
+    entry.rowIds.forEach(id => removeCompanionAllocation(id));
+
+    logAction({
+      modulo: 'Demandas',
+      acao: 'Editar',
+      descricao: [
+        `Acompanhante removido da demanda ${demandId}`,
+        `Instrutor: ${nome}`,
+        `Dias: ${[...entry.diasDentro, ...entry.diasFora].join(', ')}`,
+      ].join(' | '),
+      dadosAntes: { demandId, instructorId: entry.instructorId, allocationIds: entry.rowIds },
+    });
+    setNotification({ type: 'success', message: `Acompanhante ${nome} removido.` });
+
+    if (!continuaVinculado) {
+      await releaseLogisticBlocksForPerson(demandId, entry.instructorId);
+      setLogisticsReloadKey(k => k + 1);
+    }
+  };
 
 
   // ✅ FIX: manter formDemand sincronizado com o estado global da demanda
@@ -3313,6 +3467,19 @@ const companionInstructorIds = useMemo(() => {
                             )}
                           </div>
                         </div>
+
+                        {/* ACOMPANHANTES — terceiro card, com escrita em qualquer
+                            status menos CANCELADA/CONCLUIDA, tenha a demanda
+                            instrutor ou não. Grava em companion_allocations pelo
+                            mesmo caminho da Orquestração Logística. Demanda
+                            interna não tem este bloco (lá são participantes). */}
+                        <AcompanhantesBlock
+                          mode={companionBlockMode(formDemand, currentStatus, canEditDemand)}
+                          entries={companionEntries}
+                          getInstructorName={getInstructorName}
+                          onAdd={() => setIsCompanionPickerOpen(true)}
+                          onRemove={handleRemoveCompanion}
+                        />
                       </div>
                     )}
 
@@ -3463,6 +3630,23 @@ const companionInstructorIds = useMemo(() => {
           </div>
         </div>
       , document.body)}
+
+      {/* SELEÇÃO DE ACOMPANHANTE — o MESMO componente da Orquestração Logística
+          e do AllocationDrawer (três grupos, vários dias, conflito que avisa e
+          deixa "alocar mesmo assim"). Fica fora do JSX do modal de propósito:
+          o picker é um portal, e clique em portal sobe pela árvore do React —
+          dentro do backdrop do modal, ele o fecharia. */}
+      {isModalOpen && modalSubMode === 'VIEW' && companionDemand && (
+        <CompanionPicker
+          open={isCompanionPickerOpen}
+          demand={companionDemand}
+          instructors={instructors}
+          alreadyCompanionIds={companionPickerExcludedIds}
+          hasScheduleConflict={hasScheduleConflict}
+          onCancel={() => setIsCompanionPickerOpen(false)}
+          onConfirm={handleConfirmCompanion}
+        />
+      )}
 
       {/* MODAL DE ALOCAÇÃO DE INSTRUTOR */}
       {isAllocationModalOpen && createPortal(

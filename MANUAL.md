@@ -245,7 +245,7 @@ Exibe todos os dados preenchidos. Disponibiliza as seguintes ações:
 | **Editar** | Habilita edição dos campos |
 | **Alocar Instrutor** | Abre painel para selecionar instrutor e período |
 | **Alocar CTM** | Aloca Centro de Treinamento Móvel |
-| **Alocar Acompanhante** | Adiciona segundo instrutor como acompanhante |
+| **Acompanhantes → Adicionar** | Adiciona instrutor acompanhante, nos dias escolhidos (ver abaixo) |
 | **Exportar para Word** | Gera documento .docx com todos os dados |
 | **Cancelar Demanda** | Marca como CANCELADA (pede motivo) |
 | **Reativar Demanda** | Desfaz o cancelamento |
@@ -258,6 +258,20 @@ Exibe todos os dados preenchidos. Disponibiliza as seguintes ações:
 3. Selecione o instrutor
 4. Informe o período de atuação (início e fim)
 5. Confirme — se houver conflito de agenda, o sistema avisa e pergunta se deseja forçar
+
+#### Acompanhantes
+
+O bloco **Acompanhantes** fica logo abaixo de **Instrutores** e **Centro Móvel**, na visualização da demanda de cliente. Serve para pôr um acompanhante numa demanda **que já tem instrutor alocado** — não é mais preciso remover o titular, adicionar o acompanhante pela Orquestração Logística e alocar de novo.
+
+1. Clique em **Adicionar**
+2. Marque os **dias** que a pessoa vai acompanhar (um, vários ou todos)
+3. Escolha o instrutor. A lista vem em três grupos: qualificados para o treinamento, exceção (fora do estado da demanda) e demais ativos. Quem já está ocupado em algum dos dias marcados aparece com o aviso **"Já alocado neste dia"**; o sistema avisa, mas deixa **Alocar mesmo assim**
+
+O acompanhante segue o **horário da demanda** e passa a aparecer na agenda e na medição, exatamente como o que é adicionado pela Orquestração Logística.
+
+A lista mostra cada acompanhante com os dias que ele acompanha — **"período todo"** ou, por exemplo, **"2 de 5 dias"**. A **lixeira** (aparece ao passar o mouse) remove a pessoa da demanda, em todos os dias. Se as datas da demanda mudaram e algum dia do acompanhante ficou de fora, a linha fica amarela com o aviso **"Fora do período da demanda"**: remova e adicione de novo nos dias certos.
+
+O botão **Adicionar** e a lixeira não aparecem em demanda **cancelada** ou **concluída**. Demanda **interna** não tem este bloco — nela, quem entra a mais é participante.
 
 #### Modo Edição (FORM)
 

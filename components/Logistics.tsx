@@ -25,6 +25,7 @@ import {
   Moon
 } from 'lucide-react';
 import { isNightDemand } from '../domain/demandDays';
+import { buildCompanionRow } from '../domain/companionRows';
 
 const Logistics: React.FC = () => {
   const {
@@ -145,6 +146,10 @@ const Logistics: React.FC = () => {
  * demanda e 08/18 de fallback — exatamente o que o fluxo anterior desta tela
  * fazia. O que mudou foi so COMO os dias sao escolhidos.
  *
+ * A montagem da linha saiu daqui para domain/companionRows.ts (buildCompanionRow):
+ * o bloco Acompanhantes da Visualizacao da Demanda grava pela MESMA funcao, e
+ * por isso a linha dele e indistinguivel da desta tela.
+ *
  * O bloco de logistica sai UMA VEZ por pessoa, fora do laco (regra da F1):
  * N dias geram N linhas de acompanhante e 2 blocos, nao 2N.
  */
@@ -157,19 +162,10 @@ const handleConfirmCompanion = (instructorId: string, dias: string[]) => {
     return;
   }
 
-  // horarios padrao (usa o que existir na demanda; senao 08/18)
-  const demandStart = splitDateTime(selectedDemand.startDate);
-  const demandEnd = splitDateTime(selectedDemand.endDate);
-  const startTime = demandStart.time || '08:00';
-  const endTime = demandEnd.time || '18:00';
-
   dias.forEach(day => {
     addCompanionAllocation({
       id: `CA-${Date.now()}-${day}`,
-      demandId: selectedDemand.id,
-      instructorId,
-      startDate: buildDateTime(day, startTime, '08:00'),
-      endDate: buildDateTime(day, endTime, '18:00'),
+      ...buildCompanionRow(selectedDemand, instructorId, day),
     });
   });
 

@@ -2558,15 +2558,14 @@ const InternalDemands: React.FC = () => {
                         </p>
                       )}
 
-                      {/* A F1 entrega vínculo, agenda e conflito — pagamento é
-                          a F2. Sem este aviso a tela parece completa e não é:
-                          alguém adicionaria três participantes e esperaria vê-los
-                          na medição do mês. */}
+                      {/* O que o vínculo de participante entrega. Até a F1 este
+                          rodapé avisava que participante ainda não gerava
+                          pagamento; desde a F2 ele tem bloco próprio na medição
+                          e entra no Excel de pagamento como Titular. */}
                       <div className="mt-4 flex items-start gap-2 text-[10px] text-slate-400 leading-snug">
                         <Info size={12} className="shrink-0 mt-0.5" />
                         <span>
-                          Participantes já aparecem na agenda e entram na checagem de conflito.
-                          <strong className="text-slate-500"> Ainda não geram pagamento na medição</strong> (em desenvolvimento).
+                          Participantes aparecem na agenda, entram na checagem de conflito e têm bloco próprio na medição (horas, valor e despesas).
                         </span>
                       </div>
                     </div>

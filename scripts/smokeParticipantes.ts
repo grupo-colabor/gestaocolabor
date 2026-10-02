@@ -518,11 +518,19 @@ console.log('\n[6] Guarda de fonte — integração');
     modal.includes('disabled={!selectedId}') && !/disabled=\{[^}]*hasConflict/.test(modal)
   );
 
-  // O aviso de que F1 ainda não paga.
+  // O rodapé do card. Na F1 ele avisava que participante ainda não gerava
+  // pagamento; desde a F2 o participante tem bloco próprio na medição, e o
+  // aviso de obra ficou falso. A guarda prende o texto certo E a saída do velho.
   const formInterna = ler('components/InternalDemands.tsx');
   check(
-    'card Participantes avisa que ainda não gera pagamento',
-    /Ainda não geram pagamento na medição/.test(formInterna)
+    'card Participantes diz que o participante tem bloco próprio na medição',
+    formInterna.includes(
+      'Participantes aparecem na agenda, entram na checagem de conflito e têm bloco próprio na medição (horas, valor e despesas).'
+    )
+  );
+  check(
+    'e o aviso de obra da F1 saiu',
+    !/Ainda não geram pagamento na medição/.test(formInterna) && !/\(em desenvolvimento\)/.test(formInterna)
   );
 }
 

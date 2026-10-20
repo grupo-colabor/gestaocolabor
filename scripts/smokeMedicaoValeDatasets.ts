@@ -154,7 +154,23 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     eq('sem medição -> despesas zero', de('DEM-108').input.despesas.total, 0);
 
     eq('consultor: dois titulares', de('DEM-100').input.titulares, ['Titular', 'Segundo']);
-    eq('carga = training.hours (híbrida 40, não 8)', de('DEM-102').input.cargaHoraria, 40);
+    eq('carga da LINHA = training.hours (híbrida 40, não 8 — a divisão é na saída para a planilha)', de('DEM-102').input.cargaHoraria, 40);
+    eq('modalidade do treinamento na linha (demanda diz PRESENCIAL, treinamento HIBRIDO)', [de('DEM-102').input.modalidade, de('DEM-100').input.modalidade], ['HIBRIDO', 'PRESENCIAL']);
+    eq('híbrida 40h/8h: 8 presenciais + 32 online, pelo cadastro', de('DEM-102').hibrida, { ok: true, presencial: 8, online: 32, hours: 40 });
+    eq('presencial não tem divisão', de('DEM-100').hibrida, null);
+    eq('interna não tem divisão nem modalidade de treinamento', [de('DEM-107').hibrida, de('DEM-107').input.modalidade], [null, '']);
+    {
+      const semPraticas = buildMedicaoValeRows({
+        ...src,
+        trainings: [...TRAININGS, { id: 'T_HIB0', name: 'NR 10 Básico', hours: 40, practicalHours: null, modality: 'HIBRIDO' }, { id: 'T_HIB50', name: 'NR 20 Avançado', hours: 40, practicalHours: 50, modality: 'HIBRIDO' }],
+        demands: [demandaVale({ id: 'DEM-400', trainingId: 'T_HIB0' }), demandaVale({ id: 'DEM-401', trainingId: 'T_HIB50' })],
+      });
+      const h = (id: string) => semPraticas.find(r => r.demand.id === id)!;
+      eq('híbrida SEM horas práticas: divisão inválida com motivo', [h('DEM-400').hibrida?.ok, (h('DEM-400').hibrida as any).motivo], [false, 'SEM_HORAS_PRATICAS']);
+      eq('e vira aviso do painel (a turma continua elegível)', [h('DEM-400').avisos.map(a => a.texto), h('DEM-400').elegivelTurmas], [['Treinamento híbrido sem horas práticas cadastradas'], true]);
+      eq('híbrida com práticas >= carga: inválida, nunca online negativa', (h('DEM-401').hibrida as any).motivo, 'HORAS_PRATICAS_INVALIDAS');
+      check('com o texto dizendo os números', h('DEM-401').avisos[0].texto.includes('50h de 40h'));
+    }
     eq('dias específicos: data = primeiro dia ordenado', de('DEM-102').input.dataInicio, '2026-08-20');
     eq('dias específicos: horário do primeiro dia', de('DEM-102').input.horarioInicio, '13:00');
     eq('contínuo: horário de parede do início', de('DEM-100').input.horarioInicio, '08:00');

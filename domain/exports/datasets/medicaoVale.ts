@@ -49,6 +49,8 @@ import { resolveDemandInstructors } from '../../demandInstructors';
 import { buildTrainingsById } from '../../modalityOptions';
 import { getDemandTitle, isInternalDemand } from '../../demandLabel';
 import { getDemandDays, getDayHorarioInicioRaw, getDayHorarioFimRaw, getDemandLastDay } from '../../demandDays';
+import { resolveDemandModality } from '../../modalityOptions';
+import { splitHybridHours, type HybridSplit } from '../../hybridHours';
 import { resolveCalculatedStatus, resolveCompanyLabel, statusLabel } from '../shared';
 import { DEFAULT_OPTIONS, type ExportOptions } from '../options';
 import { TITULARES_SEPARATOR, type SourceField, type TemplateRowInput } from '../templates/sourceFields';
@@ -110,6 +112,13 @@ export interface MedicaoValeRow extends FilterableRow {
    * campo não recebe o aviso.
    */
   avisos: DatasetAviso[];
+  /**
+   * Treinamento HÍBRIDO (modalidade do treinamento): a divisão presencial /
+   * online pelo cadastro (`practicalHours`), ou o motivo de ela não existir.
+   * `null` nas demais modalidades. A linha continua UMA por demanda; é na
+   * saída para a planilha (`toRowsSheetInput`) que a híbrida vira duas.
+   */
+  hibrida: HybridSplit | null;
 }
 
 export interface DatasetAviso {
@@ -180,12 +189,20 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
     if (!horarioInicio) avisos.push({ texto: 'Sem horário de início', source: 'demand.horarioInicio' });
     if (!horarioFim) avisos.push({ texto: 'Sem horário de término', source: 'demand.horarioFim' });
 
+    // Modalidade do TREINAMENTO (a da demanda só quando ele não a tem).
+    const modalidade = interna ? '' : resolveDemandModality(demand, trainingsById);
+    // Híbrida: a divisão pelo cadastro. Inválida = aviso (a turma sai, com a
+    // carga em branco nas duas linhas — ver toRowsSheetInput).
+    const hibrida = !interna && modalidade === 'HIBRIDO' ? splitHybridHours(training) : null;
+    if (hibrida && hibrida.ok === false) avisos.push({ texto: hibrida.texto });
+
     const input: TemplateRowInput = {
       demandId: demand.id,
       clientDemandId: (demand.clientDemandId ?? '').trim(),
       companyName: resolveCompanyLabel(demand, src.companies),
       trainingId: String(demand.trainingId ?? ''),
       trainingName: getDemandTitle(demand, src.trainings as any, '—'),
+      modalidade,
       cargaHoraria,
       local: (demand.trainingLocal ?? '').trim(),
       corredor: demand.corredor ?? '',
@@ -227,6 +244,7 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
       bloqueios,
       elegivelTurmas: bloqueios.length === 0,
       avisos,
+      hibrida,
     });
   }
 

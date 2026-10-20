@@ -30,6 +30,7 @@ import {
   computeIdleCoverage,
 } from '../domain/instructorAvailability';
 import { computeInstructorHours, InstructorHoursEntry } from '../domain/instructorHours';
+import { practicalHoursOf } from '../domain/hybridHours';
 import { buildModalityOptions, buildTrainingsById, matchesModality } from '../domain/modalityOptions';
 import { buildVolumeComparison, computeVolume, rankVolumeByPeriod, rankVolumeRows, volumeByKey, volumeCell, volumeRowsFromInstructorHours, volumeValue, type VolumeMetric } from '../domain/dashboardVolume';
 import { MetricToggle, metricLabel } from './dashboard/MetricToggle';
@@ -794,7 +795,7 @@ const pendingLogisticsDemands = useMemo(() => {
       if (d.status === 'CANCELADA') return false;
       if (getDemandModality(d) !== 'HIBRIDO') return false;
       const training = trainings.find(t => t.id === d.trainingId);
-      return !(training?.practicalHours != null && training.practicalHours > 0);
+      return practicalHoursOf(training) === null;
     });
   }, [filteredDemands, trainings]);
 

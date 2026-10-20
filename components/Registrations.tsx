@@ -2239,8 +2239,10 @@ const handleRemoveBaseItem = async (item: string) => {
                       />
                       <p className="text-[11px] text-gray-400 mt-1 leading-snug">
                         Só a parte presencial é ministrada por instrutor — o restante é EAD, sem instrutor.
-                        Usado no cálculo de "Horas Concluídas" do Dashboard em vez da carga horária total.
-                        Deixe em branco para usar a carga horária total ({trainingFormData.hours || 0}h).
+                        Usado em "Horas Concluídas" do Dashboard e na Medição Vale / BM, onde a turma híbrida sai em duas linhas:
+                        presencial com estas horas e online com o restante ({trainingFormData.hours || 0}h − práticas).
+                        Em branco, o Dashboard usa a carga total e a Medição Vale deixa a carga em branco até o cadastro.
+                        Mudar este valor muda a divisão de toda medição da Vale gerada de novo, inclusive de meses fechados.
                       </p>
                     </div>
                   )}

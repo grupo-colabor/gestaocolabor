@@ -43,6 +43,9 @@ export const isEAD = (m?: string | null): boolean => {
  * Existe porque a medição de híbrida NÃO pode herdar a carga cheia do
  * treinamento como default de horas: o split presencial/online varia por
  * demanda (8+32, 16+24...) e só quem mede sabe as horas presenciais realizadas.
+ * Isso vale para o PAGAMENTO do instrutor. A Medição Vale e o BM dividem a
+ * híbrida pelo CADASTRO (`practicalHours`, domain/hybridHours.ts), porque o
+ * cliente paga a carga contratada — são duas políticas sobre o mesmo campo.
  */
 export const isHybridModality = (m?: string | null): boolean =>
   // A MESMA normalização do resto do app (acento, caixa, hífen/espaço e o

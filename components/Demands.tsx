@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { requiresLogistics } from '../domain/modalityRules';
+import { practicalHoursOf } from '../domain/hybridHours';
 import { isValeCompanyName, localObrigatorio, motivoLocalInvalido } from '../domain/demandLocalRules';
 import { buildModalityOptions, buildTrainingsById, matchesModality } from '../domain/modalityOptions';
 import { createPortal } from 'react-dom';
@@ -3059,12 +3060,13 @@ const companionInstructorIds = useMemo(() => {
                                 const isHibrido = formDemand.modality === 'HIBRIDO' || formDemand.modality === 'HÍBRIDA' || formDemand.modality === 'HÍBRIDO';
                                 if (!isHibrido || !formDemand.trainingId) return null;
                                 const t = trainings.find(t => t.id === formDemand.trainingId);
-                                if (!t || (t.practicalHours != null && t.practicalHours > 0)) return null;
+                                if (!t || practicalHoursOf(t) !== null) return null;
                                 return (
                                   <div className="md:col-span-2 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2 text-amber-800">
                                     <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-500" />
                                     <p className="text-xs leading-relaxed">
-                                      Este treinamento é híbrido sem horas práticas cadastradas — as horas ministradas serão calculadas pela carga total ({t.hours}h).
+                                      Este treinamento é híbrido sem horas práticas cadastradas — o Dashboard conta as horas ministradas pela carga total ({t.hours}h),
+                                      e na Medição Vale a turma sai com a carga em branco (presencial e online) até o cadastro ser preenchido.
                                       Cadastre em <strong>Cadastros → Treinamentos</strong>.
                                     </p>
                                   </div>

@@ -567,6 +567,12 @@ export function aggregatePanelExpenseBreakdown(
  * (domain/paymentRows.ts, `applyHybridBlankHours`). O rateio em si continua
  * igual, porque o DASHBOARD trabalha com ele — ver `computeMeasurementTotals`.
  *
+ * A MEDIÇÃO VALE E O BM SÃO OUTRA COISA (20/10/2026): lá a híbrida sai em
+ * duas linhas, presencial e online, divididas pelo CADASTRO do treinamento
+ * (`practicalHours` / `hours − practicalHours`, domain/hybridHours.ts),
+ * porque a Vale cobra pela carga contratada, não pelas horas realizadas. O
+ * pagamento do instrutor continua seguindo a medição, como esta tabela diz.
+ *
  * O painel PRECISA mostrar um número: uma medição de titular sem horas digitadas
  * exibindo "R$ 0,00" é a v1 quebrada — lá o valor sempre foi
  * `classHours × hourRate`, e classHours abre preenchido com a carga da demanda.

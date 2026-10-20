@@ -33,6 +33,7 @@
 import { getDemandDays } from './demandDays';
 import { calculateDemandStatus } from './demandStatus';
 import { canonicalModality, MODALITY_UNSET } from './modalityOptions';
+import { practicalHoursOf } from './hybridHours';
 import type { Demand, InstructorAllocation, Training, Measurement } from '../types';
 
 export interface ComputeInstructorHoursInput {
@@ -145,8 +146,11 @@ function effectiveDemandHours(
   const training = trainingsById.get(String(demand.trainingId));
 
   if (resolveModality(demand, training) === 'HIBRIDO') {
-    const practical = training?.practicalHours;
-    if (typeof practical === 'number' && Number.isFinite(practical) && practical > 0) return practical;
+    // O MESMO predicado da Medição Vale (domain/hybridHours.ts). A política
+    // daqui é outra: sem horas práticas, a carga total — o rateio precisa de
+    // um número e a medição é quem corrige. A Vale não tem esse fallback.
+    const practical = practicalHoursOf(training);
+    if (practical !== null) return practical;
   }
 
   return training?.hours || 0;

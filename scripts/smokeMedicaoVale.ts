@@ -160,6 +160,50 @@ console.log('\n[T] Resolvedor de template');
   lancou = false;
   try { resolveColumns({ ...sheet, columns: [sheet.columns![0], sheet.columns![0]] }); } catch { lancou = true; }
   check('chave repetida é erro', lancou);
+
+  // ── Híbrida dividida: parte da linha, chave por parte, zero na online, anexo por turma ──
+  const hibSheet: TemplateSheet = {
+    ...sheet,
+    columns: [
+      sheet.columns![0],
+      sheet.columns![1],
+      { ...sheet.columns![2], hybridKeys: { presencial: 'pPres', online: 'pOnl' } },
+      sheet.columns![3],
+      { key: 'desp', header: 'D', source: 'expenses.locomocao', format: 'currency', hybridOnline: 'zero' },
+      { key: 'comb', header: 'C', source: 'manual', persistScope: 'demand', defaultValue: 0, format: 'currency', editable: true, hybridOnline: 'zero' },
+    ],
+  };
+  const pHib = hibSheet.columns![2];
+  const hibValues = indexTemplateValues([
+    { scope: 'training', column_key: 'p', training_id: 'T_HIB', demand_id: null, value: 100 },       // preço único antigo
+    { scope: 'training', column_key: 'pPres', training_id: 'T_HIB', demand_id: null, value: 290 },
+    { scope: 'training', column_key: 'pOnl', training_id: 'T_HIB', demand_id: null, value: 200 },
+    { scope: 'demand', column_key: 'pOnl', training_id: null, demand_id: 'DEM-H2', value: 180 },
+    { scope: 'demand', column_key: 'comb', training_id: null, demand_id: 'DEM-H1', value: 45 },
+  ]);
+  const refsH = (demandId: string, parte?: any) => ({ demandId, trainingId: 'T_HIB', parte });
+  eq('parte presencial lê a chave presencial do treinamento', resolveManualValue(pHib, refsH('DEM-H1', 'PRESENCIAL'), hibValues), { value: 290, fonte: 'treinamento' });
+  eq('parte online lê a chave online', resolveManualValue(pHib, refsH('DEM-H1', 'ONLINE'), hibValues), { value: 200, fonte: 'treinamento' });
+  eq('sobrescrita na turma vale por parte (online da DEM-H2)', resolveManualValue(pHib, refsH('DEM-H2', 'ONLINE'), hibValues), { value: 180, fonte: 'demanda' });
+  eq('e não vaza para a outra parte', resolveManualValue(pHib, refsH('DEM-H2', 'PRESENCIAL'), hibValues), { value: 290, fonte: 'treinamento' });
+  eq('sem parte, a coluna continua lendo a chave de sempre (preço único)', resolveManualValue(pHib, refsH('DEM-H1'), hibValues), { value: 100, fonte: 'treinamento' });
+  eq('o preço único NUNCA é usado por uma parte', resolveManualValue(pHib, { demandId: 'DEM-H3', trainingId: 'T_SO_UNICO', parte: 'PRESENCIAL' }, indexTemplateValues([{ scope: 'training', column_key: 'p', training_id: 'T_SO_UNICO', demand_id: null, value: 100 }])), { value: null, fonte: 'vazio' });
+  eq('combustível digitado sai na presencial e vale 0 na online', [resolveManualValue(hibSheet.columns![5], refsH('DEM-H1', 'PRESENCIAL'), hibValues).value, resolveManualValue(hibSheet.columns![5], refsH('DEM-H1', 'ONLINE'), hibValues).value], [45, 0]);
+
+  const rH = resolveRowsSheet(hibSheet, [
+    { input: linha({ demandId: 'DEM-H0' }), refs: refsH('DEM-H0') },
+    { input: linha({ demandId: 'DEM-H1', cargaHoraria: 8 }), refs: refsH('DEM-H1', 'PRESENCIAL') },
+    { input: linha({ demandId: 'DEM-H1', cargaHoraria: 32, despesas: { locomocao: 0, alimentacao: 0, hospedagem: 0, outros: 0, total: 0 } }), refs: refsH('DEM-H1', 'ONLINE') },
+    { input: linha({ demandId: 'DEM-H2' }), refs: refsH('DEM-H2') },
+  ], hibValues);
+  eq('anexo por TURMA: as duas partes repetem o número e a seguinte não pula', rH.rows.map(r => r[0].value), [1, 2, 2, 3]);
+  eq('carga por parte e fórmula por linha', rH.rows.map(r => `${r[1].value}:${r[3].formula}`), ['16:B2*C2', '8:B3*C3', '32:B4*C4', '16:B5*C5']);
+  eq('preço por parte na célula', rH.rows.map(r => r[2].value), [100, 290, 200, 100]);
+  eq('despesa do app: 80 na presencial, 0 na online', [rH.rows[1][4].value, rH.rows[2][4].value], [80, 0]);
+  eq('totais somam as duas partes (8 + 32 entram na carga)', rH.totalsRow![1]!.formula, 'SUM(B2:B5)');
+  eq('sem híbrida, a sequência continua 1..n', resolveRowsSheet(sheet, [
+    { input: linha({ demandId: 'A' }), refs: refs('A') }, { input: linha({ demandId: 'B' }), refs: refs('B') },
+  ], values).rows.map(r => r[0].value), [1, 2]);
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -194,6 +238,10 @@ console.log('\n[V] Template Vale');
   check('template casa Vale por nome, como o formulário', VALE_TEMPLATE.company.nameIncludes === 'VALE');
   check('id do template é o template_id da 017', VALE_TEMPLATE.id === 'vale-v1');
   check('colunas manuais declaram persistScope', VALE_TURMAS_COLUMNS.filter(c => c.source === 'manual').every(c => !!c.persistScope));
+  check('a Vale divide a híbrida em duas linhas', VALE_TEMPLATE.hybridSplit === true);
+  eq('preço HH com uma chave por parte', VALE_TURMAS_COLUMNS.find(c => c.key === 'precoHH')!.hybridKeys, { presencial: 'precoHHPresencial', online: 'precoHHOnline' });
+  eq('as cinco despesas (inclusive o combustível manual) zeram na online', VALE_TURMAS_COLUMNS.filter(c => c.hybridOnline === 'zero').map(c => c.key), ['locacao', 'combustivel', 'alimentacao', 'hospedagem', 'outros']);
+  check('carga em branco sai amarela', VALE_TURMAS_COLUMNS.find(c => c.key === 'cargaHoraria')!.highlightWhenEmpty === true);
   const abas = resolveTemplate(VALE_TEMPLATE, [], emptyTemplateValuesIndex());
   eq('resolveTemplate devolve as duas abas na ordem', abas.map(a => `${a.name}:${a.kind}`), ['Turmas Realizadas:rows', 'Plantas:static']);
 }

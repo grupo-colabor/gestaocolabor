@@ -97,6 +97,12 @@ export type TemplateColumnSource =
 
 export type TemplatePersistScope = 'training' | 'demand';
 
+/**
+ * Parte de uma turma HÍBRIDA quando o template a divide em duas linhas
+ * (`MeasurementTemplate.hybridSplit`): presencial e online.
+ */
+export type HybridPart = 'PRESENCIAL' | 'ONLINE';
+
 export interface TemplateColumn {
   /** Estável: é o column_key da persistência e o id no mapeamento. */
   key: string;
@@ -136,6 +142,19 @@ export interface TemplateColumn {
   highlightWhenEmpty?: boolean;
   /** Largura sugerida quando NÃO há arquivo-base (com base, a largura vem do arquivo). */
   width?: number;
+  /**
+   * Só com `hybridSplit` no template e `source: 'manual'`: a chave de
+   * persistência (column_key) que a coluna usa em CADA parte da híbrida —
+   * o preço HH presencial não é o preço HH online. Linha que não é híbrida
+   * continua usando `key`. Mesmos escopos (treinamento / sobrescrita na turma).
+   */
+  hybridKeys?: { presencial: string; online: string };
+  /**
+   * Só com `hybridSplit`: na parte ONLINE a célula vale 0 — as despesas da
+   * turma saem UMA vez, na linha presencial. Vale para coluna do app e para
+   * coluna manual (combustível).
+   */
+  hybridOnline?: 'zero';
 }
 
 export interface TemplateTotals {
@@ -284,6 +303,15 @@ export interface MeasurementTemplate {
   /** Só com `baseFileFrom: 'storage'`. */
   baseFileBucket?: string;
   fileNameBase: string;
+  /**
+   * Turma de treinamento HÍBRIDO sai em DUAS linhas — presencial e online —
+   * com a carga dividida pelo cadastro do treinamento (domain/hybridHours.ts),
+   * preço HH próprio por parte (`TemplateColumn.hybridKeys`) e despesas só na
+   * presencial (`hybridOnline: 'zero'`). O dataset continua uma linha por
+   * demanda; a divisão é na saída para a planilha (`toRowsSheetInput`).
+   * Ausente/false = uma linha por demanda, como os modelos do banco.
+   */
+  hybridSplit?: boolean;
   /** Texto fixo que a aba mostra (diferenças de regra, ex.: período por data de início). */
   notes?: string[];
   /**

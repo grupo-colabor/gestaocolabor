@@ -65,9 +65,11 @@ export async function runWriterChecks(t: ValeSmokeTools, ctx: { src: any; rows: 
   if (!fs.existsSync(basePath)) return falhas;
   const base = fs.readFileSync(basePath);
 
-  const linhas = toRowsSheetInput(ctx.rows);
+  // Com o template da Vale a híbrida DEM-102 (40h/8h) vira duas linhas: 5 ao todo.
+  const linhas = toRowsSheetInput(ctx.rows, VALE_TEMPLATE);
   const sheets = resolveTemplate(VALE_TEMPLATE, linhas, ctx.src.templateValues);
   const n = linhas.length;
+  eq('5 linhas: 4 turmas, a híbrida em duas', n, 5);
   const buffer = await buildTemplateXlsxBuffer(VALE_TEMPLATE, sheets, base);
 
   const ExcelJS = (await import('exceljs')) as any;
@@ -86,8 +88,8 @@ export async function runWriterChecks(t: ValeSmokeTools, ctx: { src: any; rows: 
     sheets[0].kind === 'rows' ? sheets[0].columns.map(c => c.header) : ['?']);
   check('cabeçalho mantém o fill de tema do modelo', !!cell('A1').fill && cell('A1').fill.pattern === 'solid');
   check('as colunas novas (E..H) têm o mesmo fill de cabeçalho', ['E1', 'F1', 'G1', 'H1'].every(a => cell(a).fill?.pattern === 'solid'));
-  eq(`${n} turmas nas linhas 2..${n + 1}`, ws.getRow(n + 1).getCell(1).value, n);
-  eq('A é sequência 1..n', Array.from({ length: n }, (_, i) => ws.getRow(2 + i).getCell(1).value), Array.from({ length: n }, (_, i) => i + 1));
+  eq(`${n} linhas (2..${n + 1}); a última turma é a 4ª`, ws.getRow(n + 1).getCell(1).value, 4);
+  eq('A é o Nº do anexo POR TURMA: a híbrida repete o 3 e a seguinte é 4', Array.from({ length: n }, (_, i) => ws.getRow(2 + i).getCell(1).value), [1, 2, 3, 3, 4]);
   eq('K2 = I2*J2', texto(cell('K2').value), '=I2*J2');
   eq('R2 = SUM(L2:P2)+(SUM(L2:P2)*Q2)', texto(cell('R2').value), '=SUM(L2:P2)+(SUM(L2:P2)*Q2)');
   eq(`K${n + 1} na última turma`, texto(cell(`K${n + 1}`).value), `=I${n + 1}*J${n + 1}`);
@@ -124,12 +126,17 @@ export async function runWriterChecks(t: ValeSmokeTools, ctx: { src: any; rows: 
   eq('B3 vazia e amarela', [cell('B3').value ?? null, cell('B3').fill?.fgColor?.argb], [null, 'FFFFFF00']);
   eq('J3 = preço sobrescrito na demanda', cell('J3').value, 150);
   check('J3 não é amarela (tem valor)', cell('J3').fill?.fgColor?.argb !== 'FFFFFF00');
-  // Terceira (DEM-102, híbrida, dias específicos, treinamento sem preço): J amarela, vazia.
-  eq('J4 vazia e amarela', [cell('J4').value ?? null, cell('J4').fill?.fgColor?.argb], [null, 'FFFFFF00']);
-  eq('I4 = 40 (carga do treinamento, híbrida)', cell('I4').value, 40);
+  // Terceira turma (DEM-102, híbrida 40h/8h, dias específicos, treinamento sem preço): linhas 4 e 5.
+  eq('C4/C5 = Treinamento com o sufixo da parte', [cell('C4').value, cell('C5').value], ['NR 20 Intermediário – Presencial', 'NR 20 Intermediário – Online']);
+  eq('I4/I5 = 8 presenciais e 32 online (cadastro: 40h, 8 práticas)', [cell('I4').value, cell('I5').value], [8, 32]);
+  eq('J4 e J5 vazias e amarelas (sem preço presencial nem online)', ['J4', 'J5'].map(a => [cell(a).value ?? null, cell(a).fill?.fgColor?.argb]), [[null, 'FFFFFF00'], [null, 'FFFFFF00']]);
+  eq('K4/K5 = valor total da própria linha', [texto(cell('K4').value), texto(cell('K5').value)], ['=I4*J4', '=I5*J5']);
+  eq('despesas da online zeradas (L5..P5)', ['L', 'M', 'N', 'O', 'P'].map(l => cell(`${l}5`).value), [0, 0, 0, 0, 0]);
   eq('F4 = último dia específico (22/08), G4/H4 = horários do primeiro e do último dia',
     [(cell('F4').value as Date).toISOString().slice(0, 10), cell('G4').value, cell('H4').value], ['2026-08-22', '13:00', '18:00']);
+  eq('a linha online repete ID, datas, horários e consultor', ['B', 'E', 'F', 'G', 'H', 'S'].map(l => String(cell(`${l}4`).value) === String(cell(`${l}5`).value)), [true, true, true, true, true, true]);
   check('G4/H4 com horário não são amarelas', cell('G4').fill?.fgColor?.argb !== 'FFFFFF00' && cell('H4').fill?.fgColor?.argb !== 'FFFFFF00');
+  eq('quarta turma (DEM-108) na linha 6 com anexo 4', [cell('B6').value, cell('A6').value], ['SAP-108', 4]);
 
   // Plantas: igual ao snapshot, célula a célula.
   const plantas = wb.getWorksheet('Plantas');

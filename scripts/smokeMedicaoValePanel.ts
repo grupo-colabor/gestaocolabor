@@ -6,6 +6,7 @@ import { VALE_TEMPLATE } from '../domain/exports/templates/vale';
 import { buildTable, defaultColumnKeys } from '../domain/exports/buildRows';
 import { applyFilters } from '../domain/exports/filters';
 import { EMPTY_FILTERS } from '../domain/exports/types';
+import { indexTemplateValues } from '../domain/exports/templates/values';
 import { buildTrainingsById } from '../domain/modalityOptions';
 import type { ValeSmokeTools } from './smokeMedicaoValeDatasets';
 import { TRAININGS, HOJE } from './smokeMedicaoValeDatasets';
@@ -32,6 +33,7 @@ export function runPanelChecks(t: ValeSmokeTools, ctx: { src: any; rows: any[] }
   ];
   const pend = buildPendencias(rowsComRepetido, {
     sheet: VALE_TEMPLATE.sheets[0],
+    template: VALE_TEMPLATE,
     templateValues: ctx.src.templateValues,
     logisticAllocations,
     logisticBlocks,
@@ -48,8 +50,22 @@ export function runPanelChecks(t: ValeSmokeTools, ctx: { src: any; rows: any[] }
     textos('DEM-100'), ['aviso:Item não reembolsável fora das colunas da Vale (R$ 30,00)', 'aviso:ID SAP repetido em outra demanda do recorte (SAP-100)']);
   eq('DEM-101: sem ID SAP + medição não pronta (avisos, linha sai)',
     textos('DEM-101'), ['aviso:Sem ID SAP / Pedido Cliente (célula B em branco)', 'aviso:Medição não pronta (Em lançamento de despesas)']);
-  eq('DEM-102: sem HH (treinamento sem preço) + medição não iniciada + viagem sem despesa (inferência)',
-    textos('DEM-102'), ['aviso:Sem preço unitário HH (célula J em branco)', 'aviso:Medição não iniciada', 'aviso:Logística indica viagem, mas não há despesa lançada (inferência)']);
+  eq('DEM-102 (híbrida): sem preço presencial E sem preço online + medição não iniciada + viagem sem despesa (inferência)',
+    textos('DEM-102'), ['aviso:Sem preço HH presencial (célula J em branco)', 'aviso:Sem preço HH online (célula J em branco)', 'aviso:Medição não iniciada', 'aviso:Logística indica viagem, mas não há despesa lançada (inferência)']);
+  {
+    // Só um dos dois preços, e o preço único antigo gravado na híbrida.
+    const valores = indexTemplateValues([
+      { scope: 'training', column_key: 'precoHH', training_id: 'T_HIB', demand_id: null, value: 250 },
+      { scope: 'training', column_key: 'precoHHPresencial', training_id: 'T_HIB', demand_id: null, value: 290 },
+    ]);
+    const soPres = buildPendencias([ctx.rows.find((r: any) => r.demand.id === 'DEM-102')], { sheet: VALE_TEMPLATE.sheets[0], template: VALE_TEMPLATE, templateValues: valores, logisticAllocations: [], logisticBlocks: [] });
+    const ts = soPres[0].pendencias.map(p => p.texto);
+    check('com só o presencial: falta o online', ts.includes('Sem preço HH online (célula J em branco)') && !ts.includes('Sem preço HH presencial (célula J em branco)'));
+    check('e o preço único antigo fica visível, nunca usado', ts.includes('Preço único antigo do treinamento (R$ 250,00) não vale para híbrida — informe o presencial e o online'));
+    // Sem o flag do template (modelo do banco), o preço único continua sendo o preço.
+    const semFlag = buildPendencias([ctx.rows.find((r: any) => r.demand.id === 'DEM-102')], { sheet: VALE_TEMPLATE.sheets[0], templateValues: valores, logisticAllocations: [], logisticBlocks: [] });
+    check('sem hybridSplit no contexto: um preço só, e ele está preenchido', !semFlag[0]?.pendencias.some(p => /preço/.test(p.texto)));
+  }
   eq('DEM-103: futura = fato + sem medição aberta', textos('DEM-103'), ['fato:Demanda não concluída (Alocada)', 'aviso:Sem medição aberta']);
   eq('DEM-104: cancelada = fato', textos('DEM-104')[0], 'fato:Demanda cancelada');
   eq('DEM-105: sem titular = fato', textos('DEM-105')[0], 'fato:Sem instrutor titular');

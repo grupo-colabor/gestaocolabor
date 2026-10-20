@@ -197,7 +197,7 @@ const MedicaoTemplateView: React.FC<{
     return mergePendencias(base, extras);
   }, [filtered, sheetTurmas, values, carga, bm, comecaramAntes]);
 
-  const previa = useMemo(() => (isBm ? null : resolveRowsSheet(sheetTurmas, toRowsSheetInput(elegiveis), values)), [isBm, sheetTurmas, elegiveis, values]);
+  const previa = useMemo(() => (isBm ? null : resolveRowsSheet(sheetTurmas, toRowsSheetInput(elegiveis, turmasTemplate), values)), [isBm, sheetTurmas, turmasTemplate, elegiveis, values]);
 
   const temPendente = pendentes.size > 0;
   const podeGerar = !temPendente && !salvando && !gerando && !erro && (isBm ? !!bm && bm.minas.length > 0 : elegiveis.length > 0);
@@ -298,7 +298,7 @@ const MedicaoTemplateView: React.FC<{
         }
         return;
       }
-      const sheets = resolveTemplate(template, toRowsSheetInput(elegiveis), values);
+      const sheets = resolveTemplate(template, toRowsSheetInput(elegiveis, turmasTemplate), values);
       const nome = buildExportFileName(template.fileNameBase, 'xlsx');
       await downloadTemplateXlsx(template, sheets, nome, baseFileLoader);
       onNotify(`${nome} gerado com ${elegiveis.length} turma(s).`, 'success');

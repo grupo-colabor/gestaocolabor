@@ -41,7 +41,8 @@ export const VALE_TURMAS_COLUMNS: TemplateColumn[] = [
   { key: 'dataFim', header: 'Data fim', source: 'demand.dataFim', format: 'date' },
   { key: 'horarioInicio', header: 'Horário início', source: 'demand.horarioInicio', format: 'time', highlightWhenEmpty: true },
   { key: 'horarioFim', header: 'Horário fim', source: 'demand.horarioFim', format: 'time', highlightWhenEmpty: true },
-  { key: 'cargaHoraria', header: 'Carga horária', source: 'demand.cargaHoraria', format: 'hours' },
+  // Carga em branco (híbrida sem horas práticas válidas) sai amarela, com aviso.
+  { key: 'cargaHoraria', header: 'Carga horária', source: 'demand.cargaHoraria', format: 'hours', highlightWhenEmpty: true },
   {
     key: 'precoHH',
     header: 'Preço unitário HH',
@@ -51,6 +52,10 @@ export const VALE_TURMAS_COLUMNS: TemplateColumn[] = [
     persistScope: 'training',
     overrideScope: 'demand',
     highlightWhenEmpty: true,
+    // Híbrida: um preço por parte, nas mesmas chaves de persistência de
+    // sempre (treinamento / sobrescrita na turma). O `precoHH` único de um
+    // treinamento híbrido NÃO vale para as partes — ver pendencias.ts.
+    hybridKeys: { presencial: 'precoHHPresencial', online: 'precoHHOnline' },
   },
   {
     key: 'valorTotal',
@@ -59,7 +64,8 @@ export const VALE_TURMAS_COLUMNS: TemplateColumn[] = [
     formula: '={col:cargaHoraria}{row}*{col:precoHH}{row}',
     format: CURRENCY,
   },
-  { key: 'locacao', header: 'Despesa reembolsável (locação veículo/táxi)', source: 'expenses.locomocao', format: CURRENCY },
+  // Despesas: na híbrida saem UMA vez, na linha presencial (`hybridOnline`).
+  { key: 'locacao', header: 'Despesa reembolsável (locação veículo/táxi)', source: 'expenses.locomocao', format: CURRENCY, hybridOnline: 'zero' },
   {
     key: 'combustivel',
     header: 'Despesa reembolsável (combustível)',
@@ -68,10 +74,11 @@ export const VALE_TURMAS_COLUMNS: TemplateColumn[] = [
     defaultValue: 0,
     editable: true,
     persistScope: 'demand',
+    hybridOnline: 'zero',
   },
-  { key: 'alimentacao', header: 'Despesa reembolsável (alimentação)', source: 'expenses.alimentacao', format: CURRENCY },
-  { key: 'hospedagem', header: 'Despesa reembolsável (hospedagem)', source: 'expenses.hospedagem', format: CURRENCY },
-  { key: 'outros', header: 'Despesa reembolsável (outros)', source: 'expenses.outros', format: CURRENCY },
+  { key: 'alimentacao', header: 'Despesa reembolsável (alimentação)', source: 'expenses.alimentacao', format: CURRENCY, hybridOnline: 'zero' },
+  { key: 'hospedagem', header: 'Despesa reembolsável (hospedagem)', source: 'expenses.hospedagem', format: CURRENCY, hybridOnline: 'zero' },
+  { key: 'outros', header: 'Despesa reembolsável (outros)', source: 'expenses.outros', format: CURRENCY, hybridOnline: 'zero' },
   {
     key: 'pctDespesa',
     header: '% despesa reembolsável',
@@ -108,10 +115,12 @@ export const VALE_TEMPLATE: MeasurementTemplate = {
   company: { nameIncludes: 'VALE' },
   baseFile: '/templates/vale.xlsx',
   fileNameBase: 'medicao_vale',
+  hybridSplit: true,
   notes: [
     'A turma entra na medição do período em que TERMINA, mesmo que tenha começado antes — diferente do dataset Medições, que usa interseção. Como cada turma tem uma só data de fim, ela nunca aparece em duas medições.',
     'Itens marcados como não reembolsáveis na medição ficam fora das colunas de despesa.',
     'O preço unitário HH é lembrado por treinamento e pode ser sobrescrito na turma.',
+    'Treinamento híbrido sai em duas linhas — presencial e online — com a carga dividida pelo cadastro do treinamento (horas práticas) e um preço HH para cada parte; as despesas saem só na linha presencial.',
   ],
   sheets: [
     {

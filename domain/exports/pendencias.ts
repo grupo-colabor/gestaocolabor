@@ -33,9 +33,9 @@
 import type { MedicaoValeRow } from './datasets/medicaoVale';
 import { columnLetter, resolveManualValue } from './templates/resolve';
 import { SOURCE_FIELDS, isSourceField } from './templates/sourceFields';
-import type { MeasurementTemplate, TemplateColumn, TemplateSheet } from './templates/types';
+import type { HybridPart, MeasurementTemplate, TemplateColumn, TemplateSheet } from './templates/types';
 import { validarTemplate, type ValidacaoDeModelo } from './templates/validate';
-import type { TemplateValuesIndex } from './templates/values';
+import { getTemplateValue, type TemplateValuesIndex } from './templates/values';
 import type { ColumnDef, DatasetDef, FilterableRow } from './types';
 import { statusLabel, toBrDate } from './shared';
 import { MEDICAO_STATUS_OPTIONS } from './filters';
@@ -165,8 +165,17 @@ const NOMES_HISTORICOS = {
   /** No aviso de repetição, onde o texto de hoje é mais curto. */
   idClienteCurto: 'ID SAP',
   valorManual: 'preço unitário HH',
+  /** Híbrida dividida (20/10/2026): um aviso por parte. */
+  valorManualPresencial: 'preço HH presencial',
+  valorManualOnline: 'preço HH online',
   colunas: 'da Vale',
 } as const;
+
+/** "R$ 290,00" — para citar o preço único antigo no aviso. */
+const moeda = (v: unknown): string => {
+  const n = Number(v);
+  return Number.isFinite(n) ? `R$ ${n.toFixed(2).replace('.', ',')}` : String(v);
+};
 
 /** A letra da coluna na ordem atual do template ('A', 'B', … 'AA'). */
 function letraDaColuna(sheet: TemplateSheet, key: string): string | null {
@@ -270,6 +279,24 @@ export function buildPendencias(rows: MedicaoValeRow[], ctx: PendenciasContext):
 
     if (on('semValorManual')) {
       for (const col of manuaisObrigatorias) {
+        // Híbrida dividida: um preço por parte, cada um com o seu aviso.
+        if (col.hybridKeys && r.hibrida && ctx.template?.hybridSplit) {
+          const partes: { parte: HybridPart; nome: string }[] = [
+            { parte: 'PRESENCIAL', nome: NOMES_HISTORICOS.valorManualPresencial },
+            { parte: 'ONLINE', nome: NOMES_HISTORICOS.valorManualOnline },
+          ];
+          for (const { parte, nome } of partes) {
+            const valor = resolveManualValue(col, { ...r.refs, parte }, ctx.templateValues);
+            if (valor.fonte === 'vazio') p.push({ tipo: 'aviso', texto: `Sem ${nome}${sufixoCelula(ctx.sheet, col.key)}` });
+          }
+          // O preço único gravado antes de a híbrida ter duas chaves NÃO vale
+          // para as partes: fica visível, nunca usado em silêncio.
+          const unico = r.refs.trainingId ? getTemplateValue(ctx.templateValues, 'training', r.refs.trainingId, col.key) : undefined;
+          if (unico !== undefined && unico !== null && unico !== '') {
+            p.push({ tipo: 'aviso', texto: `Preço único antigo do treinamento (${moeda(unico)}) não vale para híbrida — informe o presencial e o online` });
+          }
+          continue;
+        }
         const valor = resolveManualValue(col, r.refs, ctx.templateValues);
         if (valor.fonte !== 'vazio') continue;
         const nome = nomeDaColuna(ctx, col, NOMES_HISTORICOS.valorManual);

@@ -55,7 +55,7 @@ import { resolveCalculatedStatus, resolveCompanyLabel, statusLabel } from '../sh
 import { DEFAULT_OPTIONS, type ExportOptions } from '../options';
 import { TITULARES_SEPARATOR, type SourceField, type TemplateRowInput } from '../templates/sourceFields';
 import type { ManualRefs, RowsSheetInput } from '../templates/resolve';
-import type { MeasurementTemplate, TemplateCompanyMatch } from '../templates/types';
+import type { HybridPart, MeasurementTemplate, TemplateCompanyMatch } from '../templates/types';
 import type { TemplateValuesIndex } from '../templates/values';
 import type { FilterableRow } from '../types';
 
@@ -285,9 +285,53 @@ export function avisoTurmaComecouAntes(row: MedicaoValeRow): string {
   return `Começou em ${diaMes(row.input.dataInicio)}, antes do início do período — entra nesta medição porque termina em ${diaMes(row.ultimoDia)}`;
 }
 
-/** As linhas que entram na aba de turmas, no formato do resolvedor. */
-export function toRowsSheetInput(rows: MedicaoValeRow[]): RowsSheetInput[] {
-  return rows.filter(r => r.elegivelTurmas).map(r => ({ input: r.input, refs: r.refs }));
+/** Sufixo da coluna Treinamento em cada parte da híbrida (travessão, como a Vale lê). */
+export const HYBRID_SUFFIX: Record<HybridPart, string> = {
+  PRESENCIAL: ' – Presencial',
+  ONLINE: ' – Online',
+};
+
+const DESPESAS_ZERO: TemplateRowInput['despesas'] = { locomocao: 0, alimentacao: 0, hospedagem: 0, outros: 0, total: 0 };
+
+/**
+ * As linhas que entram na aba de turmas, no formato do resolvedor.
+ *
+ * Com `template.hybridSplit`, a turma de treinamento HÍBRIDO vira DUAS linhas
+ * adjacentes — presencial e depois online — com:
+ *   • Treinamento com o sufixo da parte;
+ *   • carga = horas práticas / carga − práticas (domain/hybridHours.ts); com a
+ *     divisão inválida as duas saem em branco (amarelas), e o aviso já está
+ *     na linha do dataset;
+ *   • despesas só na presencial (a online nasce zerada — e o template zera
+ *     também o combustível, que é manual);
+ *   • `refs.parte`, que escolhe o preço HH da parte e o zero das despesas.
+ * Tudo o mais (anexo, ID, datas, horários, consultor, observação) repete.
+ * Sem o flag (modelos do banco), uma linha por demanda, como sempre.
+ */
+export function toRowsSheetInput(
+  rows: MedicaoValeRow[],
+  template?: Pick<MeasurementTemplate, 'hybridSplit'>
+): RowsSheetInput[] {
+  const divide = template?.hybridSplit === true;
+  const out: RowsSheetInput[] = [];
+  for (const r of rows) {
+    if (!r.elegivelTurmas) continue;
+    if (!divide || !r.hibrida) {
+      out.push({ input: r.input, refs: r.refs });
+      continue;
+    }
+    const h = r.hibrida;
+    const nome = r.input.trainingName;
+    out.push({
+      input: { ...r.input, trainingName: `${nome}${HYBRID_SUFFIX.PRESENCIAL}`, cargaHoraria: h.ok === true ? h.presencial : null },
+      refs: { ...r.refs, parte: 'PRESENCIAL' },
+    });
+    out.push({
+      input: { ...r.input, trainingName: `${nome}${HYBRID_SUFFIX.ONLINE}`, cargaHoraria: h.ok === true ? h.online : null, despesas: DESPESAS_ZERO },
+      refs: { ...r.refs, parte: 'ONLINE' },
+    });
+  }
+  return out;
 }
 
 export { TITULARES_SEPARATOR };

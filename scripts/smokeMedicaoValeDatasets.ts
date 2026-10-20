@@ -222,6 +222,40 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     eq('L..P vêm das despesas reembolsáveis', [linhaDe('DEM-100')[11].value, linhaDe('DEM-100')[13].value, linhaDe('DEM-100')[14].value, linhaDe('DEM-100')[15].value], [80, 50, 200, 25]);
     eq('E..H = início/fim da DEM-102 (dias específicos)', linhaDe('DEM-102').slice(4, 8).map(c => c.value), ['2026-08-20', '2026-08-22', '13:00', '18:00']);
 
+    // Híbrida em DUAS linhas na saída para a planilha (só com o flag do template).
+    {
+      const semFlag = toRowsSheetInput(rows);
+      eq('sem hybridSplit (modelos do banco): uma linha por demanda', semFlag.map(l => l.refs.demandId), ['DEM-100', 'DEM-101', 'DEM-102', 'DEM-108']);
+      const comFlag = toRowsSheetInput(rows, VALE_TEMPLATE);
+      eq('com hybridSplit: a híbrida vira duas linhas ADJACENTES, presencial primeiro', comFlag.map(l => `${l.refs.demandId}${l.refs.parte ? ':' + l.refs.parte : ''}`), ['DEM-100', 'DEM-101', 'DEM-102:PRESENCIAL', 'DEM-102:ONLINE', 'DEM-108']);
+      const [pres, onl] = comFlag.filter(l => l.refs.demandId === 'DEM-102');
+      eq('Treinamento com o sufixo de cada parte (travessão)', [pres.input.trainingName, onl.input.trainingName], ['NR 20 Intermediário – Presencial', 'NR 20 Intermediário – Online']);
+      eq('carga 40h/8h: 8 presenciais + 32 online', [pres.input.cargaHoraria, onl.input.cargaHoraria], [8, 32]);
+      eq('despesas ficam na presencial; a online nasce zerada', [pres.input.despesas.total, onl.input.despesas], [rows.find(r => r.demand.id === 'DEM-102')!.input.despesas.total, { locomocao: 0, alimentacao: 0, hospedagem: 0, outros: 0, total: 0 }]);
+      check('o resto repete (ID, datas, horários, consultor)', ['clientDemandId', 'dataInicio', 'dataFim', 'horarioInicio', 'horarioFim', 'titulares'].every(k => JSON.stringify((pres.input as any)[k]) === JSON.stringify((onl.input as any)[k])));
+
+      const valoresHib = indexTemplateValues([
+        { scope: 'training', column_key: 'precoHHPresencial', training_id: 'T_HIB', demand_id: null, value: 290 },
+        { scope: 'training', column_key: 'precoHHOnline', training_id: 'T_HIB', demand_id: null, value: 200 },
+        { scope: 'demand', column_key: 'combustivel', training_id: null, demand_id: 'DEM-102', value: 60 },
+      ]);
+      const planilha = resolveRowsSheet(VALE_TEMPLATE.sheets[0], comFlag, valoresHib);
+      const col = (k: string) => planilha.columns.findIndex(c => c.key === k);
+      const l = (i: number, k: string) => planilha.rows[i][col(k)];
+      eq('anexo: 1, 2, 3, 3, 4 — as partes repetem, a turma seguinte não pula', planilha.rows.map(r => r[0].value), [1, 2, 3, 3, 4]);
+      eq('preço HH por parte: presencial 290, online 200', [l(2, 'precoHH').value, l(3, 'precoHH').value], [290, 200]);
+      eq('valor total por linha: K = I*J da própria linha', [l(2, 'valorTotal').formula, l(3, 'valorTotal').formula], ['I4*J4', 'I5*J5']);
+      eq('combustível digitado sai na presencial e vale 0 na online', [l(2, 'combustivel').value, l(3, 'combustivel').value], [60, 0]);
+      eq('demais despesas zeradas na online', ['locacao', 'alimentacao', 'hospedagem', 'outros'].map(k => l(3, k).value), [0, 0, 0, 0]);
+      eq('ID, Local, datas e consultor repetem nas duas linhas', ['idTurma', 'local', 'dataInicio', 'dataFim', 'horarioInicio', 'horarioFim', 'consultor'].map(k => l(2, k).value === l(3, k).value), [true, true, true, true, true, true, true]);
+
+      // Sem horas práticas: duas linhas com carga em branco e amarela.
+      const semPraticas = buildMedicaoValeRows({ ...src, trainings: [...TRAININGS, { id: 'T_HIB0', name: 'NR 10 Básico', hours: 40, practicalHours: null, modality: 'HIBRIDO' }], demands: [demandaVale({ id: 'DEM-400', trainingId: 'T_HIB0' })] });
+      const sp = resolveRowsSheet(VALE_TEMPLATE.sheets[0], toRowsSheetInput(semPraticas, VALE_TEMPLATE), emptyTemplateValuesIndex());
+      eq('sem horas práticas: duas linhas, carga vazia e amarela nas duas', sp.rows.map(r => [r[col('cargaHoraria')].value ?? null, r[col('cargaHoraria')].highlight]), [[null, true], [null, true]]);
+      eq('e nenhuma delas vira carga cheia', sp.rows.map(r => r[col('cargaHoraria')].value).includes(40), false);
+    }
+
     // Filtros da tela.
     const ctx = { trainingsById: buildTrainingsById(TRAININGS), now: HOJE };
     const allowed: any = ['periodoFim', 'corredor', 'site', 'statusMedicao'];

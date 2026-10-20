@@ -30,6 +30,7 @@ import { compileFormulaSpec, formulaLiteral, validateFormulaSpec } from './formu
 import { SOURCE_FIELDS, isSourceField, type TemplateRowInput } from './sourceFields';
 import { getTemplateValue, type TemplateValuesIndex, type TemplateValue } from './values';
 import type {
+  HybridPart,
   MeasurementTemplate,
   ResolvedCell,
   ResolvedColumn,
@@ -190,12 +191,35 @@ export interface ManualValueResolution {
 export interface ManualRefs {
   trainingId: string;
   demandId: string;
+  /**
+   * Parte da turma híbrida que esta linha representa (template com
+   * `hybridSplit`). Ausente = linha inteira (não híbrida, ou template que não
+   * divide). Decide a chave de persistência das colunas com `hybridKeys` e o
+   * zero das colunas com `hybridOnline`.
+   */
+  parte?: HybridPart;
 }
+
+/**
+ * A chave de persistência de uma coluna manual NESTA linha: a própria `key`,
+ * ou a da parte da híbrida quando a coluna declara `hybridKeys`.
+ */
+export function manualColumnKey(column: TemplateColumn, parte?: HybridPart): string {
+  if (!parte || !column.hybridKeys) return column.key;
+  return parte === 'ONLINE' ? column.hybridKeys.online : column.hybridKeys.presencial;
+}
+
+/** A coluna vale 0 nesta linha (parte ONLINE da híbrida, coluna de despesa). */
+export const zeroNestaParte = (column: TemplateColumn, parte?: HybridPart): boolean =>
+  parte === 'ONLINE' && column.hybridOnline === 'zero';
 
 /**
  * O valor de uma coluna manual para uma linha: sobrescrita da demanda vence o
  * valor do treinamento, que vence o default, que vence o vazio. `fonte` é a
  * coluna "fonte do preço" da grade da prévia.
+ *
+ * Na parte ONLINE de uma híbrida, coluna de despesa vale 0 (a despesa saiu na
+ * presencial) e o preço lê a chave da parte (`manualColumnKey`).
  */
 export function resolveManualValue(
   column: TemplateColumn,
@@ -205,17 +229,20 @@ export function resolveManualValue(
   const presente = (v: TemplateValue | undefined): v is TemplateValue =>
     v !== undefined && v !== null && !(typeof v === 'string' && v.trim() === '');
 
+  if (zeroNestaParte(column, refs.parte)) return { value: 0, fonte: 'padrão' };
+  const key = manualColumnKey(column, refs.parte);
+
   if (column.persistScope === 'training') {
     if (column.overrideScope === 'demand') {
-      const porDemanda = getTemplateValue(values, 'demand', refs.demandId, column.key);
+      const porDemanda = getTemplateValue(values, 'demand', refs.demandId, key);
       if (presente(porDemanda)) return { value: porDemanda, fonte: 'demanda' };
     }
     const porTreinamento = refs.trainingId
-      ? getTemplateValue(values, 'training', refs.trainingId, column.key)
+      ? getTemplateValue(values, 'training', refs.trainingId, key)
       : undefined;
     if (presente(porTreinamento)) return { value: porTreinamento, fonte: 'treinamento' };
   } else if (column.persistScope === 'demand') {
-    const porDemanda = getTemplateValue(values, 'demand', refs.demandId, column.key);
+    const porDemanda = getTemplateValue(values, 'demand', refs.demandId, key);
     if (presente(porDemanda)) return { value: porDemanda, fonte: 'demanda' };
   }
   if (column.defaultValue !== undefined && column.defaultValue !== null) {
@@ -325,11 +352,26 @@ export function resolveRowsSheet(
     textoFormula.set(c.key, texto);
   }
 
+  /**
+   * "Número do anexo" é por TURMA, não por linha: as duas partes de uma
+   * híbrida repetem o número, e a turma seguinte não pula. As partes chegam
+   * adjacentes (toRowsSheetInput), então basta contar a troca de demanda.
+   * Sem híbrida dividida, cada linha é uma demanda e a sequência é 1..n.
+   */
+  const sequencia: number[] = [];
+  let seq = 0;
+  let demandaAnterior: string | undefined;
+  for (const r of rows) {
+    if (r.refs.demandId !== demandaAnterior) seq += 1;
+    demandaAnterior = r.refs.demandId;
+    sequencia.push(seq);
+  }
+
   const resolvedRows: ResolvedCell[][] = rows.map((r, i) => {
     const rowNumber = firstDataRow + i;
     return cols.map((c): ResolvedCell => {
       const base: ResolvedCell = { format: c.format, editable: c.editable };
-      if (c.source === 'sequence') return { ...base, value: i + 1 };
+      if (c.source === 'sequence') return { ...base, value: sequencia[i] };
       if (c.source === 'blank') return { ...base, value: null };
       if (c.source === 'formula') {
         const texto = textoFormula.get(c.key) ?? null;
@@ -365,7 +407,8 @@ export function resolveRowsSheet(
         }
         if (isEmpty(value) && c.defaultValue !== undefined) value = c.defaultValue;
       } else if (isSourceField(c.source)) {
-        value = SOURCE_FIELDS[c.source].get(r.input);
+        // Parte ONLINE da híbrida: despesa vale 0 (saiu na presencial).
+        value = zeroNestaParte(c, r.refs.parte) ? 0 : SOURCE_FIELDS[c.source].get(r.input);
         if (isEmpty(value) && c.defaultValue !== undefined) value = c.defaultValue;
       } else {
         problema(ctx, {

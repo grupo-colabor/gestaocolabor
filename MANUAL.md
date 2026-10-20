@@ -549,8 +549,15 @@ Catálogo de treinamentos disponíveis.
 
 **Campos:**
 - Nome, Código/NR, Categoria, Duração (horas), Modalidade, Status
+- **Horas práticas (híbrido)** — só em modalidade Híbrido: a parte **presencial** da carga; o restante é EAD
 - Descrição curta e detalhada, Pré-requisitos, Público-alvo
 - Emite certificado? Sim/Não — Validade em meses
+
+**Horas práticas (híbrido) — onde o campo é usado:**
+- **Dashboard**: "Horas Concluídas" conta as horas práticas em vez da carga total; em branco, usa a carga total.
+- **Medição Vale e BM**: a turma híbrida sai em **duas linhas** — presencial com as horas práticas e online com o restante (carga − práticas), cada uma com o seu preço HH. Em branco, ou com horas práticas iguais ou maiores que a carga, a turma sai com a **carga em branco e amarela** nas duas linhas e entra no painel de pendências ("Treinamento híbrido sem horas práticas cadastradas").
+- **Pagamento do instrutor**: não usa o campo — segue as horas digitadas na medição.
+- ⚠️ É dado de **cadastro**: mudar o valor muda a divisão de **toda** Medição Vale/BM gerada de novo com esse treinamento, inclusive de meses já fechados. Confira antes de alterar um treinamento que já foi medido.
 
 **Categorias disponíveis:**
 Segurança do Trabalho, Manutenção Industrial, Operação de Equipamentos, Emergência, Operação Ferroviária, Técnicos Elétrica, Técnicos Solda, Treinamentos Comportamentais.
@@ -734,34 +741,38 @@ Gera o XLSX **no layout do modelo da Vale**, a partir do próprio arquivo-modelo
 
 | Coluna do modelo | De onde vem |
 |---|---|
-| Número do anexo | sequência 1..n |
+| Número do anexo | sequência por **turma** (as duas linhas de uma híbrida repetem o número; a turma seguinte não pula) |
 | ID da Turma | campo *ID SAP / Pedido Cliente* da demanda (em branco e amarelo quando falta) |
-| Treinamento, Local, Data, Horário | cadastro da demanda (data e horário do **primeiro** dia — a coluna *Data* continua sendo a de início; só a seleção do período olha o término) |
-| Carga horária | carga do treinamento, inclusive em híbrida |
-| Preço unitário HH | **digitado na prévia**; lembrado por treinamento, sobrescrevível na turma (em branco e amarelo quando falta) |
-| Valor total do treinamento | fórmula `=G×H` do modelo |
-| Despesas reembolsáveis (locação/táxi, alimentação, hospedagem, outros) | as categorias da medição (Locomoção, Alimentação, Hospedagem, Outros), **só os itens reembolsáveis** |
-| Combustível | digitado na prévia (nasce 0; o app não separa combustível) |
+| Treinamento, Local | cadastro da demanda; híbrida ganha o sufixo ` – Presencial` / ` – Online` |
+| Data início, Data fim | primeiro e **último dia real** da turma — a data fim é a mesma que o filtro de período usa (em dias específicos, o último dia da lista) |
+| Horário início, Horário fim | horário do primeiro e do último dia, **como está na demanda**; sem horário gravado, a célula sai **em branco e amarela** e o painel avisa — o sistema nunca inventa 08:00 ou 18:00 |
+| Carga horária | carga do treinamento; **híbrida: horas práticas na linha presencial e o restante na online** (em branco e amarela quando as horas práticas não estão cadastradas) |
+| Preço unitário HH | **digitado na prévia**; lembrado por treinamento, sobrescrevível na turma (em branco e amarelo quando falta). **Híbrida: dois preços**, presencial e online |
+| Valor total do treinamento | fórmula `=I×J` do modelo, linha a linha |
+| Despesas reembolsáveis (locação/táxi, alimentação, hospedagem, outros) | as categorias da medição (Locomoção, Alimentação, Hospedagem, Outros), **só os itens reembolsáveis**; na híbrida, **só na linha presencial** (a online sai zerada) |
+| Combustível | digitado na prévia (nasce 0; o app não separa combustível); na híbrida, só na presencial |
 | % despesa reembolsável | 0,2 do modelo, editável |
-| Valor total despesas | fórmula `=SOMA(J:N)+(SOMA(J:N)×O)` do modelo |
+| Valor total despesas | fórmula `=SOMA(L:P)+(SOMA(L:P)×Q)` do modelo |
 | Consultor | instrutor(es) titular(es); demanda dividida sai "A / B" |
-| Observação | digitada na prévia, por turma |
-| Linha de totais | `SOMA` em G, I a N e P, logo abaixo da última turma |
+| Observação | digitada na prévia, por turma (repete nas duas linhas da híbrida) |
+| Linha de totais | `SOMA` em I, K a P e R, logo abaixo da última turma |
+
+**Treinamento híbrido em duas linhas.** Na Vale, a parte presencial e a parte online têm preços HH diferentes. Por isso a turma de treinamento híbrido (pela modalidade do **treinamento**) sai em duas linhas adjacentes: `<nome> – Presencial`, com as **horas práticas** do cadastro do treinamento, e `<nome> – Online`, com o restante (carga − práticas). Ex.: NR 10 híbrido de 40h com 8 horas práticas → 8h × preço presencial + 32h × preço online. ID, datas, horários, consultor e observação repetem; despesas só na presencial. Os dois preços são digitados em **Campos manuais da planilha → Por treinamento** (o card do treinamento híbrido tem os campos **Preço HH presencial** e **Preço HH online**, com as horas de cada parte ao lado) e podem ser sobrescritos por turma, também em dois campos. O selo do card só diz **com preço** com os dois preenchidos ("falta online" / "falta presencial" com um só), e o contador "N treinamentos, M com preço" segue a regra. Um preço único que tenha sido gravado para o treinamento híbrido **antes** da divisão aparece no card como "preço único anterior", mas **não é usado** — informe os dois. A divisão vale só para a Medição Vale e o BM; o pagamento do instrutor e o Dashboard não mudam.
 
 **Passo a passo:**
 1. Escolha **Medição Vale** e clique em **Carregar dados**
 2. Filtre por período (**data de término** da turma), corredor, site e status da medição
 3. Leia o painel **O que falta para fechar a medição** — ⛔ tira a demanda da planilha; ⚠ entra, mas confira. Dá para baixar em XLSX
-4. Preencha os campos manuais (preço HH por treinamento e, se preciso, por turma; combustível; %; observação) e clique em **Salvar**
+4. Preencha os campos manuais (preço HH por treinamento — dois na híbrida — e, se preciso, por turma; combustível; %; observação) e clique em **Salvar**
 5. Confira a prévia e clique em **Gerar Medição Vale** — o botão fica travado enquanto houver edição não salva
 
-**Pendências e de onde vêm:** não concluída, cancelada e sem titular (fatos, do cadastro); sem ID SAP; sem preço HH; sem medição aberta ou não iniciada; medição não pronta; item não reembolsável excluído das colunas; ID SAP repetido em outra demanda do recorte; interna com empresa Vale. A única **inferência** é *logística indica viagem, mas não há despesa lançada* (carro ou hotel na logística e nenhum item na medição) — é aviso, nunca bloqueio.
+**Pendências e de onde vêm:** não concluída, cancelada e sem titular (fatos, do cadastro); sem ID SAP; sem preço HH (na híbrida, *sem preço HH presencial* e *sem preço HH online*, um aviso por parte); preço único antigo em treinamento híbrido; treinamento híbrido sem horas práticas cadastradas (ou com horas práticas inválidas); sem horário de início ou de término na demanda; sem medição aberta ou não iniciada; medição não pronta; item não reembolsável excluído das colunas; ID SAP repetido em outra demanda do recorte; interna com empresa Vale. A única **inferência** é *logística indica viagem, mas não há despesa lançada* (carro ou hotel na logística e nenhum item na medição) — é aviso, nunca bloqueio.
 
 #### BM da Vale (Boletim de Medição)
 
 **Como acessar:** Exportações → módulo **BM Vale** (perfil com acesso à Medição).
 
-O BM é o documento que a Vale assina: a medição **agregada por treinamento**, no modelo da Vale (folha `BOLETIM MEDIÇÃO`), gerado a partir do próprio arquivo-modelo guardado no sistema. **Ele sai da mesma seleção da Medição Vale**: mesmas turmas (concluídas, com instrutor, que **terminam** no período), mesmo preço HH (com sobrescrita por turma), mesma exclusão de item não reembolsável. Por isso o **Σ das linhas de treinamento do BM é igual ao Σ da coluna I** da aba Turmas, e a **quantidade da linha de despesas é igual ao Σ da coluna P** — batem por construção, e o sistema confere isso automaticamente.
+O BM é o documento que a Vale assina: a medição **agregada por treinamento**, no modelo da Vale (folha `BOLETIM MEDIÇÃO`), gerado a partir do próprio arquivo-modelo guardado no sistema. **Ele sai da mesma seleção da Medição Vale**: mesmas turmas (concluídas, com instrutor, que **terminam** no período), mesmo preço HH (com sobrescrita por turma), mesma exclusão de item não reembolsável, mesma divisão da híbrida em presencial e online. Por isso o **Σ das linhas de treinamento do BM é igual ao Σ da coluna K** (Valor total do treinamento) da aba Turmas, e a **quantidade da linha de despesas é igual ao Σ da coluna R** (Valor total despesas) — batem por construção, e o sistema confere isso automaticamente.
 
 **Um BM por (corredor, mina).** Mina = *Local Treinamento* da demanda. Com corredor e site/mina nos filtros, sai um `.xlsx`; só com o corredor, sai um `.zip` com um `.xlsx` por mina do recorte; com corredor **Todos**, sai um `.zip` (`vale-bm-todos-<período>.zip`) com **uma pasta por corredor** e, dentro de cada uma, um `.xlsx` por mina com o mesmo nome de sempre. A prévia e o bloco Cabeçalho do BM ficam agrupados por corredor. Turma **sem local** na demanda fica fora do BM — a tela mostra em destaque quantas ficaram e o painel de pendências lista cada uma; corrija o local na demanda. Com **Todos**, turma **sem corredor** na demanda também fica fora, com o mesmo destaque.
 
@@ -770,8 +781,8 @@ O BM é o documento que a Vale assina: a medição **agregada por treinamento**,
 | Bloco | Conteúdo | De onde vem |
 |---|---|---|
 | Cabeçalho | gerência executiva, gerência, contrato nº, contratada/CNPJ, objeto, gestor, local de prestação, data de envio, período | cadastro por corredor/mina (bloco **Cabeçalho do BM**, uma vez por mina, com Salvar); data de envio = hoje, editável; período = o filtro, `dd/mm/aaaa a dd/mm/aaaa` |
-| Linhas do QQP | uma linha por treinamento: QQP 20, `Aplicação de Treinamento - <nome>`, unidade Hora/Aula, preço HH, quantidade = Σ carga horária das turmas, valor = fórmula preço × quantidade | turmas do recorte agregadas por **nome do treinamento + preço**; preços diferentes viram linhas separadas; cadastro duplicado (mesmo nome, ids diferentes) vira aviso, o BM sai limpo |
-| Linha de despesas | QQP 70, `Despesas Tributáveis (hospedagem,transporte e alimentação)`, unidade 1, preço 1, quantidade = Σ das despesas das turmas | com o acréscimo de % de cada turma (coluna P da Medição Vale). Se a Colabor decidir sem o acréscimo, é uma constante do template |
+| Linhas do QQP | uma linha por treinamento: QQP 20, `Aplicação de Treinamento - <nome>`, unidade Hora/Aula, preço HH, quantidade = Σ carga horária das turmas, valor = fórmula preço × quantidade | turmas do recorte agregadas por **nome do treinamento + preço**; preços diferentes viram linhas separadas; cadastro duplicado (mesmo nome, ids diferentes) vira aviso, o BM sai limpo. **Híbrida**: duas linhas por treinamento, `<nome> – Presencial` (horas práticas, preço presencial) e `<nome> – Online` (restante, preço online) — uma turma presencial pura do mesmo treinamento fica em linha própria. Quantidade **em branco e amarela** quando a híbrida não tem horas práticas cadastradas |
+| Linha de despesas | QQP 70, `Despesas Tributáveis (hospedagem,transporte e alimentação)`, unidade 1, preço 1, quantidade = Σ das despesas das turmas | com o acréscimo de % de cada turma (coluna R da Medição Vale); a híbrida entra **uma vez** (a despesa está na linha presencial). Se a Colabor decidir sem o acréscimo, é uma constante do template |
 | Valor total desta medição | fórmula SOMA das linhas | sempre na faixa real; mais de 24 linhas insere linhas antes do total sem mexer nas assinaturas |
 | Assinaturas | intocadas | o modelo |
 

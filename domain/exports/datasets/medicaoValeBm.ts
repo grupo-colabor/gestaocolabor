@@ -37,12 +37,14 @@ import { VALE_BM_CONSTANTS } from '../templates/vale-bm';
 import { resolveRowsSheet, type RegionRowInput } from '../templates/resolve';
 import { contextKey, type TemplateValue, type TemplateValuesIndex } from '../templates/values';
 import { toBrDate, round2 } from '../shared';
-import { toRowsSheetInput, type MedicaoValeRow } from './medicaoVale';
+import { HYBRID_SUFFIX, toRowsSheetInput, type MedicaoValeRow } from './medicaoVale';
 
 export interface BmLinha {
   tipo: 'treinamento' | 'despesas';
   qqp: string;
   descricao: string;
+  /** Parte da híbrida que esta linha agrega (presencial / online); ausente nas demais. */
+  parte?: HybridPart;
   unidade: string | number;
   /** `null` = alguma turma sem preço HH (célula em branco e amarela). */
   preco: number | null;
@@ -100,6 +102,13 @@ export const normalizeTrainingName = (s: string): string =>
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim();
+
+/** A descrição sem o sufixo da parte — o que a ordenação compara. */
+const nomeSemParte = (l: Pick<BmLinha, 'descricao' | 'parte'>): string =>
+  l.parte ? l.descricao.slice(0, -HYBRID_SUFFIX[l.parte].length) : l.descricao;
+
+/** Pura → presencial → online, dentro do mesmo nome. */
+const ordemDaParte = (p?: HybridPart): number => (p === 'PRESENCIAL' ? 1 : p === 'ONLINE' ? 2 : 0);
 
 const num = (v: unknown): number => {
   if (v === null || v === undefined || v === '') return 0;
@@ -238,6 +247,7 @@ export function buildBm(
             tipo: 'treinamento' as const,
             qqp: qqpTreinamento,
             descricao: `${c.prefixoTreinamento}${n.trainingName.trim()}`,
+            parte: n.parte,
             unidade: c.unidadeTreinamento,
             preco: n.preco,
             quantidade: 0 as number | null,
@@ -253,8 +263,15 @@ export function buildBm(
           totalDespesas = round2(totalDespesas + (c.despesasComAcrescimo ? n.p : n.despesas));
         }
       }
+      // Ordem: alfabética pelo nome SEM o sufixo da parte; dentro do mesmo
+      // treinamento híbrido, presencial antes de online (a ordem da aba
+      // Turmas) — alfabeticamente "– Online" viria primeiro. A turma
+      // presencial pura do mesmo nome fica antes das duas partes.
       const linhasTreino = [...grupos.values()].sort(
-        (a, b) => a.descricao.localeCompare(b.descricao, 'pt-BR') || (a.preco ?? -1) - (b.preco ?? -1)
+        (a, b) =>
+          nomeSemParte(a).localeCompare(nomeSemParte(b), 'pt-BR') ||
+          ordemDaParte(a.parte) - ordemDaParte(b.parte) ||
+          (a.preco ?? -1) - (b.preco ?? -1)
       );
       const linhas: BmLinha[] = [
         ...linhasTreino,

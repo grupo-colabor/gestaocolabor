@@ -165,9 +165,9 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
     const treinos = bru.linhas.filter(l => l.tipo === 'treinamento');
     eq('Brucutu: NR 35 a 120 agrega DEM-100 + DEM-110 (16h + 16h)', treinos.find(l => l.preco === 120)?.quantidade, 32);
     eq('Brucutu: DEM-112 com preço sobrescrito 130 é linha separada, 16h', treinos.find(l => l.preco === 130)?.quantidade, 16);
-    eq('Brucutu: linhas em ordem alfabética, com o prefixo do modelo (a híbrida em duas, com o sufixo da parte)', treinos.map(l => l.descricao), [
-      'Aplicação de Treinamento - NR 20 Intermediário – Online',
+    eq('Brucutu: linhas em ordem alfabética, com o prefixo do modelo (a híbrida em duas: presencial antes de online)', treinos.map(l => l.descricao), [
       'Aplicação de Treinamento - NR 20 Intermediário – Presencial',
+      'Aplicação de Treinamento - NR 20 Intermediário – Online',
       'Aplicação de Treinamento - NR 35 Trabalho em Altura',
       'Aplicação de Treinamento - NR 35 Trabalho em Altura',
     ]);
@@ -211,7 +211,7 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
 
     // Preço vazio: híbrida DEM-102 (T_HIB 40h/8h, sem preço presencial nem online) na mina Brucutu.
     const hib = bm.minas[0].linhas.filter(l => l.trainingIds.includes('T_HIB'));
-    eq('híbrida sem preço: DUAS linhas do QQP (online 32h e presencial 8h), as duas com preço em branco', hib.map(l => [l.descricao.replace('Aplicação de Treinamento - NR 20 Intermediário', ''), l.preco, l.quantidade]), [[' – Online', null, 32], [' – Presencial', null, 8]]);
+    eq('híbrida sem preço: DUAS linhas do QQP (presencial 8h e online 32h), as duas com preço em branco', hib.map(l => [l.descricao.replace('Aplicação de Treinamento - NR 20 Intermediário', ''), l.preco, l.quantidade]), [[' – Presencial', null, 8], [' – Online', null, 32]]);
     check('as duas linhas apontam para a mesma turma', hib.every(l => l.turmas.length === 1 && l.turmas[0] === 'DEM-102'));
     check('a despesa da híbrida (zero aqui) entrou na linha 70 uma vez só', numeros.filter(n => n.demandId === 'DEM-102' && n.parte === 'ONLINE').every(n => n.p === 0));
 
@@ -327,6 +327,24 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
     eq('DEM-503: online 12h com preço em branco', linha('CIPA Mineração – Online', null)?.quantidade, 12);
     // Presencial pura "X" e "X – Presencial" não se misturam.
     eq('DEM-504 (presencial pura, mesmo nome): linha própria, 40h a R$ 120', linha('NR 20 Intermediário', 120)?.quantidade, 40);
+
+    // ORDEM do QQP: alfabética pelo nome sem a parte; dentro do mesmo
+    // treinamento, pura → presencial → online (a ordem da aba Turmas), e
+    // preço crescente entre linhas iguais. "– Online" NÃO vem antes de
+    // "– Presencial" só porque O < P.
+    eq('ordem das linhas 20: nome, depois pura → presencial → online, depois preço', bru.linhas.filter(l => l.tipo === 'treinamento').map(l => `${l.descricao.replace('Aplicação de Treinamento - ', '')} @${l.preco ?? '—'}`), [
+      'CIPA Mineração – Presencial @250',
+      'CIPA Mineração – Online @—',
+      'NR 10 Básico – Presencial @—',
+      'NR 10 Básico – Online @—',
+      'NR 20 Intermediário @120',
+      'NR 20 Intermediário – Presencial @290',
+      'NR 20 Intermediário – Presencial @300',
+      'NR 20 Intermediário – Online @200',
+      'NR 20 Intermediário – Online @210',
+    ]);
+    eq('as linhas de híbrida carregam a parte', bru.linhas.filter(l => l.tipo === 'treinamento').map(l => l.parte ?? '-'), ['PRESENCIAL', 'ONLINE', 'PRESENCIAL', 'ONLINE', '-', 'PRESENCIAL', 'PRESENCIAL', 'ONLINE', 'ONLINE']);
+    check('a linha de despesas continua por último', bru.linhas[bru.linhas.length - 1].tipo === 'despesas');
 
     // Despesas uma vez por turma: 100 × 1,2 + 300 × 1,2 = 480.
     perto('linha 70 = despesas das híbridas uma vez só (100 + 300) × 1,2', bru.totalDespesas, 480);

@@ -6,9 +6,9 @@
  *   [T] Resolvedor: fórmulas por chave viram letras na ordem atual; reordenar
  *       coluna não quebra fórmula; totais cobrem exatamente a faixa de dados;
  *       valor manual: demanda > treinamento > padrão > vazio.
- *   [V] Template Vale: 18 colunas na ordem do arquivo, cabeçalhos exatos
- *       (com os espaços), I = G*H e P = SUM(J:N)+(SUM(J:N)*O) nas letras que
- *       o modelo usa, totais em G, I..N, P.
+ *   [V] Template Vale: 20 colunas na ordem do arquivo, cabeçalhos exatos
+ *       (com os espaços), K = I*J e R = SUM(L:P)+(SUM(L:P)*Q) nas letras que
+ *       o modelo usa, totais em I, K..P, R.
  *   [D] Dataset: linhas por demanda Vale (entra no commit 4).
  *   [X] Escritor: XLSX gerado a partir das fixtures e do arquivo-base, lido de
  *       volta — fórmulas nas células certas, Plantas igual ao snapshot,
@@ -169,23 +169,27 @@ console.log('\n[V] Template Vale');
 {
   const turmas = VALE_TEMPLATE.sheets[0];
   const cols = resolveColumns(turmas);
-  eq('18 colunas A..R', cols.map(c => c.letter).join(''), 'ABCDEFGHIJKLMNOPQR');
+  eq('20 colunas A..T', cols.map(c => c.letter).join(''), 'ABCDEFGHIJKLMNOPQRST');
   eq('cabeçalhos exatos do arquivo (com os espaços)', cols.map(c => c.header), [
-    'Número do anexo', 'ID da Turma', 'Treinamento', 'Local Treinamento ', 'Data', 'Horário', 'Carga horária',
+    'Número do anexo', 'ID da Turma', 'Treinamento', 'Local Treinamento ', 'Data início', 'Data fim', 'Horário início', 'Horário fim', 'Carga horária',
     'Preço unitário HH', 'Valor total do treinamento', 'Despesa reembolsável (locação veículo/táxi)',
     'Despesa reembolsável (combustível)', 'Despesa reembolsável (alimentação)', 'Despesa reembolsável (hospedagem)',
     'Despesa reembolsável (outros)', '% despesa reembolsável', 'Valor total despesas', 'Consultor', 'Observação',
   ]);
   const r = resolveRowsSheet(turmas, [{ input: linha(), refs: refs('DEM-100') }, { input: linha({ demandId: 'DEM-101' }), refs: refs('DEM-101') }], emptyTemplateValuesIndex());
-  eq('I = G*H na linha 2', r.rows[0][8].formula, 'G2*H2');
-  eq('P = SUM(J:N)+(SUM(J:N)*O) na linha 3', r.rows[1][15].formula, 'SUM(J3:N3)+(SUM(J3:N3)*O3)');
-  eq('totais em G, I..N, P (e não em H, O, Q, R)', r.totalsRow!.map((c, i) => (c ? cols[i].letter : null)).filter(Boolean), ['G', 'I', 'J', 'K', 'L', 'M', 'N', 'P']);
-  eq('total de I cobre a faixa real (corrigido do modelo)', r.totalsRow![8]!.formula, 'SUM(I2:I3)');
-  eq('O = 0,2 por padrão', r.rows[0][14].value, 0.2);
-  eq('K (combustível) nasce 0', r.rows[0][10].value, 0);
+  eq('K = I*J na linha 2', r.rows[0][10].formula, 'I2*J2');
+  eq('R = SUM(L:P)+(SUM(L:P)*Q) na linha 3', r.rows[1][17].formula, 'SUM(L3:P3)+(SUM(L3:P3)*Q3)');
+  eq('totais em I, K..P, R (e não em J, Q, S, T)', r.totalsRow!.map((c, i) => (c ? cols[i].letter : null)).filter(Boolean), ['I', 'K', 'L', 'M', 'N', 'O', 'P', 'R']);
+  eq('total de K cobre a faixa real (corrigido do modelo)', r.totalsRow![10]!.formula, 'SUM(K2:K3)');
+  eq('Q = 0,2 por padrão', r.rows[0][16].value, 0.2);
+  eq('M (combustível) nasce 0', r.rows[0][12].value, 0);
   eq('B sem ID SAP fica destacada', resolveRowsSheet(turmas, [{ input: linha({ clientDemandId: '' }), refs: refs('DEM-100') }], emptyTemplateValuesIndex()).rows[0][1].highlight, true);
-  eq('H sem preço fica destacada', r.rows[0][7].highlight, true);
-  eq('consultor: titulares com " / "', resolveRowsSheet(turmas, [{ input: linha({ titulares: ['A', 'B'] }), refs: refs('DEM-100') }], emptyTemplateValuesIndex()).rows[0][16].value, 'A / B');
+  eq('J sem preço fica destacada', r.rows[0][9].highlight, true);
+  eq('E/F = data início e data fim; G/H = horários', r.rows[0].slice(4, 8).map(c => c.value), ['2026-08-10', '2026-08-11', '08:00', '17:00']);
+  check('com horário, G e H não são destacadas', r.rows[0][6].highlight === false && r.rows[0][7].highlight === false);
+  eq('sem horário gravado: G e H vazias e amarelas (nada de 08:00/17:00)',
+    resolveRowsSheet(turmas, [{ input: linha({ horarioInicio: '', horarioFim: '' }), refs: refs('DEM-100') }], emptyTemplateValuesIndex()).rows[0].slice(6, 8).map(c => [c.value ?? null, c.highlight]), [[null, true], [null, true]]);
+  eq('consultor: titulares com " / "', resolveRowsSheet(turmas, [{ input: linha({ titulares: ['A', 'B'] }), refs: refs('DEM-100') }], emptyTemplateValuesIndex()).rows[0][18].value, 'A / B');
   check('Plantas é estática do arquivo', VALE_TEMPLATE.sheets[1].kind === 'static' && VALE_TEMPLATE.sheets[1].staticFrom === 'file');
   check('template casa Vale por nome, como o formulário', VALE_TEMPLATE.company.nameIncludes === 'VALE');
   check('id do template é o template_id da 017', VALE_TEMPLATE.id === 'vale-v1');

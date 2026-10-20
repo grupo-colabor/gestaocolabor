@@ -196,14 +196,15 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     // Resolução com o template real e os valores manuais.
     const sheet = resolveRowsSheet(VALE_TEMPLATE.sheets[0], toRowsSheetInput(rows), src.templateValues);
     const linhaDe = (id: string) => sheet.rows[rows.filter(r => r.elegivelTurmas).findIndex(r => r.demand.id === id)];
-    eq('preço HH por treinamento pré-preenche', linhaDe('DEM-100')[7].value, 120);
-    eq('preço HH sobrescrito na demanda vence', linhaDe('DEM-101')[7].value, 150);
-    eq('híbrida: treinamento sem preço -> H vazia e amarela', [linhaDe('DEM-102')[7].value, linhaDe('DEM-102')[7].highlight], [null, true]);
-    eq('combustível digitado', linhaDe('DEM-100')[10].value, 45);
-    eq('combustível não digitado -> 0', linhaDe('DEM-101')[10].value, 0);
-    eq('observação por demanda', linhaDe('DEM-100')[17].value, 'Turma extra');
+    eq('preço HH por treinamento pré-preenche', linhaDe('DEM-100')[9].value, 120);
+    eq('preço HH sobrescrito na demanda vence', linhaDe('DEM-101')[9].value, 150);
+    eq('híbrida: treinamento sem preço -> J vazia e amarela', [linhaDe('DEM-102')[9].value, linhaDe('DEM-102')[9].highlight], [null, true]);
+    eq('combustível digitado', linhaDe('DEM-100')[12].value, 45);
+    eq('combustível não digitado -> 0', linhaDe('DEM-101')[12].value, 0);
+    eq('observação por demanda', linhaDe('DEM-100')[19].value, 'Turma extra');
     eq('B vazia e amarela sem ID SAP', [linhaDe('DEM-101')[1].value, linhaDe('DEM-101')[1].highlight], [null, true]);
-    eq('J..N vêm das despesas reembolsáveis', [linhaDe('DEM-100')[9].value, linhaDe('DEM-100')[11].value, linhaDe('DEM-100')[12].value, linhaDe('DEM-100')[13].value], [80, 50, 200, 25]);
+    eq('L..P vêm das despesas reembolsáveis', [linhaDe('DEM-100')[11].value, linhaDe('DEM-100')[13].value, linhaDe('DEM-100')[14].value, linhaDe('DEM-100')[15].value], [80, 50, 200, 25]);
+    eq('E..H = início/fim da DEM-102 (dias específicos)', linhaDe('DEM-102').slice(4, 8).map(c => c.value), ['2026-08-20', '2026-08-22', '13:00', '18:00']);
 
     // Filtros da tela.
     const ctx = { trainingsById: buildTrainingsById(TRAININGS), now: HOJE };

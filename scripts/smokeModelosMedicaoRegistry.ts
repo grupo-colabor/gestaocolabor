@@ -499,8 +499,8 @@ export function runValeTextosChecks(t: Tools): void {
   const todos = semTemplate.flatMap(p => p.pendencias.map((x: any) => x.texto));
   t.check('o aviso de ID continua "Sem ID SAP / Pedido Cliente (célula B em branco)"',
     todos.includes('Sem ID SAP / Pedido Cliente (célula B em branco)'), JSON.stringify(todos));
-  t.check('o aviso de preço continua "Sem preço unitário HH (célula H em branco)"',
-    todos.includes('Sem preço unitário HH (célula H em branco)'), JSON.stringify(todos));
+  t.check('o aviso de preço continua "Sem preço unitário HH (célula J em branco)" (J desde as colunas de fim, 20/10/2026)',
+    todos.includes('Sem preço unitário HH (célula J em branco)'), JSON.stringify(todos));
   t.check('o excluído continua "fora das colunas da Vale"',
     todos.some(x => x.includes('fora das colunas da Vale')), JSON.stringify(todos));
   t.check('o repetido continua começando por "ID SAP repetido"',

@@ -51,7 +51,7 @@ import { getDemandTitle, isInternalDemand } from '../../demandLabel';
 import { getDemandDays, getDayHorarioInicioRaw, getDayHorarioFimRaw, getDemandLastDay } from '../../demandDays';
 import { resolveCalculatedStatus, resolveCompanyLabel, statusLabel } from '../shared';
 import { DEFAULT_OPTIONS, type ExportOptions } from '../options';
-import { TITULARES_SEPARATOR, type TemplateRowInput } from '../templates/sourceFields';
+import { TITULARES_SEPARATOR, type SourceField, type TemplateRowInput } from '../templates/sourceFields';
 import type { ManualRefs, RowsSheetInput } from '../templates/resolve';
 import type { MeasurementTemplate, TemplateCompanyMatch } from '../templates/types';
 import type { TemplateValuesIndex } from '../templates/values';
@@ -103,6 +103,18 @@ export interface MedicaoValeRow extends FilterableRow {
   /** Fatos que tiram a demanda da aba Turmas. Vazio = elegível. */
   bloqueios: string[];
   elegivelTurmas: boolean;
+  /**
+   * Avisos que o DATASET já sabe (a linha sai, o painel avisa): horário que a
+   * demanda não tem. `source` é o campo do catálogo que a célula lê — o painel
+   * acha a coluna por ele para dizer a letra, e um modelo que não mapeia esse
+   * campo não recebe o aviso.
+   */
+  avisos: DatasetAviso[];
+}
+
+export interface DatasetAviso {
+  texto: string;
+  source?: SourceField;
 }
 
 /* ─────────────────────────── empresa do template ─────────────────────────── */
@@ -162,6 +174,12 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
     else if (statusCalculado !== 'CONCLUIDA') bloqueios.push(`Demanda não concluída (${statusLabel(statusCalculado)})`);
     if (titularIds.length === 0) bloqueios.push('Sem instrutor titular');
 
+    const horarioInicio = getDayHorarioInicioRaw(demand, primeiroDia);
+    const horarioFim = getDayHorarioFimRaw(demand, ultimoDia);
+    const avisos: DatasetAviso[] = [];
+    if (!horarioInicio) avisos.push({ texto: 'Sem horário de início', source: 'demand.horarioInicio' });
+    if (!horarioFim) avisos.push({ texto: 'Sem horário de término', source: 'demand.horarioFim' });
+
     const input: TemplateRowInput = {
       demandId: demand.id,
       clientDemandId: (demand.clientDemandId ?? '').trim(),
@@ -174,8 +192,8 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
       uf: (demand.demandState ?? '').trim().toUpperCase(),
       dataInicio: primeiroDia,
       dataFim: ultimoDia,
-      horarioInicio: getDayHorarioInicioRaw(demand, primeiroDia),
-      horarioFim: getDayHorarioFimRaw(demand, ultimoDia),
+      horarioInicio,
+      horarioFim,
       nDias: dias.length,
       statusCalculado,
       titulares: titularIds.map(nameOf),
@@ -208,6 +226,7 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
       itensDespesa: todas.itens,
       bloqueios,
       elegivelTurmas: bloqueios.length === 0,
+      avisos,
     });
   }
 

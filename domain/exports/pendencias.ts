@@ -252,6 +252,16 @@ export function buildPendencias(rows: MedicaoValeRow[], ctx: PendenciasContext):
     // FATOS — vêm do dataset; a interna é decisão (fica fora), não defeito: aviso.
     for (const b of r.bloqueios) p.push({ tipo: r.interna && /interna/i.test(b) ? 'aviso' : 'fato', texto: b });
 
+    // AVISOS que o dataset já sabe (horário ausente). A letra vem da coluna
+    // que lê aquele campo; modelo sem a coluna não recebe o aviso — avisar
+    // "sem horário" numa planilha que não tem horário seria ruído.
+    for (const a of r.avisos ?? []) {
+      if (!a.source) { p.push({ tipo: 'aviso', texto: a.texto }); continue; }
+      const col = colunas.find(c => c.source === a.source);
+      if (!col) continue;
+      p.push({ tipo: 'aviso', texto: `${a.texto}${sufixoCelula(ctx.sheet, col.key)}` });
+    }
+
     // AVISOS
     if (on('semIdCliente') && !r.input.clientDemandId) {
       const sufixo = idClienteCol ? sufixoCelula(ctx.sheet, idClienteCol.key) : ' (em branco)';

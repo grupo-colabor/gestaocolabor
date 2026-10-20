@@ -78,46 +78,58 @@ export async function runWriterChecks(t: ValeSmokeTools, ctx: { src: any; rows: 
   const ws = wb.getWorksheet('Turmas Realizadas');
   const cell = (addr: string) => ws.getCell(addr);
 
-  eq('cabeçalho preservado do arquivo (D1 com espaço)', [texto(cell('A1').value), texto(cell('D1').value), texto(cell('R1').value)], ['Número do anexo', 'Local Treinamento ', 'Observação']);
+  eq('cabeçalho preservado do arquivo (D1 com espaço)', [texto(cell('A1').value), texto(cell('D1').value), texto(cell('T1').value)], ['Número do anexo', 'Local Treinamento ', 'Observação']);
+  // O escritor copia a linha 1 DO ARQUIVO, não do template: se os dois
+  // divergirem, a planilha sai com cabeçalho de uma coluna sobre dado de outra.
+  eq('linha 1 do arquivo-base = cabeçalhos do template, coluna a coluna',
+    sheets[0].kind === 'rows' ? sheets[0].columns.map((c, i) => texto(ws.getRow(1).getCell(i + 1).value)) : [],
+    sheets[0].kind === 'rows' ? sheets[0].columns.map(c => c.header) : ['?']);
   check('cabeçalho mantém o fill de tema do modelo', !!cell('A1').fill && cell('A1').fill.pattern === 'solid');
+  check('as colunas novas (E..H) têm o mesmo fill de cabeçalho', ['E1', 'F1', 'G1', 'H1'].every(a => cell(a).fill?.pattern === 'solid'));
   eq(`${n} turmas nas linhas 2..${n + 1}`, ws.getRow(n + 1).getCell(1).value, n);
   eq('A é sequência 1..n', Array.from({ length: n }, (_, i) => ws.getRow(2 + i).getCell(1).value), Array.from({ length: n }, (_, i) => i + 1));
-  eq('I2 = G2*H2', texto(cell('I2').value), '=G2*H2');
-  eq('P2 = SUM(J2:N2)+(SUM(J2:N2)*O2)', texto(cell('P2').value), '=SUM(J2:N2)+(SUM(J2:N2)*O2)');
-  eq(`I${n + 1} na última turma`, texto(cell(`I${n + 1}`).value), `=G${n + 1}*H${n + 1}`);
+  eq('K2 = I2*J2', texto(cell('K2').value), '=I2*J2');
+  eq('R2 = SUM(L2:P2)+(SUM(L2:P2)*Q2)', texto(cell('R2').value), '=SUM(L2:P2)+(SUM(L2:P2)*Q2)');
+  eq(`K${n + 1} na última turma`, texto(cell(`K${n + 1}`).value), `=I${n + 1}*J${n + 1}`);
 
   const tot = n + 2;
-  eq(`totais logo abaixo da última turma (linha ${tot}): G`, texto(cell(`G${tot}`).value), `=SUM(G2:G${n + 1})`);
-  eq('total de I cobre a faixa real (corrigido do modelo)', texto(cell(`I${tot}`).value), `=SUM(I2:I${n + 1})`);
-  eq('totais em J..N e P', ['J', 'K', 'L', 'M', 'N', 'P'].map(l => texto(cell(`${l}${tot}`).value)), ['J', 'K', 'L', 'M', 'N', 'P'].map(l => `=SUM(${l}2:${l}${n + 1})`));
-  eq('sem total em H, O, Q, R', ['H', 'O', 'Q', 'R'].map(l => cell(`${l}${tot}`).value ?? null), [null, null, null, null]);
-  check('linha de totais com o estilo do modelo (negrito)', !!cell(`G${tot}`).font?.bold);
-  eq('sobras do modelo removidas: nada abaixo dos totais', ws.getRow(tot + 1).getCell(15).value ?? null, null);
+  eq(`totais logo abaixo da última turma (linha ${tot}): I`, texto(cell(`I${tot}`).value), `=SUM(I2:I${n + 1})`);
+  eq('total de K cobre a faixa real (corrigido do modelo)', texto(cell(`K${tot}`).value), `=SUM(K2:K${n + 1})`);
+  eq('totais em L..P e R', ['L', 'M', 'N', 'O', 'P', 'R'].map(l => texto(cell(`${l}${tot}`).value)), ['L', 'M', 'N', 'O', 'P', 'R'].map(l => `=SUM(${l}2:${l}${n + 1})`));
+  eq('sem total em J, Q, S, T', ['J', 'Q', 'S', 'T'].map(l => cell(`${l}${tot}`).value ?? null), [null, null, null, null]);
+  check('linha de totais com o estilo do modelo (negrito)', !!cell(`I${tot}`).font?.bold);
+  eq('sobras do modelo removidas: nada abaixo dos totais', ws.getRow(tot + 1).getCell(17).value ?? null, null);
   check('rowCount termina nos totais', ws.rowCount === tot || ws.actualRowCount === tot);
 
   // Valores da primeira turma (DEM-100: SAP-100, preço por treinamento 120, combustível 45, obs).
   eq('B2 = ID SAP', cell('B2').value, 'SAP-100');
-  eq('H2 = preço HH por treinamento', cell('H2').value, 120);
-  eq('H2 com formato de moeda (aprovado)', cell('H2').numFmt, '"R$" #,##0.00');
-  eq('K2 = combustível digitado', cell('K2').value, 45);
-  eq('O2 = 0,2 com 0.00%', [cell('O2').value, cell('O2').numFmt], [0.2, '0.00%']);
-  eq('R2 = observação', cell('R2').value, 'Turma extra');
-  eq('J2/L2/M2/N2 = despesas reembolsáveis', ['J', 'L', 'M', 'N'].map(l => cell(`${l}2`).value), [80, 50, 200, 25]);
-  eq('Q2 = titulares " / "', cell('Q2').value, 'Titular / Segundo');
-  eq('F2 = horário HH:mm como texto', cell('F2').value, '08:00');
-  eq('G2 = carga como número', cell('G2').value, 16);
+  eq('J2 = preço HH por treinamento', cell('J2').value, 120);
+  eq('J2 com formato de moeda (aprovado)', cell('J2').numFmt, '"R$" #,##0.00');
+  eq('M2 = combustível digitado', cell('M2').value, 45);
+  eq('Q2 = 0,2 com 0.00%', [cell('Q2').value, cell('Q2').numFmt], [0.2, '0.00%']);
+  eq('T2 = observação', cell('T2').value, 'Turma extra');
+  eq('L2/N2/O2/P2 = despesas reembolsáveis', ['L', 'N', 'O', 'P'].map(l => cell(`${l}2`).value), [80, 50, 200, 25]);
+  eq('S2 = titulares " / "', cell('S2').value, 'Titular / Segundo');
+  eq('G2 = horário de início HH:mm como texto', cell('G2').value, '08:00');
+  eq('H2 = horário de término HH:mm como texto', cell('H2').value, '17:00');
+  eq('I2 = carga como número', cell('I2').value, 16);
   check('E2 é data de verdade', cell('E2').value instanceof Date);
   eq('E2 no dia certo (UTC)', (cell('E2').value as Date).toISOString().slice(0, 10), '2026-08-10');
   eq('E2 com dd/mm/yyyy', cell('E2').numFmt, 'dd/mm/yyyy');
+  check('F2 (data fim) é data de verdade', cell('F2').value instanceof Date);
+  eq('F2 = último dia, com dd/mm/yyyy', [(cell('F2').value as Date).toISOString().slice(0, 10), cell('F2').numFmt], ['2026-08-11', 'dd/mm/yyyy']);
   check('linha de dados copia o estilo do protótipo (borda fina)', cell('C2').border?.left?.style === 'thin');
 
   // Segunda turma (DEM-101): sem ID SAP -> B amarela; preço sobrescrito 150.
   eq('B3 vazia e amarela', [cell('B3').value ?? null, cell('B3').fill?.fgColor?.argb], [null, 'FFFFFF00']);
-  eq('H3 = preço sobrescrito na demanda', cell('H3').value, 150);
-  check('H3 não é amarela (tem valor)', cell('H3').fill?.fgColor?.argb !== 'FFFFFF00');
-  // Terceira (DEM-102, híbrida, treinamento sem preço): H amarela, vazia.
-  eq('H4 vazia e amarela', [cell('H4').value ?? null, cell('H4').fill?.fgColor?.argb], [null, 'FFFFFF00']);
-  eq('G4 = 40 (carga do treinamento, híbrida)', cell('G4').value, 40);
+  eq('J3 = preço sobrescrito na demanda', cell('J3').value, 150);
+  check('J3 não é amarela (tem valor)', cell('J3').fill?.fgColor?.argb !== 'FFFFFF00');
+  // Terceira (DEM-102, híbrida, dias específicos, treinamento sem preço): J amarela, vazia.
+  eq('J4 vazia e amarela', [cell('J4').value ?? null, cell('J4').fill?.fgColor?.argb], [null, 'FFFFFF00']);
+  eq('I4 = 40 (carga do treinamento, híbrida)', cell('I4').value, 40);
+  eq('F4 = último dia específico (22/08), G4/H4 = horários do primeiro e do último dia',
+    [(cell('F4').value as Date).toISOString().slice(0, 10), cell('G4').value, cell('H4').value], ['2026-08-22', '13:00', '18:00']);
+  check('G4/H4 com horário não são amarelas', cell('G4').fill?.fgColor?.argb !== 'FFFFFF00' && cell('H4').fill?.fgColor?.argb !== 'FFFFFF00');
 
   // Plantas: igual ao snapshot, célula a célula.
   const plantas = wb.getWorksheet('Plantas');
@@ -134,15 +146,15 @@ export async function runWriterChecks(t: ValeSmokeTools, ctx: { src: any; rows: 
   await wb2.xlsx.load(semBase);
   const ws2 = wb2.getWorksheet('Turmas Realizadas');
   eq('sem base: cabeçalho do template', ws2.getCell('D1').value, 'Local Treinamento ');
-  eq('sem base: mesma fórmula', texto(ws2.getCell('P2').value), '=SUM(J2:N2)+(SUM(J2:N2)*O2)');
-  eq('sem base: totais na mesma linha', texto(ws2.getCell(`G${tot}`).value), `=SUM(G2:G${n + 1})`);
+  eq('sem base: mesma fórmula', texto(ws2.getCell('R2').value), '=SUM(L2:P2)+(SUM(L2:P2)*Q2)');
+  eq('sem base: totais na mesma linha', texto(ws2.getCell(`I${tot}`).value), `=SUM(I2:I${n + 1})`);
   check('sem base: aba Plantas existe vazia', !!wb2.getWorksheet('Plantas'));
 
   // Zero turmas: totais valem 0, nada quebra.
   const vazio = await buildTemplateXlsxBuffer(VALE_TEMPLATE, resolveTemplate(VALE_TEMPLATE, [], ctx.src.templateValues), base);
   const wb3 = new (ExcelJS.default ?? ExcelJS).Workbook();
   await wb3.xlsx.load(vazio);
-  eq('zero turmas: totais na linha 2 valendo 0', wb3.getWorksheet('Turmas Realizadas').getCell('G2').value, 0);
+  eq('zero turmas: totais na linha 2 valendo 0', wb3.getWorksheet('Turmas Realizadas').getCell('I2').value, 0);
 
   return falhas;
 }

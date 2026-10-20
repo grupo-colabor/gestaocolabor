@@ -109,10 +109,10 @@ console.log('\n[F] Fórmula por seleção — as duas contas da Vale, caractere 
   // E o texto compilado percorre o resolvedor produzindo as MESMAS letras.
   const turmas = VALE_TEMPLATE.sheets[0];
   const cols = resolveColumns(turmas);
-  eq('valor total compilado -> I = G2*H2', resolveFormula(compileFormulaSpec(specValorTotal), cols, { row: 2 }), 'G2*H2');
-  eq('despesas compilado -> P = SUM(J3:N3)+(SUM(J3:N3)*O3)',
+  eq('valor total compilado -> K = I2*J2', resolveFormula(compileFormulaSpec(specValorTotal), cols, { row: 2 }), 'I2*J2');
+  eq('despesas compilado -> R = SUM(L3:P3)+(SUM(L3:P3)*Q3)',
     resolveFormula(compileFormulaSpec(specDespesas), cols, { row: 3 }),
-    'SUM(J3:N3)+(SUM(J3:N3)*O3)');
+    'SUM(L3:P3)+(SUM(L3:P3)*Q3)');
 
   eq('subtrair', compileFormulaSpec({ op: 'subtrair', a: { coluna: 'a' }, b: { coluna: 'b' } }), '={col:a}{row}-{col:b}{row}');
   eq('somar intervalo', compileFormulaSpec({ op: 'somarIntervalo', de: 'j', ate: 'n' }), '=SUM({col:j}{row}:{col:n}{row})');

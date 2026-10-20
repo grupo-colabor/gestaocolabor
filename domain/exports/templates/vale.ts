@@ -3,16 +3,21 @@
  *
  * Extraído do modelo `public/templates/vale.xlsx` em 16/09/2026 (duas abas:
  * "Turmas Realizadas" e "Plantas"). O arquivo é a fonte: cabeçalhos com os
- * espaços que ele tem, fórmulas de I e P como ele grava, 0,2 em O, totais em
- * G, I a N e P. Divergências aprovadas em relação ao arquivo:
- *   • o total de I no modelo soma só I2:I5 (erro do modelo) — aqui soma a
- *     faixa real, como as outras colunas;
+ * espaços que ele tem, fórmulas de valor total e total de despesas como ele
+ * grava, 0,2 no % de despesa, totais em carga, valor e despesas. Em
+ * 20/10/2026 "Data"/"Horário" viraram quatro colunas (início e fim, E..H) e
+ * o arquivo-base ganhou as mesmas — ele e esta lista precisam ter as mesmas
+ * colunas na mesma ordem, porque o escritor copia o cabeçalho e os estilos
+ * do arquivo por posição (smoke:medicao-vale confere). Divergências aprovadas
+ * em relação ao arquivo original:
+ *   • o total de valor no modelo somava só as 4 primeiras linhas (erro do
+ *     modelo) — aqui soma a faixa real, como as outras colunas;
  *   • a linha de totais vai logo abaixo da última turma (o modelo a fixa na
  *     33, com 31 linhas pré-formatadas); sobras são removidas pelo escritor;
  *   • Data grava data de verdade com dd/mm/yyyy (o modelo usa o formato
  *     embutido dependente do idioma);
- *   • H (preço) ganha formato de moeda (o modelo não tem);
- *   • B e H em amarelo quando saem vazias.
+ *   • o preço ganha formato de moeda (o modelo não tem);
+ *   • ID da Turma, horários e preço em amarelo quando saem vazios.
  * Sem proteção, sem congelamento, sem autofiltro — como o arquivo.
  *
  * Fórmulas SÓ por chave de coluna ({col:key}); o smoke reprova letra literal.
@@ -29,8 +34,13 @@ export const VALE_TURMAS_COLUMNS: TemplateColumn[] = [
   { key: 'idTurma', header: 'ID da Turma', source: 'demand.clientDemandId', format: 'text', highlightWhenEmpty: true },
   { key: 'treinamento', header: 'Treinamento', source: 'training.name', format: 'text' },
   { key: 'local', header: 'Local Treinamento ', source: 'demand.local', format: 'text' },
-  { key: 'data', header: 'Data', source: 'demand.dataInicio', format: 'date' },
-  { key: 'horario', header: 'Horário', source: 'demand.horarioInicio', format: 'time' },
+  // Início e fim (20/10/2026): a data fim é o último dia REAL — o mesmo pelo
+  // qual o filtro de período escolhe a medição. Horário ausente sai em branco
+  // e amarelo, nunca inventado (o dataset lê os horários crus).
+  { key: 'dataInicio', header: 'Data início', source: 'demand.dataInicio', format: 'date' },
+  { key: 'dataFim', header: 'Data fim', source: 'demand.dataFim', format: 'date' },
+  { key: 'horarioInicio', header: 'Horário início', source: 'demand.horarioInicio', format: 'time', highlightWhenEmpty: true },
+  { key: 'horarioFim', header: 'Horário fim', source: 'demand.horarioFim', format: 'time', highlightWhenEmpty: true },
   { key: 'cargaHoraria', header: 'Carga horária', source: 'demand.cargaHoraria', format: 'hours' },
   {
     key: 'precoHH',

@@ -139,7 +139,7 @@ export async function runArquivoChecks(t: Tools): Promise<number> {
     t.check('nenhuma oculta, nenhuma protegida', snap.sheets.every(s => !s.hidden && !s.locked));
 
     const turmas = snap.sheets[0];
-    t.check('19 colunas declaradas pelo arquivo', turmas.columnCount === 19, String(turmas.columnCount));
+    t.check('20 colunas declaradas pelo arquivo', turmas.columnCount === 20, String(turmas.columnCount));
     t.eq('primeiro cabeçalho, com os espaços do arquivo',
       turmas.rows[0].slice(0, 4).map(c => c.text),
       ['Número do anexo', 'ID da Turma', 'Treinamento', 'Local Treinamento ']);
@@ -147,7 +147,7 @@ export async function runArquivoChecks(t: Tools): Promise<number> {
     const s = suggestHeader(turmas);
     t.eq('vale.xlsx: cabeçalho na linha 1', s.headerRow, 1);
     t.eq('confiança alta', s.confianca, 'alta');
-    t.eq('as 18 colunas do template, na ordem',
+    t.eq('as 20 colunas do template, na ordem',
       s.columns.slice(0, 3).map(c => `${c.letter}:${c.header}`),
       ['A:Número do anexo', 'B:ID da Turma', 'C:Treinamento']);
     t.check('sugere a aba de turmas, não a de Plantas', suggestSheet(snap).sheetName === 'Turmas Realizadas');

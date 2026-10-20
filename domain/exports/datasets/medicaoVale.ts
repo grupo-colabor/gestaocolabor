@@ -17,10 +17,12 @@
  *     justamente para o que o cliente não paga. O que foi excluído fica em
  *     `naoReembolsavelExcluido`, para o painel avisar. Órfãos de Outros fora,
  *     como no painel. Combustível não é inferido: coluna manual do template.
- *   • DATA = primeiro dia; HORÁRIO = hora de parede do primeiro dia
- *     (getDayHorarioInicio); CARGA = training.hours, inclusive híbrida. A
- *     coluna "Data" da planilha continua sendo a de INÍCIO — o que mudou em
- *     23/09/2026 foi só o critério de seleção do período (ver abaixo).
+ *   • DATA INÍCIO = primeiro dia; DATA FIM = último dia REAL (`getDemandLastDay`,
+ *     o mesmo dia que o filtro de período usa); HORÁRIOS = hora de parede do
+ *     primeiro e do último dia, lidos CRUS (`getDayHorario*Raw`): a demanda
+ *     sem horário gravado sai com '' — célula amarela e aviso no painel —,
+ *     nunca com o 08:00/17:00 que a agenda inventa para não ficar sem card.
+ *     CARGA = training.hours, inclusive híbrida.
  *   • CONSULTOR = titulares do rateio (`resolveDemandInstructors`), nomes
  *     unidos por " / " quando a demanda foi dividida.
  *
@@ -46,7 +48,7 @@ import { computePanelExpenseBreakdown, isNaoReembolsavel } from '../../measureme
 import { resolveDemandInstructors } from '../../demandInstructors';
 import { buildTrainingsById } from '../../modalityOptions';
 import { getDemandTitle, isInternalDemand } from '../../demandLabel';
-import { getDemandDays, getDayHorarioInicio, getDemandLastDay } from '../../demandDays';
+import { getDemandDays, getDayHorarioInicioRaw, getDayHorarioFimRaw, getDemandLastDay } from '../../demandDays';
 import { resolveCalculatedStatus, resolveCompanyLabel, statusLabel } from '../shared';
 import { DEFAULT_OPTIONS, type ExportOptions } from '../options';
 import { TITULARES_SEPARATOR, type TemplateRowInput } from '../templates/sourceFields';
@@ -149,6 +151,7 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
 
     const dias = getDemandDays(demand);
     const primeiroDia = dias[0] ?? String(demand.startDate ?? '').slice(0, 10);
+    const ultimoDia = getDemandLastDay(demand);
     const cargaHoraria = interna
       ? Number(demand.horasPrevistas) > 0 ? Number(demand.horasPrevistas) : null
       : typeof training?.hours === 'number' && training.hours > 0 ? training.hours : null;
@@ -170,7 +173,9 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
       corredor: demand.corredor ?? '',
       uf: (demand.demandState ?? '').trim().toUpperCase(),
       dataInicio: primeiroDia,
-      horarioInicio: getDayHorarioInicio(demand, primeiroDia),
+      dataFim: ultimoDia,
+      horarioInicio: getDayHorarioInicioRaw(demand, primeiroDia),
+      horarioFim: getDayHorarioFimRaw(demand, ultimoDia),
       nDias: dias.length,
       statusCalculado,
       titulares: titularIds.map(nameOf),
@@ -192,7 +197,7 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
       refs: { trainingId: input.trainingId, demandId: demand.id },
       companyName: input.companyName,
       trainingId: input.trainingId,
-      ultimoDia: getDemandLastDay(demand),
+      ultimoDia,
       titularIds,
       statusCalculado,
       cancelada,

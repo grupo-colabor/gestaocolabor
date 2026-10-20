@@ -66,7 +66,7 @@ export const tools = { check, eq, perto, ler, semComentarios };
 const linha = (over: Partial<TemplateRowInput> = {}): TemplateRowInput => ({
   demandId: 'DEM-100', clientDemandId: 'SAP-1', companyName: 'Vale', trainingId: 'T_PRE',
   trainingName: 'NR 35', cargaHoraria: 16, local: 'Itabira', corredor: 'Sudeste', uf: 'MG',
-  dataInicio: '2026-08-10', horarioInicio: '08:00', nDias: 2, statusCalculado: 'CONCLUIDA',
+  dataInicio: '2026-08-10', dataFim: '2026-08-11', horarioInicio: '08:00', horarioFim: '17:00', nDias: 2, statusCalculado: 'CONCLUIDA',
   titulares: ['Titular'], despesas: { locomocao: 80, alimentacao: 50, hospedagem: 200, outros: 30, total: 360 },
   medicaoStatus: 'PRONTA_FATURAMENTO', temMedicao: true, ...over,
 });

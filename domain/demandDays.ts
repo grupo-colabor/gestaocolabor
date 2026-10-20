@@ -184,6 +184,33 @@ export function getDayHorarioFim(demand: DemandLike, dayKey: string): string {
 }
 
 /**
+ * Horário de início de um dia, SEM fallback — '' quando a demanda não tem.
+ *
+ * `getDayHorarioInicio` inventa 08:00 (e `getDayHorarioFim`, 17:00) para a
+ * agenda nunca ficar sem card. A Medição Vale não pode inventar: um horário
+ * que a demanda não tem sai em branco e amarelo, com aviso no painel. Mesma
+ * leitura, sem o último degrau.
+ */
+export function getDayHorarioInicioRaw(demand: DemandLike, dayKey: string): string {
+  if (demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates) && demand.specificDates.length > 0) {
+    const entry = demand.specificDates.find(e => e.data === dayKey);
+    return String(entry?.horarioInicio ?? '').slice(0, 5);
+  }
+  const s = String(demand.startDate ?? '');
+  return s.length >= 16 ? s.slice(11, 16) : '';
+}
+
+/** Horário de término de um dia, SEM fallback — ver `getDayHorarioInicioRaw`. */
+export function getDayHorarioFimRaw(demand: DemandLike, dayKey: string): string {
+  if (demand.dateMode === 'DIAS_ESPECIFICOS' && Array.isArray(demand.specificDates) && demand.specificDates.length > 0) {
+    const entry = demand.specificDates.find(e => e.data === dayKey);
+    return String(entry?.horarioFim ?? '').slice(0, 5);
+  }
+  const e = String(demand.endDate ?? '');
+  return e.length >= 16 ? e.slice(11, 16) : '';
+}
+
+/**
  * Monta o label do card da agenda para um dia específico.
  * Fonte única de verdade — usar em todos os caminhos de renderização.
  *

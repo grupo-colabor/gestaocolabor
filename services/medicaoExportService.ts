@@ -93,10 +93,25 @@ export type MedicaoExportResult =
  * Uma segunda cópia do mapeamento divergiria do Excel de pagamento na
  * primeira coluna nova. */
 
-export function mapSpecificDates(raw: any): Demand['specificDates'] {
+export interface MapDemandOptions {
+  /**
+   * Dia específico sem horário gravado sai com '' em vez de 08:00/18:00.
+   *
+   * O Excel de pagamento só olha o DIA, e para ele o fallback é inofensivo.
+   * A aba Exportações (Medição Vale) grava o horário na planilha do cliente e
+   * não pode inventar: horário ausente vira célula amarela e aviso no painel,
+   * o que só é possível se o mapper entregar a ausência em vez de 18:00.
+   */
+  horariosCrus?: boolean;
+}
+
+export function mapSpecificDates(raw: any, opts: MapDemandOptions = {}): Demand['specificDates'] {
   if (!raw) return undefined;
   const arr = Array.isArray(raw) ? raw : typeof raw === 'string' ? safeParseArray(raw) : null;
   if (!Array.isArray(arr) || arr.length === 0) return undefined;
+
+  const inicio = opts.horariosCrus ? '' : '08:00';
+  const fim = opts.horariosCrus ? '' : '18:00';
 
   return arr.map((sd: any) => {
     if (typeof sd === 'string') {
@@ -105,20 +120,20 @@ export function mapSpecificDates(raw: any): Demand['specificDates'] {
       if (parsed?.data) {
         return {
           data: String(parsed.data).slice(0, 10),
-          horarioInicio: parsed.horarioInicio ?? '08:00',
-          horarioFim: parsed.horarioFim ?? '18:00',
+          horarioInicio: parsed.horarioInicio ?? inicio,
+          horarioFim: parsed.horarioFim ?? fim,
         };
       }
-      return { data: sd.slice(0, 10), horarioInicio: '08:00', horarioFim: '18:00' };
+      return { data: sd.slice(0, 10), horarioInicio: inicio, horarioFim: fim };
     }
     if (sd && typeof sd === 'object') {
       return {
         data: String(sd.data ?? '').slice(0, 10),
-        horarioInicio: sd.horarioInicio ?? '08:00',
-        horarioFim: sd.horarioFim ?? '18:00',
+        horarioInicio: sd.horarioInicio ?? inicio,
+        horarioFim: sd.horarioFim ?? fim,
       };
     }
-    return { data: String(sd).slice(0, 10), horarioInicio: '08:00', horarioFim: '18:00' };
+    return { data: String(sd).slice(0, 10), horarioInicio: inicio, horarioFim: fim };
   });
 }
 
@@ -140,7 +155,7 @@ function safeParseObject(raw: string): any | null {
   }
 }
 
-export function mapDemand(row: any): Demand {
+export function mapDemand(row: any, opts: MapDemandOptions = {}): Demand {
   return {
     id: row.id,
     // Demanda interna: carga horária em horasPrevistas (consumida por
@@ -157,7 +172,7 @@ export function mapDemand(row: any): Demand {
     demandState: row.demand_state ?? undefined,
     modality: row.modality ?? 'PRESENCIAL',
     dateMode: row.date_mode ?? 'CONTINUO',
-    specificDates: mapSpecificDates(row.specific_dates),
+    specificDates: mapSpecificDates(row.specific_dates, opts),
     status: (row.status ?? 'NOVA') as DemandStatus,
     startDate: row.start_date ?? '',
     endDate: row.end_date ?? '',
@@ -247,7 +262,7 @@ export async function fetchMedicaoData(dataInicio: string, dataFim: string): Pro
       fetchCompanionAllocations(),
     ]);
 
-  const demands = (demandRows ?? []).map(mapDemand);
+  const demands = (demandRows ?? []).map(r => mapDemand(r));
   const instructorAllocations = (allocationRows ?? []).map(mapAllocation);
   const measurements = (measurementRows ?? []).map(mapMeasurement);
   const trainings = (trainingRows ?? []).map(mapTraining);

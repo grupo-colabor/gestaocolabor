@@ -23,6 +23,7 @@ import {
 } from '../domain/exports/siteCorredor';
 import { VALE_TEMPLATE } from '../domain/exports/templates/vale';
 import { resolveRowsSheet } from '../domain/exports/templates/resolve';
+import { SOURCE_FIELDS } from '../domain/exports/templates/sourceFields';
 import { indexTemplateValues, emptyTemplateValuesIndex } from '../domain/exports/templates/values';
 import { applyFilters, buildFilterOptions, MEDICAO_STATUS_OPTIONS } from '../domain/exports/filters';
 import { EMPTY_FILTERS, SEM_MEDICAO } from '../domain/exports/types';
@@ -157,6 +158,37 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     eq('dias específicos: data = primeiro dia ordenado', de('DEM-102').input.dataInicio, '2026-08-20');
     eq('dias específicos: horário do primeiro dia', de('DEM-102').input.horarioInicio, '13:00');
     eq('contínuo: horário de parede do início', de('DEM-100').input.horarioInicio, '08:00');
+
+    // Data e horário de TÉRMINO: o último dia real (o mesmo do filtro de
+    // período) e a hora de parede desse dia — lidos crus, sem inventar.
+    eq('contínuo: data fim = último dia', de('DEM-100').input.dataFim, '2026-08-11');
+    eq('contínuo: horário de término de parede', de('DEM-100').input.horarioFim, '17:00');
+    eq('dias específicos: data fim = maior dia da lista', de('DEM-102').input.dataFim, '2026-08-22');
+    eq('dias específicos: horário de término do ÚLTIMO dia', de('DEM-102').input.horarioFim, '18:00');
+    eq('data fim da linha é o ultimoDia do filtro', rows.map(r => r.input.dataFim), rows.map(r => r.ultimoDia));
+    {
+      const semHora = buildMedicaoValeRows({
+        ...src,
+        demands: [
+          demandaVale({ id: 'DEM-300', startDate: '2026-08-10', endDate: '2026-08-11' }),
+          demandaVale({ id: 'DEM-301', dateMode: 'DIAS_ESPECIFICOS', startDate: '2026-08-10T08:00', endDate: '2026-08-11T17:00',
+            specificDates: [{ data: '2026-08-10', horarioInicio: '', horarioFim: '' }, { data: '2026-08-11', horarioInicio: '09:00', horarioFim: '' }] }),
+        ],
+      });
+      const h = (id: string) => { const r = semHora.find(x => x.demand.id === id)!; return [r.input.horarioInicio, r.input.horarioFim]; };
+      eq('contínuo sem hora gravada: início e fim VAZIOS (nada de 08:00/17:00)', h('DEM-300'), ['', '']);
+      eq('dia específico sem hora: vazio onde falta, hora onde há', h('DEM-301'), ['', '']);
+      eq('sem hora: o campo do catálogo resolve null (célula vazia), não texto vazio',
+        [SOURCE_FIELDS['demand.horarioInicio'].get(semHora[0].input), SOURCE_FIELDS['demand.horarioFim'].get(semHora[0].input)], [null, null]);
+    }
+    {
+      // O carregador da aba pede o mapper SEM o 08:00/18:00 do Excel de pagamento.
+      const carga = t.semComentarios(t.ler('services/exports/loadExportData.ts'));
+      check('a carga da aba lê os horários crus', carga.includes('mapDemand(row, { horariosCrus: true })'));
+      const svc = t.semComentarios(t.ler('services/medicaoExportService.ts'));
+      check('o mapper só inventa 08:00/18:00 quando ninguém pede o cru', svc.includes("const inicio = opts.horariosCrus ? '' : '08:00';") && svc.includes("const fim = opts.horariosCrus ? '' : '18:00';"));
+      check('e o Excel de pagamento continua chamando sem opção', !/mapDemand\([^)]*horariosCrus/.test(svc));
+    }
     eq('ID SAP vem de clientDemandId', de('DEM-100').input.clientDemandId, 'SAP-100');
     eq('interna: carga = horas previstas', de('DEM-107').input.cargaHoraria, 4);
     eq('medicaoStatus na linha para o filtro', [de('DEM-100').medicaoStatus, de('DEM-108').medicaoStatus], ['PRONTA_FATURAMENTO', '']);
@@ -232,6 +264,7 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     eq('DEM-1418 termina em 25/08, não no campo endDate (21/08)', getDemandLastDay(demands[0]), '2026-08-25');
     eq('ultimoDia na linha vem dos dias reais', rowsR.find(r => r.demand.id === 'DEM-1418')!.ultimoDia, '2026-08-25');
     eq('a coluna Data continua sendo o primeiro dia', rowsR.find(r => r.demand.id === 'DEM-1418')!.input.dataInicio, '2026-08-19');
+    eq('e a Data fim é o dia em que a turma termina (25/08), o mesmo do filtro', rowsR.find(r => r.demand.id === 'DEM-1418')!.input.dataFim, '2026-08-25');
 
     check('DEM-1418 entra em 20/08–21/09 (começou antes, termina dentro)', ids('2026-08-20', '2026-09-21').includes('DEM-1418'));
     check('DEM-1418 NÃO entra em 20/07–19/08 (termina depois)', !ids('2026-07-20', '2026-08-19').includes('DEM-1418'));

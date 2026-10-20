@@ -97,7 +97,9 @@ export interface ExportSourceData {
 
 function mapDemandForExport(row: any): Demand {
   return {
-    ...mapDemand(row),
+    // Horário de dia específico SEM o 08:00/18:00 do Excel de pagamento: a
+    // Medição Vale grava o horário na planilha do cliente e avisa quando falta.
+    ...mapDemand(row, { horariosCrus: true }),
     clientDemandId: row.client_demand_id ?? undefined,
     corredor: row.corredor ?? undefined,
     requester: row.requester ?? undefined,

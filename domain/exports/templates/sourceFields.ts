@@ -37,8 +37,20 @@ export interface TemplateRowInput {
   uf: string;
   /** 'YYYY-MM-DD' do primeiro dia da demanda. */
   dataInicio: string;
-  /** 'HH:mm' do primeiro dia. */
+  /**
+   * 'YYYY-MM-DD' do último dia REAL — o mesmo dia pelo qual o filtro de
+   * período escolhe a medição ("a turma entra no período em que termina").
+   * Em dias específicos é o maior dia da lista, não o campo de data fim.
+   */
+  dataFim: string;
+  /**
+   * 'HH:mm' do primeiro dia, ou '' quando a demanda não tem horário gravado.
+   * SEM fallback de propósito: a planilha do cliente recebe o horário, e um
+   * 08:00 inventado seria dado falso. Vazio = célula amarela + aviso.
+   */
   horarioInicio: string;
+  /** 'HH:mm' do último dia, ou '' — mesma regra de `horarioInicio`. */
+  horarioFim: string;
   nDias: number;
   statusCalculado: string;
   /** Nomes dos titulares, na ordem do rateio. */
@@ -56,7 +68,9 @@ export type SourceField =
   | 'demand.corredor'
   | 'demand.uf'
   | 'demand.dataInicio'
+  | 'demand.dataFim'
   | 'demand.horarioInicio'
+  | 'demand.horarioFim'
   | 'demand.nDias'
   | 'demand.cargaHoraria'
   | 'demand.statusCalculado'
@@ -105,7 +119,10 @@ export const SOURCE_FIELDS: Record<SourceField, SourceFieldDef> = {
   'demand.corredor': { label: 'Corredor', grupo: 'Demanda', get: r => r.corredor },
   'demand.uf': { label: 'UF', grupo: 'Demanda', get: r => r.uf },
   'demand.dataInicio': { label: 'Data de início', grupo: 'Demanda', get: r => r.dataInicio },
-  'demand.horarioInicio': { label: 'Horário de início', grupo: 'Demanda', get: r => r.horarioInicio },
+  'demand.dataFim': { label: 'Data de término', grupo: 'Demanda', get: r => r.dataFim },
+  // Horário ausente sai como null (célula vazia), nunca como hora inventada.
+  'demand.horarioInicio': { label: 'Horário de início', grupo: 'Demanda', get: r => r.horarioInicio || null },
+  'demand.horarioFim': { label: 'Horário de término', grupo: 'Demanda', get: r => r.horarioFim || null },
   'demand.nDias': { label: 'Nº de dias', grupo: 'Demanda', get: r => r.nDias },
   'demand.cargaHoraria': { label: 'Carga horária', grupo: 'Treinamento', get: r => r.cargaHoraria },
   'demand.statusCalculado': { label: 'Status (calculado)', grupo: 'Demanda', get: r => r.statusCalculado },

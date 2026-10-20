@@ -31,7 +31,7 @@
  * `semLocal` para a tela mostrar em destaque e o painel avisar. Nunca
  * silencioso.
  */
-import type { MeasurementTemplate } from '../templates/types';
+import type { HybridPart, MeasurementTemplate } from '../templates/types';
 import { VALE_TEMPLATE } from '../templates/vale';
 import { VALE_BM_CONSTANTS } from '../templates/vale-bm';
 import { resolveRowsSheet, type RegionRowInput } from '../templates/resolve';
@@ -46,7 +46,8 @@ export interface BmLinha {
   unidade: string | number;
   /** `null` = alguma turma sem preço HH (célula em branco e amarela). */
   preco: number | null;
-  quantidade: number;
+  /** `null` = alguma linha com carga em branco (híbrida sem horas práticas válidas) — célula amarela. */
+  quantidade: number | null;
   /** Demandas que compõem a linha. */
   turmas: string[];
   trainingIds: string[];
@@ -108,39 +109,49 @@ const num = (v: unknown): number => {
 const precoDe = (v: unknown): number | null =>
   v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v);
 
-/** Os números de UMA turma, lidos da resolução da aba Turmas (mesma fonte do XLSX). */
+/**
+ * Os números de UMA LINHA da aba Turmas (mesma fonte do XLSX). Uma turma
+ * híbrida tem DUAS linhas (presencial e online, `parte`), com o nome já
+ * sufixado e as despesas só na presencial — é assim que ela vira duas linhas
+ * do QQP e as despesas entram uma vez.
+ */
 export interface TurmaNumeros {
   demandId: string;
+  parte?: HybridPart;
   trainingId: string;
   trainingName: string;
-  cargaHoraria: number;
+  /** `null` = carga em branco (híbrida sem horas práticas válidas). */
+  cargaHoraria: number | null;
   preco: number | null;
-  /** Σ J..N (locação, combustível, alimentação, hospedagem, outros). */
+  /** Σ despesas reembolsáveis (locação, combustível, alimentação, hospedagem, outros). */
   despesas: number;
   pct: number;
-  /** Coluna P: despesas × (1 + %). */
+  /** Valor total despesas: despesas × (1 + %). */
   p: number;
 }
 
 export function turmasNumeros(elegiveis: MedicaoValeRow[], values: TemplateValuesIndex): TurmaNumeros[] {
   const turmasSheet = VALE_TEMPLATE.sheets[0];
-  const resolved = resolveRowsSheet(turmasSheet, toRowsSheetInput(elegiveis), values);
+  const linhas = toRowsSheetInput(elegiveis, VALE_TEMPLATE);
+  const resolved = resolveRowsSheet(turmasSheet, linhas, values);
   const idx = (key: string) => resolved.columns.findIndex(c => c.key === key);
   const iCarga = idx('cargaHoraria');
   const iPreco = idx('precoHH');
   const iDesp = ['locacao', 'combustivel', 'alimentacao', 'hospedagem', 'outros'].map(idx);
   const iPct = idx('pctDespesa');
-  const soElegiveis = elegiveis.filter(r => r.elegivelTurmas);
+  const trainingIdDe = new Map(elegiveis.map(r => [r.demand.id, r.trainingId]));
 
   return resolved.rows.map((cells, i) => {
-    const r = soElegiveis[i];
+    const l = linhas[i];
     const despesas = iDesp.reduce((acc, j) => acc + num(cells[j].value), 0);
     const pct = num(cells[iPct].value);
+    const carga = cells[iCarga].value;
     return {
-      demandId: r.demand.id,
-      trainingId: r.trainingId,
-      trainingName: r.input.trainingName,
-      cargaHoraria: num(cells[iCarga].value),
+      demandId: l.refs.demandId,
+      parte: l.refs.parte,
+      trainingId: trainingIdDe.get(l.refs.demandId) ?? l.input.trainingId,
+      trainingName: l.input.trainingName,
+      cargaHoraria: carga === null || carga === undefined || carga === '' ? null : num(carga),
       preco: precoDe(cells[iPreco].value),
       despesas: round2(despesas),
       pct,
@@ -156,7 +167,13 @@ export function buildBm(
   opts: BuildBmOptions
 ): BmResult {
   const c = { ...VALE_BM_CONSTANTS, ...(template.constants ?? {}) } as typeof VALE_BM_CONSTANTS;
-  const numeros = new Map(turmasNumeros(elegiveis, values).map(n => [n.demandId, n]));
+  // Por DEMANDA, com as linhas dela: uma (turma comum) ou duas (híbrida).
+  const numeros = new Map<string, TurmaNumeros[]>();
+  for (const n of turmasNumeros(elegiveis, values)) {
+    const lista = numeros.get(n.demandId) ?? [];
+    lista.push(n);
+    numeros.set(n.demandId, lista);
+  }
 
   // Nomes duplicados (ids diferentes, mesmo nome) — aviso, não muda o BM.
   const idsPorNome = new Map<string, Set<string>>();
@@ -209,27 +226,32 @@ export function buildBm(
       const qqpTreinamento = String(ctxValor('qqpTreinamento') ?? c.qqpTreinamento);
       const qqpDespesas = String(ctxValor('qqpDespesas') ?? c.qqpDespesas);
 
-      // Agregação por nome normalizado + preço efetivo.
+      // Agregação por nome normalizado + preço efetivo, LINHA a linha: a
+      // híbrida contribui com "X – Presencial" e "X – Online", cada uma no seu
+      // preço; a despesa dela está só na presencial, então entra uma vez.
       const grupos = new Map<string, BmLinha>();
       let totalDespesas = 0;
       for (const t of turmas) {
-        const n = numeros.get(t.demand.id)!;
-        const chave = `${normalizeTrainingName(n.trainingName)}|${n.preco === null ? '' : n.preco}`;
-        const g = grupos.get(chave) ?? {
-          tipo: 'treinamento' as const,
-          qqp: qqpTreinamento,
-          descricao: `${c.prefixoTreinamento}${n.trainingName.trim()}`,
-          unidade: c.unidadeTreinamento,
-          preco: n.preco,
-          quantidade: 0,
-          turmas: [],
-          trainingIds: [],
-        };
-        g.quantidade = round2(g.quantidade + n.cargaHoraria);
-        g.turmas.push(n.demandId);
-        if (!g.trainingIds.includes(n.trainingId)) g.trainingIds.push(n.trainingId);
-        grupos.set(chave, g);
-        totalDespesas = round2(totalDespesas + (c.despesasComAcrescimo ? n.p : n.despesas));
+        for (const n of numeros.get(t.demand.id) ?? []) {
+          const chave = `${normalizeTrainingName(n.trainingName)}|${n.preco === null ? '' : n.preco}`;
+          const g = grupos.get(chave) ?? {
+            tipo: 'treinamento' as const,
+            qqp: qqpTreinamento,
+            descricao: `${c.prefixoTreinamento}${n.trainingName.trim()}`,
+            unidade: c.unidadeTreinamento,
+            preco: n.preco,
+            quantidade: 0 as number | null,
+            turmas: [],
+            trainingIds: [],
+          };
+          // Carga em branco (híbrida sem horas práticas) contamina a linha:
+          // sai vazia e amarela, nunca somada como zero em silêncio.
+          g.quantidade = g.quantidade === null || n.cargaHoraria === null ? null : round2(g.quantidade + n.cargaHoraria);
+          if (!g.turmas.includes(n.demandId)) g.turmas.push(n.demandId);
+          if (!g.trainingIds.includes(n.trainingId)) g.trainingIds.push(n.trainingId);
+          grupos.set(chave, g);
+          totalDespesas = round2(totalDespesas + (c.despesasComAcrescimo ? n.p : n.despesas));
+        }
       }
       const linhasTreino = [...grupos.values()].sort(
         (a, b) => a.descricao.localeCompare(b.descricao, 'pt-BR') || (a.preco ?? -1) - (b.preco ?? -1)
@@ -247,7 +269,7 @@ export function buildBm(
           trainingIds: [],
         },
       ];
-      const totalTreinamentos = round2(linhasTreino.reduce((acc, l) => acc + (l.preco ?? 0) * l.quantidade, 0));
+      const totalTreinamentos = round2(linhasTreino.reduce((acc, l) => acc + (l.preco ?? 0) * (l.quantidade ?? 0), 0));
       const cabecalhoIncompleto = [...semDefault].filter(k => ctxValor(k) === null);
 
       return { corredor, mina, contextKey: key, contexto, cabecalhoIncompleto, turmas, linhas, totalTreinamentos, totalDespesas };

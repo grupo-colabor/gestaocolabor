@@ -115,14 +115,16 @@ export function buildBmFixture() {
  */
 export function sigmaMedicaoVale(rows: MedicaoValeRow[], values: TemplateValuesIndex) {
   const sheet = VALE_TEMPLATE.sheets[0];
-  const resolved = resolveRowsSheet(sheet, toRowsSheetInput(rows), values);
+  // Com o template da Vale: a híbrida são duas linhas, como no XLSX.
+  const linhas = toRowsSheetInput(rows, VALE_TEMPLATE);
+  const resolved = resolveRowsSheet(sheet, linhas, values);
   const idx = (key: string) => resolved.columns.findIndex(c => c.key === key);
   const n = (v: unknown) => (v === null || v === undefined || v === '' ? 0 : Number(v) || 0);
   const elegiveis = rows.filter(r => r.elegivelTurmas);
   let noBm = 0;
   let foraDoBm = 0;
   resolved.rows.forEach((cells, i) => {
-    const r = elegiveis[i];
+    const r = elegiveis.find(x => x.demand.id === linhas[i].refs.demandId)!;
     const I = n(cells[idx('cargaHoraria')].value) * n(cells[idx('precoHH')].value);
     const despesas = ['locacao', 'combustivel', 'alimentacao', 'hospedagem', 'outros'].reduce((acc, k) => acc + n(cells[idx(k)].value), 0);
     const P = despesas + despesas * n(cells[idx('pctDespesa')].value);
@@ -148,7 +150,9 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
   {
     const numeros = turmasNumeros(recorte, src.templateValues);
     const elegiveis = recorte.filter(r => r.elegivelTurmas);
-    eq('numeros: um por turma elegível, na ordem', numeros.map(n => n.demandId), elegiveis.map(r => r.demand.id));
+    eq('numeros: um por LINHA da aba Turmas, na ordem — a híbrida DEM-102 em duas',
+      numeros.map(n => `${n.demandId}${n.parte ? ':' + n.parte : ''}`),
+      elegiveis.flatMap(r => (r.hibrida ? [`${r.demand.id}:PRESENCIAL`, `${r.demand.id}:ONLINE`] : [r.demand.id])));
 
     const bm = buildBm(recorte, src.templateValues, VALE_BM_TEMPLATE, { corredor: 'Sudeste' });
     eq('um BM por mina, em ordem', bm.minas.map(m => m.mina), ['Brucutu', 'Timbopeba']);
@@ -161,8 +165,9 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
     const treinos = bru.linhas.filter(l => l.tipo === 'treinamento');
     eq('Brucutu: NR 35 a 120 agrega DEM-100 + DEM-110 (16h + 16h)', treinos.find(l => l.preco === 120)?.quantidade, 32);
     eq('Brucutu: DEM-112 com preço sobrescrito 130 é linha separada, 16h', treinos.find(l => l.preco === 130)?.quantidade, 16);
-    eq('Brucutu: linhas em ordem alfabética, com o prefixo do modelo', treinos.map(l => l.descricao), [
-      'Aplicação de Treinamento - NR 20 Intermediário',
+    eq('Brucutu: linhas em ordem alfabética, com o prefixo do modelo (a híbrida em duas, com o sufixo da parte)', treinos.map(l => l.descricao), [
+      'Aplicação de Treinamento - NR 20 Intermediário – Online',
+      'Aplicação de Treinamento - NR 20 Intermediário – Presencial',
       'Aplicação de Treinamento - NR 35 Trabalho em Altura',
       'Aplicação de Treinamento - NR 35 Trabalho em Altura',
     ]);
@@ -179,12 +184,12 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
     eq('Timbopeba: cabeçalho incompleto (sem cadastro) lista os 7 campos sem default', tim.cabecalhoIncompleto.length, 7);
     check('Timbopeba: QQP continua com default sem cadastro', tim.linhas[0].qqp === '20' && tim.linhas[tim.linhas.length - 1].qqp === '70');
 
-    // Σ linhas 20 = Σ coluna I das turmas da mina; quantidade 70 = Σ P.
+    // Σ linhas 20 = Σ coluna K das LINHAS da mina (a híbrida conta as duas); quantidade 70 = Σ R.
     for (const m of bm.minas) {
-      const ns = m.turmas.map(r => numeros.find(n => n.demandId === r.demand.id)!);
-      const sigmaI = ns.reduce((acc, n) => acc + (n.preco ?? 0) * n.cargaHoraria, 0);
+      const ns = m.turmas.flatMap(r => numeros.filter(n => n.demandId === r.demand.id));
+      const sigmaI = ns.reduce((acc, n) => acc + (n.preco ?? 0) * (n.cargaHoraria ?? 0), 0);
       const sigmaP = ns.reduce((acc, n) => acc + n.p, 0);
-      const linhas20 = m.linhas.filter(l => l.tipo === 'treinamento').reduce((acc, l) => acc + (l.preco ?? 0) * l.quantidade, 0);
+      const linhas20 = m.linhas.filter(l => l.tipo === 'treinamento').reduce((acc, l) => acc + (l.preco ?? 0) * (l.quantidade ?? 0), 0);
       perto(`${m.mina}: Σ preço×quantidade das linhas 20 = Σ coluna I das turmas`, linhas20, sigmaI);
       perto(`${m.mina}: quantidade da linha 70 = Σ coluna P`, m.linhas[m.linhas.length - 1].quantidade, sigmaP);
       perto(`${m.mina}: totalTreinamentos coerente`, m.totalTreinamentos, Math.round((sigmaI + Number.EPSILON) * 100) / 100);
@@ -204,9 +209,11 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
     const soBru = buildBm(recorte, src.templateValues, VALE_BM_TEMPLATE, { corredor: 'Sudeste', mina: 'Brucutu' });
     eq('com mina: uma só', soBru.minas.map(m => m.mina), ['Brucutu']);
 
-    // Preço vazio: híbrida DEM-102 (T_HIB sem preço) na mina Brucutu.
-    const hib = bm.minas[0].linhas.find(l => l.trainingIds.includes('T_HIB'));
-    eq('turma sem preço: linha com preço em branco e horas somadas', hib ? [hib.preco, hib.quantidade] : 'sem linha', [null, 40]);
+    // Preço vazio: híbrida DEM-102 (T_HIB 40h/8h, sem preço presencial nem online) na mina Brucutu.
+    const hib = bm.minas[0].linhas.filter(l => l.trainingIds.includes('T_HIB'));
+    eq('híbrida sem preço: DUAS linhas do QQP (online 32h e presencial 8h), as duas com preço em branco', hib.map(l => [l.descricao.replace('Aplicação de Treinamento - NR 20 Intermediário', ''), l.preco, l.quantidade]), [[' – Online', null, 32], [' – Presencial', null, 8]]);
+    check('as duas linhas apontam para a mesma turma', hib.every(l => l.turmas.length === 1 && l.turmas[0] === 'DEM-102'));
+    check('a despesa da híbrida (zero aqui) entrou na linha 70 uma vez só', numeros.filter(n => n.demandId === 'DEM-102' && n.parte === 'ONLINE').every(n => n.p === 0));
 
     // Linhas da região e nomes de arquivo.
     eq('bmRegionRows: campos da região', Object.keys(bmRegionRows(bru)[0]), ['qqp', 'descricao', 'unidade', 'preco', 'quantidade']);
@@ -259,6 +266,78 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
     eq('entrada com pasta por corredor', bmZipEntryName(VALE_BM_TEMPLATE, todos.minas[0], di, df, true), 'ferrovia-mg/vale-bm-ferrovia-mg-vitoria-2026-08-01_2026-08-31.xlsx');
     eq('entrada sem pasta = nome de sempre', bmZipEntryName(VALE_BM_TEMPLATE, todos.minas[1], di, df, false), bmFileName(VALE_BM_TEMPLATE, 'Sudeste', 'Brucutu', di, df));
     eq('corredor vazio explícito = "Todos"', buildBm(recorteTodos, src.templateValues, VALE_BM_TEMPLATE, { corredor: '' }).minas.length, 3);
+  }
+
+  /* ──────────────────────────────────────────────────────────────────────
+   * [H] Híbrida no BM — 40h/8h com os dois preços, sem horas práticas, com
+   *     um preço só, e sobrescrita dos dois preços na turma
+   *
+   * Fixture própria (a compartilhada tem números conferidos à mão): quatro
+   * turmas híbridas em Brucutu, mais uma presencial pura do mesmo nome.
+   * ──────────────────────────────────────────────────────────────────── */
+  console.log('\n[H] Híbrida no BM: duas linhas do QQP por turma, despesas uma vez');
+  {
+    const trainings: any[] = [
+      { id: 'T_HIB', name: 'NR 20 Intermediário', hours: 40, practicalHours: 8, modality: 'HIBRIDO' },
+      { id: 'T_HIB0', name: 'NR 10 Básico', hours: 40, practicalHours: null, modality: 'HIBRIDO' },
+      { id: 'T_HIB1', name: 'CIPA Mineração', hours: 16, practicalHours: 4, modality: 'HIBRIDO' },
+      { id: 'T_PRE', name: 'NR 20 Intermediário', hours: 40, practicalHours: null, modality: 'PRESENCIAL' },
+    ];
+    const demands = [
+      demandaVale({ id: 'DEM-500', trainingId: 'T_HIB', trainingLocal: 'Brucutu', startDate: '2026-08-03T08:00', endDate: '2026-08-07T17:00' }),  // 40h/8h, preços do treinamento
+      demandaVale({ id: 'DEM-501', trainingId: 'T_HIB', trainingLocal: 'Brucutu', startDate: '2026-08-10T08:00', endDate: '2026-08-14T17:00' }),  // 40h/8h, os dois preços sobrescritos
+      demandaVale({ id: 'DEM-502', trainingId: 'T_HIB0', trainingLocal: 'Brucutu', startDate: '2026-08-17T08:00', endDate: '2026-08-21T17:00' }), // sem horas práticas
+      demandaVale({ id: 'DEM-503', trainingId: 'T_HIB1', trainingLocal: 'Brucutu', startDate: '2026-08-24T08:00', endDate: '2026-08-25T17:00' }), // só o preço presencial
+      demandaVale({ id: 'DEM-504', trainingId: 'T_PRE', trainingLocal: 'Brucutu', startDate: '2026-08-26T08:00', endDate: '2026-08-28T17:00' }),  // presencial pura, mesmo nome
+    ];
+    const measurements = [
+      medicao('DEM-500', { attachments: [{ id: 'h1', category: 'LOCOMOCAO', value: 100 }] }),
+      medicao('DEM-501', { attachments: [{ id: 'h2', category: 'HOSPEDAGEM', value: 300 }] }),
+      medicao('DEM-502'), medicao('DEM-503'), medicao('DEM-504'),
+    ];
+    const instructorAllocations = demands.map((d, i) => ({ id: `H${i}`, demandId: d.id, instructorId: 'INS-T', startDate: d.startDate, endDate: d.endDate }));
+    const values = indexTemplateValues([
+      { scope: 'training', column_key: 'precoHHPresencial', training_id: 'T_HIB', demand_id: null, value: 290 },
+      { scope: 'training', column_key: 'precoHHOnline', training_id: 'T_HIB', demand_id: null, value: 200 },
+      { scope: 'demand', column_key: 'precoHHPresencial', training_id: null, demand_id: 'DEM-501', value: 300 },
+      { scope: 'demand', column_key: 'precoHHOnline', training_id: null, demand_id: 'DEM-501', value: 210 },
+      { scope: 'training', column_key: 'precoHHPresencial', training_id: 'T_HIB1', demand_id: null, value: 250 },
+      { scope: 'training', column_key: 'precoHH', training_id: 'T_PRE', demand_id: null, value: 120 },
+    ]);
+    const srcH = { ...src, trainings, demands, measurements, instructorAllocations, templateValues: values };
+    const rowsH = applyFilters(buildMedicaoValeRows(srcH), { ...agosto, corredor: 'Sudeste' }, allowed, { trainingsById: buildTrainingsById(trainings), now: HOJE });
+    eq('as cinco turmas estão no recorte', rowsH.map(r => r.demand.id), ['DEM-500', 'DEM-501', 'DEM-502', 'DEM-503', 'DEM-504']);
+
+    const bmH = buildBm(rowsH, values, VALE_BM_TEMPLATE, { corredor: 'Sudeste' });
+    const bru = bmH.minas[0];
+    const linha = (desc: string, preco: number | null) => bru.linhas.find(l => l.descricao === `Aplicação de Treinamento - ${desc}` && l.preco === preco);
+    eq('5 turmas na mina (contagem por demanda, não por linha)', bru.turmas.length, 5);
+
+    // 40h/8h com os preços do treinamento: 8h a 290 e 32h a 200.
+    eq('DEM-500: presencial 8h a R$ 290', linha('NR 20 Intermediário – Presencial', 290)?.quantidade, 8);
+    eq('DEM-500: online 32h a R$ 200', linha('NR 20 Intermediário – Online', 200)?.quantidade, 32);
+    // Sobrescrita dos dois preços na turma: linhas separadas, no preço da turma.
+    eq('DEM-501: presencial 8h a R$ 300 (sobrescrito)', linha('NR 20 Intermediário – Presencial', 300)?.quantidade, 8);
+    eq('DEM-501: online 32h a R$ 210 (sobrescrito)', linha('NR 20 Intermediário – Online', 210)?.quantidade, 32);
+    // Sem horas práticas: duas linhas com quantidade em branco (amarela), nunca 40 nem 0.
+    const semPraticas = bru.linhas.filter(l => l.trainingIds.includes('T_HIB0'));
+    eq('DEM-502 (sem horas práticas): duas linhas com quantidade EM BRANCO', semPraticas.map(l => [l.descricao.endsWith('– Presencial') || l.descricao.endsWith('– Online'), l.quantidade]), [[true, null], [true, null]]);
+    // Só o preço presencial: a online sai com preço em branco.
+    eq('DEM-503 (16h/4h, só presencial): presencial 4h a R$ 250', linha('CIPA Mineração – Presencial', 250)?.quantidade, 4);
+    eq('DEM-503: online 12h com preço em branco', linha('CIPA Mineração – Online', null)?.quantidade, 12);
+    // Presencial pura "X" e "X – Presencial" não se misturam.
+    eq('DEM-504 (presencial pura, mesmo nome): linha própria, 40h a R$ 120', linha('NR 20 Intermediário', 120)?.quantidade, 40);
+
+    // Despesas uma vez por turma: 100 × 1,2 + 300 × 1,2 = 480.
+    perto('linha 70 = despesas das híbridas uma vez só (100 + 300) × 1,2', bru.totalDespesas, 480);
+    perto('total dos treinamentos = 8×290 + 32×200 + 8×300 + 32×210 + 4×250 + 40×120', bru.totalTreinamentos, 8 * 290 + 32 * 200 + 8 * 300 + 32 * 210 + 4 * 250 + 40 * 120);
+    // Σ BM = Σ (K + R) da aba Turmas — a prova de que os dois documentos batem com a híbrida dividida.
+    const sigmaH = sigmaMedicaoVale(rowsH, values);
+    perto('Σ BM = Σ (K + R) da Medição Vale com híbridas', Math.round((bru.totalTreinamentos + bru.totalDespesas + Number.EPSILON) * 100) / 100, sigmaH.noBm);
+
+    // A folha do BM: quantidade em branco sai amarela.
+    const region = bmRegionRows(bru);
+    check('bmRegionRows carrega quantidade null para a linha sem horas práticas', region.some(r => r.quantidade === null));
   }
 
   /* ──────────────────────────────────────────────────────────────────────

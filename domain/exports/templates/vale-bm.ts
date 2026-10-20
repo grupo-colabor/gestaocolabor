@@ -98,7 +98,8 @@ export const VALE_BM_TEMPLATE: MeasurementTemplate = {
           { key: 'descricao', col: 'C', source: 'field' },
           { key: 'unidade', col: 'F', source: 'field' },
           { key: 'preco', col: 'G', source: 'field', highlightWhenEmpty: true },
-          { key: 'quantidade', col: 'H', source: 'field' },
+          // Vazia (híbrida sem horas práticas válidas) sai amarela, como o preço.
+          { key: 'quantidade', col: 'H', source: 'field', highlightWhenEmpty: true },
           { key: 'total', col: 'I', source: 'formula', formula: '={col:preco}{row}*{col:quantidade}{row}' },
         ],
         totals: { col: 'I', formula: 'SUM({col:total}{first}:J{last})' },

@@ -48,6 +48,7 @@ import {
   periodoLabel as bmPeriodoLabel,
 } from '../../domain/exports/datasets/medicaoValeBm';
 import { buildPendencias, mergePendencias, type Pendencia } from '../../domain/exports/pendencias';
+import { isHybridTraining, splitHybridHours } from '../../domain/hybridHours';
 import { resolveTemplate, resolveRowsSheet } from '../../domain/exports/templates/resolve';
 import { VALE_TEMPLATE } from '../../domain/exports/templates/vale';
 import {
@@ -138,6 +139,11 @@ const MedicaoTemplateView: React.FC<{
   const values = useMemo(() => mergeIndex(baseIndex, pendentes), [baseIndex, pendentes]);
   const trainingsById = useMemo(() => buildTrainingsById(carga.trainings), [carga.trainings]);
   const trainingNames = useMemo(() => new Map(carga.trainings.map(t => [String(t.id), t.name])), [carga.trainings]);
+  /** Treinamentos híbridos com a divisão pelo cadastro — a grade mostra dois preços para eles. */
+  const hibridas = useMemo(
+    () => new Map(carga.trainings.filter(isHybridTraining).map(t => [String(t.id), splitHybridHours(t)])),
+    [carga.trainings]
+  );
 
   const rows = useMemo(
     () => buildMedicaoValeRows({ ...carga, template: turmasTemplate, templateValues: values, options }),
@@ -382,6 +388,8 @@ const MedicaoTemplateView: React.FC<{
         values={values}
         onEdit={registrarEdicao}
         trainingNames={trainingNames}
+        hibridas={hibridas}
+        hybridSplit={turmasTemplate.hybridSplit === true}
         demandasComPendencia={demandasComPendencia}
         pendentes={pendentes.size}
         salvando={salvando}

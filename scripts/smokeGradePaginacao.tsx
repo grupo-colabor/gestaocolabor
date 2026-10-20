@@ -40,7 +40,7 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import GradeEditavel from '../components/exportacoes/GradeEditavel';
 import { VALE_TURMAS_COLUMNS } from '../domain/exports/templates/vale';
-import { emptyTemplateValuesIndex } from '../domain/exports/templates/values';
+import { emptyTemplateValuesIndex, indexTemplateValues } from '../domain/exports/templates/values';
 
 let falhas = 0;
 function check(nome: string, condicao: boolean, detalhe = '') {
@@ -134,6 +134,64 @@ clicar(toggle);
 check('religar "só com pendência" refiltra (0 turmas) e mostra a mensagem', $$('tbody tr').length === 1 && textoDe($$('tbody tr')[0]).includes('desligue o filtro'));
 clicar(toggle);
 check('desligar de novo volta à página 1', primeiraTurma() === 'DEM-1000', primeiraTurma());
+
+/* ────────────────────────── [HÍBRIDA] dois preços na grade ────────────────────────── */
+console.log('\n[GRADE] híbrida: dois preços por treinamento e por turma');
+{
+  const rowsH: any[] = [
+    { demand: { id: 'DEM-H1' }, refs: { trainingId: 'T_HIB', demandId: 'DEM-H1' }, trainingId: 'T_HIB',
+      hibrida: { ok: true, presencial: 8, online: 32, hours: 40 },
+      input: { demandId: 'DEM-H1', clientDemandId: 'SAP-H1', trainingName: 'NR 20 Intermediário', titulares: ['Titular'], dataInicio: '2026-08-10' } },
+    { demand: { id: 'DEM-P1' }, refs: { trainingId: 'T_PRE', demandId: 'DEM-P1' }, trainingId: 'T_PRE', hibrida: null,
+      input: { demandId: 'DEM-P1', clientDemandId: 'SAP-P1', trainingName: 'NR 35', titulares: ['Titular'], dataInicio: '2026-08-11' } },
+  ];
+  const namesH = new Map([['T_HIB', 'NR 20 Intermediário'], ['T_PRE', 'NR 35']]);
+  const hibridas = new Map<string, any>([['T_HIB', { ok: true, presencial: 8, online: 32, hours: 40 }]]);
+  const valoresSoPresencial = indexTemplateValues([
+    { scope: 'training', column_key: 'precoHH', training_id: 'T_HIB', demand_id: null, value: 250 },           // preço único antigo
+    { scope: 'training', column_key: 'precoHHPresencial', training_id: 'T_HIB', demand_id: null, value: 290 },
+  ]);
+  const props = { rows: rowsH, allRows: rowsH, trainingNames: namesH, hibridas, hybridSplit: true, values: valoresSoPresencial, resetKey: 1 };
+  render(props);
+
+  clicar(botaoTexto('Por treinamento'));
+  const card = () => container.querySelector('[data-hibrida="T_HIB"]') as any;
+  check('o card da híbrida existe', !!card());
+  check('selo "falta online" com só o presencial preenchido', textoDe(card()).includes('falta online'));
+  check('dois campos de preço no card', card().querySelectorAll('input').length === 2, String(card()?.querySelectorAll('input').length));
+  check('com as horas de cada parte (8h / 32h)', textoDe(card()).includes('8h') && textoDe(card()).includes('32h'));
+  check('o presencial vem preenchido (290) e o online vazio', (card().querySelectorAll('input')[0] as any).value === '290' && (card().querySelectorAll('input')[1] as any).value === '');
+  check('o preço único antigo aparece, sem ser usado', textoDe(card()).includes('Preço único anterior: R$ 250'));
+  check('contador: 2 treinamentos, 0 com preço (híbrida incompleta não conta)', textoDe(botaoTexto('Por treinamento')).includes('2 treinamentos, 0 com preço'));
+  check('o presencial puro continua com um campo só', (container.querySelectorAll('label.text-xs.bg-white')[0] as any)?.querySelectorAll('input').length === 1);
+
+  // Os dois preços: "com preço" e o contador sobe.
+  const valoresCompletos = indexTemplateValues([
+    { scope: 'training', column_key: 'precoHHPresencial', training_id: 'T_HIB', demand_id: null, value: 290 },
+    { scope: 'training', column_key: 'precoHHOnline', training_id: 'T_HIB', demand_id: null, value: 200 },
+    { scope: 'demand', column_key: 'precoHHOnline', training_id: null, demand_id: 'DEM-H1', value: 180 },
+  ]);
+  render({ ...props, values: valoresCompletos, resetKey: 2 });
+  check('com os dois preços: selo "com preço"', textoDe(card()).includes('com preço') && !textoDe(card()).includes('falta'));
+  check('contador: 2 treinamentos, 1 com preço', textoDe(botaoTexto('Por treinamento')).includes('2 treinamentos, 1 com preço'));
+  check('sem preço único antigo, sem a nota', !textoDe(card()).includes('Preço único anterior'));
+
+  // Por turma: a híbrida tem dois campos de sobrescrita de preço e duas fontes.
+  const toggleH = $$('input[type="checkbox"]').find((i: any) => textoDe(i.parentElement).includes('só turmas com pendência'));
+  if (toggleH && (toggleH as any).checked) clicar(toggleH);
+  const linhaH = () => container.querySelector('[data-turma="DEM-H1"]') as any;
+  const linhaP = () => container.querySelector('[data-turma="DEM-P1"]') as any;
+  check('a turma híbrida aparece na grade "Por turma"', !!linhaH());
+  check('marcada como híbrido · duas linhas', textoDe(linhaH()).includes('híbrido · duas linhas'));
+  check('um campo de preço a mais que a turma presencial (presencial + online)', linhaH().querySelectorAll('input').length === linhaP().querySelectorAll('input').length + 1);
+  check('sobrescrita do online na turma (180) preenchida no campo online', Array.from(linhaH().querySelectorAll('input') as any[]).some((i: any) => i.value === '180'));
+  check('duas badges de fonte: presencial "treinamento", online "sobrescrito"', textoDe(linhaH()).includes('treinamento') && textoDe(linhaH()).includes('sobrescrito'));
+  check('contador de exceções conta a híbrida sobrescrita', textoDe(botaoTexto('Por turma')).includes('1 com exceção'));
+
+  // Sem hybridSplit (modelo do banco): a híbrida volta a ter um campo só.
+  render({ ...props, hybridSplit: false, resetKey: 3 });
+  check('sem hybridSplit: o card da híbrida não existe e o treinamento tem um campo só', !card() && container.querySelectorAll('label.text-xs.bg-white').length === 2);
+}
 
 act(() => root.unmount());
 console.log(falhas === 0 ? '\n✅ SMOKE GRADE PAGINACAO: OK' : `\n❌ SMOKE GRADE PAGINACAO: ${falhas} falha(s)`);

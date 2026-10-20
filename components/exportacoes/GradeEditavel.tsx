@@ -1,8 +1,10 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Loader2, PencilLine, Save, Search, Undo2 } from 'lucide-react';
 import type { MedicaoValeRow } from '../../domain/exports/datasets/medicaoVale';
-import type { TemplateColumn } from '../../domain/exports/templates/types';
-import { resolveManualValue, type ManualValueSource } from '../../domain/exports/templates/resolve';
+import type { HybridPart, TemplateColumn } from '../../domain/exports/templates/types';
+import { manualColumnKey, resolveManualValue, type ManualValueSource } from '../../domain/exports/templates/resolve';
+import { hybridPriceStatus, type HybridPriceBadge } from '../../domain/exports/templates/hybridPrice';
+import type { HybridSplit } from '../../domain/hybridHours';
 import type { TemplateValuesIndex, TemplateValueScope } from '../../domain/exports/templates/values';
 import { toBrDate } from '../../domain/exports/shared';
 import { usePagination } from '../../hooks/usePagination';
@@ -30,6 +32,21 @@ const FONTE_CLASS: Record<ManualValueSource, string> = {
   treinamento: 'bg-slate-100 text-slate-600',
   padrão: 'bg-slate-100 text-slate-600',
   vazio: 'bg-yellow-100 text-yellow-800',
+};
+
+/** Selo do card de treinamento híbrido: amarelo enquanto faltar um dos dois preços. */
+const SELO_HIBRIDA_CLASS: Record<HybridPriceBadge, string> = {
+  'com preço': FONTE_CLASS.treinamento,
+  'falta online': FONTE_CLASS.vazio,
+  'falta presencial': FONTE_CLASS.vazio,
+  'sem preço': FONTE_CLASS.vazio,
+};
+
+/** Rótulo das horas ao lado de cada preço da híbrida ("8h" / "32h"), ou o motivo de não haver. */
+const horasDaParte = (split: HybridSplit | undefined, parte: HybridPart): string => {
+  if (!split) return '';
+  if (split.ok !== true) return 'horas práticas não cadastradas';
+  return `${parte === 'PRESENCIAL' ? split.presencial : split.online}h`;
 };
 
 const PAGE = 25;
@@ -66,6 +83,12 @@ const SectionHeader: React.FC<{ aberto: boolean; onToggle: () => void; titulo: s
  * Nada é gravado aqui: as edições sobem como pendentes; a barra fixa no rodapé
  * oferece Salvar / Descartar enquanto houver pendente. O download fica travado
  * nesse estado (a tela pai cuida disso).
+ *
+ * HÍBRIDA (template com `hybridSplit`): o treinamento híbrido tem DOIS campos
+ * de preço — presencial e online, cada um com as horas da parte ao lado — e o
+ * selo só diz "com preço" com os dois preenchidos ("falta online" / "falta
+ * presencial" com um só). Na turma, a sobrescrita também é por parte. O preço
+ * único gravado antes da divisão aparece no card e não é usado em silêncio.
  */
 const GradeEditavel: React.FC<{
   /** Turmas elegíveis do recorte (as que vão para a planilha). */
@@ -76,6 +99,13 @@ const GradeEditavel: React.FC<{
   values: TemplateValuesIndex;
   onEdit: (e: EdicaoPendente) => void;
   trainingNames: Map<string, string>;
+  /**
+   * Treinamentos HÍBRIDOS (id → divisão pelo cadastro). Com `hybridSplit`
+   * ligado, cada um ganha dois campos de preço. Ausente = nenhum híbrido.
+   */
+  hibridas?: Map<string, HybridSplit>;
+  /** O template da aba de linhas divide a híbrida? (modelos do banco: não). */
+  hybridSplit?: boolean;
   /** Demandas com pendência (ids), para o toggle "só com pendência ou exceção". */
   demandasComPendencia: Set<string>;
   pendentes: number;
@@ -84,7 +114,12 @@ const GradeEditavel: React.FC<{
   onDescartar: () => void;
   /** Muda a cada salvar/descartar: remonta os inputs (não controlados). */
   resetKey: number;
-}> = ({ rows, allRows, columns, values, onEdit, trainingNames, demandasComPendencia, pendentes, salvando, onSalvar, onDescartar, resetKey }) => {
+}> = ({ rows, allRows, columns, values, onEdit, trainingNames, hibridas, hybridSplit = false, demandasComPendencia, pendentes, salvando, onSalvar, onDescartar, resetKey }) => {
+  /** A híbrida só tem dois preços quando o template divide E a coluna declara as chaves. */
+  const splitDe = useCallback(
+    (tid: string): HybridSplit | undefined => (hybridSplit && hibridas ? hibridas.get(tid) : undefined),
+    [hybridSplit, hibridas]
+  );
   // ⚠️ Memoizadas de propósito: `porDemanda` entra nas dependências do
   // useMemo de `turmas`. Sem isto, cada render produzia um array novo, `turmas`
   // ganhava referência nova e o usePagination (que volta para a página 1 quando
@@ -110,26 +145,46 @@ const GradeEditavel: React.FC<{
   /* ───────── por treinamento ───────── */
   const idsNoRecorte = useMemo(() => new Set<string>(rows.map(r => r.trainingId).filter(id => !!id)), [rows]);
   const idsVale = useMemo(() => new Set<string>(allRows.map(r => r.trainingId).filter(id => !!id)), [allRows]);
+  /**
+   * "Com preço" por treinamento: o preço de sempre — ou, na híbrida dividida,
+   * os DOIS preços da parte. É a mesma regra do selo e do contador.
+   */
+  const temPreco = useCallback(
+    (tid: string): boolean => {
+      if (!precoCol) return false;
+      const refs = { trainingId: tid, demandId: '' };
+      if (precoCol.hybridKeys && splitDe(tid)) return hybridPriceStatus(precoCol, refs, values).completo;
+      return resolveManualValue(precoCol, refs, values).fonte === 'treinamento';
+    },
+    [precoCol, splitDe, values]
+  );
   const treinamentos = useMemo(() => {
     const base: string[] = Array.from(todosTreinos ? idsVale : idsNoRecorte);
     const q = normalize(buscaTreino.trim());
-    const temPreco = (tid: string) =>
-      precoCol ? resolveManualValue(precoCol, { trainingId: tid, demandId: '' }, values).fonte === 'treinamento' : false;
     return base
       .map(tid => ({ tid, nome: trainingNames.get(tid) ?? tid, comPreco: temPreco(tid) }))
       .filter(t => !q || normalize(t.nome).includes(q))
       .sort((a, b) => Number(a.comPreco) - Number(b.comPreco) || a.nome.localeCompare(b.nome, 'pt-BR'));
-  }, [idsNoRecorte, idsVale, todosTreinos, buscaTreino, precoCol, values, trainingNames]);
+  }, [idsNoRecorte, idsVale, todosTreinos, buscaTreino, temPreco, trainingNames]);
   const totalTreinos = (todosTreinos ? idsVale : idsNoRecorte).size;
   const treinosComPreco = useMemo(
-    () => Array.from<string>(todosTreinos ? idsVale : idsNoRecorte).filter(tid => precoCol && resolveManualValue(precoCol, { trainingId: tid, demandId: '' }, values).fonte === 'treinamento').length,
-    [idsNoRecorte, idsVale, todosTreinos, precoCol, values]
+    () => Array.from<string>(todosTreinos ? idsVale : idsNoRecorte).filter(temPreco).length,
+    [idsNoRecorte, idsVale, todosTreinos, temPreco]
   );
 
   /* ───────── por turma ───────── */
+  /** As partes que a linha tem na grade: duas na híbrida dividida, senão uma "inteira" (undefined). */
+  const partesDe = useCallback(
+    (r: MedicaoValeRow): (HybridPart | undefined)[] =>
+      hybridSplit && r.hibrida && precoCol?.hybridKeys ? ['PRESENCIAL', 'ONLINE'] : [undefined],
+    [hybridSplit, precoCol]
+  );
   const temExcecao = useCallback(
-    (r: MedicaoValeRow) => porDemanda.some(c => resolveManualValue(c, r.refs, values).fonte === 'demanda'),
-    [porDemanda, values]
+    (r: MedicaoValeRow) =>
+      porDemanda.some(c =>
+        (c.hybridKeys ? partesDe(r) : [undefined]).some(parte => resolveManualValue(c, { ...r.refs, parte }, values).fonte === 'demanda')
+      ),
+    [porDemanda, partesDe, values]
   );
   const turmasComExcecao = useMemo(() => rows.filter(temExcecao).length, [rows, temExcecao]);
   const turmasDerivadas = useMemo(() => {
@@ -188,6 +243,44 @@ const GradeEditavel: React.FC<{
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {treinamentos.map(t => {
+              const split = precoCol.hybridKeys ? splitDe(t.tid) : undefined;
+              if (split) {
+                // Híbrida: dois preços, com as horas de cada parte ao lado.
+                const st = hybridPriceStatus(precoCol, { trainingId: t.tid, demandId: '' }, values);
+                const partes: { parte: HybridPart; rotulo: string; atual: typeof st.presencial }[] = [
+                  { parte: 'PRESENCIAL', rotulo: 'Preço HH presencial', atual: st.presencial },
+                  { parte: 'ONLINE', rotulo: 'Preço HH online', atual: st.online },
+                ];
+                return (
+                  <div key={t.tid} className="text-xs bg-white rounded-xl border border-slate-200 p-3" data-hibrida={t.tid}>
+                    <span className="flex items-center gap-2">
+                      <span className="font-bold text-slate-600 truncate flex-1" title={t.nome}>{t.nome}</span>
+                      <span className="text-[9px] font-bold text-violet-600 uppercase">híbrido</span>
+                      <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${SELO_HIBRIDA_CLASS[st.selo]}`}>{st.selo}</span>
+                    </span>
+                    {partes.map(p => (
+                      <label key={p.parte} className="flex items-center gap-2 mt-2">
+                        <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                          {p.rotulo} <span className="text-slate-300">· {horasDaParte(split, p.parte)}</span>
+                        </span>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          className={inputClass}
+                          defaultValue={show(precoCol, p.atual.fonte === 'treinamento' ? p.atual.value : null)}
+                          placeholder="R$"
+                          onBlur={e => onEdit({ scope: 'training', refId: t.tid, columnKey: manualColumnKey(precoCol, p.parte), value: parse(precoCol, e.target.value) })}
+                        />
+                      </label>
+                    ))}
+                    {st.precoUnicoAntigo !== null && (
+                      <p className="mt-2 text-[10px] text-amber-700 leading-snug">
+                        Preço único anterior: R$ {show(precoCol, st.precoUnicoAntigo)} — não vale para híbrida; informe o presencial e o online.
+                      </p>
+                    )}
+                  </div>
+                );
+              }
               const atual = resolveManualValue(precoCol, { trainingId: t.tid, demandId: '' }, values);
               return (
                 <label key={t.tid} className="text-xs bg-white rounded-xl border border-slate-200 p-3">
@@ -247,35 +340,54 @@ const GradeEditavel: React.FC<{
               </thead>
               <tbody>
                 {pag.paginatedItems.map(r => {
-                  const preco = precoCol ? resolveManualValue(precoCol, r.refs, values) : null;
+                  const partes = partesDe(r);
+                  const hibrida = partes.length === 2;
                   return (
-                    <tr key={r.demand.id} className="border-t border-slate-100 bg-white">
+                    <tr key={r.demand.id} className="border-t border-slate-100 bg-white" data-turma={r.demand.id}>
                       <td className="p-3 whitespace-nowrap">
                         <span className="font-black font-mono text-blue-600">{r.demand.id}</span>
                         <span className="block text-[10px] text-slate-400 font-mono">{r.input.clientDemandId || 'sem ID SAP'}</span>
                       </td>
-                      <td className="p-3 max-w-[220px] truncate" title={r.input.trainingName}>{r.input.trainingName}</td>
+                      <td className="p-3 max-w-[220px] truncate" title={r.input.trainingName}>
+                        {r.input.trainingName}
+                        {hibrida && <span className="block text-[9px] font-bold text-violet-600 uppercase">híbrido · duas linhas</span>}
+                      </td>
                       <td className="p-3 whitespace-nowrap">{toBrDate(r.input.dataInicio)}</td>
                       {porDemanda.map(col => {
-                        const atual = resolveManualValue(col, r.refs, values);
-                        const proprio = atual.fonte === 'demanda' ? atual.value : null;
+                        // Coluna com chave por parte numa híbrida: um campo por parte (presencial / online).
+                        const colPartes = col.hybridKeys && hibrida ? partes : [undefined];
                         return (
-                          <td key={col.key} className="p-2 min-w-[120px]">
-                            <input
-                              type="text"
-                              inputMode={col.format === 'text' ? 'text' : 'decimal'}
-                              className={inputClass}
-                              defaultValue={show(col, proprio)}
-                              placeholder={col.format === 'text' ? '' : show(col, atual.value) || '—'}
-                              onBlur={e => onEdit({ scope: 'demand', refId: r.demand.id, columnKey: col.key, value: parse(col, e.target.value) })}
-                            />
+                          <td key={col.key} className="p-2 min-w-[120px] space-y-1">
+                            {colPartes.map(parte => {
+                              const atual = resolveManualValue(col, { ...r.refs, parte }, values);
+                              const proprio = atual.fonte === 'demanda' ? atual.value : null;
+                              return (
+                                <span key={parte ?? 'unica'} className="flex items-center gap-1">
+                                  {parte && <span className="text-[9px] text-slate-400 w-14 shrink-0">{parte === 'PRESENCIAL' ? 'presencial' : 'online'}</span>}
+                                  <input
+                                    type="text"
+                                    inputMode={col.format === 'text' ? 'text' : 'decimal'}
+                                    className={inputClass}
+                                    defaultValue={show(col, proprio)}
+                                    placeholder={col.format === 'text' ? '' : show(col, atual.value) || '—'}
+                                    onBlur={e => onEdit({ scope: 'demand', refId: r.demand.id, columnKey: manualColumnKey(col, parte), value: parse(col, e.target.value) })}
+                                  />
+                                </span>
+                              );
+                            })}
                           </td>
                         );
                       })}
-                      <td className="p-3 whitespace-nowrap">
-                        {preco && (
-                          <span className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded ${FONTE_CLASS[preco.fonte]}`}>{FONTE_LABEL[preco.fonte]}</span>
-                        )}
+                      <td className="p-3 whitespace-nowrap space-y-1">
+                        {precoCol && partes.map(parte => {
+                          const preco = resolveManualValue(precoCol, { ...r.refs, parte }, values);
+                          return (
+                            <span key={parte ?? 'unica'} className="flex items-center gap-1">
+                              {parte && <span className="text-[9px] text-slate-400 w-14 shrink-0">{parte === 'PRESENCIAL' ? 'presencial' : 'online'}</span>}
+                              <span className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded ${FONTE_CLASS[preco.fonte]}`}>{FONTE_LABEL[preco.fonte]}</span>
+                            </span>
+                          );
+                        })}
                       </td>
                     </tr>
                   );

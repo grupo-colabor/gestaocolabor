@@ -132,10 +132,42 @@ Painel de controle com métricas, gráficos e indicadores de saúde operacional 
 - Média de custo por demanda
 - Custos por empresa
 - Evolução de despesas no período
+- **Despesas Não Reembolsáveis**: o que a Colabor absorve (itens marcados na Medição como *Não reembolsa*). O card mostra o total, "N itens em M medições" e a quebra em Hospedagem / Locomoção / Alimentação / Outros — as mesmas quatro categorias do Painel de Medição. Esses itens **continuam** no Total em Despesas: é um recorte, não uma subtração.
+
+##### Card "Despesas Não Reembolsáveis" — lista por trás do número
+
+Clique em **qualquer ponto do cabeçalho** do card (a seta indica o estado) para abrir a lista. Começa sempre recolhida. No topo da lista há a alternância **Por demanda | Por item** — a escolha fica lembrada no navegador e trocar de visão não recolhe o card.
+
+| Visão | O que mostra |
+|-------|--------------|
+| **Por demanda** (padrão) | Uma linha por demanda com item marcado: DEM, empresa, treinamento, período, pessoa(s) dona(s) dos itens, status da medição, Hospedagem, Locomoção, Alimentação, Outros e Total. Ordenada por Total (maior primeiro), com rodapé. **Clique na linha** para abrir os itens: categoria (com Café da manhã / Almoço / Jantar dentro de Alimentação), descrição, data, dono (papel), indicador *Pago pelo instrutor* e valor |
+| **Por item** | Tabela plana, um item por linha: DEM, empresa, treinamento, pessoa, papel, categoria, descrição, data, *Pago pelo instrutor* e valor. **Clique em Data ou Valor** no cabeçalho para ordenar (clique de novo para inverter). Rodapé com o total |
+
+Regras que valem nas duas visões e no card:
+
+- **Dono do item**: a mesma regra do Painel de Medição — o dono gravado no item; item lançado sem pessoa (ou cujo dono saiu do cadastro) vai para o **titular principal** da demanda.
+- **Órfão de Outras despesas** (anexo cuja linha foi apagada no painel): fica fora do total, da lista e do Excel — como o painel não soma, aqui também não. O card avisa com a nota *"N itens órfãos fora do total"*.
+- **Item com as duas flags** (*Não reembolsa* + *Pago pelo instrutor*) aparece uma vez só, com o indicador ligado. Item só *Pago pelo instrutor* não entra aqui.
+- Acima de 20 linhas a lista pagina (10/20/50/100 por página).
+- **Períodos de comparação**: o número grande vira a fileira P1, P2… (menor é melhor); a lista e o Excel mostram **só P1**.
+- **DEM-N** é um link para a tela de Medição, já filtrada naquela demanda — aparece só para quem tem acesso à Medição.
+
+Card, lista e Excel leem o **mesmo cálculo** (uma passagem pelos itens marcados); não há como um divergir do outro.
 
 ### Exportar pelo Dashboard
 
-Clique em **Exportar** para abrir o modal de exportação Excel (veja seção 10).
+Clique em **Exportar** → *Exportar este dashboard* (só a aba aberta) ou *Exportar todos os dashboards*. Sai um Excel `dashboard-<aba>_<data>.xlsx` (ou `todos-os-dashboards_<data>.xlsx`) com uma aba por dashboard. A primeira linha de cada aba traz o título e a data; a **segunda linha diz os filtros aplicados** no momento (P1, empresa, região, status, local, corredor, modalidade, UF) — o export inteiro é do período principal (P1).
+
+A aba **Custos** traz, além das seções de sempre, o bloco **Despesas Não Reembolsáveis**: total, nº de itens, nº de medições e as quatro categorias do card, com Café da manhã / Almoço / Jantar indentados sob Alimentação (a seção *Despesas por Categoria*, com as seis categorias, continua igual). E leva junto **duas abas** — sempre as duas, independentemente da visão escolhida no card:
+
+| Aba | Colunas |
+|-----|---------|
+| **Não reemb. por demanda** | Demanda, Empresa, Treinamento, Data início, Data fim, Corredor, UF, Pessoa(s), Status medição, Hospedagem, Locomoção, Alimentação, Outros, Total, Qtd itens |
+| **Não reemb. por item** | Demanda, Empresa, Treinamento, Data início, Data fim, Corredor, UF, Pessoa, Papel, Status medição, Categoria, Subcategoria, Descrição, Data do item, Pago pelo instrutor (Sim/Não), Valor |
+
+Nas duas: valores como número (moeda), cabeçalho congelado e autofiltro a partir do cabeçalho, e uma linha **Total visível** *acima* do cabeçalho com `SUBTOTAL(109; …)` — ela acompanha o filtro que você aplicar no Excel e não é filtrada nem ordenada junto. A aba por demanda é a aba por item agrupada: a soma das duas é o total do card.
+
+O botão de exportação de **demandas** (lista de demandas em Excel) fica na tela Demandas — veja a seção 10.
 
 ---
 

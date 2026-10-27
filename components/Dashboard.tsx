@@ -3,7 +3,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell
 } from 'recharts';
-import { useApp } from '../App';
+import { useApp, canAccessView } from '../App';
+import { useAuth } from '../contexts/AuthContext';
 import {
   Filter, Calendar, Users, Briefcase, AlertCircle, CheckCircle,
   Clock, TrendingUp, TrendingDown, AlertTriangle, Building2, MapPin,
@@ -358,7 +359,21 @@ const Dashboard: React.FC = () => {
   const {
     demands: allDemands, companies, regions, instructors, trainings, measurements,
     instructorAllocations, companionAllocations, demandParticipants, getEvidenceAutoStatus,
+    setCurrentView, setNotificationTarget,
   } = useApp();
+  const { profile } = useAuth();
+
+  /**
+   * DEM-N da lista de não reembolsáveis abre a Medição já filtrada naquela
+   * demanda — o MESMO mecanismo das Notificações (`notificationTarget` +
+   * `setCurrentView`), sem importar a tela. Só para quem pode acessar a
+   * Medição (`canAccessView`, a regra do menu); para os demais o DEM-N é texto.
+   */
+  const podeAbrirMedicao = !!canAccessView(profile?.role, 'measurement');
+  const abrirNaMedicao = useCallback((demandId: string) => {
+    setNotificationTarget({ demandId, view: 'measurement' });
+    setCurrentView('measurement');
+  }, [setNotificationTarget, setCurrentView]);
 
   // ⚠️ FONTE ÚNICA do Dashboard: demanda de cliente.
   // Todo KPI, total de horas e ranking daqui pra baixo mede entrega a cliente —
@@ -2524,6 +2539,7 @@ const pendingLogisticsDemands = useMemo(() => {
           formatCurrency={formatCurrency}
           bucketStyle={PANEL_EXPENSE_STYLE}
           periods={naoReembPeriods}
+          onOpenDemand={podeAbrirMedicao ? abrirNaMedicao : undefined}
         />
 
         {/* Mix de Despesas + Média por Categoria */}

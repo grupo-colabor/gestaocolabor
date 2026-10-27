@@ -25,6 +25,7 @@ import {
 } from '../domain/measurementTotals';
 import { listNonReimbursableByDemand } from '../domain/nonReimbursableExpenses';
 import { MEASUREMENT_STATUS_LABELS } from '../domain/measurementStatus';
+import NonReimbursableCard from './dashboard/NonReimbursableCard';
 import {
   getAvailableInstructors,
   defaultAvailabilityWindow,
@@ -864,6 +865,31 @@ const pendingLogisticsDemands = useMemo(() => {
       return measurements.filter((m: any) => ids.has(m.demandId));
     });
   }, [allFilteredDemandsList, measurements]);
+
+  /**
+   * Com comparação ligada: o total não reembolsável de cada período (P1..PN),
+   * pela MESMA função — P1 reaproveita `naoReemb`. Só o número grande do card
+   * compara; a lista e o export seguem P1 (opção A do parecer).
+   */
+  const naoReembPeriods = useMemo(() => {
+    if (!compareMode) return undefined;
+    return allFilteredDemandsList.map((dList, i) => ({
+      label: `P${i + 1}`,
+      color: PERIOD_COLORS[i % PERIOD_COLORS.length],
+      value: i === 0
+        ? naoReemb.total
+        : listNonReimbursableByDemand({
+            demands: dList,
+            measurements: allFilteredMeasurementsList[i] ?? [],
+            instructorAllocations,
+            participants: demandParticipants,
+            companions: companionAllocations,
+            instructors,
+            companies,
+            trainings,
+          }).total,
+    }));
+  }, [compareMode, allFilteredDemandsList, allFilteredMeasurementsList, naoReemb, instructorAllocations, demandParticipants, companionAllocations, instructors, companies, trainings]);
 
   // --- Bordas de cada período (P1 = filtro principal, P2..PN = extraPeriods) ---
   const getPeriodBounds = (i: number): { start?: string; end?: string } => {
@@ -2479,57 +2505,18 @@ const pendingLogisticsDemands = useMemo(() => {
           <KPICard title="Faturadas" value={filteredMeasurements.filter(m => m.status === 'FATURADA').length} compareValue={compareMode ? filteredMeasurements2.filter(m => m.status === 'FATURADA').length : undefined} periods={mkPeriods((_d, m) => m.filter((x: any) => x.status === 'FATURADA').length)} icon={Award} colorClass="bg-emerald-50 text-emerald-600" />
         </div>
 
-        {/* Despesas Nao Reembolsaveis */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h3 className="text-xs font-black text-slate-800 uppercase tracking-tight">Despesas Não Reembolsáveis</h3>
-              <p className="text-[10px] font-bold text-slate-400 mt-0.5 uppercase tracking-widest">
-                O que a Colabor absorve — já incluso no total acima
-              </p>
-            </div>
-            <div className="p-3 rounded-xl bg-amber-50 text-amber-600 shrink-0">
-              <ShieldAlert size={20} />
-            </div>
-          </div>
-
-          {/* Mesmo tratamento do card "Custo das Demandas Internas": total em
-              destaque à esquerda, os quatro mini-cards do Painel de Medição
-              preenchendo a direita. Sem mini-card de Hora/Aula — hora/aula não
-              tem flag de reembolso, o toggle vive só nos itens de despesa.
-
-              Os mini-cards aparecem SEMPRE, zerados inclusive. O empty state
-              anterior trocava o bloco inteiro por uma frase, então o card
-              mudava de altura no instante em que a primeira despesa fosse
-              marcada; agora a frase entra discreta embaixo e nada pula. */}
-          <div className="p-5 flex flex-col lg:flex-row lg:items-center gap-5">
-            <div className="lg:w-48 xl:w-56 shrink-0 min-w-0">
-              <h4 className="text-2xl font-black text-amber-600">{formatCurrency(naoReemb.total)}</h4>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
-                {naoReemb.qtdItens} ite{naoReemb.qtdItens === 1 ? 'm' : 'ns'} em {naoReemb.medicoes} medi{naoReemb.medicoes === 1 ? 'ção' : 'ções'}
-              </p>
-            </div>
-
-            <div className="flex-1 min-w-0 grid grid-cols-2 lg:grid-cols-4 gap-3">
-              {PANEL_EXPENSE_LABELS.map(({ key, label }) => (
-                <ExpenseSummaryCard
-                  key={key}
-                  label={label}
-                  value={formatCurrency(naoReemb.quebra[key])}
-                  icon={PANEL_EXPENSE_STYLE[key].icon}
-                  colorClass={PANEL_EXPENSE_STYLE[key].colorClass}
-                  surfaceClass="bg-slate-50"
-                />
-              ))}
-            </div>
-          </div>
-
-          {naoReemb.total <= 0 && (
-            <p className="px-5 pb-5 -mt-2 text-[11px] text-slate-300 italic font-bold">
-              Nenhuma despesa marcada como não reembolsável no período.
-            </p>
-          )}
-        </div>
+        {/* Despesas Nao Reembolsaveis — mesmo tratamento do card "Custo das
+            Demandas Internas" (total à esquerda, os quatro mini-cards do
+            Painel de Medição à direita; sem Hora/Aula, que não tem flag de
+            reembolso). Expansível: a lista por demanda/por item lê o MESMO
+            `naoReemb` do card. Só P1; com comparação ligada, a fileira
+            P1..PN substitui o número grande (opção A do parecer). */}
+        <NonReimbursableCard
+          list={naoReemb}
+          formatCurrency={formatCurrency}
+          bucketStyle={PANEL_EXPENSE_STYLE}
+          periods={naoReembPeriods}
+        />
 
         {/* Mix de Despesas + Média por Categoria */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

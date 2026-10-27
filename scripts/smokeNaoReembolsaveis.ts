@@ -23,8 +23,13 @@
  *       item = total do card; Σ Qtd itens = contagem de itens; nº de linhas da
  *       aba por demanda = contagem de medições. Bloco da aba Custos:
  *       Café+Almoço+Jantar = Alimentação, e as quatro categorias somam o total.
+ *   [G] Escritor (services/exports/dashboardXlsx.ts): o XLSX de verdade tem
+ *       a linha de filtros, "Total visível" com SUBTOTAL(109) ACIMA do
+ *       cabeçalho, congelamento e autofiltro a partir do cabeçalho, e as
+ *       linhas nas posições esperadas. Grava o Excel das fixtures (abas
+ *       Custos, por demanda e por item) em C:\tmp para conferência.
  *   [H] Guarda de fonte: os módulos de domínio não importam react, services
- *       nem exceljs.
+ *       nem exceljs; o escritor não importa react nem supabase.
  *
  * Sai com código 1 se qualquer asserção falhar.
  */
@@ -47,6 +52,16 @@ import {
   type NonReimbursableSource,
 } from '../domain/nonReimbursableExpenses';
 import { MEASUREMENT_STATUS_LABELS } from '../domain/measurementStatus';
+import { describeDashboardFilters } from '../domain/dashboardExportFilters';
+import {
+  addDashboardMeta,
+  addNonReimbursableCustosSection,
+  addNonReimbursableSheets,
+  NR_SHEET_BY_DEMAND,
+  NR_SHEET_BY_ITEM,
+  NR_HEADER_ROW,
+  NR_TOTAL_ROW,
+} from '../services/exports/dashboardXlsx';
 
 let falhas = 0;
 function check(nome: string, condicao: boolean, detalhe = '') {
@@ -289,17 +304,105 @@ const custos = buildNonReimbursableCustosRows(lista);
   eq('bloco Custos: as três refeições indentadas', custos.filter(r => r.sub).map(r => r.label), ['Café da manhã', 'Almoço', 'Jantar']);
 }
 
-/* ────────────────────────────── [H] ────────────────────────────── */
-console.log('\n[H] guarda de fonte');
-{
-  // O bundle roda de node_modules/.cache: a raiz do projeto é o cwd, não __dirname.
-  const ler = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8');
-  const semComentarios = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-  for (const rel of ['domain/nonReimbursableExpenses.ts', 'domain/measurementStatus.ts']) {
-    const src = semComentarios(ler(rel));
-    check(`${rel} não importa react/services/exceljs/supabase`, !/from\s+['"](react|exceljs|@supabase)|\/services\//.test(src));
+/* ────────────────────────────── [G] ────────────────────────────── */
+const colLetter = (n: number): string => {
+  let s = '';
+  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+};
+
+async function escritor() {
+  console.log('\n[G] escritor XLSX: filtros, SUBTOTAL acima do cabeçalho, congelamento, autofiltro');
+  const ExcelJSModule = await import('exceljs');
+  const ExcelJS = (ExcelJSModule as any).default ?? ExcelJSModule;
+  const wb = new ExcelJS.Workbook();
+
+  const filtros = describeDashboardFilters({ periodo: 'Todo o período', empresa: 'Vale', regiao: '', status: '', local: '', corredor: '', modalidade: '', uf: 'MG' });
+  eq('linha de filtros', filtros, 'P1: Todo o período · Empresa: Vale · UF: MG');
+  eq('linha de filtros sem nada', describeDashboardFilters({ periodo: '' }), 'P1: Todo o período · Sem outros filtros');
+  const exportadoEm = '27/10/2026';
+
+  const wsCustos = wb.addWorksheet('Custos');
+  wsCustos.columns = [{ width: 28 }, { width: 20 }, { width: 20 }, { width: 20 }];
+  addDashboardMeta(wsCustos, 'Custos', filtros, exportadoEm);
+  addNonReimbursableCustosSection(wsCustos, lista);
+  addNonReimbursableSheets(wb, lista, { filtros, exportadoEm });
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const wb2 = new ExcelJS.Workbook();
+  await wb2.xlsx.load(buffer);
+
+  const num = (v: any): number => (v && typeof v === 'object' && 'result' in v ? Number(v.result) : Number(v));
+  const texto = (v: any): string => (v && typeof v === 'object' && 'richText' in v ? v.richText.map((r: any) => r.text).join('') : String(v ?? ''));
+
+  // Custos: meta + filtros + bloco
+  const c = wb2.getWorksheet('Custos')!;
+  eq('Custos: título na A1', texto(c.getCell('A1').value), 'Dashboard Colabor — Custos');
+  eq('Custos: "Exportado em" na C1', texto(c.getCell('C1').value), `Exportado em: ${exportadoEm}`);
+  eq('Custos: filtros na A2', texto(c.getCell('A2').value), `Filtros: ${filtros}`);
+  const rotulos: string[] = [];
+  c.eachRow((row: any, n: number) => { rotulos[n] = texto(row.getCell(1).value); });
+  check('Custos: bloco "Despesas Não Reembolsáveis" presente', rotulos.includes('Despesas Não Reembolsáveis'));
+  const iTotalRow = rotulos.indexOf('Total não reembolsável');
+  perto('Custos: total do bloco é número = card', num(c.getRow(iTotalRow).getCell(2).value), lista.total);
+  eq('Custos: refeições indentadas sob Alimentação', [rotulos[iTotalRow + 5], rotulos[iTotalRow + 6], rotulos[iTotalRow + 7], rotulos[iTotalRow + 8]], ['Alimentação', '   Café da manhã', '   Almoço', '   Jantar']);
+  perto('Custos: Café + Almoço + Jantar no arquivo = Alimentação', [6, 7, 8].reduce((s, k) => s + num(c.getRow(iTotalRow + k).getCell(2).value), 0), num(c.getRow(iTotalRow + 5).getCell(2).value));
+
+  for (const [nome, cols, linhas, iSum] of [
+    [NR_SHEET_BY_DEMAND, NR_BY_DEMAND_COLUMNS, porDemanda, 13],
+    [NR_SHEET_BY_ITEM, NR_BY_ITEM_COLUMNS, porItem, 15],
+  ] as const) {
+    const ws = wb2.getWorksheet(nome)!;
+    check(`${nome}: aba existe`, !!ws);
+    eq(`${nome}: cabeçalho na linha ${NR_HEADER_ROW}`, cols.map((_, i) => texto(ws.getRow(NR_HEADER_ROW).getCell(i + 1).value)), cols.map(x => x.header));
+    eq(`${nome}: filtros na A2`, texto(ws.getCell('A2').value), `Filtros: ${filtros}`);
+    eq(`${nome}: "Total visível" na linha ${NR_TOTAL_ROW}, acima do cabeçalho`, texto(ws.getRow(NR_TOTAL_ROW).getCell(1).value), 'Total visível');
+    const f = ws.getRow(NR_TOTAL_ROW).getCell(iSum + 1).value as any;
+    const formula = f && typeof f === 'object' && 'formula' in f ? String(f.formula) : '';
+    const ultima = NR_HEADER_ROW + linhas.length;
+    const L = colLetter(iSum + 1);
+    eq(`${nome}: SUBTOTAL(109) sobre as linhas de dados`, formula, `SUBTOTAL(109,${L}${NR_HEADER_ROW + 1}:${L}${Math.max(NR_HEADER_ROW + 1, ultima)})`);
+    eq(`${nome}: congelado a partir do cabeçalho`, (ws.views ?? [])[0]?.ySplit, NR_HEADER_ROW);
+    // Lido de volta, o autofiltro vem como intervalo A1 ("A4:O7").
+    eq(`${nome}: autofiltro do cabeçalho à última linha`, ws.autoFilter, `A${NR_HEADER_ROW}:${colLetter(cols.length)}${Math.max(NR_HEADER_ROW, ultima)}`);
+    eq(`${nome}: ${linhas.length} linhas de dados a partir da ${NR_HEADER_ROW + 1}`, linhas.map((_, i) => texto(ws.getRow(NR_HEADER_ROW + 1 + i).getCell(1).value)), linhas.map(r => String(r[0])));
+    perto(`${nome}: Σ da coluna somada no arquivo = card`, soma(linhas.map((_, i) => num(ws.getRow(NR_HEADER_ROW + 1 + i).getCell(iSum + 1).value))), lista.total);
+    eq(`${nome}: nada abaixo da última linha`, ws.getRow(ultima + 1).getCell(1).value ?? null, null);
+  }
+  const qtdCol = NR_BY_DEMAND_COLUMNS.findIndex(x => x.header === 'Qtd itens') + 1;
+  const fq = wb2.getWorksheet(NR_SHEET_BY_DEMAND)!.getRow(NR_TOTAL_ROW).getCell(qtdCol).value as any;
+  check('por demanda: "Qtd itens" também tem SUBTOTAL', fq && typeof fq === 'object' && String(fq.formula).startsWith('SUBTOTAL(109,'));
+
+  // Excel das fixtures para conferência (abas Custos, por demanda, por item).
+  const TMP = 'C:\\tmp';
+  try { fs.mkdirSync(TMP, { recursive: true }); } catch { /* sem permissão: pula a gravação */ }
+  if (fs.existsSync(TMP)) {
+    const arquivo = path.join(TMP, 'dashboard-custos_fixtures-nao-reembolsaveis.xlsx');
+    fs.writeFileSync(arquivo, Buffer.from(buffer));
+    check(`XLSX das fixtures gravado em ${arquivo}`, fs.statSync(arquivo).size > 5_000);
+  } else {
+    check('XLSX das fixtures (C:\\tmp ausente — pulado)', true);
   }
 }
 
-console.log(falhas === 0 ? '\nTudo certo.' : `\n${falhas} falha(s).`);
-process.exit(falhas === 0 ? 0 : 1);
+/* ────────────────────────────── [H] ────────────────────────────── */
+function guardaDeFonte() {
+  console.log('\n[H] guarda de fonte');
+  // O bundle roda de node_modules/.cache: a raiz do projeto é o cwd, não __dirname.
+  const ler = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8');
+  const semComentarios = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  for (const rel of ['domain/nonReimbursableExpenses.ts', 'domain/measurementStatus.ts', 'domain/dashboardExportFilters.ts']) {
+    const src = semComentarios(ler(rel));
+    check(`${rel} não importa react/services/exceljs/supabase`, !/from\s+['"](react|exceljs|@supabase)|\/services\//.test(src));
+  }
+  const svc = semComentarios(ler('services/exports/dashboardXlsx.ts'));
+  check('services/exports/dashboardXlsx.ts não importa react nem supabase', !/from\s+['"](react|@supabase)/.test(svc));
+}
+
+escritor()
+  .then(() => {
+    guardaDeFonte();
+    console.log(falhas === 0 ? '\nTudo certo.' : `\n${falhas} falha(s).`);
+    process.exit(falhas === 0 ? 0 : 1);
+  })
+  .catch(e => { console.error(e); process.exit(1); });

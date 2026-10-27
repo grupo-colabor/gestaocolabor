@@ -26,6 +26,13 @@ import {
 import { listNonReimbursableByDemand } from '../domain/nonReimbursableExpenses';
 import { MEASUREMENT_STATUS_LABELS } from '../domain/measurementStatus';
 import NonReimbursableCard from './dashboard/NonReimbursableCard';
+import { describeDashboardFilters } from '../domain/dashboardExportFilters';
+import {
+  addSection,
+  addDashboardMeta,
+  addNonReimbursableCustosSection,
+  addNonReimbursableSheets,
+} from '../services/exports/dashboardXlsx';
 import {
   getAvailableInstructors,
   defaultAvailabilityWindow,
@@ -3053,41 +3060,22 @@ const pendingLogisticsDemands = useMemo(() => {
         acc + m.attachments.filter((a: any) => cl.includes(normCat(a.category))).reduce((s: number, a: any) => s + toVal(a.value), 0), 0);
     };
 
-    const styleHeader = (row: any) => {
-      row.eachCell(cell => {
-        cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
-        cell.alignment = { vertical: 'middle', wrapText: true };
-        cell.border = { bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } } };
-      });
-      row.height = 22;
-    };
+    // Estilos e a seção "título + cabeçalho + linhas" moram em
+    // services/exports/dashboardXlsx.ts (o smoke gera o mesmo arquivo em Node).
 
-    const styleSection = (row: any) => {
-      row.eachCell(cell => {
-        cell.font = { bold: true, size: 9 };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
-      });
-      row.height = 18;
-    };
-
-    const addSection = (
-      ws: any,
-      title: string,
-      headers: string[],
-      rows: (string | number)[][]
-    ) => {
-      ws.addRow([]);
-      const titleRow = ws.addRow([title]);
-      styleSection(titleRow);
-      ws.mergeCells(titleRow.number, 1, titleRow.number, headers.length);
-      const hRow = ws.addRow(headers);
-      styleHeader(hRow);
-      rows.forEach(r => {
-        const dr = ws.addRow(r);
-        dr.eachCell(cell => { cell.font = { size: 10 }; cell.alignment = { vertical: 'middle' }; });
-      });
-    };
+    // Linha de filtros aplicados — vai na 2ª linha de toda aba. Só P1: o
+    // export inteiro é do período principal.
+    const filtrosLinha = describeDashboardFilters({
+      periodo: getPeriodLabel(filters.startDate, filters.endDate),
+      empresa: filters.companyId ? getCompanyName(filters.companyId) : '',
+      regiao: filters.regionId ? (regions.find(r => r.id === filters.regionId)?.name ?? filters.regionId) : '',
+      status: filters.status ? (STATUS_LABELS[filters.status] ?? filters.status) : '',
+      local: filters.trainingLocal,
+      corredor: filters.corredor,
+      modalidade: filters.modality ? (availableModalities.find(m => m.value === filters.modality)?.label ?? filters.modality) : '',
+      uf: filters.demandState,
+    });
+    const exportadoEm = new Date().toLocaleDateString('pt-BR');
 
     const buildGeral = (ws: any) => {
       ws.columns = [{ width: 28 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 20 }];
@@ -3285,6 +3273,9 @@ const pendingLogisticsDemands = useMemo(() => {
           ['Outros', fmt(outTotal)],
         ]
       );
+      // O MESMO objeto do card e da lista (`naoReemb`): total, itens,
+      // medições e as quatro categorias, com Café/Almoço/Jantar indentados.
+      addNonReimbursableCustosSection(ws, naoReemb);
       addSection(ws, 'Status das Medições', ['Status', 'Qtd'],
         [
           ['Não Iniciada', naoIniciada],
@@ -3338,13 +3329,11 @@ const pendingLogisticsDemands = useMemo(() => {
 
     for (const tab of tabs) {
       const ws = wb.addWorksheet(tab.label);
-      // Metadata row
-      const meta = ws.addRow([`Dashboard Colabor — ${tab.label}`, '', `Exportado em: ${new Date().toLocaleDateString('pt-BR')}`]);
-      meta.getCell(1).font = { bold: true, size: 12 };
-      meta.getCell(3).font = { size: 9, italic: true, color: { argb: 'FF94A3B8' } };
-      meta.getCell(3).alignment = { horizontal: 'right' };
-      ws.mergeCells(meta.number, 1, meta.number, 2);
+      addDashboardMeta(ws, tab.label, filtrosLinha, exportadoEm); // título + "Exportado em" + filtros
       tab.build(ws);
+      // Custos leva junto as duas abas de não reembolsáveis — sempre as duas,
+      // independentemente da visão escolhida no card.
+      if (tab.id === 'CUSTOS') addNonReimbursableSheets(wb, naoReemb, { filtros: filtrosLinha, exportadoEm });
     }
 
     const dateStr = new Date().toISOString().slice(0, 10);

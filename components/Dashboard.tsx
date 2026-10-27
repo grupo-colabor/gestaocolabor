@@ -20,10 +20,11 @@ import { demandIntersectsRange } from '../domain/demandDays';
 import {
   aggregateMeasurements,
   aggregatePanelExpenseBreakdown,
-  isNaoReembolsavel,
   PANEL_EXPENSE_LABELS,
   type PanelExpenseBucket,
 } from '../domain/measurementTotals';
+import { listNonReimbursableByDemand } from '../domain/nonReimbursableExpenses';
+import { MEASUREMENT_STATUS_LABELS } from '../domain/measurementStatus';
 import {
   getAvailableInstructors,
   defaultAvailabilityWindow,
@@ -345,7 +346,10 @@ const HelpDrawer: React.FC<{ tab: string; onClose: () => void }> = ({ tab, onClo
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
 const Dashboard: React.FC = () => {
-  const { demands: allDemands, companies, regions, instructors, trainings, measurements, instructorAllocations, getEvidenceAutoStatus } = useApp();
+  const {
+    demands: allDemands, companies, regions, instructors, trainings, measurements,
+    instructorAllocations, companionAllocations, demandParticipants, getEvidenceAutoStatus,
+  } = useApp();
 
   // ⚠️ FONTE ÚNICA do Dashboard: demanda de cliente.
   // Todo KPI, total de horas e ranking daqui pra baixo mede entrega a cliente —
@@ -800,6 +804,28 @@ const pendingLogisticsDemands = useMemo(() => {
   }, [filteredDemands, trainings]);
 
   const totalCosts = useMemo(() => computeVolume(filteredDemands, hoursOf, { costOf }).cost, [filteredDemands, costByDemandId]);
+
+  /**
+   * FONTE ÚNICA das despesas não reembolsáveis (aba CUSTOS): itens, demandas
+   * e resumo de UMA passagem pelos anexos (domain/nonReimbursableExpenses.ts).
+   * O card lê o resumo, a lista expansível lê as demandas/itens e o export
+   * lê os três — por isso vive aqui, no nível do componente, e não dentro do
+   * render da aba. Só P1: `filteredDemands`/`filteredMeasurements` já são
+   * cliente-only e já passaram por todos os filtros.
+   *
+   * Acompanhantes e participantes entram só para resolver o DONO de cada item
+   * (mesma regra do painel: sem dono → titular principal); não mudam total.
+   */
+  const naoReemb = useMemo(() => listNonReimbursableByDemand({
+    demands: filteredDemands,
+    measurements: filteredMeasurements,
+    instructorAllocations,
+    participants: demandParticipants,
+    companions: companionAllocations,
+    instructors,
+    companies,
+    trainings,
+  }), [filteredDemands, filteredMeasurements, instructorAllocations, demandParticipants, companionAllocations, instructors, companies, trainings]);
 
   const totalAllHours2 = useMemo(() => {
     if (extraPeriods.length === 0) return 0;
@@ -2300,21 +2326,14 @@ const pendingLogisticsDemands = useMemo(() => {
     // separada: o item marcado continua somando na sua categoria.
     // `filteredMeasurements` ja e cliente-only, entao interna nao entra aqui —
     // o custo dela e integral e aparece na aba INTERNAS.
-    // A quebra nas QUATRO categorias do Painel de Medição, restrita aos itens
-    // marcados — mesmo percurso do card das internas, só que com predicado
-    // (domain/measurementTotals.ts). `isNaoReembolsavel` é o mesmo helper que o
-    // painel usa no botãozinho de cada item: `reembolsavel === false`, nunca
-    // `=== true`, então item antigo sem o campo é reembolsável e fica de fora.
     //
-    // O total exibido vem daqui, e não do `naoReembolsavel` de
-    // `aggregateMeasurements`, para a soma dos quatro mini-cards fechar com o
-    // número grande por construção — é a mesma conta, um percurso só. Os
-    // dois só divergem se existir item marcado com categoria fora das seis —
-    // que a quebra joga em Outros e o outro descarta. A UI não grava isso; o
-    // smoke prende a igualdade para os dados bem-formados.
-    const naoReembQuebra = aggregatePanelExpenseBreakdown(filteredMeasurements as any, {
-      itemFilter: isNaoReembolsavel,
-    });
+    // Total, contagens e a quebra nas QUATRO categorias do Painel de Medição
+    // vêm de `naoReemb` (nível do componente): Σ dos itens marcados, as mesmas
+    // regras da quebra antiga (`aggregatePanelExpenseBreakdown` com
+    // `isNaoReembolsavel`): órfão de Outros fora do total mas contado,
+    // categoria desconhecida em Outros, `parseExpenseValue`. A soma dos quatro
+    // mini-cards fecha com o número grande por construção, e a lista e o
+    // Excel leem o mesmo objeto. Preso em smoke:nao-reembolsaveis.
 
     // Totais por categoria (com normalização)
     const hospTotal  = sumByCategory(filteredMeasurements, 'HOSPEDAGEM');
@@ -2354,12 +2373,14 @@ const pendingLogisticsDemands = useMemo(() => {
     ).length;
     const totalConcluded = concludedDemands.length;
 
+    // Rótulos do funil vêm do mapa do domínio (domain/measurementStatus.ts),
+    // o mesmo que a lista de não reembolsáveis e as abas do Excel usam.
     const measurementStatusRows = [
-      { key: 'NAO_INICIADA',       label: 'Não Iniciada',         count: naoIniciadaCount,                                              color: 'bg-slate-300',   textColor: 'text-slate-500'  },
-      { key: 'LANCAMENTO',         label: 'Em Lançamento',        count: filteredMeasurements.filter(m => m.status === 'LANCAMENTO').length,         color: 'bg-amber-400',   textColor: 'text-amber-600'  },
-      { key: 'CONFERENCIA',        label: 'Em Conferência',       count: filteredMeasurements.filter(m => m.status === 'CONFERENCIA').length,        color: 'bg-blue-400',    textColor: 'text-blue-600'   },
-      { key: 'PRONTA_FATURAMENTO', label: 'Pronta Faturamento',   count: filteredMeasurements.filter(m => m.status === 'PRONTA_FATURAMENTO').length, color: 'bg-violet-400',  textColor: 'text-violet-600' },
-      { key: 'FATURADA',           label: 'Faturada',             count: filteredMeasurements.filter(m => m.status === 'FATURADA').length,           color: 'bg-emerald-400', textColor: 'text-emerald-600'},
+      { key: 'NAO_INICIADA',       label: MEASUREMENT_STATUS_LABELS.NAO_INICIADA,       count: naoIniciadaCount,                                              color: 'bg-slate-300',   textColor: 'text-slate-500'  },
+      { key: 'LANCAMENTO',         label: MEASUREMENT_STATUS_LABELS.LANCAMENTO,         count: filteredMeasurements.filter(m => m.status === 'LANCAMENTO').length,         color: 'bg-amber-400',   textColor: 'text-amber-600'  },
+      { key: 'CONFERENCIA',        label: MEASUREMENT_STATUS_LABELS.CONFERENCIA,        count: filteredMeasurements.filter(m => m.status === 'CONFERENCIA').length,        color: 'bg-blue-400',    textColor: 'text-blue-600'   },
+      { key: 'PRONTA_FATURAMENTO', label: MEASUREMENT_STATUS_LABELS.PRONTA_FATURAMENTO, count: filteredMeasurements.filter(m => m.status === 'PRONTA_FATURAMENTO').length, color: 'bg-violet-400',  textColor: 'text-violet-600' },
+      { key: 'FATURADA',           label: MEASUREMENT_STATUS_LABELS.FATURADA,           count: filteredMeasurements.filter(m => m.status === 'FATURADA').length,           color: 'bg-emerald-400', textColor: 'text-emerald-600'},
     ];
 
     // Top Instrutores por Custo: a MESMA conta do KPI "Total em Despesas", por
@@ -2483,9 +2504,9 @@ const pendingLogisticsDemands = useMemo(() => {
               marcada; agora a frase entra discreta embaixo e nada pula. */}
           <div className="p-5 flex flex-col lg:flex-row lg:items-center gap-5">
             <div className="lg:w-48 xl:w-56 shrink-0 min-w-0">
-              <h4 className="text-2xl font-black text-amber-600">{formatCurrency(naoReembQuebra.total)}</h4>
+              <h4 className="text-2xl font-black text-amber-600">{formatCurrency(naoReemb.total)}</h4>
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
-                {naoReembQuebra.itens} ite{naoReembQuebra.itens === 1 ? 'm' : 'ns'} em {naoReembQuebra.medicoes} medi{naoReembQuebra.medicoes === 1 ? 'ção' : 'ções'}
+                {naoReemb.qtdItens} ite{naoReemb.qtdItens === 1 ? 'm' : 'ns'} em {naoReemb.medicoes} medi{naoReemb.medicoes === 1 ? 'ção' : 'ções'}
               </p>
             </div>
 
@@ -2494,7 +2515,7 @@ const pendingLogisticsDemands = useMemo(() => {
                 <ExpenseSummaryCard
                   key={key}
                   label={label}
-                  value={formatCurrency(naoReembQuebra[key])}
+                  value={formatCurrency(naoReemb.quebra[key])}
                   icon={PANEL_EXPENSE_STYLE[key].icon}
                   colorClass={PANEL_EXPENSE_STYLE[key].colorClass}
                   surfaceClass="bg-slate-50"
@@ -2503,7 +2524,7 @@ const pendingLogisticsDemands = useMemo(() => {
             </div>
           </div>
 
-          {naoReembQuebra.total <= 0 && (
+          {naoReemb.total <= 0 && (
             <p className="px-5 pb-5 -mt-2 text-[11px] text-slate-300 italic font-bold">
               Nenhuma despesa marcada como não reembolsável no período.
             </p>

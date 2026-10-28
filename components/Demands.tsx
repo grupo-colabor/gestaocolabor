@@ -87,12 +87,16 @@ import {
   canReactivateDemand,
   extraConfirmationMatches,
   buildCancelPatch,
+  buildReactivatePatch,
+  reactivationTargetStatus,
   summarizeCancellationImpact,
   describeCancellation,
+  describeReactivation,
   statusLabel as demandStatusLabel,
   formatBrDateTime,
 } from '../domain/demandCancellation';
 import CancelDemandModal from './demand-form/CancelDemandModal';
+import type { DemandFormState } from './demand-form/types';
 // Tabela de permissões compartilhada com o formulário de demanda interna —
 // alias local para manter as chamadas existentes (canPerformAction) intactas.
 import { canPerformDemandAction as canPerformAction } from '../domain/demandPermissions';
@@ -272,6 +276,8 @@ useEffect(() => {
   const [cancelConfirmText, setCancelConfirmText] = useState<string>('');
   /** Enquanto o banco responde ao cancelamento. */
   const [cancelando, setCancelando] = useState(false);
+  /** Enquanto o banco responde à reativação. */
+  const [reativando, setReativando] = useState(false);
   
   // --- Advanced Filters State ---
   const [advancedFilters, setAdvancedFilters] = useState({
@@ -477,7 +483,7 @@ useEffect(() => {
   });
 
   // Note: attachments is handled dynamically in formDemand
-  const [formDemand, setFormDemand] = useState<Partial<Demand & { cancelledAt?: string, attachments?: { classListPdf?: { name: string; base64: string }; instructorReleasePdf?: { name: string; base64: string } }, cancelInfo?: { reason: string, note: string, date: string } }>>(initialDemandState());
+  const [formDemand, setFormDemand] = useState<DemandFormState>(initialDemandState());
 
   /**
    * Sugestões do campo Local: base operacional + locais já usados nas
@@ -1301,38 +1307,45 @@ useEffect(() => {
     setCancelConfirmText('');
   };
 
-  // --- HANDLER DE REATIVAÇÃO ---
-  const handleReactivateDemand = () => {
-    if (!formDemand?.id) return;
-    
-    // 1. Limpar Agenda (itens manuais vinculados)
-    agendaItems
-      .filter(item => item.relatedDemandId === formDemand.id)
-      .forEach(item => removeAgendaItem(item.id));
-
-    // 2. Resetar Medição
-    const measurement = measurements.find(m => m.demandId === formDemand.id);
-    if (measurement) {
-      updateMeasurement({
-        ...measurement,
-        status: 'NAO_INICIADA',
-        attachments: [],
-        otherExpenses: [],
-        updatedAt: new Date().toISOString()
-      });
+  // --- REATIVAÇÃO: o inverso exato do cancelamento (domain/demandCancellation.ts) ---
+  // Volta o status GRAVADO antes do cancelamento (fallback para cancelada
+  // antiga: ALOCADA com instrutor, NOVA sem) e limpa os quatro campos. NÃO
+  // toca em instrutor, alocações, medição nem agenda — o "Reativar" antigo
+  // zerava a medição (anexos e outras despesas) e apagava os itens de agenda.
+  const handleReactivateDemand = async () => {
+    if (!formDemand?.id || reativando) return;
+    if (!canReactivateDemand(profile?.role)) {
+      setNotification({ message: 'Seu perfil não pode reativar demandas.', type: 'error' });
+      return;
     }
 
-    // 3. Atualizar Demanda
-    const reactivateData = {
-      ...formDemand as Demand,
-      status: 'NOVA' as DemandStatus,
-      instructorId: undefined,
-      cancelledAt: undefined,
-      cancelReason: undefined,
-      cancelInfo: undefined
-    };
-    
-    updateDemand(reactivateData);
+    const antes = formDemand as Demand;
+    const reactivateData = buildReactivatePatch(antes);
+
+    setReativando(true);
+    const gravou = await updateDemand(reactivateData, {
+      successMessage: `Demanda ${reactivateData.id} reativada (${demandStatusLabel(reactivateData.status)}).`,
+    });
+    setReativando(false);
+    // Banco recusou: banner já subiu, lista voltou, modal fica aberto.
+    if (!gravou.ok) return;
+
+    const auditoria = await logAction({
+      modulo: 'Demandas',
+      acao: 'Reativar',
+      descricao: describeReactivation({
+        demandId: reactivateData.id,
+        voltaPara: reactivateData.status,
+        cancelledAt: antes.cancelledAt,
+        reason: antes.cancelReason,
+      }),
+      dadosAntes: antes,
+      dadosDepois: reactivateData,
+    });
+    if (!auditoria.ok) {
+      setNotification({ message: `Demanda ${reactivateData.id} reativada, mas a auditoria não foi gravada. Avise o administrador.`, type: 'error' });
+    }
+
     setFormDemand(reactivateData);
     setConfirmReactivate(false);
   };
@@ -4000,10 +4013,13 @@ const companionInstructorIds = useMemo(() => {
               <div className="bg-white p-8 rounded-2xl max-sm text-center space-y-4">
                   <RefreshCw size={48} className="mx-auto text-blue-500" />
                   <h3 className="text-xl font-bold">Reativar demanda?</h3>
-                  <p className="text-sm text-slate-500">A demanda voltará ao status NOVA. Alocações e medições anteriores serão resetadas para este ID.</p>
+                  <p className="text-sm text-slate-500">
+                    A demanda <strong>{formDemand.id}</strong> volta ao status <strong>{demandStatusLabel(reactivationTargetStatus(formDemand))}</strong>; nada é apagado.
+                    Instrutor, alocações, medição e agenda continuam como estão.
+                  </p>
                   <div className="flex gap-2">
-                      <button onClick={() => setConfirmReactivate(false)} className="flex-1 py-2 bg-slate-100 rounded-lg font-bold">Cancelar</button>
-                      <button onClick={handleReactivateDemand} className="flex-1 py-2 bg-blue-600 text-white rounded-lg font-bold">Sim, reativar</button>
+                      <button onClick={() => setConfirmReactivate(false)} disabled={reativando} className="flex-1 py-2 bg-slate-100 rounded-lg font-bold disabled:opacity-60">Cancelar</button>
+                      <button onClick={handleReactivateDemand} disabled={reativando} className="flex-1 py-2 bg-blue-600 text-white rounded-lg font-bold disabled:opacity-60">{reativando ? 'Gravando…' : 'Sim, reativar'}</button>
                   </div>
               </div>
           </div>

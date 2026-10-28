@@ -53,8 +53,11 @@ import {
   canReactivateDemand,
   extraConfirmationMatches,
   buildCancelPatch,
+  buildReactivatePatch,
+  reactivationTargetStatus,
   summarizeCancellationImpact,
   describeCancellation,
+  describeReactivation,
   statusLabel as demandStatusLabel,
   formatBrDateTime,
 } from '../domain/demandCancellation';
@@ -322,6 +325,8 @@ const InternalDemands: React.FC = () => {
   const [cancelConfirmText, setCancelConfirmText] = useState('');
   /** Enquanto o banco responde ao cancelamento. */
   const [cancelando, setCancelando] = useState(false);
+  /** Enquanto o banco responde à reativação. */
+  const [reativando, setReativando] = useState(false);
 
   const [pendingPdfs, setPendingPdfs] = useState<PendingPdfs>({ classList: null, instructorRelease: null });
   const [dbDocs, setDbDocs] = useState<DbDocs>({});
@@ -1614,18 +1619,46 @@ const InternalDemands: React.FC = () => {
     setCancelConfirmText('');
   };
 
-  const handleReactivateDemand = () => {
-    if (!formDemand?.id) return;
-    const reactivated = {
-      ...(formDemand as Demand),
-      status: 'NOVA' as DemandStatus,
-      instructorId: undefined,
-      cancelledAt: undefined,
-      cancelReason: undefined,
-      cancelInfo: undefined,
-    };
-    updateDemand(reactivated);
-    setFormDemand(reactivated);
+  // --- REATIVAÇÃO: o inverso exato do cancelamento (domain/demandCancellation.ts) ---
+  // Volta o status GRAVADO antes (fallback: ALOCADA com instrutor, NOVA sem),
+  // limpa os quatro campos e NÃO toca em instrutor, alocações, medição nem
+  // agenda — o "Reativar" antigo tirava o instrutor da demanda.
+  const handleReactivateDemand = async () => {
+    if (!formDemand?.id || reativando) return;
+    if (!canReactivateDemand(profile?.role)) {
+      setNotification({ message: 'Seu perfil não pode reativar demandas.', type: 'error' });
+      return;
+    }
+
+    const antes = formDemand as Demand;
+    const reactivateData = buildReactivatePatch(antes);
+
+    setReativando(true);
+    const gravou = await updateDemand(reactivateData, {
+      successMessage: `Demanda ${reactivateData.id} reativada (${demandStatusLabel(reactivateData.status)}).`,
+    });
+    setReativando(false);
+    // Banco recusou: banner já subiu, lista voltou, modal fica aberto.
+    if (!gravou.ok) return;
+
+    const auditoria = await logAction({
+      modulo: 'Demandas',
+      acao: 'Reativar',
+      descricao: describeReactivation({
+        demandId: reactivateData.id,
+        interna: true,
+        voltaPara: reactivateData.status,
+        cancelledAt: antes.cancelledAt,
+        reason: antes.cancelReason,
+      }),
+      dadosAntes: antes,
+      dadosDepois: reactivateData,
+    });
+    if (!auditoria.ok) {
+      setNotification({ message: `Demanda ${reactivateData.id} reativada, mas a auditoria não foi gravada. Avise o administrador.`, type: 'error' });
+    }
+
+    setFormDemand(reactivateData);
     setConfirmReactivate(false);
   };
 
@@ -2854,14 +2887,15 @@ const InternalDemands: React.FC = () => {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
             <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Reativar demanda?</h3>
             <p className="text-sm text-slate-500">
-              A demanda <strong>{formDemand.id}</strong> volta para o status NOVA e perde a alocação de instrutor.
+              A demanda <strong>{formDemand.id}</strong> volta ao status <strong>{demandStatusLabel(reactivationTargetStatus(formDemand))}</strong>; nada é apagado.
+              Instrutor, alocações, medição e agenda continuam como estão.
             </p>
             <div className="flex justify-end gap-3 pt-2">
               <button onClick={() => setConfirmReactivate(false)} className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-black text-xs uppercase tracking-widest hover:bg-slate-50 transition">
                 Voltar
               </button>
-              <button onClick={handleReactivateDemand} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-widest transition">
-                Reativar
+              <button onClick={handleReactivateDemand} disabled={reativando} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-widest transition disabled:opacity-60">
+                {reativando ? 'Gravando…' : 'Reativar'}
               </button>
             </div>
           </div>

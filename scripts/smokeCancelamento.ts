@@ -31,6 +31,10 @@
  *       Concluída (calculado) / ALOCADA (gravado)"; reativar traz "Volta para".
  *   [I] Guarda de fonte: o domínio não importa react, services, exceljs nem
  *       supabase.
+ *   [J] Nada apagado ao cancelar/reativar: os handlers dos dois modais não
+ *       chamam remoção de agenda, reset de medição nem delete/remove; gravam
+ *       pelo patch do domínio, só fecham o modal se o banco aceitou e auditam
+ *       com await. O cancelDemand antigo do App (apagava alocações) não existe.
  *
  * Sai com código 1 se qualquer asserção falhar.
  */
@@ -268,6 +272,35 @@ const semComentarios = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace
   check('domain/demandCancellation.ts não importa react/services/exceljs/supabase', !/from\s+['"](react|exceljs|@supabase)|\/services\//.test(src));
   const med = semComentarios(ler('components/Measurement.tsx'));
   check('Measurement.tsx não compara o motivo por string solta', !/cancelReason\s*[!=]==\s*['"]No-Show['"]/.test(med));
+}
+
+/* ────────────────────────────── [J] ────────────────────────────── */
+console.log('\n[J] nada apagado ao cancelar/reativar: guarda de fonte dos handlers');
+{
+  const bodyOf = (src: string, nome: string): string => {
+    const i = src.indexOf(`const ${nome} = async () => {`);
+    check(`${nome} existe e é async`, i >= 0);
+    if (i < 0) return '';
+    // Corpo: até o primeiro "\n  };" (os handlers fecham com dois espaços de indentação).
+    const j = src.indexOf('\n  };', i);
+    return src.slice(i, j < 0 ? undefined : j);
+  };
+  const PROIBIDO = [
+    /removeAgendaItem\s*\(/, /updateMeasurement\s*\(/, /\bdelete[A-Z]\w*\s*\(/, /\bremove[A-Z]\w*\s*\(/,
+    /attachments\s*:\s*\[\]/, /otherExpenses\s*:\s*\[\]/, /instructorId\s*:\s*undefined/, /NAO_INICIADA/,
+  ];
+  for (const rel of ['components/Demands.tsx', 'components/InternalDemands.tsx']) {
+    const src = ler(rel).replace(/\r\n/g, '\n');
+    for (const nome of ['handleCancelDemand', 'handleReactivateDemand']) {
+      const body = bodyOf(src, nome);
+      check(`${rel}: ${nome} não apaga nem reseta nada`, body.length > 0 && !PROIBIDO.some(re => re.test(body)));
+      check(`${rel}: ${nome} grava pelo patch do domínio`, (nome === 'handleCancelDemand' ? /buildCancelPatch\(/ : /buildReactivatePatch\(/).test(body));
+      check(`${rel}: ${nome} só fecha o modal se o banco aceitou`, /if \(!gravou\.ok\) return;/.test(body));
+      check(`${rel}: ${nome} audita com await`, /await logAction\(/.test(body));
+    }
+  }
+  const app = ler('App.tsx');
+  check('App.tsx não tem mais o cancelDemand que apagava alocações', !/const cancelDemand = useCallback/.test(app) && !/deleteInstructorAllocationsByDemandId/.test(app));
 }
 
 console.log(falhas === 0 ? '\nTudo certo.' : `\n${falhas} falha(s).`);

@@ -119,8 +119,7 @@ import {
 import {
   fetchInstructorAllocations,
   upsertInstructorAllocation,
-  replaceInstructorAllocationsForDemand,
-  deleteInstructorAllocationsByDemandId
+  replaceInstructorAllocationsForDemand
 } from './services/instructorAllocations';
 
 import {
@@ -234,7 +233,6 @@ interface AppState {
   /** Resolve quando o banco respondeu; `ok: false` = recusou (o banner de erro já subiu) e a lista voltou ao que era. */
   updateDemand: (d: Demand, opts?: UpdateDemandOptions) => Promise<UpdateDemandResult>;
   deleteDemand: (id: string) => void;
-  cancelDemand: (demandId: string) => void;
   addInstructor: (i: Instructor) => void;
   updateInstructor: (i: Instructor) => void;
   deleteInstructor: (id: string) => Promise<void>;
@@ -2211,55 +2209,9 @@ const addDemand = useCallback(
 );
 
 
-  const cancelDemand = useCallback(
-    (demandId: string) => {
-      // ✅ MOCK MODE
-      if (AUTH_MODE !== 'supabase') {
-        setDemands(prev => prev.map(d => (d.id === demandId ? { ...d, status: 'CANCELADA' } : d)));
-        setInstructorAllocations(prev => prev.filter(a => a.demandId !== demandId));
-        return;
-      }
-
-      // ✅ SUPABASE MODE
-      if (!user) {
-        setNotification({
-          message: 'Aguarde a sessão carregar para cancelar a demanda.',
-          type: 'info'
-        });
-        return;
-      }
-
-      (async () => {
-        try {
-          const payload = { status: 'CANCELADA' };
-          const { error } = await updateDemandById(demandId, payload);
-          if (error) {
-            console.error('Erro cancel demand:', error);
-            setNotification({
-              message: `Erro ao cancelar demanda: ${error.message}`,
-              type: 'error'
-            });
-            return;
-          }
-
-          // Libera agenda: remove alocações vinculadas a esta demanda cancelada
-          try {
-            await deleteInstructorAllocationsByDemandId(demandId);
-            setInstructorAllocations(prev => prev.filter(a => a.demandId !== demandId));
-          } catch (e) {
-            console.error('[cancelDemand] erro ao remover alocações:', e);
-          }
-
-          await syncDemandsFromDb();
-          setNotification({ message: 'Demanda cancelada.', type: 'success' });
-        } catch (e) {
-          console.error('Erro ao cancelar demanda:', e);
-          setNotification({ message: 'Erro ao cancelar demanda.', type: 'error' });
-        }
-      })();
-    },
-    [AUTH_MODE, loading, user, syncDemandsFromDb]
-  );
+  // `cancelDemand` (apagava instructor_allocations) saiu: não tinha chamador.
+  // O cancelamento real é updateDemand com buildCancelPatch
+  // (domain/demandCancellation.ts) — só status e os quatro campos, nada apagado.
 
   const updateMeasurement = useCallback((m: Measurement) => {
   // MOCK
@@ -3545,7 +3497,6 @@ const hasScheduleConflict = useCallback(
       addDemand,
       updateDemand,
       deleteDemand,
-      cancelDemand,
       addInstructor,
       updateInstructor,
       deleteInstructor,
@@ -3600,7 +3551,6 @@ const hasScheduleConflict = useCallback(
       addDemand,
       updateDemand,
       deleteDemand,
-      cancelDemand,
       addInstructor,
       updateInstructor,
       deleteInstructor,

@@ -11,12 +11,10 @@ import type { Demand } from '../../types';
  */
 export type DemandFormState = Partial<
   Demand & {
-    cancelledAt?: string;
     attachments?: {
       classListPdf?: { name: string; base64: string };
       instructorReleasePdf?: { name: string; base64: string };
     };
-    cancelInfo?: { reason: string; note: string; date: string };
   }
 >;
 

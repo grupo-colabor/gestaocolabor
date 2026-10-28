@@ -133,6 +133,7 @@ Painel de controle com métricas, gráficos e indicadores de saúde operacional 
 - Custos por empresa
 - Evolução de despesas no período
 - **Despesas Não Reembolsáveis**: o que a Colabor absorve (itens marcados na Medição como *Não reembolsa*). O card mostra o total, "N itens em M medições" e a quebra em Hospedagem / Locomoção / Alimentação / Outros — as mesmas quatro categorias do Painel de Medição. Esses itens **continuam** no Total em Despesas: é um recorte, não uma subtração.
+- **Demanda cancelada**: as despesas da medição de uma demanda cancelada **continuam** no Total em Despesas e no card de não reembolsáveis — o gasto existiu. Nos KPIs, a demanda sai de Concluídas e entra em Canceladas. Nas abas *Não reemb. por demanda / por item* do Excel, a linha da cancelada por **No-Show** sai em fonte vermelha.
 
 ##### Card "Despesas Não Reembolsáveis" — lista por trás do número
 
@@ -279,8 +280,8 @@ Exibe todos os dados preenchidos. Disponibiliza as seguintes ações:
 | **Alocar CTM** | Aloca Centro de Treinamento Móvel |
 | **Acompanhantes → Adicionar** | Adiciona instrutor acompanhante, nos dias escolhidos (ver abaixo) |
 | **Exportar para Word** | Gera documento .docx com todos os dados |
-| **Cancelar Demanda** | Marca como CANCELADA (pede motivo) |
-| **Reativar Demanda** | Desfaz o cancelamento |
+| **Cancelar Demanda** | Marca como CANCELADA em **qualquer status** (pede motivo; ver *Cancelar e reativar uma demanda*) |
+| **Reativar Demanda** | Desfaz o cancelamento: volta ao status anterior, nada é apagado |
 | **Deletar Demanda** | Remove permanentemente (pede confirmação) |
 
 #### Alocar Instrutor
@@ -304,6 +305,27 @@ O acompanhante segue o **horário da demanda** e passa a aparecer na agenda e na
 A lista mostra cada acompanhante com os dias que ele acompanha — **"período todo"** ou, por exemplo, **"2 de 5 dias"**. A **lixeira** (aparece ao passar o mouse) remove a pessoa da demanda, em todos os dias. Se as datas da demanda mudaram e algum dia do acompanhante ficou de fora, a linha fica amarela com o aviso **"Fora do período da demanda"**: remova e adicione de novo nos dias certos.
 
 O botão **Adicionar** e a lixeira não aparecem em demanda **cancelada** ou **concluída**. Demanda **interna** não tem este bloco — nela, quem entra a mais é participante.
+
+#### Cancelar e reativar uma demanda
+
+**Cancelar** vale em **qualquer status** — NOVA, PENDENTE, ALOCADA, EM ANDAMENTO ou CONCLUÍDA — e é só uma marca de status: **nada é apagado nem liberado**. Medição, notinhas, evidências, alocações de instrutor, acompanhante e CTM, logística e itens de agenda ficam exatamente como estão; a agenda e os conflitos já liberam a pessoa e o recurso pelo status. O que fica gravado na demanda: o **motivo** (obrigatório), a **observação** (pedida em *Outro*), a **data do cancelamento** e o **status anterior**.
+
+| Quem | Pode cancelar |
+|------|---------------|
+| Admin e Analista | Em qualquer status |
+| Admin | Também quando a medição está **FATURADA** — e precisa **digitar o número da demanda** (ex.: `DEM-1583`) para confirmar |
+| Analista | Não cancela demanda com medição FATURADA |
+| Coordenador | Não cancela |
+
+Motivos: Baixo quórum, Falta de instrutor, Reagendamento, Solicitação do cliente, **No-Show** e Outro — a mesma lista na demanda de cliente e na interna. O motivo é lido de forma tolerante: "No-Show", "no show" e "noshow" são o mesmo motivo.
+
+Para demanda que **já começou ou terminou** (EM ANDAMENTO / CONCLUÍDA), o modal mostra o bloco **Impacto** antes de confirmar: status atual, etapa da medição, despesas lançadas, o reembolso ao instrutor que **não entrará** no Excel de pagamento, as pessoas alocadas e a frase *"Nada será apagado"*.
+
+Se o banco recusar a gravação, o modal **não fecha** como cancelado e o banner de erro aparece. A trilha de auditoria registra quem cancelou, quando, o motivo, a observação e o **status anterior** (calculado e gravado); se a auditoria falhar, o cancelamento fica gravado mesmo assim e um banner avisa.
+
+**Reativar** é o inverso exato: a demanda volta ao **status gravado antes** do cancelamento (cancelada antiga, anterior a esta regra: ALOCADA se tem instrutor, NOVA se não) e os quatro campos são limpos. Instrutor, alocações, medição e agenda continuam como estavam — uma concluída reativada reaparece como CONCLUÍDA, porque o status concluído é calculado pela data. Também vai para a auditoria ("Reativar").
+
+**Onde a cancelada aparece depois:** some das pendências, da agenda e do Controle Logístico (por status, como antes). Na **Medição**, a medição continua visível **se tiver lançamentos**, com o selo *Cancelada · motivo* (vazia fica fora; No-Show aparece sempre). No **Dashboard**, sai de Concluídas e entra em Canceladas, mas as despesas da medição **continuam** nos custos — o gasto existiu. Nas **Exportações**, entra só com *Incluir canceladas* ou status *Cancelada*. No **Excel de pagamento**, fica fora (ver seção 7). Nos Excel que listam demanda por linha, a cancelada por **No-Show** sai em **fonte vermelha** (ver seção 10).
 
 #### Modo Edição (FORM)
 
@@ -407,6 +429,10 @@ Módulo para registrar, revisar e aprovar as despesas geradas durante o treiname
 - **Empresa**: Dropdown
 - **Status da demanda**: NOVA, PENDENTE, ALOCADA, EM_ANDAMENTO, CONCLUÍDA
 - **Período**: Data início e data fim
+
+**Demanda cancelada na lista:** a medição de uma demanda cancelada continua na lista **se tiver lançamentos** (etapa além de *Não Iniciada*, ou qualquer item), com o selo vermelho **Cancelada · motivo**; medição vazia de demanda cancelada fica fora. Cancelada por **No-Show** aparece sempre, com o selo **No-Show**. Cancelar não apaga nada da medição; a mesma regra vale para a lista de seleção do Excel de pagamento.
+
+**Reembolso que não entra no pagamento:** o Excel de pagamento só considera demanda **concluída** — cancelada, por qualquer motivo, fica fora dele. Se a demanda foi cancelada e a medição tem item marcado como *Pago pelo instrutor*, o painel mostra um aviso âmbar — *"Demanda cancelada: este reembolso não entra no Excel de pagamento"* — com o valor. Pagar hora/aula ou despesas em No-Show é decisão de negócio pendente; até lá, o aviso garante que nada some em silêncio.
 
 ### Estágios da Medição
 
@@ -675,6 +701,9 @@ Gerenciamento de contas de acesso ao sistema.
 | Analista | Nome do analista |
 | Transporte | Tipo de transporte |
 | Hospedagem | Tipo de hospedagem |
+| Motivo do cancelamento | Preenchido só em demanda cancelada |
+
+**Linhas em vermelho:** demanda **cancelada por No-Show** sai com a **fonte vermelha na linha inteira** — só a cor da fonte, sem fundo, para continuar legível e imprimível. Demanda noturna continua em negrito com fundo laranja; se for noturna **e** No-Show, ficam os dois e a fonte sai vermelha. O mesmo vermelho vale para **todas** as planilhas que listam demanda por linha: os datasets da aba Exportações (e a prévia na tela), o painel de pendências e as abas *Não reemb. por demanda / por item* do Dashboard. O CSV não tem cor. O motivo é comparado de forma tolerante ("No-Show", "no show", "noshow").
 
 ### Aba Exportações (planilhas de análise)
 
@@ -722,7 +751,7 @@ O **filtro de período** seleciona as demandas que têm ao menos um dia dentro d
 #### Opções marcáveis (Medições e Demandas)
 
 - **Usar Valor HH da medição** (ligada por padrão, só em Medições): desligada, as colunas *Valor HH*, *Hora/aula* e *Total geral* saem em branco. A coluna **Origem da tarifa** diz, linha a linha, se a tarifa veio da medição, se foi digitada como zero, se não existe na medição (o R$ 0,00 "por ausência") ou se a opção está desligada.
-- **Incluir canceladas** (desligada por padrão): demandas canceladas ficam fora, a menos que o filtro de status seja exatamente *Cancelada*, que força a inclusão.
+- **Incluir canceladas** (desligada por padrão): demandas canceladas ficam fora, a menos que o filtro de status seja exatamente *Cancelada*, que força a inclusão. Quando entram, a linha da cancelada por **No-Show** sai em fonte vermelha (XLSX e prévia; o CSV não tem cor). No dataset Medições, a origem das horas de uma cancelada diz *Não elegível: demanda cancelada*.
 
 #### Logística (uma linha por bloco)
 
@@ -798,7 +827,7 @@ Gera o XLSX **no layout do modelo da Vale**, a partir do próprio arquivo-modelo
 4. Preencha os campos manuais (preço HH por treinamento — dois na híbrida — e, se preciso, por turma; combustível; %; observação) e clique em **Salvar**
 5. Confira a prévia e clique em **Gerar Medição Vale** — o botão fica travado enquanto houver edição não salva
 
-**Pendências e de onde vêm:** não concluída, cancelada e sem titular (fatos, do cadastro); sem ID SAP; sem preço HH (na híbrida, *sem preço HH presencial* e *sem preço HH online*, um aviso por parte); preço único antigo em treinamento híbrido; treinamento híbrido sem horas práticas cadastradas (ou com horas práticas inválidas); sem horário de início ou de término na demanda; sem medição aberta ou não iniciada; medição não pronta; item não reembolsável excluído das colunas; ID SAP repetido em outra demanda do recorte; interna com empresa Vale. A única **inferência** é *logística indica viagem, mas não há despesa lançada* (carro ou hotel na logística e nenhum item na medição) — é aviso, nunca bloqueio.
+**Pendências e de onde vêm:** não concluída, cancelada e sem titular (fatos, do cadastro) — se o cancelamento aconteceu **depois** do fim real da turma, a pendência diz *"Demanda cancelada em dd/mm, após o término da turma"*, sinal de que uma medição já enviada pode precisar de ajuste; sem ID SAP; sem preço HH (na híbrida, *sem preço HH presencial* e *sem preço HH online*, um aviso por parte); preço único antigo em treinamento híbrido; treinamento híbrido sem horas práticas cadastradas (ou com horas práticas inválidas); sem horário de início ou de término na demanda; sem medição aberta ou não iniciada; medição não pronta; item não reembolsável excluído das colunas; ID SAP repetido em outra demanda do recorte; interna com empresa Vale. A única **inferência** é *logística indica viagem, mas não há despesa lançada* (carro ou hotel na logística e nenhum item na medição) — é aviso, nunca bloqueio.
 
 #### BM da Vale (Boletim de Medição)
 
@@ -945,7 +974,7 @@ O status é **calculado automaticamente** com base na data atual, nas datas da d
 | **ALOCADA** | Com instrutor · Ainda não começou |
 | **EM_ANDAMENTO** | Data atual está dentro do período do treinamento |
 | **CONCLUÍDA** | Data atual é posterior ao fim do treinamento |
-| **CANCELADA** | Cancelada manualmente (pode ser reativada) |
+| **CANCELADA** | Cancelada manualmente, em qualquer status (pode ser reativada: volta ao status anterior, nada é apagado) |
 
 > **Importante:** Demandas com modalidade **ONLINE** ou **TUTORIA** nunca ficam com status PENDENTE — não exigem instrutor obrigatório.
 

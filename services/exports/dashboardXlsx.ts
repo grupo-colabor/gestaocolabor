@@ -37,6 +37,8 @@ import {
   type NonReimbursableList,
   type NonReimbursableRow,
 } from '../../domain/nonReimbursableExpenses';
+import type { RowMark } from '../../domain/exports/types';
+import { paintNoShowRow } from './xlsxRowStyles';
 
 export const NR_SHEET_BY_DEMAND = 'Não reemb. por demanda';
 export const NR_SHEET_BY_ITEM = 'Não reemb. por item';
@@ -141,7 +143,9 @@ function addTableSheet(
   name: string,
   columns: NonReimbursableColumn[],
   rows: NonReimbursableRow[],
-  meta: NonReimbursableSheetMeta
+  meta: NonReimbursableSheetMeta,
+  /** `marks[i]` = marca da linha `rows[i]`: 'no-show' pinta a fonte de vermelho. */
+  marks: (RowMark | null)[] = []
 ): Worksheet {
   const ws = wb.addWorksheet(name.slice(0, 31), {
     views: [{ state: 'frozen', ySplit: NR_HEADER_ROW }],
@@ -171,7 +175,7 @@ function addTableSheet(
   if (hRow.number !== NR_HEADER_ROW) throw new Error(`Cabeçalho caiu na linha ${hRow.number}, esperado ${NR_HEADER_ROW}`);
 
   // Linhas 5…: dados.
-  for (const r of rows) {
+  rows.forEach((r, idx) => {
     const dr = ws.addRow(r);
     columns.forEach((c, i) => {
       const cell = dr.getCell(i + 1);
@@ -179,7 +183,9 @@ function addTableSheet(
       if (c.kind === 'currency') cell.numFmt = FMT_MOEDA;
       else if (c.kind === 'int') cell.numFmt = FMT_INT;
     });
-  }
+    // Demanda cancelada por No-Show: linha inteira em fonte vermelha, sem fundo.
+    if (marks[idx] === 'no-show') paintNoShowRow(dr, columns.length);
+  });
 
   ws.autoFilter = {
     from: { row: NR_HEADER_ROW, column: 1 },
@@ -193,6 +199,9 @@ function addTableSheet(
  * workbook — SEMPRE as duas, independentemente da visão escolhida na tela.
  */
 export function addNonReimbursableSheets(wb: Workbook, list: NonReimbursableList, meta: NonReimbursableSheetMeta): void {
-  addTableSheet(wb, NR_SHEET_BY_DEMAND, NR_BY_DEMAND_COLUMNS, buildNonReimbursableByDemandRows(list), meta);
-  addTableSheet(wb, NR_SHEET_BY_ITEM, NR_BY_ITEM_COLUMNS, buildNonReimbursableByItemRows(list), meta);
+  const marcaDeNoShow = (noShow: boolean): RowMark | null => (noShow ? 'no-show' : null);
+  addTableSheet(wb, NR_SHEET_BY_DEMAND, NR_BY_DEMAND_COLUMNS, buildNonReimbursableByDemandRows(list), meta,
+    list.demandas.map(d => marcaDeNoShow(d.noShow)));
+  addTableSheet(wb, NR_SHEET_BY_ITEM, NR_BY_ITEM_COLUMNS, buildNonReimbursableByItemRows(list), meta,
+    list.itens.map(it => marcaDeNoShow(it.noShow)));
 }

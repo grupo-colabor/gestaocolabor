@@ -52,6 +52,7 @@ import { getDemandDays, getDayHorarioInicioRaw, getDayHorarioFimRaw, getDemandLa
 import { resolveDemandModality } from '../../modalityOptions';
 import { splitHybridHours, type HybridSplit } from '../../hybridHours';
 import { resolveCalculatedStatus, resolveCompanyLabel, statusLabel } from '../shared';
+import { cancellationBlockText } from '../../demandCancellation';
 import { DEFAULT_OPTIONS, type ExportOptions } from '../options';
 import { TITULARES_SEPARATOR, type SourceField, type TemplateRowInput } from '../templates/sourceFields';
 import type { ManualRefs, RowsSheetInput } from '../templates/resolve';
@@ -179,7 +180,8 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
 
     const bloqueios: string[] = [];
     if (interna) bloqueios.push('Demanda interna com empresa Vale — não entra na medição da Vale');
-    if (cancelada) bloqueios.push('Demanda cancelada');
+    // Cancelada depois do fim real da turma: o texto diz a data — sinal de que uma medição já enviada pode precisar de ajuste.
+    if (cancelada) bloqueios.push(cancellationBlockText(demand.cancelledAt, ultimoDia));
     else if (statusCalculado !== 'CONCLUIDA') bloqueios.push(`Demanda não concluída (${statusLabel(statusCalculado)})`);
     if (titularIds.length === 0) bloqueios.push('Sem instrutor titular');
 

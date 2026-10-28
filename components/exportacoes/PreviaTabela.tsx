@@ -25,15 +25,18 @@ const PreviaTabela: React.FC<{ table: ExportTable }> = ({ table }) => {
             </tr>
           </thead>
           <tbody>
-            {pag.paginatedItems.map((row, i) => (
-              <tr key={pag.startIdx + i} className="border-b border-slate-100 hover:bg-slate-50">
+            {pag.paginatedItems.map((row, i) => {
+              // Demanda cancelada por No-Show: a linha sai vermelha aqui como no XLSX.
+              const noShow = table.marks?.[pag.startIdx + i] === 'no-show';
+              return (
+              <tr key={pag.startIdx + i} data-mark={noShow ? 'no-show' : undefined} className="border-b border-slate-100 hover:bg-slate-50">
                 {row.map((v, j) => {
                   const kind = table.columns[j].kind;
                   const vazio = v === null || v === undefined || v === '';
                   return (
                     <td
                       key={table.columns[j].key}
-                      className={`p-3 whitespace-nowrap max-w-[260px] truncate ${isNumericKind(kind) ? 'text-right tabular-nums' : ''} ${vazio ? 'text-slate-300' : 'text-slate-700'}`}
+                      className={`p-3 whitespace-nowrap max-w-[260px] truncate ${isNumericKind(kind) ? 'text-right tabular-nums' : ''} ${noShow ? 'text-red-600 font-semibold' : vazio ? 'text-slate-300' : 'text-slate-700'}`}
                       title={vazio ? undefined : String(v)}
                     >
                       {formatPreviewCell(v, kind)}
@@ -41,7 +44,8 @@ const PreviaTabela: React.FC<{ table: ExportTable }> = ({ table }) => {
                   );
                 })}
               </tr>
-            ))}
+              );
+            })}
             {table.rows.length === 0 && (
               <tr>
                 <td colSpan={Math.max(1, table.columns.length)} className="p-10 text-center text-slate-300 font-bold">

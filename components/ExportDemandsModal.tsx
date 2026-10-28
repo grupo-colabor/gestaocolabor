@@ -18,6 +18,8 @@ import { demandIntersectsRange } from '../domain/demandDays';
 import { formatDateOnlySafe } from './demand-form/formatters';
 import { buildModalityOptions, buildTrainingsById, matchesModality } from '../domain/modalityOptions';
 import { fetchLogisticBlocksByDemandIds, LogisticBlockRow } from '../services/logistics';
+import { isNoShowCancellation } from '../domain/demandCancellation';
+import { paintNoShowRow } from '../services/exports/xlsxRowStyles';
 
 /* ========== STATUS STYLING (idêntico ao Measurement.tsx) ========== */
 const STATUS_STYLING: Record<string, string> = {
@@ -403,6 +405,10 @@ const ExportDemandsModal: React.FC<ExportDemandsModalProps> = ({
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE0B2' } };
         });
       }
+
+      // Cancelada por No-Show: fonte vermelha na linha inteira, compondo com o
+      // estilo noturno (negrito e fundo laranja ficam; só a cor da fonte muda).
+      if (isNoShowCancellation(d)) paintNoShowRow(row, worksheet.columns.length);
     });
 
     // AutoFilter cobrindo todas as colunas (26) e todas as linhas com dados

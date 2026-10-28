@@ -71,6 +71,7 @@ import type { InstructorAllocationLike } from './demandInstructors';
 import { resolveAttachmentLink, type AttachmentLike } from './measurementAttachment';
 import { getDemandTitle, getDemandCompanyLabel } from './demandLabel';
 import { measurementStatusLabel } from './measurementStatus';
+import { isNoShowCancellation } from './demandCancellation';
 import { toBrDate } from './exports/shared';
 
 /* ────────────────────────────── entrada ────────────────────────────── */
@@ -88,6 +89,9 @@ export interface NonReimbursableDemandLike extends PeopleDemandLike {
   corredor?: string | null;
   demandState?: string | null;
   instructorId?: string | null;
+  /** Status e motivo de cancelamento: a linha de demanda No-Show sai vermelha nas abas do Excel. */
+  status?: string | null;
+  cancelReason?: string | null;
 }
 
 /** Só o que a lista lê de uma medição: os campos da conta mais id, status e descrições de Outros. */
@@ -162,6 +166,8 @@ export interface NonReimbursableItem {
   dataItem: string;
   pagoPeloInstrutor: boolean;
   valor: number;
+  /** Demanda cancelada por No-Show (isNoShowCancellation): a linha sai em fonte vermelha nas abas do Excel. */
+  noShow: boolean;
 }
 
 export interface NonReimbursablePerson {
@@ -188,6 +194,8 @@ export interface NonReimbursableDemand {
   quebra: Record<PanelExpenseBucket, number>;
   total: number;
   qtdItens: number;
+  /** Demanda cancelada por No-Show: a linha sai em fonte vermelha na aba por demanda. */
+  noShow: boolean;
   /** Os itens desta demanda, em ordem de valor desc. */
   itens: NonReimbursableItem[];
 }
@@ -257,6 +265,7 @@ export function collectNonReimbursableItems(src: NonReimbursableSource): Collect
       uf: (demand.demandState ?? '').trim().toUpperCase(),
       medicaoStatus: m.status ?? '',
       medicaoStatusLabel: measurementStatusLabel(m.status),
+      noShow: isNoShowCancellation(demand),
     };
 
     for (const bloco of blocos) {
@@ -322,6 +331,7 @@ export function aggregateNonReimbursableByDemand(itens: NonReimbursableItem[]): 
         pessoasLabel: '',
         medicaoStatus: it.medicaoStatus,
         medicaoStatusLabel: it.medicaoStatusLabel,
+        noShow: it.noShow,
         quebra: zeroQuebra(),
         total: 0,
         qtdItens: 0,

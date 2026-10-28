@@ -12,6 +12,7 @@
  */
 import type { CellKind, CellValue, ExportTable } from '../../domain/exports/types';
 import { triggerDownload, XLSX_MIME } from '../../utils/download';
+import { paintNoShowRow } from './xlsxRowStyles';
 
 const HEADER_FILL = 'FF1E293B'; // o mesmo azul-escuro dos outros exports
 const FMT_MOEDA = '"R$" #,##0.00';
@@ -63,13 +64,15 @@ export async function buildXlsxBuffer(table: ExportTable, opts: XlsxOptions): Pr
   });
   ws.getRow(1).height = 30;
 
-  for (const row of table.rows) {
+  table.rows.forEach((row, r) => {
     const added = ws.addRow(row.map(cellValue));
     table.columns.forEach((c, i) => {
       const fmt = numFmt(c.kind);
       if (fmt) added.getCell(i + 1).numFmt = fmt;
     });
-  }
+    // Demanda cancelada por No-Show (marca vinda de buildTable): linha inteira em fonte vermelha, sem fundo.
+    if (table.marks?.[r] === 'no-show') paintNoShowRow(added, table.columns.length);
+  });
 
   ws.autoFilter = {
     from: { row: 1, column: 1 },

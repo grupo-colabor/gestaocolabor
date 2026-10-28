@@ -177,8 +177,18 @@ export const EMPTY_FILTERS: ExportFilters = {
   pagoPeloInstrutor: '',
 };
 
-/** Cabeçalho + matriz, prontos para qualquer escritor. */
+/**
+ * Marca por linha, para o escritor estilizar sem conhecer o dataset:
+ *   • 'no-show' — demanda CANCELADA por No-Show: a linha inteira sai com
+ *     fonte vermelha no XLSX e na prévia (sem fundo: legível e imprimível).
+ *     Vem de `isNoShowCancellation(row.demand)` (domain/demandCancellation.ts),
+ *     nunca de string solta. CSV não tem cor.
+ */
+export type RowMark = 'no-show';
+
+/** Cabeçalho + matriz, prontos para qualquer escritor. `marks[i]` é a marca da linha `rows[i]` (null = nenhuma). */
 export interface ExportTable {
   columns: { key: string; header: string; kind: CellKind; width?: number }[];
   rows: CellValue[][];
+  marks?: (RowMark | null)[];
 }

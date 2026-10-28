@@ -133,6 +133,7 @@ export type OrigemHoras =
   | 'Rateio da alocação (dividida)'
   | 'Horas previstas da demanda (participante)'
   | 'Não elegível: demanda não concluída'
+  | 'Não elegível: demanda cancelada'
   | 'Não elegível: sem dias na demanda'
   | 'Acompanhante sem horas informadas'
   | 'Híbrida sem horas presenciais informadas'
@@ -354,9 +355,9 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
           return 'Horas previstas da demanda (participante)';
         }
         if (!elegiveis.has(demand.id)) {
-          return base.statusCalculado === 'CONCLUIDA'
-            ? 'Não elegível: sem dias na demanda'
-            : 'Não elegível: demanda não concluída';
+          if (base.statusCalculado === 'CONCLUIDA') return 'Não elegível: sem dias na demanda';
+          if (base.statusCalculado === 'CANCELADA') return 'Não elegível: demanda cancelada';
+          return 'Não elegível: demanda não concluída';
         }
         if (papel === 'ACOMPANHANTE') return 'Acompanhante sem horas informadas';
         if (!doRateio && papel === 'TITULAR') return 'Sem alocação em instructor_allocations';

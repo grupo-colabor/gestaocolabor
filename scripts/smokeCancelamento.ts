@@ -35,6 +35,13 @@
  *       chamam remoção de agenda, reset de medição nem delete/remove; gravam
  *       pelo patch do domínio, só fecham o modal se o banco aceitou e auditam
  *       com await. O cancelDemand antigo do App (apagava alocações) não existe.
+ *   [K] Vermelho do No-Show: buildTable marca a linha pelo domínio; o XLSX das
+ *       Exportações, lido de volta, tem fonte vermelha em TODAS as células da
+ *       linha No-Show (sem fundo) e em nenhuma das outras; a composição com o
+ *       estilo noturno do Excel de demandas mantém negrito e fundo; as abas de
+ *       não reembolsáveis do Dashboard pintam a linha da demanda No-Show.
+ *       Grava o Excel das fixtures (No-Show noturna, cancelada por outro
+ *       motivo, normal) em C:\tmp para conferência.
  *
  * Sai com código 1 se qualquer asserção falhar.
  */
@@ -68,6 +75,12 @@ import {
   describeReactivation,
 } from '../domain/demandCancellation';
 import { computeMeasurementTotals } from '../domain/measurementTotals';
+import { buildDemandasRows, DEMANDAS_DATASET } from '../domain/exports/datasets/demandas';
+import { buildTable, defaultColumnKeys } from '../domain/exports/buildRows';
+import { buildXlsxBuffer } from '../services/exports/xlsxWriter';
+import { NO_SHOW_FONT_ARGB, paintNoShowRow } from '../services/exports/xlsxRowStyles';
+import { listNonReimbursableByDemand, NR_BY_DEMAND_COLUMNS, NR_BY_ITEM_COLUMNS } from '../domain/nonReimbursableExpenses';
+import { addNonReimbursableSheets, NR_SHEET_BY_DEMAND, NR_SHEET_BY_ITEM, NR_HEADER_ROW } from '../services/exports/dashboardXlsx';
 
 let falhas = 0;
 function check(nome: string, condicao: boolean, detalhe = '') {
@@ -303,5 +316,113 @@ console.log('\n[J] nada apagado ao cancelar/reativar: guarda de fonte dos handle
   check('App.tsx não tem mais o cancelDemand que apagava alocações', !/const cancelDemand = useCallback/.test(app) && !/deleteInstructorAllocationsByDemandId/.test(app));
 }
 
-console.log(falhas === 0 ? '\nTudo certo.' : `\n${falhas} falha(s).`);
-process.exit(falhas === 0 ? 0 : 1);
+/* ────────────────────────────── [K] ────────────────────────────── */
+async function vermelhoNoShow() {
+  console.log('\n[K] vermelho do No-Show: marca por linha + fonte lida de volta do XLSX');
+  const ExcelJSModule = await import('exceljs');
+  const ExcelJS = (ExcelJSModule as any).default ?? ExcelJSModule;
+
+  // Três demandas: No-Show NOTURNA (fim 23:00), cancelada por outro motivo, normal.
+  const base = (o: any): any => ({
+    tipo: 'cliente', companyId: 'C1', trainingId: 'T1', regionId: 'R1', modality: 'PRESENCIAL', dateMode: 'CONTINUO',
+    trainingLocal: 'Mina X', demandState: 'MG', corredor: 'Corredor Sul', ...o,
+  });
+  const NOSHOW = base({ id: 'DEM-9001', status: 'CANCELADA', cancelReason: 'no show', instructorId: 'INS-1', startDate: '2026-10-20T19:00:00', endDate: '2026-10-20T23:00:00', cancelledAt: '2026-10-21T09:00:00', statusBeforeCancel: 'ALOCADA' });
+  const OUTRO = base({ id: 'DEM-9002', status: 'CANCELADA', cancelReason: 'Solicitação do cliente', instructorId: 'INS-1', startDate: '2026-10-21T08:00:00', endDate: '2026-10-22T17:00:00', cancelledAt: '2026-10-15T09:00:00', statusBeforeCancel: 'ALOCADA' });
+  const NORMAL = base({ id: 'DEM-9003', status: 'ALOCADA', instructorId: 'INS-1', startDate: '2026-10-23T08:00:00', endDate: '2026-10-24T17:00:00' });
+  const rows = buildDemandasRows({
+    demands: [NOSHOW, OUTRO, NORMAL],
+    measurements: [],
+    trainings: [{ id: 'T1', name: 'NR 35 — Trabalho em Altura', hours: 8, modality: 'PRESENCIAL' } as any],
+    instructors: [{ id: 'INS-1', name: 'Instrutor Um' }],
+    companies: [{ id: 'C1', name: 'Vale' }],
+    instructorAllocations: [], participants: [], companions: [], logisticBlocks: [], documentFlags: [],
+    now: new Date('2026-10-28T12:00:00'),
+  });
+  // O dataset ordena por número desc: localiza as linhas pelo id, não por índice fixo.
+  eq('dataset Demandas: três linhas', [...rows.map(r => r.demand.id)].sort(), ['DEM-9001', 'DEM-9002', 'DEM-9003']);
+  const idx = (id: string) => rows.findIndex(r => r.demand.id === id);
+  const xl = (id: string) => idx(id) + 2; // linha no XLSX (1 = cabeçalho)
+  check('No-Show é noturna no dataset (fim 23:00)', rows[idx('DEM-9001')].noturno === true);
+  // "Motivo do cancelamento" não nasce ligada; entra aqui para o Excel de fixtures mostrá-la.
+  const table = buildTable(DEMANDAS_DATASET, rows, [...defaultColumnKeys(DEMANDAS_DATASET), 'motivoCancelamento']);
+  eq('buildTable marca só a No-Show', rows.map((r, i) => [r.demand.id, table.marks?.[i] ?? null]).sort(), [['DEM-9001', 'no-show'], ['DEM-9002', null], ['DEM-9003', null]]);
+  check('a marca vem do domínio: "no show" minúsculo conta como No-Show', isNoShowCancellation(NOSHOW));
+
+  const buffer = await buildXlsxBuffer(table, { sheetName: 'Demandas' });
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer);
+  const ws = wb.getWorksheet('Demandas')!;
+  const corDaLinha = (n: number) => table.columns.map((_, i) => ws.getRow(n).getCell(i + 1).font?.color?.argb ?? null);
+  const temFundo = (n: number) => table.columns.some((_, i) => { const f = ws.getRow(n).getCell(i + 1).fill as any; return !!f && f.type === 'pattern' && !!f.fgColor; });
+  check('linha da No-Show: TODAS as células com fonte vermelha', corDaLinha(xl('DEM-9001')).every(c => c === NO_SHOW_FONT_ARGB));
+  check('linha da No-Show: sem fundo — só a cor da fonte', !temFundo(xl('DEM-9001')));
+  check('linha da cancelada por outro motivo: sem vermelho', corDaLinha(xl('DEM-9002')).every(c => c === null));
+  check('linha da normal: sem vermelho', corDaLinha(xl('DEM-9003')).every(c => c === null));
+  eq('cabeçalho continua branco em fundo escuro', ws.getRow(1).getCell(1).font?.color?.argb, 'FFFFFFFF');
+  {
+    const c = table.columns.findIndex(x => x.key === 'motivoCancelamento') + 1;
+    check('coluna "Motivo do cancelamento" presente na tabela', c > 0);
+    const motivo = (id: string) => String(ws.getRow(xl(id)).getCell(c).value ?? '').trim();
+    eq('coluna "Motivo do cancelamento" preenchida só nas canceladas',
+      [motivo('DEM-9001'), motivo('DEM-9002'), motivo('DEM-9003')], ['no show', 'Solicitação do cliente', '']);
+  }
+
+  // Composição com o estilo noturno do Excel de demandas (ExportDemandsModal):
+  // negrito + fundo laranja ficam; só a cor da fonte muda.
+  const ws2 = wb.addWorksheet('Noturna + No-Show');
+  ws2.addRow(['Demanda', 'Treinamento', 'Status']);
+  const row = ws2.addRow(['DEM-9001', 'NR 35 — Trabalho em Altura', 'CANCELADA']);
+  row.eachCell({ includeEmpty: true }, (cell: any) => { cell.font = { bold: true }; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE0B2' } }; });
+  paintNoShowRow(row, 3);
+  check('noturna + No-Show: negrito mantido', [1, 2, 3].every(i => row.getCell(i).font?.bold === true));
+  check('noturna + No-Show: fundo laranja mantido', [1, 2, 3].every(i => (row.getCell(i).fill as any)?.fgColor?.argb === 'FFFFE0B2'));
+  check('noturna + No-Show: fonte vermelha', [1, 2, 3].every(i => row.getCell(i).font?.color?.argb === NO_SHOW_FONT_ARGB));
+
+  // Abas do Dashboard (não reembolsáveis): item de demanda No-Show sai vermelho; o resto não.
+  const medNoShow: any = { id: 'MEA-9001', demandId: 'DEM-9001', status: 'LANCAMENTO', attachments: [{ id: 'n1', name: 'uber.pdf', url: 'u', category: 'LOCOMOCAO', value: 30, reembolsavel: false }], otherExpenses: [] };
+  const medNormal: any = { id: 'MEA-9003', demandId: 'DEM-9003', status: 'LANCAMENTO', attachments: [{ id: 'n2', name: 'almoco.jpg', url: 'u', category: 'ALMOCO', value: 20, reembolsavel: false }], otherExpenses: [] };
+  const lista = listNonReimbursableByDemand({
+    demands: [NOSHOW, NORMAL], measurements: [medNoShow, medNormal],
+    instructorAllocations: [], participants: [], companions: [],
+    instructors: [{ id: 'INS-1', name: 'Instrutor Um' }], companies: [{ id: 'C1', name: 'Vale' }], trainings: [{ id: 'T1', name: 'NR 35' }],
+  });
+  eq('não reembolsáveis: noShow por demanda vem da demanda', lista.demandas.map(d => [d.demandId, d.noShow]), [['DEM-9001', true], ['DEM-9003', false]]);
+  addNonReimbursableSheets(wb, lista, { filtros: 'P1: Todo o período · Sem outros filtros', exportadoEm: '28/10/2026' });
+
+  const bufferFinal = await wb.xlsx.writeBuffer();
+  const wb2 = new ExcelJS.Workbook();
+  await wb2.xlsx.load(bufferFinal);
+  for (const [nome, cols] of [[NR_SHEET_BY_DEMAND, NR_BY_DEMAND_COLUMNS], [NR_SHEET_BY_ITEM, NR_BY_ITEM_COLUMNS]] as const) {
+    const w = wb2.getWorksheet(nome)!;
+    const linhaDe = (id: string) => { let n = 0; w.eachRow((r: any, i: number) => { if (i > NR_HEADER_ROW && String(r.getCell(1).value) === id) n = i; }); return n; };
+    const cor = (n: number) => cols.map((_, i) => w.getRow(n).getCell(i + 1).font?.color?.argb ?? null);
+    check(`${nome}: linha da No-Show com fonte vermelha`, linhaDe('DEM-9001') > 0 && cor(linhaDe('DEM-9001')).every(c => c === NO_SHOW_FONT_ARGB));
+    check(`${nome}: linha normal sem vermelho`, linhaDe('DEM-9003') > 0 && cor(linhaDe('DEM-9003')).every(c => c === null));
+  }
+
+  // Excel de fixtures para conferência: aba Demandas (No-Show noturna em vermelho,
+  // cancelada por outro motivo, normal), a composição noturna + No-Show e as duas
+  // abas de não reembolsáveis.
+  const TMP = 'C:\\tmp';
+  try { fs.mkdirSync(TMP, { recursive: true }); } catch { /* sem permissão: pula a gravação */ }
+  if (fs.existsSync(TMP)) {
+    const arquivo = path.join(TMP, 'demandas_fixtures-cancelamento-noshow.xlsx');
+    fs.writeFileSync(arquivo, Buffer.from(bufferFinal));
+    check(`XLSX das fixtures gravado em ${arquivo}`, fs.statSync(arquivo).size > 5_000);
+  } else {
+    check('XLSX das fixtures (C:\\tmp ausente — pulado)', true);
+  }
+
+  // Guarda de fonte dos escritores novos.
+  const semComentarios2 = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  check('services/exports/xlsxRowStyles.ts não importa react nem supabase', !/from\s+['"](react|@supabase)/.test(semComentarios2(ler('services/exports/xlsxRowStyles.ts'))));
+  check('domain/exports/buildRows.ts marca a linha pelo domínio (isNoShowCancellation), sem string solta', /isNoShowCancellation\(/.test(ler('domain/exports/buildRows.ts')) && !/No-Show/.test(semComentarios2(ler('domain/exports/buildRows.ts'))));
+}
+
+vermelhoNoShow()
+  .then(() => {
+    console.log(falhas === 0 ? '\nTudo certo.' : `\n${falhas} falha(s).`);
+    process.exit(falhas === 0 ? 0 : 1);
+  })
+  .catch(e => { console.error(e); process.exit(1); });

@@ -6,7 +6,12 @@
  * oferece chaves do registry, então isso é bug, não entrada do usuário);
  * chave repetida é colapsada mantendo a primeira ocorrência.
  */
-import type { ColumnDef, DatasetDef, ExportTable, FilterableRow } from './types';
+import type { ColumnDef, DatasetDef, ExportTable, FilterableRow, RowMark } from './types';
+import { isNoShowCancellation } from '../demandCancellation';
+
+/** A marca da linha: No-Show cancelado → 'no-show' (fonte vermelha nos escritores); senão null. */
+export const rowMarkOf = (r: FilterableRow): RowMark | null =>
+  isNoShowCancellation(r.demand) ? 'no-show' : null;
 
 export function defaultColumnKeys<Row extends FilterableRow>(dataset: DatasetDef<Row>): string[] {
   return dataset.columns.filter(c => c.defaultOn).map(c => c.key);
@@ -39,5 +44,6 @@ export function buildTable<Row extends FilterableRow>(
   return {
     columns: columns.map(c => ({ key: c.key, header: c.header, kind: c.kind, width: c.width })),
     rows: rows.map(r => columns.map(c => c.get(r))),
+    marks: rows.map(rowMarkOf),
   };
 }

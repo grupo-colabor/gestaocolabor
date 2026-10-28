@@ -28,7 +28,7 @@ import {
   Calendar, Check, AlertCircle, Building, 
   Tag, Info, BookOpen, Clock, Mail, MessageCircle, 
   FileDown, Upload, ExternalLink, User, Plus, Paperclip, DollarSign, Wallet, CheckSquare, Square, RotateCcw,
-  FileSpreadsheet, Moon
+  FileSpreadsheet, Moon, AlertTriangle
 } from 'lucide-react';
 import MedicaoExportModal from './MedicaoExportModal';
 // Linha do item de despesa: UMA para as seis categorias. O layout dela não pode
@@ -39,7 +39,14 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Bord
 import * as pdfjsLib from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
 import { calculateDemandStatus } from '../domain/demandStatus';
-import { isCancelledDemand, isNoShowCancellation } from '../domain/demandCancellation';
+import {
+  isCancelledDemand,
+  isNoShowCancellation,
+  isMeasurementListed,
+  cancelBadgeLabel,
+  reembolsoForaDoPagamento,
+  AVISO_REEMBOLSO_CANCELADA,
+} from '../domain/demandCancellation';
 import { isHybridModality } from '../domain/modalityRules';
 import { demandIntersectsRange, isNightDemand, getDemandDays } from '../domain/demandDays';
 import { companionDaysFromRows, companionDefaultHours } from '../domain/measurementOverrides';
@@ -334,8 +341,8 @@ const MeasurementView: React.FC = () => {
     return measurements.filter(m => {
       const d = demands.find(demand => demand.id === m.demandId);
       // FILTRO: Ignorar se a demanda não existe ou se está CANCELADA (exceto No-Show, que aparece na medição)
-      if (!d) return false;
-      if (isCancelledDemand(d) && !isNoShowCancellation(d)) return false;
+      // Cancelada com conteúdo aparece (com selo); cancelada vazia fica fora; No-Show sempre.
+      if (!isMeasurementListed(d, m)) return false;
 
       const matchesText =
         d.id.toLowerCase().includes(filter.toLowerCase()) ||
@@ -363,8 +370,9 @@ const MeasurementView: React.FC = () => {
   const availableCorredores = useMemo(() =>
     [...new Set(
       measurements
-        .map(m => demands.find(d => d.id === m.demandId))
-        .filter((d): d is Demand => !!d && (!isCancelledDemand(d) || isNoShowCancellation(d)))
+        .map(m => ({ m, d: demands.find(d => d.id === m.demandId) }))
+        .filter((x): x is { m: Measurement; d: Demand } => !!x.d && isMeasurementListed(x.d, x.m))
+        .map(x => x.d)
         .map(d => d.corredor)
         .filter((v): v is string => !!v)
     )].sort(),
@@ -373,8 +381,9 @@ const MeasurementView: React.FC = () => {
   const availableLocalidades = useMemo(() =>
     [...new Set(
       measurements
-        .map(m => demands.find(d => d.id === m.demandId))
-        .filter((d): d is Demand => !!d && (!isCancelledDemand(d) || isNoShowCancellation(d)))
+        .map(m => ({ m, d: demands.find(d => d.id === m.demandId) }))
+        .filter((x): x is { m: Measurement; d: Demand } => !!x.d && isMeasurementListed(x.d, x.m))
+        .map(x => x.d)
         .map(d => d.trainingLocal)
         .filter((v): v is string => !!v && v !== 'N/A')
     )].sort(),
@@ -394,8 +403,8 @@ const MeasurementView: React.FC = () => {
     return measurements.filter(m => {
       const d = demands.find(demand => demand.id === m.demandId);
       // FILTRO: Ignorar se a demanda não existe ou se está CANCELADA (exceto No-Show, que aparece na medição)
-      if (!d) return false;
-      if (isCancelledDemand(d) && !isNoShowCancellation(d)) return false;
+      // Cancelada com conteúdo aparece (com selo); cancelada vazia fica fora; No-Show sempre.
+      if (!isMeasurementListed(d, m)) return false;
 
       const currentDemandStatus = getCalculatedDemandStatus(d);
 
@@ -648,6 +657,13 @@ const totals = useMemo(() => {
       : 0,
     [selectedMeasurement]
   );
+
+  /**
+   * Demanda cancelada: o Excel de pagamento só olha demanda CONCLUÍDA, então o
+   * reembolso ao instrutor lançado aqui NÃO entra nele (decisão de negócio
+   * pendente com a Colabor). Zero = sem aviso. Regra em domain/demandCancellation.ts.
+   */
+  const reembolsoCanceladaForaDoPagamento = reembolsoForaDoPagamento(_selDemand, selectedMeasurement as any);
 
   /**
    * Grava um campo do bloco de UMA pessoa no estado local.
@@ -1880,14 +1896,18 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
               {paginatedMeasurements.map(m => {
                 const d = demands.find(demand => demand.id === m.demandId);
                 const isNoShow = isNoShowCancellation(d);
+                const cancelada = isCancelledDemand(d);
                 return (
-                  <tr key={m.id} className={`transition-colors text-sm text-gray-700 ${isNoShow ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}>
+                  <tr key={m.id} className={`transition-colors text-sm text-gray-700 ${isNoShow || cancelada ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}>
                     <td className="p-4 font-bold text-blue-600">
                       <div className="flex items-center gap-2">
                         {d?.id}
                         <NightBadge demand={d} />
                         {isNoShow && (
                           <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-red-600 text-white tracking-widest">No-Show</span>
+                        )}
+                        {cancelada && !isNoShow && d && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-red-100 text-red-700 border border-red-200 tracking-widest" title="Demanda cancelada: a medição continua visível porque tem lançamentos">{cancelBadgeLabel(d)}</span>
                         )}
                       </div>
                     </td>
@@ -2018,13 +2038,14 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                     const mTotals = getMeasurementTotals(m);
                     const cDemandStatus = d ? getCalculatedDemandStatus(d) : 'N/A';
                     const isNoShow = isNoShowCancellation(d);
+                    const cancelada = isCancelledDemand(d);
 
                     return (
                       <div
                         key={m.id}
                         onClick={() => toggleExportSelection(m.id)}
                         className={`p-4 rounded-[1.5rem] border-2 transition-all cursor-pointer group flex items-center gap-4
-                          ${isSelected ? 'bg-blue-50/50 border-blue-200' : isNoShow ? 'bg-red-50/50 border-red-100 hover:border-red-200' : 'bg-white border-slate-50 hover:border-slate-100'}`}
+                          ${isSelected ? 'bg-blue-50/50 border-blue-200' : isNoShow || cancelada ? 'bg-red-50/50 border-red-100 hover:border-red-200' : 'bg-white border-slate-50 hover:border-slate-100'}`}
                       >
                         <div className={`transition-colors ${isSelected ? 'text-blue-600' : 'text-slate-200 group-hover:text-slate-300'}`}>
                           {isSelected ? <CheckSquare size={24} /> : <Square size={24} />}
@@ -2041,6 +2062,9 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                               </span>
                               {isNoShow && (
                                 <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-red-600 text-white tracking-widest">No-Show</span>
+                              )}
+                              {cancelada && !isNoShow && d && (
+                                <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-red-100 text-red-700 border border-red-200 tracking-widest">{cancelBadgeLabel(d)}</span>
                               )}
                             </div>
                           </div>
@@ -2179,6 +2203,21 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                    />
                  ))}
               </div>
+
+              {/* Demanda cancelada com item "pago pelo instrutor": o Excel de
+                  pagamento não vai reembolsar. Aviso âmbar, nunca silêncio. */}
+              {reembolsoCanceladaForaDoPagamento > 0 && (
+                <div role="alert" data-testid="aviso-reembolso-cancelada" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900 flex items-start gap-3">
+                  <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-black uppercase tracking-widest text-[10px]">{AVISO_REEMBOLSO_CANCELADA}</p>
+                    <p className="mt-1">
+                      Itens marcados como pagos pelo instrutor nesta medição: <strong>{formatCurrency(reembolsoCanceladaForaDoPagamento)}</strong>.
+                      A demanda está cancelada{_selDemand?.cancelReason ? ` (${_selDemand.cancelReason})` : ''}; o pagamento só considera demanda concluída.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* ─────────── SEÇÕES POR PESSOA (medição multi-pessoa) ───────────
                   Só renderiza quando a interna tem participante. Demanda de

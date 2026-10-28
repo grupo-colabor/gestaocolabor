@@ -1317,6 +1317,9 @@ const syncDemandParticipantsFromDb = useCallback(async () => {
       matriculador: row.matriculador ?? undefined,
       confirmationStatus: (row.confirmation_status || undefined) as 'CONFIRMADO' | 'A_CONFIRMAR' | undefined,
       cancelReason: row.cancel_reason ?? undefined,
+      cancelNote: row.cancel_note ?? undefined,
+      cancelledAt: row.cancelled_at ?? undefined,
+      statusBeforeCancel: (row.status_before_cancel ?? undefined) as DemandStatus | undefined,
     } as Demand;
   }, []);
 
@@ -1369,6 +1372,9 @@ const syncDemandParticipantsFromDb = useCallback(async () => {
     matriculador: cleanOrNull((d as any).matriculador),
     confirmation_status: cleanOrNull((d as any).confirmationStatus),
     cancel_reason: cleanOrNull((d as any).cancelReason),
+    cancelled_at: cleanOrNull((d as any).cancelledAt),
+    cancel_note: cleanOrNull((d as any).cancelNote),
+    status_before_cancel: cleanOrNull((d as any).statusBeforeCancel),
   };
 
   if (extra?.id) payload.id = extra.id;

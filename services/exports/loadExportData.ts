@@ -109,6 +109,9 @@ function mapDemandForExport(row: any): Demand {
     matriculador: row.matriculador ?? undefined,
     confirmationStatus: (row.confirmation_status || undefined) as Demand['confirmationStatus'],
     cancelReason: row.cancel_reason ?? undefined,
+    cancelNote: row.cancel_note ?? undefined,
+    cancelledAt: row.cancelled_at ?? undefined,
+    statusBeforeCancel: (row.status_before_cancel ?? undefined) as Demand['statusBeforeCancel'],
   };
 }
 

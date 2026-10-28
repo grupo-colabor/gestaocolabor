@@ -53,6 +53,10 @@ export type DemandRow = {
   matriculador: string | null;
   confirmation_status: string | null;
   cancel_reason: string | null;
+  // Cancelamento (migration 023): data, observação e status gravado antes.
+  cancelled_at: string | null;
+  cancel_note: string | null;
+  status_before_cancel: string | null;
 };
 
 /**
@@ -78,7 +82,8 @@ export async function fetchDemands(): Promise<DemandRow[]> {
           instructor_id,
           requester, observations, approver, analyst, matriculador,
           created_at, updated_at, corredor, demand_state,
-          confirmation_status, cancel_reason
+          confirmation_status, cancel_reason,
+          cancelled_at, cancel_note, status_before_cancel
         `)
         .order('number', { ascending: false })
         .range(from, to)

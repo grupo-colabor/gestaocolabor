@@ -31,6 +31,7 @@
     "smoke:modelos-medicao": "esbuild scripts/smokeModelosMedicao.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-modelos-medicao.cjs --log-level=error && node node_modules/.cache/smoke-modelos-medicao.cjs",
     "smoke:acompanhantes": "esbuild scripts/smokeAcompanhantes.tsx --bundle --platform=node --format=cjs --jsx=automatic --outfile=node_modules/.cache/smoke-acompanhantes.cjs --log-level=error && node node_modules/.cache/smoke-acompanhantes.cjs",
     "smoke:nao-reembolsaveis": "esbuild scripts/smokeNaoReembolsaveis.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-nao-reembolsaveis.cjs --log-level=error && node node_modules/.cache/smoke-nao-reembolsaveis.cjs",
+    "smoke:cancelamento": "esbuild scripts/smokeCancelamento.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-cancelamento.cjs --log-level=error && node node_modules/.cache/smoke-cancelamento.cjs",
     "smoke:nao-reembolsaveis-card": "esbuild scripts/smokeNaoReembolsaveisCard.tsx --bundle --platform=node --format=cjs --jsx=automatic --outfile=node_modules/.cache/smoke-nao-reembolsaveis-card.cjs --log-level=error && node node_modules/.cache/smoke-nao-reembolsaveis-card.cjs"
   },
   "dependencies": {

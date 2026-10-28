@@ -295,8 +295,14 @@ export interface Demand {
   // Status de confirmação visual na agenda
   confirmationStatus?: 'CONFIRMADO' | 'A_CONFIRMAR';
 
-  // Cancelamento
+  // Cancelamento (migration 023; regras em domain/demandCancellation.ts)
   cancelReason?: string; // motivo do cancelamento (ex: 'No-Show', 'Baixo quórum', etc.)
+  /** Observação livre do modal de cancelamento. */
+  cancelNote?: string;
+  /** Instante do cancelamento (ISO). */
+  cancelledAt?: string;
+  /** Status GRAVADO antes do cancelamento; a reativação volta para ele. */
+  statusBeforeCancel?: DemandStatus;
 
   // Legado / Outros
   corredor?: string;

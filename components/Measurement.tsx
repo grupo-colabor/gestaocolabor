@@ -39,6 +39,7 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Bord
 import * as pdfjsLib from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
 import { calculateDemandStatus } from '../domain/demandStatus';
+import { isCancelledDemand, isNoShowCancellation } from '../domain/demandCancellation';
 import { isHybridModality } from '../domain/modalityRules';
 import { demandIntersectsRange, isNightDemand, getDemandDays } from '../domain/demandDays';
 import { companionDaysFromRows, companionDefaultHours } from '../domain/measurementOverrides';
@@ -334,7 +335,7 @@ const MeasurementView: React.FC = () => {
       const d = demands.find(demand => demand.id === m.demandId);
       // FILTRO: Ignorar se a demanda não existe ou se está CANCELADA (exceto No-Show, que aparece na medição)
       if (!d) return false;
-      if (d.status === 'CANCELADA' && d.cancelReason !== 'No-Show') return false;
+      if (isCancelledDemand(d) && !isNoShowCancellation(d)) return false;
 
       const matchesText =
         d.id.toLowerCase().includes(filter.toLowerCase()) ||
@@ -363,7 +364,7 @@ const MeasurementView: React.FC = () => {
     [...new Set(
       measurements
         .map(m => demands.find(d => d.id === m.demandId))
-        .filter((d): d is Demand => !!d && (d.status !== 'CANCELADA' || d.cancelReason === 'No-Show'))
+        .filter((d): d is Demand => !!d && (!isCancelledDemand(d) || isNoShowCancellation(d)))
         .map(d => d.corredor)
         .filter((v): v is string => !!v)
     )].sort(),
@@ -373,7 +374,7 @@ const MeasurementView: React.FC = () => {
     [...new Set(
       measurements
         .map(m => demands.find(d => d.id === m.demandId))
-        .filter((d): d is Demand => !!d && (d.status !== 'CANCELADA' || d.cancelReason === 'No-Show'))
+        .filter((d): d is Demand => !!d && (!isCancelledDemand(d) || isNoShowCancellation(d)))
         .map(d => d.trainingLocal)
         .filter((v): v is string => !!v && v !== 'N/A')
     )].sort(),
@@ -394,7 +395,7 @@ const MeasurementView: React.FC = () => {
       const d = demands.find(demand => demand.id === m.demandId);
       // FILTRO: Ignorar se a demanda não existe ou se está CANCELADA (exceto No-Show, que aparece na medição)
       if (!d) return false;
-      if (d.status === 'CANCELADA' && d.cancelReason !== 'No-Show') return false;
+      if (isCancelledDemand(d) && !isNoShowCancellation(d)) return false;
 
       const currentDemandStatus = getCalculatedDemandStatus(d);
 
@@ -1878,7 +1879,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
             <tbody className="divide-y divide-gray-100">
               {paginatedMeasurements.map(m => {
                 const d = demands.find(demand => demand.id === m.demandId);
-                const isNoShow = d?.status === 'CANCELADA' && d?.cancelReason === 'No-Show';
+                const isNoShow = isNoShowCancellation(d);
                 return (
                   <tr key={m.id} className={`transition-colors text-sm text-gray-700 ${isNoShow ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}>
                     <td className="p-4 font-bold text-blue-600">
@@ -2016,7 +2017,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                     const isSelected = selectedForExport.has(m.id);
                     const mTotals = getMeasurementTotals(m);
                     const cDemandStatus = d ? getCalculatedDemandStatus(d) : 'N/A';
-                    const isNoShow = d?.status === 'CANCELADA' && d?.cancelReason === 'No-Show';
+                    const isNoShow = isNoShowCancellation(d);
 
                     return (
                       <div

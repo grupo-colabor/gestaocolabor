@@ -49,6 +49,17 @@ import {
 import { calculateDemandStatus } from '../domain/demandStatus';
 import { canPerformDemandAction } from '../domain/demandPermissions';
 import {
+  canCancelDemand,
+  canReactivateDemand,
+  extraConfirmationMatches,
+  buildCancelPatch,
+  summarizeCancellationImpact,
+  describeCancellation,
+  statusLabel as demandStatusLabel,
+  formatBrDateTime,
+} from '../domain/demandCancellation';
+import CancelDemandModal from './demand-form/CancelDemandModal';
+import {
   resolveDemandInstructors,
   resolveDemandInstructorIds,
   classifyAllocationAgainstDemand,
@@ -137,14 +148,8 @@ import type { DemandFormState } from './demand-form/types';
 type ModalMode = 'CREATE' | 'EDIT' | null;
 type ModalSubMode = 'VIEW' | 'FORM';
 
-const CANCEL_REASONS = [
-  'Baixo quórum',
-  'Falta de instrutor',
-  'Reagendamento',
-  'Solicitação do cliente',
-  'No-Show',
-  'Outro',
-];
+// Motivos de cancelamento: lista ÚNICA em domain/demandCancellation.ts (CANCEL_REASONS),
+// lida pelo modal compartilhado components/demand-form/CancelDemandModal.tsx.
 
 const statusColor = (status: string) => {
   switch (status) {
@@ -230,6 +235,7 @@ const initialInternalDemandState = (): DemandFormState => ({
 const InternalDemands: React.FC = () => {
   const {
     demands: allDemands,
+    measurements,
     companies,
     regions,
     instructors,
@@ -265,7 +271,7 @@ const InternalDemands: React.FC = () => {
   const isAdmin = profile?.role === 'admin';
   const isAnalyst = profile?.role === 'analista';
   const canDelete = isAdmin || isAnalyst;
-  const canCancel = isAdmin || isAnalyst;
+  // Cancelar/reativar: regra ÚNICA em domain/demandCancellation.ts (ver decisaoCancelamento).
   // Mesmo nome e mesma definição do modal de cliente (Demands.tsx), para os dois
   // modais responderem igual a uma mudança de permissão.
   const canEditDemand = isAdmin || isAnalyst;
@@ -312,6 +318,10 @@ const InternalDemands: React.FC = () => {
   const [showDeleteBlocked, setShowDeleteBlocked] = useState(false);
   const [selectedCancelReason, setSelectedCancelReason] = useState('');
   const [cancelTextNote, setCancelTextNote] = useState('');
+  /** Confirmação extra (medição FATURADA): o número da demanda digitado. */
+  const [cancelConfirmText, setCancelConfirmText] = useState('');
+  /** Enquanto o banco responde ao cancelamento. */
+  const [cancelando, setCancelando] = useState(false);
 
   const [pendingPdfs, setPendingPdfs] = useState<PendingPdfs>({ classList: null, instructorRelease: null });
   const [dbDocs, setDbDocs] = useState<DbDocs>({});
@@ -1537,36 +1547,71 @@ const InternalDemands: React.FC = () => {
     [formDemand.id, removeDemandParticipant, setNotification]
   );
 
-  const handleCancelDemand = () => {
-    if (!formDemand?.id || !selectedCancelReason) return;
+  // --- CANCELAMENTO (regras em domain/demandCancellation.ts; o mesmo fluxo do modal de cliente) ---
+  const medicaoDoForm = formDemand.id ? measurements.find(m => m.demandId === formDemand.id) : undefined;
+  // Permissão e impacto vêm do domínio; o modal só mostra e coleta.
+  const decisaoCancelamento = canCancelDemand(profile?.role, currentStatus, medicaoDoForm?.status);
+  const impactoCancelamento = summarizeCancellationImpact({
+    statusCalculado: currentStatus,
+    measurement: medicaoDoForm as any,
+    pessoas: {
+      titulares: new Set(instructorAllocations.filter(a => a.demandId === formDemand.id).map(a => a.instructorId)).size || (formDemand.instructorId ? 1 : 0),
+      acompanhantes: new Set(companionAllocations.filter(c => c.demandId === formDemand.id).map(c => c.instructorId)).size,
+      participantes: demandParticipants.filter(p => p.demandId === formDemand.id).length,
+    },
+  });
 
-    const cancelData = {
-      ...(formDemand as Demand),
-      status: 'CANCELADA' as DemandStatus,
-      cancelReason: selectedCancelReason,
-      cancelledAt: new Date().toISOString(),
-      cancelInfo: { reason: selectedCancelReason, note: cancelTextNote, date: new Date().toISOString() },
-    };
+  const handleCancelDemand = async () => {
+    if (!formDemand?.id || !selectedCancelReason || cancelando) return;
+    if (decisaoCancelamento.allowed === false) {
+      setNotification({ message: decisaoCancelamento.reason, type: 'error' });
+      return;
+    }
+    if (decisaoCancelamento.extraConfirmation && !extraConfirmationMatches(cancelConfirmText, formDemand.id)) return;
 
-    updateDemand(cancelData);
-    logAction({
+    const antes = formDemand as Demand;
+    // Só o status e os quatro campos mudam (buildCancelPatch). Nada é apagado
+    // nem liberado em tabela: agenda e conflitos já liberam por status.
+    const cancelData = buildCancelPatch(antes, {
+      reason: selectedCancelReason,
+      note: cancelTextNote,
+      now: new Date().toISOString(),
+    });
+
+    setCancelando(true);
+    const gravou = await updateDemand(cancelData, { successMessage: `Demanda ${cancelData.id} cancelada.` });
+    setCancelando(false);
+    // Banco recusou: o banner de erro já subiu em updateDemand e a lista voltou
+    // ao que era. O modal fica aberto, sem fingir que cancelou.
+    if (!gravou.ok) return;
+
+    const auditoria = await logAction({
       modulo: 'Demandas',
       acao: 'Cancelar',
-      descricao: [
-        `Demanda interna ${cancelData.id} cancelada`,
-        `Categoria: ${cancelData.categoriaInterna || '—'}`,
-        `Descrição: ${cancelData.descricaoInterna || '—'}`,
-        `Motivo: ${cancelData.cancelReason || 'não informado'}`,
-        cancelTextNote ? `Obs: ${cancelTextNote}` : null,
-      ].filter(Boolean).join(' | '),
-      dadosAntes: formDemand,
+      descricao: describeCancellation({
+        demandId: cancelData.id,
+        interna: true,
+        categoria: cancelData.categoriaInterna,
+        descricao: cancelData.descricaoInterna,
+        reason: selectedCancelReason,
+        note: cancelTextNote,
+        statusCalculado: currentStatus,
+        statusGravado: antes.status,
+        medicaoStatus: medicaoDoForm?.status,
+      }),
+      dadosAntes: antes,
       dadosDepois: cancelData,
     });
+    if (!auditoria.ok) {
+      // O cancelamento já está gravado e não é desfeito por falha de auditoria — mas ninguém fica sem saber.
+      setNotification({ message: `Demanda ${cancelData.id} cancelada, mas a auditoria não foi gravada. Avise o administrador.`, type: 'error' });
+    }
 
     setFormDemand(cancelData);
     setConfirmCancel(false);
     setSelectedCancelReason('');
     setCancelTextNote('');
+    setCancelConfirmText('');
   };
 
   const handleReactivateDemand = () => {
@@ -2000,11 +2045,15 @@ const InternalDemands: React.FC = () => {
               {formDemand.status === 'CANCELADA' && (
                 <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-800">
                   <p className="text-xs font-black uppercase tracking-widest mb-1">Demanda Cancelada</p>
-                  {(formDemand.cancelReason || formDemand.cancelInfo) && (
-                    <p className="text-xs">
-                      <strong>Motivo:</strong> {formDemand.cancelReason || formDemand.cancelInfo?.reason}
-                      {formDemand.cancelInfo?.note ? ` — ${formDemand.cancelInfo.note}` : ''}
-                    </p>
+                  <p className="text-xs">
+                    <strong>Motivo:</strong> {formDemand.cancelReason || 'não informado'}
+                    {formDemand.cancelNote ? ` — ${formDemand.cancelNote}` : ''}
+                  </p>
+                  {formDemand.cancelledAt && (
+                    <p className="text-xs">Cancelamento registrado em {formatBrDateTime(formDemand.cancelledAt)}</p>
+                  )}
+                  {formDemand.statusBeforeCancel && (
+                    <p className="text-xs">Status antes do cancelamento: {demandStatusLabel(formDemand.statusBeforeCancel)}</p>
                   )}
                 </div>
               )}
@@ -2661,7 +2710,7 @@ const InternalDemands: React.FC = () => {
                         <Trash2 size={16} /> Excluir Demanda
                       </button>
                     )}
-                    {currentStatus !== 'CANCELADA' && currentStatus !== 'CONCLUIDA' && canCancel && (
+                    {decisaoCancelamento.allowed && (
                       <button
                         type="button"
                         onClick={() => {
@@ -2670,13 +2719,14 @@ const InternalDemands: React.FC = () => {
                           setConfirmReactivate(false);
                           setSelectedCancelReason('');
                           setCancelTextNote('');
+                          setCancelConfirmText('');
                         }}
                         className="flex items-center gap-2 px-4 py-2.5 border rounded-xl transition font-black text-xs uppercase tracking-widest shadow-sm bg-white text-orange-600 border-orange-200 hover:bg-orange-50"
                       >
                         <X size={16} /> Cancelar Demanda
                       </button>
                     )}
-                    {currentStatus === 'CANCELADA' && canCancel && (
+                    {currentStatus === 'CANCELADA' && canReactivateDemand(profile?.role) && (
                       <button
                         type="button"
                         onClick={() => { setConfirmReactivate(true); setConfirmDelete(false); setConfirmCancel(false); }}
@@ -2819,57 +2869,24 @@ const InternalDemands: React.FC = () => {
         document.body
       )}
 
-      {/* Confirmação: cancelar */}
-      {confirmCancel && createPortal(
-        <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
-            <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Cancelar demanda interna</h3>
-            <p className="text-sm text-slate-500">Selecione o motivo do cancelamento de <strong>{formDemand.id}</strong>.</p>
-
-            <div className="space-y-3 max-h-64 overflow-y-auto">
-              {CANCEL_REASONS.map((reason) => (
-                <label
-                  key={reason}
-                  className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all cursor-pointer ${selectedCancelReason === reason ? 'border-orange-500 bg-orange-50' : 'border-slate-100 hover:border-slate-200'}`}
-                >
-                  <input
-                    type="radio"
-                    name="internalCancelReason"
-                    value={reason}
-                    checked={selectedCancelReason === reason}
-                    onChange={(e) => setSelectedCancelReason(e.target.value)}
-                  />
-                  <span className={`text-sm font-bold ${selectedCancelReason === reason ? 'text-orange-900' : 'text-slate-600'}`}>{reason}</span>
-                </label>
-              ))}
-            </div>
-
-            {selectedCancelReason === 'Outro' && (
-              <textarea
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-500 h-20 resize-none"
-                placeholder="Descreva o motivo..."
-                value={cancelTextNote}
-                onChange={(e) => setCancelTextNote(e.target.value)}
-              />
-            )}
-
-            <div className="flex justify-end gap-3 pt-2">
-              <button onClick={() => setConfirmCancel(false)} className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-black text-xs uppercase tracking-widest hover:bg-slate-50 transition">
-                Voltar
-              </button>
-              <button
-                onClick={handleCancelDemand}
-                disabled={!selectedCancelReason}
-                className={`px-4 py-2 rounded-xl font-black text-xs uppercase tracking-widest transition
-                  ${selectedCancelReason ? 'bg-orange-600 hover:bg-orange-700 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
-              >
-                Cancelar Demanda
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      {/* Confirmação: cancelar — o MESMO modal da demanda de cliente
+          (components/demand-form/CancelDemandModal.tsx); regras no domínio. */}
+      <CancelDemandModal
+        open={confirmCancel}
+        interna
+        demandId={formDemand.id ?? ''}
+        decision={decisaoCancelamento}
+        impacto={impactoCancelamento}
+        reason={selectedCancelReason}
+        onReasonChange={setSelectedCancelReason}
+        note={cancelTextNote}
+        onNoteChange={setCancelTextNote}
+        confirmText={cancelConfirmText}
+        onConfirmTextChange={setCancelConfirmText}
+        busy={cancelando}
+        onConfirm={handleCancelDemand}
+        onBack={() => { setConfirmCancel(false); setSelectedCancelReason(''); setCancelTextNote(''); setCancelConfirmText(''); }}
+      />
 
       {/* MODAL DE ALOCAÇÃO DE RECURSO (CTM) — o MESMO componente e o MESMO
           fluxo do modal de cliente (components/ResourceAllocationModal.tsx +

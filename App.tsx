@@ -231,7 +231,8 @@ interface AppState {
   >;
 
   addDemand: (d: Demand) => Promise<{ id: string } | null>;
-  updateDemand: (d: Demand) => void;
+  /** Resolve quando o banco respondeu; `ok: false` = recusou (o banner de erro já subiu) e a lista voltou ao que era. */
+  updateDemand: (d: Demand, opts?: UpdateDemandOptions) => Promise<UpdateDemandResult>;
   deleteDemand: (id: string) => void;
   cancelDemand: (demandId: string) => void;
   addInstructor: (i: Instructor) => void;
@@ -326,6 +327,15 @@ const getDefaultViewForRole = (role?: string | null) => {
   if (role === 'admin') return 'dashboard';
   return 'calendar'; // fallback seguro
 };
+
+/** Opções de `updateDemand`: mensagem do banner de sucesso (default: "Demanda atualizada com sucesso."). */
+export interface UpdateDemandOptions { successMessage?: string }
+/**
+ * Resultado de `updateDemand`. `ok: false` = o banco recusou: o banner de erro
+ * já subiu e a lista voltou ao que era; quem chamou decide o que fazer com o
+ * modal (o cancelamento, por exemplo, NÃO fecha como cancelado).
+ */
+export interface UpdateDemandResult { ok: boolean; error?: string }
 
 const AppContext = createContext<AppState | null>(null);
 
@@ -1959,7 +1969,7 @@ const addDemand = useCallback(
 
 
   const updateDemand = useCallback(
-    (d: Demand) => {
+    async (d: Demand, opts?: UpdateDemandOptions): Promise<UpdateDemandResult> => {
       // ✅ MOCK MODE
       if (AUTH_MODE !== 'supabase') {
         setDemands(prev =>
@@ -1969,7 +1979,7 @@ const addDemand = useCallback(
             return sanitizeHybridPracticePeriod(merged);
           })
         );
-        return;
+        return { ok: true };
       }
 
       // ✅ SUPABASE MODE
@@ -1978,38 +1988,42 @@ const addDemand = useCallback(
           message: 'Aguarde a sessão carregar para salvar a demanda.',
           type: 'info'
         });
-        return;
+        return { ok: false, error: 'Sessão ainda não carregada.' };
       }
 
-      (async () => {
-        try {
-          const merged = sanitizeHybridPracticePeriod(d);
+      try {
+        const merged = sanitizeHybridPracticePeriod(d);
 
-          // ✅ Atualiza state local imediatamente para refletir na UI sem aguardar o banco
-          setDemands(prev => prev.map(item => item.id !== merged.id ? item : merged));
+        // ✅ Atualiza state local imediatamente para refletir na UI sem aguardar o banco.
+        // A versão ANTERIOR fica guardada para reverter de verdade se o banco
+        // recusar: antes o "rollback" gravava o próprio `d`, e a lista ficava
+        // com o valor que o banco não aceitou (um cancelamento recusado
+        // aparecia como feito).
+        const anterior = demands.find(item => item.id === merged.id);
+        setDemands(prev => prev.map(item => item.id !== merged.id ? item : merged));
 
-          const payload = mapDemandToDb(merged);
+        const payload = mapDemandToDb(merged);
 
-          const { error } = await updateDemandById(merged.id, payload);
-          if (error) {
-            console.error('Erro update demand:', error);
-            // Reverte o state local em caso de erro no banco
-            setDemands(prev => prev.map(item => item.id !== merged.id ? item : d));
-            setNotification({
-              message: `Erro ao atualizar demanda: ${error.message}`,
-              type: 'error'
-            });
-            return;
-          }
-
-          setNotification({ message: 'Demanda atualizada com sucesso.', type: 'success' });
-        } catch (e) {
-          console.error('Erro ao atualizar demanda:', e);
-          setNotification({ message: 'Erro ao atualizar demanda.', type: 'error' });
+        const { error } = await updateDemandById(merged.id, payload);
+        if (error) {
+          console.error('Erro update demand:', error);
+          setDemands(prev => prev.map(item => (item.id !== merged.id || !anterior ? item : anterior)));
+          setNotification({
+            message: `Erro ao atualizar demanda: ${error.message}`,
+            type: 'error'
+          });
+          return { ok: false, error: error.message };
         }
-      })();
+
+        setNotification({ message: opts?.successMessage ?? 'Demanda atualizada com sucesso.', type: 'success' });
+        return { ok: true };
+      } catch (e) {
+        console.error('Erro ao atualizar demanda:', e);
+        setNotification({ message: 'Erro ao atualizar demanda.', type: 'error' });
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
     },
-    [AUTH_MODE, loading, user, sanitizeHybridPracticePeriod, mapDemandToDb, syncDemandsFromDb]
+    [AUTH_MODE, loading, user, demands, sanitizeHybridPracticePeriod, mapDemandToDb, syncDemandsFromDb]
   );
 
   const setHybridPracticePeriod = useCallback(
@@ -3641,7 +3655,8 @@ type Action =
   | 'create_demand'
   | 'update_demand'
   | 'delete_demand'
-  | 'cancel_demand'
+  // 'cancel_demand' saiu: cancelar/reativar dependem do status da medição e
+  // moram em domain/demandCancellation.ts (canCancelDemand).
   | 'allocate_instructor'
   | 'edit_agenda'
   | 'create_agenda'
@@ -3694,7 +3709,6 @@ const ROLE_ACTIONS: Record<string, Action[]> = {
     'create_demand',
     'update_demand',
     'delete_demand',
-    'cancel_demand',
     'allocate_instructor',
     'edit_agenda',
     'create_agenda',
@@ -3707,7 +3721,6 @@ const ROLE_ACTIONS: Record<string, Action[]> = {
     'create_demand',
     'update_demand',
     'delete_demand',
-    'cancel_demand',
     'allocate_instructor',
     'edit_agenda',
     'create_agenda',

@@ -16,7 +16,9 @@ export type DemandAction =
   | 'create_demand'
   | 'edit_demand'
   | 'delete_demand'
-  | 'cancel_demand'
+  // Cancelar e reativar NÃO estão aqui: a regra depende do status da medição
+  // (FATURADA só admin, com confirmação extra) e mora em
+  // domain/demandCancellation.ts — canCancelDemand / canReactivateDemand.
   /**
    * Alocar recurso logístico (Centro de Treinamento Móvel) na demanda.
    * Vale para os DOIS modais — cliente e interna. Até aqui o botão ALOCAR CTM
@@ -28,8 +30,8 @@ export type DemandAction =
   | 'alocarRecurso';
 
 const DEMAND_ROLE_ACTIONS: Record<string, DemandAction[]> = {
-  admin: ['create_demand', 'edit_demand', 'delete_demand', 'cancel_demand', 'alocarRecurso'],
-  analista: ['create_demand', 'edit_demand', 'delete_demand', 'cancel_demand', 'alocarRecurso'],
+  admin: ['create_demand', 'edit_demand', 'delete_demand', 'alocarRecurso'],
+  analista: ['create_demand', 'edit_demand', 'delete_demand', 'alocarRecurso'],
   coordenador: [],
 };
 

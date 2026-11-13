@@ -245,7 +245,8 @@ interface AppState {
   reloadInstructors: () => Promise<void>;
 
   // Measurement Actions
-  updateMeasurement: (m: Measurement) => void;
+  /** Resolve quando o banco gravou; REJEITA se o upsert falhar (a lista não muda). */
+  updateMeasurement: (m: Measurement) => Promise<void>;
 
   // Agenda Actions
   addAgendaItem: (item: AgendaItem) => Promise<void>;
@@ -2213,7 +2214,14 @@ const addDemand = useCallback(
   // O cancelamento real é updateDemand com buildCancelPatch
   // (domain/demandCancellation.ts) — só status e os quatro campos, nada apagado.
 
-  const updateMeasurement = useCallback((m: Measurement) => {
+  /**
+   * Grava a medição. RESOLVE só quando o banco confirmou; REJEITA (Error com a
+   * mensagem do banco) quando o upsert falha ou a rede cai — antes o erro ia
+   * só para o console e o painel seguia como se tivesse salvado (fechava,
+   * registrava o log, marcava a demanda CONCLUIDA). Sem atualização otimista:
+   * numa falha a lista não muda, então não há o que desfazer.
+   */
+  const updateMeasurement = useCallback(async (m: Measurement): Promise<void> => {
   // MOCK
   if (AUTH_MODE !== 'supabase') {
     setMeasurements(prev =>
@@ -2222,28 +2230,22 @@ const addDemand = useCallback(
     return;
   }
 
-  // SUPABASE
-  (async () => {
-    try {
-      const patch = mapMeasurementToDbPatch(m);
-      const { data, error } = await upsertMeasurementByDemandId(m.demandId, patch);
+  // SUPABASE — erro do upsert ou exceção de rede sobem como rejeição.
+  const patch = mapMeasurementToDbPatch(m);
+  const { data, error } = await upsertMeasurementByDemandId(m.demandId, patch);
 
-      if (error || !data) {
-        console.error('[Measurements] upsert error', error);
-        return;
-      }
+  if (error || !data) {
+    console.error('[Measurements] upsert error', error);
+    throw new Error(error?.message || 'O banco não devolveu a medição gravada.');
+  }
 
-      const updated = mapMeasurementFromDb(data);
+  const updated = mapMeasurementFromDb(data);
 
-      setMeasurements(prev => {
-        const exists = prev.some(x => x.demandId === updated.demandId);
-        if (!exists) return [updated, ...prev];
-        return prev.map(x => (x.demandId === updated.demandId ? updated : x));
-      });
-    } catch (e) {
-      console.error('[Measurements] update exception', e);
-    }
-  })();
+  setMeasurements(prev => {
+    const exists = prev.some(x => x.demandId === updated.demandId);
+    if (!exists) return [updated, ...prev];
+    return prev.map(x => (x.demandId === updated.demandId ? updated : x));
+  });
 }, [AUTH_MODE, upsertMeasurementByDemandId, mapMeasurementFromDb, mapMeasurementToDbPatch]);
 
 

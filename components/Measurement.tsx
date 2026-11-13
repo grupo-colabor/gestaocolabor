@@ -222,6 +222,7 @@ const MeasurementView: React.FC = () => {
     updateMeasurement, updateDemand,
     demandParticipants, instructorAllocations, companionAllocations,
     notificationTarget, setNotificationTarget,
+    setNotification,
   } = useApp();
 
   const [filter, setFilter] = useState('');
@@ -257,6 +258,13 @@ const MeasurementView: React.FC = () => {
    * nada a mostrar. Cada campo também fica vermelho na própria linha.
    */
   const [errosValorItens, setErrosValorItens] = useState<string[] | null>(null);
+  /**
+   * Gravação em andamento / última falha do banco. A falha fica no rodapé (o
+   * banner global some em 5 s) e o modal continua aberto: a tela NUNCA indica
+   * que salvou quando o banco não confirmou.
+   */
+  const [salvandoMedicao, setSalvandoMedicao] = useState(false);
+  const [erroSalvarMedicao, setErroSalvarMedicao] = useState<string | null>(null);
 
   const [isExportSelectionOpen, setIsExportSelectionOpen] = useState(false);
   const [isMedicaoExportOpen, setIsMedicaoExportOpen] = useState(false);
@@ -843,11 +851,13 @@ const totals = useMemo(() => {
 
   setSelectedMeasurement(next);
   setErrosValorItens(null);
+  setErroSalvarMedicao(null);
   setIsModalOpen(true);
 };
 
 
-  const handleSaveMeasurement = () => {
+  const handleSaveMeasurement = async () => {
+    if (salvandoMedicao) return;
     if (selectedMeasurement) {
       /**
        * VALORES DOS ITENS, antes de qualquer pergunta: texto que o parser
@@ -931,7 +941,20 @@ const totals = useMemo(() => {
         attachments: preparo.itens,
       };
       const _beforeMeasurement = measurements.find(m => m.id === selectedMeasurement.id);
-      updateMeasurement(cleaned);
+      // Só segue (log, demanda CONCLUIDA, aviso "Medição salva", fechar) depois
+      // que o BANCO confirmou. Falha = erro visível e modal aberto.
+      setSalvandoMedicao(true);
+      setErroSalvarMedicao(null);
+      try {
+        await updateMeasurement(cleaned);
+      } catch (e) {
+        const motivo = e instanceof Error ? e.message : String(e);
+        setErroSalvarMedicao(`A medição NÃO foi salva: ${motivo}`);
+        setNotification({ message: `Erro ao salvar a medição: ${motivo}`, type: 'error' });
+        return;
+      } finally {
+        setSalvandoMedicao(false);
+      }
       {
         const _dem = demands.find(d => d.id === selectedMeasurement.demandId);
         const _totalsAfter = getMeasurementTotals(cleaned);
@@ -2653,8 +2676,15 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                 <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Subtotal Final</span>
                 <span className="text-2xl font-black text-slate-900 leading-tight">{formatCurrency(totals.total)}</span>
               </div>
-              <button onClick={handleSaveMeasurement} className="px-10 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-2xl shadow-xl text-xs uppercase tracking-widest flex items-center gap-3 transition-all active:scale-95">
-                <Check size={20} /> Salvar e Finalizar
+              {erroSalvarMedicao && (
+                <p role="alert" className="max-w-xs text-xs font-bold text-red-600 text-right">{erroSalvarMedicao}</p>
+              )}
+              <button
+                onClick={handleSaveMeasurement}
+                disabled={salvandoMedicao}
+                className="px-10 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-2xl shadow-xl text-xs uppercase tracking-widest flex items-center gap-3 transition-all active:scale-95 disabled:opacity-60 disabled:cursor-wait"
+              >
+                <Check size={20} /> {salvandoMedicao ? 'Salvando…' : 'Salvar e Finalizar'}
               </button>
             </div>
           </div>

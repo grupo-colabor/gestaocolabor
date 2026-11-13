@@ -46,6 +46,7 @@ import {
   type MeasurementRole,
   type TotalizableMeasurement,
 } from './measurementTotals';
+import { listExpenseValueIssues, type ExpenseValueIssue } from './expenseValueIssues';
 import type { InstructorAllocationLike } from './demandInstructors';
 
 /** Por que uma linha da planilha está sem horas. Decide o texto da célula de hora/aula. */
@@ -59,6 +60,14 @@ export interface MedicaoReembolso {
   outros: number;
   /** Soma dos quatro. */
   total: number;
+  /**
+   * Itens PAGOS PELO INSTRUTOR desta pessoa com valor a conferir: sem valor
+   * (0/ausente — soma zero, como sempre), suspeito (3+ casas, negativo —
+   * soma o número gravado) ou ilegível (domain/expenseValueIssues.ts). Não
+   * muda nenhum número acima: o Excel pinta a célula da categoria de amarelo
+   * e lista no Resumo. Ausente = nada a conferir (objeto igual ao de antes).
+   */
+  avisos?: ExpenseValueIssue[];
 }
 
 export const REEMBOLSO_ZERO: MedicaoReembolso = Object.freeze({
@@ -283,12 +292,17 @@ export function reembolsoDaPessoa(
   const bloco = blocoDe(instructorId);
   if (!bloco) return REEMBOLSO_ZERO;
   const b = blockExpenseBreakdown(paraNormalizar, bloco, { itemFilter: isPagoPeloInstrutor });
+  // Os MESMOS itens da soma (os do bloco, pagos pelo instrutor; órfão de
+  // Outros fora): os que estão sem valor ou suspeitos viram aviso.
+  const doBloco = new Set(bloco.attachments);
+  const avisos = listExpenseValueIssues(paraNormalizar, { itemFilter: a => doBloco.has(a) && isPagoPeloInstrutor(a) });
   return {
     hospedagem: b.hospedagem,
     locomocao: b.locomocao,
     alimentacao: b.alimentacao,
     outros: b.outros,
     total: b.total,
+    ...(avisos.length > 0 ? { avisos } : {}),
   };
 }
 

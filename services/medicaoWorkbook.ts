@@ -32,6 +32,8 @@
  */
 
 import type { MedicaoReembolso, MotivoSemHoras } from '../domain/paymentRows';
+import { avisosDeValor, avisoValorEmTexto, type ExpenseValueIssue } from '../domain/expenseValueIssues';
+import { PANEL_EXPENSE_LABELS, type PanelExpenseBucket } from '../domain/measurementTotals';
 
 /* ========================================================================== */
 /* Tipos públicos                                                             */
@@ -339,6 +341,22 @@ const SHEET_PROTECTION = {
   insertHyperlinks: false,
   pivotTables: false,
 };
+
+/**
+ * Amarelo SEM destravar: aviso sobre o dado da medição (item pago pelo
+ * instrutor sem valor ou suspeito), não campo de digitação — a célula guarda
+ * a soma dos outros itens e não deve ser sobrescrita aqui. O valor não muda.
+ */
+function markAsWarning(cell: any, nota: string) {
+  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
+  cell.note = nota;
+}
+
+/** A nota da célula da categoria com item a conferir. */
+function notaDespesaAConferir(issues: ExpenseValueIssue[], categoria: string): string {
+  const linhas = avisosDeValor(issues, categoria).map(avisoValorEmTexto);
+  return `${linhas.join('\n')}\nItem pago pelo instrutor: sem valor soma zero; suspeito entra como está. Corrija no Painel de Medição e exporte de novo.`;
+}
 
 /** Destrava a célula e aplica o visual de campo de preenchimento manual. */
 function markAsInput(cell: any) {
@@ -682,6 +700,29 @@ export async function buildMedicaoWorkbook(
   totalGeralRow.getCell(RESUMO_IDX.horasPendentes).numFmt = '0';
   totalGeralRow.getCell(RESUMO_IDX.horasPendentes).alignment = { horizontal: 'center' };
 
+  // Linha "Despesas a conferir": itens PAGOS PELO INSTRUTOR sem valor ou com
+  // valor suspeito, de todas as abas. Só aparece quando há algum — sem ela o
+  // Resumo é o de sempre. A contagem fica na coluna de reembolso, amarela.
+  const aConferir = planned.flatMap(({ block }) =>
+    block.linhas.flatMap(l => (l.reembolso.avisos ?? []).map(a => ({ nome: block.nome, demandId: l.demandId, aviso: a })))
+  );
+  if (aConferir.length > 0) {
+    const porPessoa = new Map<string, Set<string>>();
+    for (const x of aConferir) porPessoa.set(x.nome, (porPessoa.get(x.nome) ?? new Set()).add(x.demandId));
+    const onde = [...porPessoa.entries()].map(([nome, dems]) => `${nome} (${[...dems].join(', ')})`).join('; ');
+    const conferirRow = resumo.addRow([
+      'DESPESAS A CONFERIR', null, null, aConferir.length, null, null, null, '', '',
+    ]);
+    conferirRow.getCell(1).font = { bold: true };
+    const qtd = conferirRow.getCell(RESUMO_IDX.reembolso);
+    qtd.numFmt = '0';
+    qtd.alignment = { horizontal: 'center' };
+    markAsWarning(qtd, `${aConferir.length} item(ns) pago(s) pelo instrutor sem valor ou com valor suspeito — veja as células amarelas: ${onde}. Sem valor soma zero; suspeito entra como está. Corrija no Painel de Medição e exporte de novo.`);
+    const texto = conferirRow.getCell(RESUMO_IDX.totalPagar);
+    texto.value = `item(ns) de reembolso sem valor ou suspeito(s): ${onde}`;
+    texto.alignment = { wrapText: true, vertical: 'top' };
+  }
+
   await resumo.protect(undefined, SHEET_PROTECTION);
 
   /* ======================================================================== */
@@ -780,6 +821,15 @@ export async function buildMedicaoWorkbook(
       ]);
       for (const idx of [DETAIL_IDX.hospedagem, DETAIL_IDX.locomocao, DETAIL_IDX.alimentacao, DETAIL_IDX.outros]) {
         row.getCell(idx).numFmt = FMT_MOEDA;
+      }
+      // Item pago pelo instrutor sem valor / suspeito: célula da categoria
+      // amarela (travada) com nota. O número é o de sempre.
+      const idxDoBucket: Record<PanelExpenseBucket, number> = {
+        hospedagem: DETAIL_IDX.hospedagem, locomocao: DETAIL_IDX.locomocao, alimentacao: DETAIL_IDX.alimentacao, outros: DETAIL_IDX.outros,
+      };
+      for (const { key, label } of PANEL_EXPENSE_LABELS) {
+        const doBucket = (r.avisos ?? []).filter(a => a.bucket === key);
+        if (doBucket.length > 0) markAsWarning(row.getCell(idxDoBucket[key]), notaDespesaAConferir(doBucket, label));
       }
 
       // K: total das despesas da linha.

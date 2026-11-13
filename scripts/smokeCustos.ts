@@ -27,6 +27,7 @@ import {
   isNaoReembolsavel,
   parseExpenseValue,
 } from '../domain/measurementTotals';
+import { listExpenseValueIssues, notaItensSemValor, summarizeMeasurementsValueIssues } from '../domain/expenseValueIssues';
 import fsCustos from 'fs';
 import pathCustos from 'path';
 
@@ -732,6 +733,30 @@ console.log('\n— Dashboard: hora/aula de medicao MULTI-PESSOA (v2)');
       dash.includes('custoInterna.horaAula')
   );
 }
+console.log('\n— Milhar ("1.234,56") e notinha sem valor (parser pt-BR, 13/11/2026)');
+{
+  const mil: any = {
+    otherExpenses: [{ id: 'O1' }], expenses: { classHours: 8, hourRate: 100 },
+    attachments: [
+      { id: 'k1', category: 'HOSPEDAGEM', value: '1.234,56' },
+      { id: 'k2', category: 'LOCOMOCAO', value: '1.234,56', reembolsavel: false },
+      { id: 'k0', category: 'ALMOCO', value: 0, name: 'almoco.jpg', url: 'https://x/k0.jpg', type: 'image/jpeg' },
+    ],
+  };
+  checkEq('parseExpenseValue("1.234,56") = 1234,56 (a leitura antiga dava 1,234)', parseExpenseValue('1.234,56'), 1234.56);
+  const t = computeMeasurementTotals(mil);
+  checkEq('Painel/Dashboard: subtotal de despesas = 2 × 1234,56', t.total, 2469.12);
+  checkEq('hospedagem = 1234,56', t.hospedagem, 1234.56);
+  checkEq('não reembolsável = 1234,56', t.naoReembolsavel, 1234.56);
+  checkEq('quebra do painel: hospedagem 1234,56', computePanelExpenseBreakdown(mil).hospedagem, 1234.56);
+  checkEq('card "Despesas Não Reembolsáveis" (itemFilter) = 1234,56', computePanelExpenseBreakdown(mil, { itemFilter: isNaoReembolsavel }).total, 1234.56);
+  checkEq('aggregateMeasurements (card Custo das Internas) = 2469,12', aggregateMeasurements([mil]).despesas, 2469.12);
+  checkEq('a notinha com valor 0 gera aviso "sem valor"', listExpenseValueIssues(mil).map(i => `${i.itemId}:${i.status}:${i.temArquivo ? 'notinha' : 'avulso'}`), ['k0:semValor:notinha']);
+  checkEq('nota do KPI do Dashboard', notaItensSemValor(summarizeMeasurementsValueIssues([mil]).foraDaSoma), '1 item sem valor fora da soma');
+  const dash = fsCustos.readFileSync(pathCustos.join(process.cwd(), 'components/Dashboard.tsx'), 'utf8');
+  check('o KPI "Total em Despesas" mostra a nota', /title="Total em Despesas"[^\n]*subtext=\{itensSemValorForaDaSoma > 0 \? notaItensSemValor\(itensSemValorForaDaSoma\)/.test(dash));
+}
+
 console.log('');
 if (falhas > 0) { console.log(`❌ ${falhas} check(s) falharam.`); process.exit(1); }
 console.log('✅ Todos os checks passaram.');

@@ -111,6 +111,7 @@ console.log('\n[F] Resolvedor de folha form');
 /* Blocos [Σ] [X] [Z] entram com dataset, escritor e zip. */
 import { runBmChecks } from './smokeMedicaoValeBmChecks';
 import { runNaoReembolsaBmChecks } from './smokeNaoReembolsaMedicaoCliente';
+import { runMilharBmChecks } from './smokeMilharDespesa';
 
 (async () => {
   // Sequenciado: `falhas += await f()` leria `falhas` antes da chamada.
@@ -119,6 +120,9 @@ import { runNaoReembolsaBmChecks } from './smokeNaoReembolsaMedicaoCliente';
   // [NR-BM] "não reembolsa" fora da linha de despesas, do acréscimo e do total.
   const nr = await runNaoReembolsaBmChecks(tools);
   falhas = Math.max(falhas, nr);
+  // [MIL-BM] "1.234,56" × 1,2 = 1.481,472 com igualdade BM × Vale; notinha sem valor.
+  const mil = await runMilharBmChecks(tools);
+  falhas = Math.max(falhas, mil);
   console.log(falhas === 0 ? '\n✅ SMOKE MEDICAO VALE BM: OK' : `\n❌ SMOKE MEDICAO VALE BM: ${falhas} falha(s)`);
   process.exit(falhas === 0 ? 0 : 1);
 })().catch(e => { console.error(e); process.exit(1); });

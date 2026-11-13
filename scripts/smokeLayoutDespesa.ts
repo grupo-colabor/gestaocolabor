@@ -84,7 +84,14 @@ fs.writeFileSync(html, `<!doctype html><html lang="pt-BR"><head><meta charset="u
         const botoes = Array.from(linha.querySelectorAll<HTMLButtonElement>('button')).filter(b => (b.textContent || '').trim().length > 0);
         const valor = linha.querySelector<HTMLInputElement>('input');
         const vr = valor?.getBoundingClientRect();
+        const campo = linha.querySelector<HTMLElement>('[data-campo-valor]');
+        const extras = Array.from(linha.querySelectorAll<HTMLElement>('[data-selo],[data-erro-valor]'));
         out.push({
+          valorExibido: valor?.value ?? null,
+          selos: Array.from(linha.querySelectorAll<HTMLElement>('[data-selo]')).map(s => (s.textContent || '').trim()),
+          erro: (linha.querySelector<HTMLElement>('[data-erro-valor]')?.textContent || '').trim() || null,
+          bordaVermelha: campo ? /rgb\(239, 68, 68\)/.test(getComputedStyle(campo).borderColor) : null,
+          extrasDentro: extras.every(e => { const r = e.getBoundingClientRect(); return r.right <= cr.right + 0.5 && r.left >= cr.left - 0.5 && e.scrollWidth <= e.clientWidth + 0.5; }),
           card: card.dataset.card,
           cardWidth: cr.width,
           linha: i + 1,
@@ -128,6 +135,19 @@ fs.writeFileSync(html, `<!doctype html><html lang="pt-BR"><head><meta charset="u
         check(`${id}: no cartão estreito as flags descem para a segunda linha`, desceram);
       }
     }
+    check(`${id}: selos e mensagem de erro dentro do cartão, sem texto cortado`, m.extrasDentro);
+  }
+
+  // Valor do item (parser pt-BR): o que o campo MOSTRA num navegador de verdade.
+  const daLinha = (card: string, n: number) => medidas.find((m: any) => m.card === card && m.linha === n);
+  for (const card of ['estreito', 'medio', 'largo']) {
+    const l1 = daLinha(card, 1); const l4 = daLinha(card, 4); const l5 = daLinha(card, 5); const l6 = daLinha(card, 6);
+    check(`${card}: item válido em edição sem selo, sem erro, sem borda vermelha`, !!l1 && l1.selos.length === 0 && !l1.erro && l1.bordaVermelha === false);
+    check(`${card}: notinha gravada com 0 → campo "0", selo "Notinha sem valor", sem erro`, !!l4 && l4.valorExibido === '0' && JSON.stringify(l4.selos) === '["Notinha sem valor"]' && !l4.erro && l4.bordaVermelha === false, JSON.stringify(l4));
+    check(`${card}: número gravado 1,234 → campo "1,234" (sem arredondar), selo "Valor suspeito", erro e borda vermelha`,
+      !!l5 && l5.valorExibido === '1,234' && JSON.stringify(l5.selos) === '["Valor suspeito"]' && l5.erro === 'Mais de 2 casas decimais — use 1.234,56' && l5.bordaVermelha === true, JSON.stringify(l5));
+    check(`${card}: texto "1.234" em edição → borda vermelha e "use 1.234,00", sem selo`,
+      !!l6 && l6.valorExibido === '1.234' && l6.selos.length === 0 && l6.erro === 'Valor ambíguo — para milhar, use 1.234,00' && l6.bordaVermelha === true, JSON.stringify(l6));
   }
 
   await page.screenshot({ path: path.join(cache, 'layout-despesa.png'), fullPage: true });

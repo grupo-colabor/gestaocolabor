@@ -52,6 +52,7 @@ import {
   type NonReimbursableSource,
 } from '../domain/nonReimbursableExpenses';
 import { MEASUREMENT_STATUS_LABELS } from '../domain/measurementStatus';
+import { listExpenseValueIssues } from '../domain/expenseValueIssues';
 import { describeDashboardFilters } from '../domain/dashboardExportFilters';
 import {
   addDashboardMeta,
@@ -397,6 +398,25 @@ function guardaDeFonte() {
   }
   const svc = semComentarios(ler('services/exports/dashboardXlsx.ts'));
   check('services/exports/dashboardXlsx.ts não importa react nem supabase', !/from\s+['"](react|@supabase)/.test(svc));
+}
+
+/* [I] Milhar ("1.234,56") e notinha sem valor — fonte própria, fora do SRC
+ *     (um item de 1.234,56 mudaria a ordem por total que [A]..[G] prendem). */
+console.log('\n[I] Milhar ("1.234,56") e notinha sem valor');
+{
+  const D5 = demanda({ id: 'DEM-104', instructorId: 'INS-B' });
+  const M5: any = {
+    id: 'MEA-DEM-104', demandId: 'DEM-104', status: 'LANCAMENTO', expenses: { classHours: 8, hourRate: 90 }, otherExpenses: [],
+    attachments: [
+      { id: 'e1', name: 'hotel-milhar.pdf', url: 'https://x/e1.pdf', category: 'HOSPEDAGEM', value: '1.234,56', reembolsavel: false },
+      { id: 'e2', name: 'almoco-sem-valor.jpg', url: 'https://x/e2.jpg', category: 'ALMOCO', value: 0, reembolsavel: false },
+    ],
+  };
+  const l = listNonReimbursableByDemand({ ...SRC, demands: [D5 as any], measurements: [M5] });
+  perto('lista: total = 1234,56 (a leitura antiga dava 1,234)', l.total, 1234.56);
+  perto('lista = conta antiga do card (a mesma leitura)', l.total, antiga([M5]).total);
+  eq('linha por item: Valor 1234,56', l.itens.find(i => i.itemId === 'e1')?.valor, 1234.56);
+  eq('a notinha não reembolsável com 0 gera aviso "sem valor"', listExpenseValueIssues(M5, { itemFilter: isNaoReembolsavel }).map(i => `${i.itemId}:${i.status}`), ['e2:semValor']);
 }
 
 escritor()

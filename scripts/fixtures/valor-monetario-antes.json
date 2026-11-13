@@ -1,0 +1,632 @@
+{
+ "parseExpenseValue": [
+  151.97,
+  46.95,
+  0,
+  1.234,
+  10.5,
+  0,
+  25,
+  5,
+  0,
+  1234.56,
+  0
+ ],
+ "painel:DEM-2001": {
+  "hospedagem": 1234.56,
+  "locomocao": 198.92000000000002,
+  "cafe": 0,
+  "almoco": 1.234,
+  "jantar": 10.5,
+  "outros": 25,
+  "total": 1470.214,
+  "horaAula": 1600,
+  "totalComHoraAula": 3070.214,
+  "naoReembolsavel": 46.95,
+  "itensNaoReembolsaveis": 1
+ },
+ "quebra:DEM-2001": {
+  "todas": {
+   "hospedagem": 1234.56,
+   "locomocao": 198.92000000000002,
+   "alimentacao": 11.734,
+   "outros": 25,
+   "total": 1470.214,
+   "itens": 10,
+   "itensOrfaos": 1
+  },
+  "naoReembolsa": {
+   "hospedagem": 0,
+   "locomocao": 46.95,
+   "alimentacao": 0,
+   "outros": 0,
+   "total": 46.95,
+   "itens": 1,
+   "itensOrfaos": 0
+  },
+  "pagoInstrutor": {
+   "hospedagem": 1234.56,
+   "locomocao": 46.95,
+   "alimentacao": 10.5,
+   "outros": 0,
+   "total": 1292.01,
+   "itens": 3,
+   "itensOrfaos": 0
+  }
+ },
+ "cliente:DEM-2001": {
+  "entram": {
+   "hospedagem": 1234.56,
+   "locomocao": 151.97,
+   "alimentacao": 11.734,
+   "outros": 25,
+   "total": 1423.264,
+   "itens": 9,
+   "itensOrfaos": 1
+  },
+  "naoReembolsavelExcluido": 46.95,
+  "itensExcluidos": 1
+ },
+ "painel:DEM-2002": {
+  "hospedagem": 200,
+  "locomocao": 12.345,
+  "cafe": 0,
+  "almoco": 40.1,
+  "jantar": 0,
+  "outros": 0,
+  "total": 252.445,
+  "horaAula": 1524,
+  "totalComHoraAula": 1776.445,
+  "naoReembolsavel": 40.1,
+  "itensNaoReembolsaveis": 1
+ },
+ "quebra:DEM-2002": {
+  "todas": {
+   "hospedagem": 200,
+   "locomocao": 12.345,
+   "alimentacao": 40.1,
+   "outros": 0,
+   "total": 252.445,
+   "itens": 4,
+   "itensOrfaos": 0
+  },
+  "naoReembolsa": {
+   "hospedagem": 0,
+   "locomocao": 0,
+   "alimentacao": 40.1,
+   "outros": 0,
+   "total": 40.1,
+   "itens": 1,
+   "itensOrfaos": 0
+  },
+  "pagoInstrutor": {
+   "hospedagem": 200,
+   "locomocao": 0,
+   "alimentacao": 0,
+   "outros": 0,
+   "total": 200,
+   "itens": 1,
+   "itensOrfaos": 0
+  }
+ },
+ "cliente:DEM-2002": {
+  "entram": {
+   "hospedagem": 200,
+   "locomocao": 12.345,
+   "alimentacao": 0,
+   "outros": 0,
+   "total": 212.345,
+   "itens": 3,
+   "itensOrfaos": 0
+  },
+  "naoReembolsavelExcluido": 40.1,
+  "itensExcluidos": 1
+ },
+ "painel:DEM-2003": {
+  "hospedagem": 0,
+  "locomocao": 198.92000000000002,
+  "cafe": 0,
+  "almoco": 1.234,
+  "jantar": 10.5,
+  "outros": 0,
+  "total": 210.65400000000002,
+  "horaAula": 1600,
+  "totalComHoraAula": 1810.654,
+  "naoReembolsavel": 46.95,
+  "itensNaoReembolsaveis": 1
+ },
+ "quebra:DEM-2003": {
+  "todas": {
+   "hospedagem": 0,
+   "locomocao": 198.92000000000002,
+   "alimentacao": 11.734,
+   "outros": 0,
+   "total": 210.65400000000002,
+   "itens": 5,
+   "itensOrfaos": 0
+  },
+  "naoReembolsa": {
+   "hospedagem": 0,
+   "locomocao": 46.95,
+   "alimentacao": 0,
+   "outros": 0,
+   "total": 46.95,
+   "itens": 1,
+   "itensOrfaos": 0
+  },
+  "pagoInstrutor": {
+   "hospedagem": 0,
+   "locomocao": 46.95,
+   "alimentacao": 10.5,
+   "outros": 0,
+   "total": 57.45,
+   "itens": 2,
+   "itensOrfaos": 0
+  }
+ },
+ "cliente:DEM-2003": {
+  "entram": {
+   "hospedagem": 0,
+   "locomocao": 151.97,
+   "alimentacao": 11.734,
+   "outros": 0,
+   "total": 163.704,
+   "itens": 4,
+   "itensOrfaos": 0
+  },
+  "naoReembolsavelExcluido": 46.95,
+  "itensExcluidos": 1
+ },
+ "painel:DEM-2004": {
+  "hospedagem": 0,
+  "locomocao": 33.33,
+  "cafe": 0,
+  "almoco": 0,
+  "jantar": 0,
+  "outros": 0,
+  "total": 33.33,
+  "horaAula": 301,
+  "totalComHoraAula": 334.33,
+  "naoReembolsavel": 0,
+  "itensNaoReembolsaveis": 0
+ },
+ "quebra:DEM-2004": {
+  "todas": {
+   "hospedagem": 0,
+   "locomocao": 33.33,
+   "alimentacao": 0,
+   "outros": 0,
+   "total": 33.33,
+   "itens": 2,
+   "itensOrfaos": 0
+  },
+  "naoReembolsa": {
+   "hospedagem": 0,
+   "locomocao": 0,
+   "alimentacao": 0,
+   "outros": 0,
+   "total": 0,
+   "itens": 0,
+   "itensOrfaos": 0
+  },
+  "pagoInstrutor": {
+   "hospedagem": 0,
+   "locomocao": 0,
+   "alimentacao": 0,
+   "outros": 0,
+   "total": 0,
+   "itens": 0,
+   "itensOrfaos": 0
+  }
+ },
+ "cliente:DEM-2004": {
+  "entram": {
+   "hospedagem": 0,
+   "locomocao": 33.33,
+   "alimentacao": 0,
+   "outros": 0,
+   "total": 33.33,
+   "itens": 2,
+   "itensOrfaos": 0
+  },
+  "naoReembolsavelExcluido": 0,
+  "itensExcluidos": 0
+ },
+ "dashboardAgregado": {
+  "despesas": 1966.6429999999998,
+  "horaAula": 5025,
+  "total": 6991.643,
+  "naoReembolsavel": 134,
+  "itensNaoReembolsaveis": 3
+ },
+ "dashboardQuebra": {
+  "hospedagem": 1434.56,
+  "locomocao": 443.51500000000004,
+  "alimentacao": 63.568000000000005,
+  "outros": 25,
+  "total": 1966.643,
+  "medicoes": 4
+ },
+ "dashboardNaoReembolsaveis": {
+  "total": 134,
+  "qtdItens": 3,
+  "quebra": {
+   "hospedagem": 0,
+   "locomocao": 93.9,
+   "alimentacao": 40.1,
+   "outros": 0
+  },
+  "itens": [
+   [
+    "DEM-2001",
+    "v-uber",
+    46.95
+   ],
+   [
+    "DEM-2003",
+    "v-uber",
+    46.95
+   ],
+   [
+    "DEM-2002",
+    "p2",
+    40.1
+   ]
+  ]
+ },
+ "medicaoVale": [
+  {
+   "anexo": 1,
+   "cargaHoraria": 16,
+   "precoHH": 120.5,
+   "locacao": 151.97,
+   "combustivel": 45.5,
+   "alimentacao": 11.734,
+   "hospedagem": 1234.56,
+   "outros": 25,
+   "pctDespesa": 0.2
+  },
+  {
+   "anexo": 2,
+   "cargaHoraria": 16,
+   "precoHH": 120.5,
+   "locacao": 12.345,
+   "combustivel": 0,
+   "alimentacao": 0,
+   "hospedagem": 200,
+   "outros": 0,
+   "pctDespesa": 0.15
+  },
+  {
+   "anexo": 3,
+   "cargaHoraria": 8,
+   "precoHH": 290,
+   "locacao": 151.97,
+   "combustivel": 0,
+   "alimentacao": 11.734,
+   "hospedagem": 0,
+   "outros": 0,
+   "pctDespesa": 0.2
+  },
+  {
+   "anexo": 3,
+   "cargaHoraria": 32,
+   "precoHH": 200.75,
+   "locacao": 0,
+   "combustivel": 0,
+   "alimentacao": 0,
+   "hospedagem": 0,
+   "outros": 0,
+   "pctDespesa": 0.2
+  }
+ ],
+ "medicaoValeLinhas": [
+  {
+   "demanda": "DEM-2001",
+   "despesas": {
+    "locomocao": 151.97,
+    "alimentacao": 11.734,
+    "hospedagem": 1234.56,
+    "outros": 25,
+    "total": 1423.264
+   },
+   "excluido": 46.95,
+   "todas": 1470.214,
+   "itens": 10
+  },
+  {
+   "demanda": "DEM-2004",
+   "despesas": {
+    "locomocao": 33.33,
+    "alimentacao": 0,
+    "hospedagem": 0,
+    "outros": 0,
+    "total": 33.33
+   },
+   "excluido": 0,
+   "todas": 33.33,
+   "itens": 2
+  },
+  {
+   "demanda": "DEM-2002",
+   "despesas": {
+    "locomocao": 12.345,
+    "alimentacao": 0,
+    "hospedagem": 200,
+    "outros": 0,
+    "total": 212.345
+   },
+   "excluido": 40.1,
+   "todas": 252.445,
+   "itens": 4
+  },
+  {
+   "demanda": "DEM-2003",
+   "despesas": {
+    "locomocao": 151.97,
+    "alimentacao": 11.734,
+    "hospedagem": 0,
+    "outros": 0,
+    "total": 163.704
+   },
+   "excluido": 46.95,
+   "todas": 210.65400000000002,
+   "itens": 5
+  }
+ ],
+ "bm": [
+  {
+   "mina": "Brucutu",
+   "linhas": [
+    [
+     "Aplicação de Treinamento - NR 20 Intermediário – Presencial",
+     290,
+     8
+    ],
+    [
+     "Aplicação de Treinamento - NR 20 Intermediário – Online",
+     200.75,
+     32
+    ],
+    [
+     "Aplicação de Treinamento - NR 35 Trabalho em Altura",
+     120.5,
+     16
+    ],
+    [
+     "Despesas Tributáveis (hospedagem,transporte e alimentação)",
+     1,
+     1958.9615999999999
+    ]
+   ],
+   "totalTreinamentos": 10672,
+   "totalDespesas": 1958.9615999999999,
+   "naoReembolsavelExcluido": 93.9
+  },
+  {
+   "mina": "Timbopeba",
+   "linhas": [
+    [
+     "Aplicação de Treinamento - NR 35 Trabalho em Altura",
+     120.5,
+     16
+    ],
+    [
+     "Despesas Tributáveis (hospedagem,transporte e alimentação)",
+     1,
+     244.19675
+    ]
+   ],
+   "totalTreinamentos": 1928,
+   "totalDespesas": 244.19675,
+   "naoReembolsavelExcluido": 40.1
+  }
+ ],
+ "pagamento": {
+  "DEM-2001:INS-T": {
+   "hospedagem": 1234.56,
+   "locomocao": 46.95,
+   "alimentacao": 10.5,
+   "outros": 0,
+   "total": 1292.01
+  },
+  "DEM-2002:INS-T": {
+   "hospedagem": 0,
+   "locomocao": 0,
+   "alimentacao": 0,
+   "outros": 0,
+   "total": 0
+  },
+  "DEM-2002:INS-2": {
+   "hospedagem": 200,
+   "locomocao": 0,
+   "alimentacao": 0,
+   "outros": 0,
+   "total": 200
+  },
+  "DEM-2003:INS-T": {
+   "hospedagem": 0,
+   "locomocao": 46.95,
+   "alimentacao": 10.5,
+   "outros": 0,
+   "total": 57.45
+  },
+  "DEM-2004:INS-T": {
+   "hospedagem": 0,
+   "locomocao": 0,
+   "alimentacao": 0,
+   "outros": 0,
+   "total": 0
+  }
+ },
+ "datasetDespesas": [
+  {
+   "valor": 0
+  },
+  {
+   "valor": 151.97
+  },
+  {
+   "valor": 46.95
+  },
+  {
+   "valor": 1.23
+  },
+  {
+   "valor": 10.5
+  },
+  {
+   "valor": 200
+  },
+  {
+   "valor": 40.1
+  },
+  {
+   "valor": 0
+  },
+  {
+   "valor": 12.35
+  },
+  {
+   "valor": 1234.56
+  },
+  {
+   "valor": 0
+  },
+  {
+   "valor": 151.97
+  },
+  {
+   "valor": 0
+  },
+  {
+   "valor": 46.95
+  },
+  {
+   "valor": 0
+  },
+  {
+   "valor": 1.23
+  },
+  {
+   "valor": 0
+  },
+  {
+   "valor": 10.5
+  },
+  {
+   "valor": 5
+  },
+  {
+   "valor": 25
+  },
+  {
+   "valor": 33.33
+  },
+  {
+   "valor": 0
+  }
+ ],
+ "datasetMedicoes": [
+  {
+   "nDiasDemanda": 2,
+   "horasInformadas": 16,
+   "horasPainel": 16,
+   "horasPagamento": 16,
+   "valorHH": 100,
+   "horaAulaPainel": 1600,
+   "horaAulaPagamento": 1600,
+   "hospedagem": 0,
+   "locomocao": 198.92000000000002,
+   "alimentacao": 11.734,
+   "outros": 0,
+   "totalDespesas": 210.65400000000002,
+   "naoReembolsavel": 46.95,
+   "despesasReembolsaveis": 163.7,
+   "reembolsoInstrutor": 57.45,
+   "totalGeral": 1810.65,
+   "itensDespesa": 5,
+   "itensOrfaos": 0
+  },
+  {
+   "nDiasDemanda": 2,
+   "horasInformadas": null,
+   "horasPainel": 8,
+   "horasPagamento": 8,
+   "valorHH": 90.5,
+   "horaAulaPainel": 724,
+   "horaAulaPagamento": 724,
+   "hospedagem": 200,
+   "locomocao": 0,
+   "alimentacao": 40.1,
+   "outros": 0,
+   "totalDespesas": 240.1,
+   "naoReembolsavel": 40.1,
+   "despesasReembolsaveis": 200,
+   "reembolsoInstrutor": 200,
+   "totalGeral": 964.1,
+   "itensDespesa": 2,
+   "itensOrfaos": 0
+  },
+  {
+   "nDiasDemanda": 2,
+   "horasInformadas": null,
+   "horasPainel": 8,
+   "horasPagamento": 8,
+   "valorHH": 100,
+   "horaAulaPainel": 800,
+   "horaAulaPagamento": 800,
+   "hospedagem": 0,
+   "locomocao": 12.345,
+   "alimentacao": 0,
+   "outros": 0,
+   "totalDespesas": 12.345,
+   "naoReembolsavel": 0,
+   "despesasReembolsaveis": 12.35,
+   "reembolsoInstrutor": 0,
+   "totalGeral": 812.35,
+   "itensDespesa": 2,
+   "itensOrfaos": 0
+  },
+  {
+   "nDiasDemanda": 2,
+   "horasInformadas": 16,
+   "horasPainel": 16,
+   "horasPagamento": 16,
+   "valorHH": 100,
+   "horaAulaPainel": 1600,
+   "horaAulaPagamento": 1600,
+   "hospedagem": 1234.56,
+   "locomocao": 198.92000000000002,
+   "alimentacao": 11.734,
+   "outros": 25,
+   "totalDespesas": 1470.214,
+   "naoReembolsavel": 46.95,
+   "despesasReembolsaveis": 1423.26,
+   "reembolsoInstrutor": 1292.01,
+   "totalGeral": 3070.21,
+   "itensDespesa": 10,
+   "itensOrfaos": 1
+  },
+  {
+   "nDiasDemanda": 2,
+   "horasInformadas": 4,
+   "horasPainel": 4,
+   "horasPagamento": 4,
+   "valorHH": 75.25,
+   "horaAulaPainel": 301,
+   "horaAulaPagamento": 301,
+   "hospedagem": 0,
+   "locomocao": 33.33,
+   "alimentacao": 0,
+   "outros": 0,
+   "totalDespesas": 33.33,
+   "naoReembolsavel": 0,
+   "despesasReembolsaveis": 33.33,
+   "reembolsoInstrutor": 0,
+   "totalGeral": 334.33,
+   "itensDespesa": 2,
+   "itensOrfaos": 0
+  }
+ ]
+}

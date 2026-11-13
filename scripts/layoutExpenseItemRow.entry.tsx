@@ -69,6 +69,33 @@ function App() {
               onTogglePagoPeloInstrutor={noop}
               donoPadraoNome="Clayton Ribeiro"
             />
+            {/* 4: notinha GRAVADA com valor 0 — selo "Notinha sem valor", sem erro */}
+            <ExpenseItemRow
+              attachment={item(`${l.id}-4`, { name: 'nota.pdf', url: 'https://example.invalid/n.pdf', type: 'application/pdf', value: 0 })}
+              onUpdateValue={noop}
+              onRemove={noop}
+              showReembolsavel
+              onToggleReembolsavel={noop}
+              onTogglePagoPeloInstrutor={noop}
+            />
+            {/* 5: número GRAVADO com 3 casas (as duas flags) — "1,234", selo "Valor suspeito" e erro */}
+            <ExpenseItemRow
+              attachment={item(`${l.id}-5`, { value: 1.234, reembolsavel: false, pagoPeloInstrutor: true })}
+              onUpdateValue={noop}
+              onRemove={noop}
+              showReembolsavel
+              onToggleReembolsavel={noop}
+              onTogglePagoPeloInstrutor={noop}
+            />
+            {/* 6: texto ambíguo em edição — borda vermelha e "use 1.234,00", sem selo */}
+            <ExpenseItemRow
+              attachment={item(`${l.id}-6`, { value: '1.234' })}
+              onUpdateValue={noop}
+              onRemove={noop}
+              showReembolsavel
+              onToggleReembolsavel={noop}
+              onTogglePagoPeloInstrutor={noop}
+            />
           </div>
         </div>
       ))}

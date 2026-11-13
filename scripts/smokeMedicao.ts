@@ -24,6 +24,7 @@ import {
   resolvePeriodo,
 } from '../services/medicaoWorkbook';
 import { resolveAttachmentLink, UNLINKED_LABEL } from '../domain/measurementAttachment';
+import { reembolsoDaPessoa } from '../domain/paymentRows';
 
 let falhas = 0;
 
@@ -907,6 +908,45 @@ console.log('\n[4] Workbook gerado');
   checkEq('recálculo: horas presenciais digitadas → 6h × 50', evalCell(elisa, 'M5'), 300);
   checkEq('recálculo: Total a pagar da Elisa passa a 500', evalCell(resD5, 'E4'), 500);
   checkEq('recálculo: TOTAL GERAL de horas pendentes zera', evalCell(resD5, 'G5'), 0);
+
+  /* ======================================================================== */
+  /* [D6] Reembolso com "1.234,56" e item pago pelo instrutor sem valor        */
+  /* ======================================================================== */
+  console.log('\n[D6] Reembolso com "1.234,56", item pago sem valor e valor suspeito');
+  {
+    const pessoasD6 = [{ instructorId: 'k1', papel: 'TITULAR' as const }];
+    const mD6: any = { otherExpenses: [], expenses: {}, attachments: [
+      { category: 'HOSPEDAGEM', value: '1.234,56', pagoPeloInstrutor: true },
+      { category: 'ALMOCO', value: 0, pagoPeloInstrutor: true, url: 'https://s/almoco.jpg', type: 'image/jpeg' },
+      { category: 'LOCOMOCAO', value: 1.234, pagoPeloInstrutor: true },
+      { category: 'JANTAR', value: 0 }, // pago pela Colabor: não é reembolso, sem aviso aqui
+    ] };
+    const rD6 = reembolsoDaPessoa(mD6, { instructorId: 'k1' }, pessoasD6, 'k1');
+    checkEq('domínio: "1.234,56" pago pelo instrutor = 1234,56 (a leitura antiga dava 1,234)', rD6.hospedagem, 1234.56);
+    checkEq('domínio: valor suspeito 1,234 entra como está', rD6.locomocao, 1.234);
+    checkEq('domínio: avisos = o sem valor e o suspeito', (rD6.avisos ?? []).map(a => `${a.bucket}:${a.status}`).sort().join(','), 'alimentacao:semValor,locomocao:suspeito');
+    const semAviso = reembolsoDaPessoa({ otherExpenses: [], expenses: {}, attachments: [{ category: 'HOSPEDAGEM', value: 200, pagoPeloInstrutor: true }] } as any, { instructorId: 'k1' }, pessoasD6, 'k1');
+    check('sem nada a conferir, o objeto é o de antes (sem a chave avisos)', !('avisos' in semAviso));
+
+    const wbD6 = await buildMedicaoWorkbook([{ instructorId: 'k1', nome: 'Fábio Notinha', cpf: '', linhas: [
+      { demandId: 'DEM-400', empresa: 'VALE', trainingName: 'NR 35', dias: ['2026-07-06'], local: 'BH - MG', modalidade: 'Presencial',
+        horas: 8, horasInformadas: true, reembolso: rD6, categoria: '', tipo: 'Treinamento', noturno: false, papel: 'Titular' } ] }] as any, periodo);
+    const lidoD6 = new ExcelJSModule.default.Workbook();
+    await lidoD6.xlsx.load((await wbD6.xlsx.writeBuffer()) as any);
+    const fab = lidoD6.getWorksheet('Fábio Notinha');
+    const resD6 = lidoD6.getWorksheet('Resumo');
+    checkEq('XLSX: G4 (Hospedagem) = 1234,56', fab.getCell('G4').value, 1234.56);
+    check('XLSX: G4 não é amarela', fab.getCell('G4').fill?.fgColor?.argb !== 'FFFFFF00');
+    checkEq('XLSX: I4 (Alimentação, sem valor) continua 0', fab.getCell('I4').value, 0);
+    checkEq('XLSX: I4 amarela', fab.getCell('I4').fill?.fgColor?.argb, 'FFFFFF00');
+    check('XLSX: I4 TRAVADA (aviso, não campo de digitação) e com nota', fab.getCell('I4').protection?.locked !== false && !!fab.getCell('I4').note);
+    checkEq('XLSX: H4 (Transporte) = 1,234 intacto e amarela', `${fab.getCell('H4').value}|${fab.getCell('H4').fill?.fgColor?.argb}`, '1.234|FFFFFF00');
+    checkEq('XLSX: K4 = SUM(G4:J4)', formula(fab, 'K4'), 'SUM(G4:J4)');
+    checkEq('Resumo: linha 5 = DESPESAS A CONFERIR (depois do TOTAL GERAL)', `${resD6.getCell('A4').value}|${resD6.getCell('A5').value}`, 'TOTAL GERAL|DESPESAS A CONFERIR');
+    checkEq('Resumo: 2 itens a conferir, amarela', `${resD6.getCell('D5').value}|${resD6.getCell('D5').fill?.fgColor?.argb}`, '2|FFFFFF00');
+    check('Resumo: diz quem e qual demanda', String(resD6.getCell('E5').value).includes('Fábio Notinha (DEM-400)'));
+    check('Resumo sem aviso não ganha a linha (o [4] continua igual)', resumo.getCell('A5').value !== 'DESPESAS A CONFERIR');
+  }
 
   /* ======================================================================== */
   /* Item de despesa do Painel: nome/link do anexo                            */

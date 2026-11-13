@@ -257,6 +257,7 @@ import { runWriterChecks } from './smokeMedicaoValeWriter';
 import { runPanelChecks } from './smokeMedicaoValePanel';
 import { runValoresChecks } from './smokeMedicaoValeValores';
 import { runNaoReembolsaValeChecks } from './smokeNaoReembolsaMedicaoCliente';
+import { runMilharValeChecks } from './smokeMilharDespesa';
 
 (async () => {
   // Sequenciado de propósito (`falhas += f()` lê `falhas` ANTES de chamar f e
@@ -272,6 +273,9 @@ import { runNaoReembolsaValeChecks } from './smokeNaoReembolsaMedicaoCliente';
   // [NR] "não reembolsa" fora da Medição Vale (DEM-1297 e casos extras).
   const f5 = await runNaoReembolsaValeChecks(tools);
   falhas = Math.max(falhas, f5);
+  // [MIL] "1.234,56" e notinha sem valor (parser pt-BR, 13/11/2026).
+  const f6 = await runMilharValeChecks(tools);
+  falhas = Math.max(falhas, f6);
 
   console.log(falhas === 0 ? '\n✅ SMOKE MEDICAO VALE: OK' : `\n❌ SMOKE MEDICAO VALE: ${falhas} falha(s)`);
   process.exit(falhas === 0 ? 0 : 1);

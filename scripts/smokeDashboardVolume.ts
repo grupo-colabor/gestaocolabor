@@ -42,6 +42,7 @@ import {
   type VolumeRanking,
 } from '../domain/dashboardVolume';
 import { demandIntersectsRange } from '../domain/demandDays';
+import { parseExpenseValue } from '../domain/measurementTotals';
 import { formatShare, formatShareTick } from '../components/dashboard/volumeFormat';
 import { metricLabel } from '../components/dashboard/MetricToggle';
 
@@ -134,8 +135,9 @@ const measurements: any[] = [
   { demandId: 'DEM-8',  attachments: [{ value: 200 }] },
   { demandId: 'DEM-13', attachments: [{ value: 300 }, { value: 'abc' }] },    // 300 (inválido = 0)
 ];
-// A MESMA leitura de valor do Dashboard (attachmentValue / toVal).
-const attachmentValue = (v: any) => { const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v); return Number(n) || 0; };
+// A MESMA leitura de valor do Dashboard: o leitor único do domínio
+// (components/Dashboard.tsx usa parseExpenseValue desde 13/11/2026).
+const attachmentValue = (v: any) => parseExpenseValue(v);
 const costByDemandId = new Map<string, number>();
 for (const m of measurements) {
   const itens = m.attachments.reduce((s: number, a: any) => s + attachmentValue(a.value), 0);

@@ -73,9 +73,9 @@ export interface BmMina {
   cabecalhoIncompleto: string[];
   turmas: MedicaoValeRow[];
   linhas: BmLinha[];
-  /** Σ preço × quantidade das linhas de treinamento (preço em branco conta 0). */
+  /** Σ preço × quantidade das linhas de treinamento (preço em branco conta 0), exato. */
   totalTreinamentos: number;
-  /** Quantidade da linha de despesas (= Σ P das turmas). */
+  /** Quantidade da linha de despesas (= Σ P das turmas), exata — 2 casas só na exibição. */
   totalDespesas: number;
   /**
    * Σ do que ficou FORA da linha de despesas por estar marcado "não reembolsa"
@@ -199,7 +199,7 @@ export function turmasNumeros(elegiveis: MedicaoValeRow[], values: TemplateValue
       trainingName: l.input.trainingName,
       cargaHoraria: carga === null || carga === undefined || carga === '' ? null : num(carga),
       preco: precoDe(cells[iPreco].value),
-      despesas: round2(despesas),
+      despesas,
       pct,
       p: despesas + despesas * pct,
     };
@@ -292,8 +292,10 @@ export function buildBm(
             trainingIds: [],
           };
           // Carga em branco (híbrida sem horas práticas) contamina a linha:
-          // sai vazia e amarela, nunca somada como zero em silêncio.
-          g.quantidade = g.quantidade === null || n.cargaHoraria === null ? null : round2(g.quantidade + n.cargaHoraria);
+          // sai vazia e amarela, nunca somada como zero em silêncio. Soma
+          // EXATA: as horas multiplicam o preço HH, e a regra é a mesma do
+          // dinheiro (arredondar só na exibição).
+          g.quantidade = g.quantidade === null || n.cargaHoraria === null ? null : g.quantidade + n.cargaHoraria;
           if (!g.turmas.includes(n.demandId)) g.turmas.push(n.demandId);
           if (!g.trainingIds.includes(n.trainingId)) g.trainingIds.push(n.trainingId);
           grupos.set(chave, g);
@@ -325,7 +327,8 @@ export function buildBm(
           trainingIds: [],
         },
       ];
-      const totalTreinamentos = round2(linhasTreino.reduce((acc, l) => acc + (l.preco ?? 0) * (l.quantidade ?? 0), 0));
+      // Hora/aula × preço HH, exato (no XLSX o total também é fórmula, =G×H e SUM).
+      const totalTreinamentos = linhasTreino.reduce((acc, l) => acc + (l.preco ?? 0) * (l.quantidade ?? 0), 0);
       const cabecalhoIncompleto = [...semDefault].filter(k => ctxValor(k) === null);
 
       // Conferência: por TURMA (a linha do dataset), nunca pelas linhas do

@@ -11,12 +11,15 @@
  *   • Só as CONCLUÍDAS (status calculado) viram linha da aba; cancelada e
  *     sem instrutor titular são bloqueios de fato. Status da medição NÃO
  *     bloqueia — é filtro na tela (multi-seleção, com "Sem medição").
- *   • DESPESAS: os quatro buckets do painel (`computePanelExpenseBreakdown`)
- *     restritos aos itens REEMBOLSÁVEIS (`!isNaoReembolsavel`), porque as
- *     colunas do modelo se chamam "Despesa reembolsável" e a flag existe
- *     justamente para o que o cliente não paga. O que foi excluído fica em
- *     `naoReembolsavelExcluido`, para o painel avisar. Órfãos de Outros fora,
- *     como no painel. Combustível não é inferido: coluna manual do template.
+ *   • DESPESAS: `computeClientMeasurementExpenses` (domain/measurementTotals.ts),
+ *     a porta ÚNICA da regra "item NÃO REEMBOLSA nunca entra na medição do
+ *     cliente": os quatro buckets do painel só com os itens que entram
+ *     (`entraNaMedicaoDoCliente`), em qualquer categoria, notinha ou valor
+ *     avulso, v1 ou v2 (o dono do item não importa aqui: a soma é da demanda).
+ *     O que ficou fora vai para `naoReembolsavelExcluido`, para o painel
+ *     avisar. Órfãos de Outros fora, como no painel. O BM não refaz nada disso:
+ *     lê as células desta mesma linha. Combustível não é inferido: coluna
+ *     manual do template — o digitado vale como está, sem passar pela regra.
  *   • DATA INÍCIO = primeiro dia; DATA FIM = último dia REAL (`getDemandLastDay`,
  *     o mesmo dia que o filtro de período usa); HORÁRIOS = hora de parede do
  *     primeiro e do último dia, lidos CRUS (`getDayHorario*Raw`): a demanda
@@ -44,7 +47,7 @@ import type {
   Training,
   InstructorAllocation,
 } from '../../../types';
-import { computePanelExpenseBreakdown, isNaoReembolsavel } from '../../measurementTotals';
+import { computeClientMeasurementExpenses } from '../../measurementTotals';
 import { resolveDemandInstructors } from '../../demandInstructors';
 import { buildTrainingsById } from '../../modalityOptions';
 import { getDemandTitle, isInternalDemand } from '../../demandLabel';
@@ -167,9 +170,10 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
       ),
     ];
 
-    // Despesas reembolsáveis (colunas da Vale) e o total cheio (painel), para o aviso.
-    const reembolsaveis = computePanelExpenseBreakdown(m as any, { itemFilter: a => !isNaoReembolsavel(a) });
-    const todas = computePanelExpenseBreakdown(m as any);
+    // O que entra na medição do cliente (colunas da Vale, base do acréscimo) e
+    // o que ficou fora por "não reembolsa" — a regra mora no domínio, aqui só se lê.
+    const despesasCliente = computeClientMeasurementExpenses(m as any);
+    const reembolsaveis = despesasCliente.entram;
 
     const dias = getDemandDays(demand);
     const primeiroDia = dias[0] ?? String(demand.startDate ?? '').slice(0, 10);
@@ -240,9 +244,9 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
       cancelada,
       interna,
       medicaoStatus: m?.status ?? '',
-      despesasTotalTodas: todas.total,
-      naoReembolsavelExcluido: Math.round((todas.total - reembolsaveis.total + Number.EPSILON) * 100) / 100,
-      itensDespesa: todas.itens,
+      despesasTotalTodas: despesasCliente.todas.total,
+      naoReembolsavelExcluido: despesasCliente.naoReembolsavelExcluido,
+      itensDespesa: despesasCliente.todas.itens,
       bloqueios,
       elegivelTurmas: bloqueios.length === 0,
       avisos,

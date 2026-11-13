@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Loader2, PencilLine, Save, Search, Undo2 } f
 import type { MedicaoValeRow } from '../../domain/exports/datasets/medicaoVale';
 import type { HybridPart, TemplateColumn } from '../../domain/exports/templates/types';
 import { manualColumnKey, resolveManualValue, type ManualValueSource } from '../../domain/exports/templates/resolve';
+import { converterCampoManual } from '../../domain/exports/templates/manualInput';
 import { hybridPriceStatus, type HybridPriceBadge } from '../../domain/exports/templates/hybridPrice';
 import type { HybridSplit } from '../../domain/hybridHours';
 import type { TemplateValuesIndex, TemplateValueScope } from '../../domain/exports/templates/values';
@@ -53,6 +54,17 @@ const PAGE = 25;
 const normalize = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 
 const inputClass = 'w-full border border-slate-200 rounded-lg px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-blue-500 bg-white';
+/** Campo com valor não reconhecido: classe PRÓPRIA (no Tailwind vence a ordem do CSS, não a da string). */
+const inputErroClass = 'w-full border border-red-500 rounded-lg px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-red-300 bg-white';
+
+/** Valor digitado que o parser pt-BR recusou: o texto (para remontar o campo) e a mensagem. */
+export interface ErroCampoManual {
+  raw: string;
+  mensagem: string;
+}
+
+/** A mesma chave de edição da tela pai (scope:refId:columnKey). */
+export const chaveCampoManual = (scope: TemplateValueScope, refId: string, columnKey: string) => `${scope}:${refId}:${columnKey}`;
 const searchClass = 'w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500';
 
 const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void; label: string }> = ({ checked, onChange, label }) => (
@@ -114,7 +126,14 @@ const GradeEditavel: React.FC<{
   onDescartar: () => void;
   /** Muda a cada salvar/descartar: remonta os inputs (não controlados). */
   resetKey: number;
-}> = ({ rows, allRows, columns, values, onEdit, trainingNames, hibridas, hybridSplit = false, demandasComPendencia, pendentes, salvando, onSalvar, onDescartar, resetKey }) => {
+  /**
+   * Campos com valor não reconhecido (chave scope:refId:columnKey). Mora no
+   * PAI porque os inputs remontam (página, busca, recolher). Ausente = nenhum.
+   */
+  erros?: Map<string, ErroCampoManual>;
+  /** Liga (erro) ou desliga (null) o erro de um campo. */
+  onErro?: (chave: string, erro: ErroCampoManual | null) => void;
+}> = ({ rows, allRows, columns, values, onEdit, trainingNames, hibridas, hybridSplit = false, demandasComPendencia, pendentes, salvando, onSalvar, onDescartar, resetKey, erros, onErro }) => {
   /** A híbrida só tem dois preços quando o template divide E a coluna declara as chaves. */
   const splitDe = useCallback(
     (tid: string): HybridSplit | undefined => (hybridSplit && hibridas ? hibridas.get(tid) : undefined),
@@ -200,13 +219,32 @@ const GradeEditavel: React.FC<{
   const turmas = useStableArray<MedicaoValeRow>(turmasDerivadas, r => r.demand.id);
   const pag = usePagination<MedicaoValeRow>(turmas, 'exportacoes.grade.turmas', PAGE);
 
-  const parse = (col: TemplateColumn, raw: string): number | string | null => {
-    if (col.format === 'text') return raw;
-    if (raw.trim() === '') return null;
-    const n = Number(raw.replace(',', '.'));
-    if (!Number.isFinite(n)) return null;
-    return col.format === 'percent' ? n / 100 : n;
+  /**
+   * Saída de um campo (onBlur). A conversão é do domínio
+   * (domain/exports/templates/manualInput.ts, parser pt-BR):
+   *   • texto IGUAL ao exibido → nada mudou: devolve o valor SALVO (desfaz
+   *     uma pendência, nunca regrava — o % exibido é arredondado na tela);
+   *   • ILEGÍVEL → erro no campo e NENHUMA edição registrada: o valor salvo
+   *     fica intocado (antes virava null, que o Salvar apagava, e a célula
+   *     caía no padrão — combustível 0, % 20% — sem aviso);
+   *   • legível (ou em branco, que limpa de propósito) → edição pendente.
+   */
+  const aoSair = (scope: TemplateValueScope, refId: string, columnKey: string, col: TemplateColumn, raw: string, exibido: string, salvo: unknown) => {
+    const chave = chaveCampoManual(scope, refId, columnKey);
+    if (raw === exibido) {
+      onErro?.(chave, null);
+      onEdit({ scope, refId, columnKey, value: (salvo ?? null) as EdicaoPendente['value'] });
+      return;
+    }
+    const c = converterCampoManual(col, raw);
+    if (c.ok === false) {
+      onErro?.(chave, { raw, mensagem: c.mensagem });
+      return;
+    }
+    onErro?.(chave, null);
+    onEdit({ scope, refId, columnKey, value: c.value });
   };
+  const erroDe = (scope: TemplateValueScope, refId: string, columnKey: string) => erros?.get(chaveCampoManual(scope, refId, columnKey));
   const show = (col: TemplateColumn, v: unknown): string => {
     if (v === null || v === undefined || v === '') return '';
     if (col.format === 'percent') return String(Math.round(Number(v) * 10000) / 100);
@@ -258,21 +296,32 @@ const GradeEditavel: React.FC<{
                       <span className="text-[9px] font-bold text-violet-600 uppercase">híbrido</span>
                       <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${SELO_HIBRIDA_CLASS[st.selo]}`}>{st.selo}</span>
                     </span>
-                    {partes.map(p => (
-                      <label key={p.parte} className="flex items-center gap-2 mt-2">
-                        <span className="text-[10px] text-slate-400 whitespace-nowrap">
-                          {p.rotulo} <span className="text-slate-300">· {horasDaParte(split, p.parte)}</span>
-                        </span>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          className={inputClass}
-                          defaultValue={show(precoCol, p.atual.fonte === 'treinamento' ? p.atual.value : null)}
-                          placeholder="R$"
-                          onBlur={e => onEdit({ scope: 'training', refId: t.tid, columnKey: manualColumnKey(precoCol, p.parte), value: parse(precoCol, e.target.value) })}
-                        />
-                      </label>
-                    ))}
+                    {partes.map(p => {
+                      const chaveCol = manualColumnKey(precoCol, p.parte);
+                      const salvoTreino = p.atual.fonte === 'treinamento' ? p.atual.value : null;
+                      const exibido = show(precoCol, salvoTreino);
+                      const erro = erroDe('training', t.tid, chaveCol);
+                      return (
+                        <React.Fragment key={p.parte}>
+                          <label className="flex items-center gap-2 mt-2">
+                            <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                              {p.rotulo} <span className="text-slate-300">· {horasDaParte(split, p.parte)}</span>
+                            </span>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              className={erro ? inputErroClass : inputClass}
+                              defaultValue={erro?.raw ?? exibido}
+                              placeholder="R$"
+                              aria-invalid={!!erro}
+                              title={erro?.mensagem}
+                              onBlur={e => aoSair('training', t.tid, chaveCol, precoCol, e.target.value, exibido, salvoTreino)}
+                            />
+                          </label>
+                          {erro && <span data-erro-campo className="block mt-1 text-[10px] font-bold text-red-600">{erro.mensagem}</span>}
+                        </React.Fragment>
+                      );
+                    })}
                     {st.precoUnicoAntigo !== null && (
                       <p className="mt-2 text-[10px] text-amber-700 leading-snug">
                         Preço único anterior: R$ {show(precoCol, st.precoUnicoAntigo)} — não vale para híbrida; informe o presencial e o online.
@@ -282,6 +331,9 @@ const GradeEditavel: React.FC<{
                 );
               }
               const atual = resolveManualValue(precoCol, { trainingId: t.tid, demandId: '' }, values);
+              const salvoTreino = atual.fonte === 'treinamento' ? atual.value : null;
+              const exibido = show(precoCol, salvoTreino);
+              const erro = erroDe('training', t.tid, precoCol.key);
               return (
                 <label key={t.tid} className="text-xs bg-white rounded-xl border border-slate-200 p-3">
                   <span className="flex items-center gap-2">
@@ -295,12 +347,15 @@ const GradeEditavel: React.FC<{
                     <input
                       type="text"
                       inputMode="decimal"
-                      className={inputClass}
-                      defaultValue={show(precoCol, atual.fonte === 'treinamento' ? atual.value : null)}
+                      className={erro ? inputErroClass : inputClass}
+                      defaultValue={erro?.raw ?? exibido}
                       placeholder="R$"
-                      onBlur={e => onEdit({ scope: 'training', refId: t.tid, columnKey: precoCol.key, value: parse(precoCol, e.target.value) })}
+                      aria-invalid={!!erro}
+                      title={erro?.mensagem}
+                      onBlur={e => aoSair('training', t.tid, precoCol.key, precoCol, e.target.value, exibido, salvoTreino)}
                     />
                   </span>
+                  {erro && <span data-erro-campo className="block mt-1 text-[10px] font-bold text-red-600">{erro.mensagem}</span>}
                 </label>
               );
             })}
@@ -361,18 +416,26 @@ const GradeEditavel: React.FC<{
                             {colPartes.map(parte => {
                               const atual = resolveManualValue(col, { ...r.refs, parte }, values);
                               const proprio = atual.fonte === 'demanda' ? atual.value : null;
+                              const chaveCol = manualColumnKey(col, parte);
+                              const exibido = show(col, proprio);
+                              const erro = erroDe('demand', r.demand.id, chaveCol);
                               return (
-                                <span key={parte ?? 'unica'} className="flex items-center gap-1">
-                                  {parte && <span className="text-[9px] text-slate-400 w-14 shrink-0">{parte === 'PRESENCIAL' ? 'presencial' : 'online'}</span>}
-                                  <input
-                                    type="text"
-                                    inputMode={col.format === 'text' ? 'text' : 'decimal'}
-                                    className={inputClass}
-                                    defaultValue={show(col, proprio)}
-                                    placeholder={col.format === 'text' ? '' : show(col, atual.value) || '—'}
-                                    onBlur={e => onEdit({ scope: 'demand', refId: r.demand.id, columnKey: manualColumnKey(col, parte), value: parse(col, e.target.value) })}
-                                  />
-                                </span>
+                                <React.Fragment key={parte ?? 'unica'}>
+                                  <span className="flex items-center gap-1">
+                                    {parte && <span className="text-[9px] text-slate-400 w-14 shrink-0">{parte === 'PRESENCIAL' ? 'presencial' : 'online'}</span>}
+                                    <input
+                                      type="text"
+                                      inputMode={col.format === 'text' ? 'text' : 'decimal'}
+                                      className={erro ? inputErroClass : inputClass}
+                                      defaultValue={erro?.raw ?? exibido}
+                                      placeholder={col.format === 'text' ? '' : show(col, atual.value) || '—'}
+                                      aria-invalid={!!erro}
+                                      title={erro?.mensagem}
+                                      onBlur={e => aoSair('demand', r.demand.id, chaveCol, col, e.target.value, exibido, proprio)}
+                                    />
+                                  </span>
+                                  {erro && <span data-erro-campo className="block text-[10px] font-bold text-red-600">{erro.mensagem}</span>}
+                                </React.Fragment>
                               );
                             })}
                           </td>
@@ -417,10 +480,15 @@ const GradeEditavel: React.FC<{
       )}
 
       {/* ───────── barra fixa: alterações não salvas ───────── */}
-      {pendentes > 0 && (
+      {(pendentes > 0 || (erros?.size ?? 0) > 0) && (
         <div className="sticky bottom-0 z-10 bg-amber-50 border-t border-amber-200 px-6 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <span className="text-xs font-bold text-amber-900">
-            {pendentes} {pendentes === 1 ? 'alteração não salva' : 'alterações não salvas'} — o download fica travado até salvar ou descartar.
+            {pendentes > 0 && <>{pendentes} {pendentes === 1 ? 'alteração não salva' : 'alterações não salvas'} — o download fica travado até salvar ou descartar.</>}
+            {(erros?.size ?? 0) > 0 && (
+              <span className="block text-red-700">
+                {erros?.size} {erros?.size === 1 ? 'campo com valor não reconhecido' : 'campos com valor não reconhecido'} — corrija (use 1.234,56). O valor salvo não foi alterado.
+              </span>
+            )}
           </span>
           <div className="flex items-center gap-2">
             <button
@@ -434,7 +502,7 @@ const GradeEditavel: React.FC<{
             <button
               type="button"
               onClick={onSalvar}
-              disabled={salvando}
+              disabled={salvando || (erros?.size ?? 0) > 0}
               className="bg-amber-500 hover:bg-amber-400 text-slate-900 px-4 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest flex items-center gap-1.5 disabled:opacity-40"
             >
               {salvando ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Salvar

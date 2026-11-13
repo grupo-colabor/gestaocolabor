@@ -76,7 +76,7 @@ import { triggerDownload, XLSX_MIME } from '../../utils/download';
 
 import FiltrosExportacao from './FiltrosExportacao';
 import PainelPendencias from './PainelPendencias';
-import GradeEditavel, { type EdicaoPendente } from './GradeEditavel';
+import GradeEditavel, { type EdicaoPendente, type ErroCampoManual } from './GradeEditavel';
 import ExportBanner from './ExportBanner';
 import { CabecalhoBm, PreviaBm } from './BmSecoes';
 import { formatPreviewCell } from './formatCell';
@@ -131,11 +131,26 @@ const MedicaoTemplateView: React.FC<{
   const [dataEnvio, setDataEnvio] = useState<string>(hojeISO());
   /** Remonta os inputs (não controlados) após salvar/descartar/recarregar. */
   const [resetKey, setResetKey] = useState(0);
+  /**
+   * Campos manuais com valor que o parser pt-BR recusou (chave
+   * scope:refId:columnKey). Enquanto houver um, Salvar e Gerar ficam travados:
+   * a pessoa digitou algo que NÃO foi aplicado, e o valor salvo segue intacto.
+   */
+  const [errosCampo, setErrosCampo] = useState<Map<string, ErroCampoManual>>(new Map());
+  const registrarErroCampo = (chave: string, e: ErroCampoManual | null) =>
+    setErrosCampo(prev => {
+      if (!e && !prev.has(chave)) return prev;
+      const next = new Map(prev);
+      if (e) next.set(chave, e);
+      else next.delete(chave);
+      return next;
+    });
 
   // Nova carga = valores novos do banco e edições pendentes descartadas.
   React.useEffect(() => {
     setValoresSalvos(carga.templateValues);
     setPendentes(new Map());
+    setErrosCampo(new Map());
     setResetKey(k => k + 1);
   }, [carga]);
 
@@ -210,7 +225,8 @@ const MedicaoTemplateView: React.FC<{
   const previa = useMemo(() => (isBm ? null : resolveRowsSheet(sheetTurmas, toRowsSheetInput(elegiveis, turmasTemplate), values)), [isBm, sheetTurmas, turmasTemplate, elegiveis, values]);
 
   const temPendente = pendentes.size > 0;
-  const podeGerar = !temPendente && !salvando && !gerando && !erro && (isBm ? !!bm && bm.minas.length > 0 : elegiveis.length > 0);
+  const temErroCampo = errosCampo.size > 0;
+  const podeGerar = !temPendente && !temErroCampo && !salvando && !gerando && !erro && (isBm ? !!bm && bm.minas.length > 0 : elegiveis.length > 0);
 
   const registrarEdicao = (e: EdicaoPendente) => {
     const salvo = baseIndex[e.scope].get(e.refId)?.get(e.columnKey);
@@ -224,7 +240,7 @@ const MedicaoTemplateView: React.FC<{
   };
 
   const salvar = async () => {
-    if (!temPendente) return;
+    if (!temPendente || temErroCampo) return;
     setSalvando(true);
     setErro(null);
     try {
@@ -270,6 +286,7 @@ const MedicaoTemplateView: React.FC<{
 
   const descartar = () => {
     setPendentes(new Map());
+    setErrosCampo(new Map());
     setResetKey(k => k + 1);
   };
 
@@ -400,6 +417,8 @@ const MedicaoTemplateView: React.FC<{
         onSalvar={salvar}
         onDescartar={descartar}
         resetKey={resetKey}
+        erros={errosCampo}
+        onErro={registrarErroCampo}
       />
 
       <div className="bg-slate-900 text-white rounded-2xl px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -449,7 +468,7 @@ const MedicaoTemplateView: React.FC<{
           type="button"
           onClick={gerar}
           disabled={!podeGerar}
-          title={temPendente ? 'Salve antes de gerar' : undefined}
+          title={temErroCampo ? 'Corrija o campo com valor não reconhecido antes de gerar' : temPendente ? 'Salve antes de gerar' : undefined}
           className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {gerando ? <Loader2 size={16} className="animate-spin" /> : isBm && !saiXlsx ? <FolderArchive size={16} /> : <FileSpreadsheet size={16} />}
@@ -457,6 +476,7 @@ const MedicaoTemplateView: React.FC<{
         </button>
       </div>
       {temPendente && <ExportBanner tipo="aviso">Há edições não salvas. <strong>Salve antes de gerar</strong> — o download nunca grava.</ExportBanner>}
+      {temErroCampo && <ExportBanner tipo="erro">{errosCampo.size} {errosCampo.size === 1 ? 'campo manual com valor não reconhecido' : 'campos manuais com valor não reconhecido'} — corrija (use 1.234,56) antes de salvar ou gerar. <strong>O valor salvo não foi alterado.</strong></ExportBanner>}
 
       {isBm && bm && <PreviaBm bm={bm} periodoLabel={periodoLabel} />}
 

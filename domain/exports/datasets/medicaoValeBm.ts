@@ -61,6 +61,13 @@ export interface BmLinha {
   /** Demandas que compõem a linha. */
   turmas: string[];
   trainingIds: string[];
+  /**
+   * Colunas da região a pintar de amarelo para conferir — só na linha de
+   * despesas, `['quantidade']`, quando alguma turma da mina tem item que
+   * entra no boletim sem valor ou com valor suspeito/ilegível. Ausente nas
+   * demais (e quando não há nada a conferir). O número não muda.
+   */
+  conferir?: string[];
 }
 
 export interface BmMina {
@@ -86,6 +93,8 @@ export interface BmMina {
   naoReembolsavelExcluido: number;
   /** Demandas desta mina com item não reembolsável excluído. */
   turmasComNaoReembolsavel: string[];
+  /** Demandas desta mina com item de despesa sem valor / suspeito (linha de despesas amarela). */
+  turmasComValorAConferir: string[];
 }
 
 export interface BmResult {
@@ -314,6 +323,10 @@ export function buildBm(
           ordemDaParte(a.parte) - ordemDaParte(b.parte) ||
           (a.preco ?? -1) - (b.preco ?? -1)
       );
+      // Item que entra no boletim sem valor / suspeito: a linha de despesas
+      // sai amarela (decisão 9: só aviso; a turma e o número seguem iguais).
+      // Lido da linha da Medição Vale — o BM não olha item de despesa.
+      const turmasComValorAConferir = turmas.filter(t => (t.valoresAConferir ?? []).length > 0).map(t => t.demand.id);
       const linhas: BmLinha[] = [
         ...linhasTreino,
         {
@@ -325,6 +338,7 @@ export function buildBm(
           quantidade: totalDespesas,
           turmas: turmas.map(t => t.demand.id),
           trainingIds: [],
+          ...(turmasComValorAConferir.length > 0 ? { conferir: ['quantidade'] } : {}),
         },
       ];
       // Hora/aula × preço HH, exato (no XLSX o total também é fórmula, =G×H e SUM).
@@ -340,6 +354,7 @@ export function buildBm(
         corredor, mina, contextKey: key, contexto, cabecalhoIncompleto, turmas, linhas, totalTreinamentos, totalDespesas,
         naoReembolsavelExcluido,
         turmasComNaoReembolsavel: comNaoReembolsavel.map(t => t.demand.id),
+        turmasComValorAConferir,
       };
     });
 
@@ -349,6 +364,16 @@ export function buildBm(
     naoReembolsavelExcluido: round2(minas.reduce((acc, m) => acc + m.naoReembolsavelExcluido, 0)),
     turmasComNaoReembolsavel: minas.reduce((acc, m) => acc + m.turmasComNaoReembolsavel.length, 0),
   };
+}
+
+/** O destaque de cada linha da região (alinhado com `bmRegionRows`): o FormSheetInput.regionDestaques. */
+export function bmRegionDestaques(mina: BmMina): (string[] | undefined)[] {
+  return mina.linhas.map(l => l.conferir);
+}
+
+/** O aviso da linha de despesas amarela, para a turma no painel de pendências. */
+export function avisoBmValorAConferir(mina: Pick<BmMina, 'corredor' | 'mina'>): string {
+  return `Despesa sem valor ou suspeita nesta turma — linha "Despesas Tributáveis" do BM em amarelo (${mina.corredor} | ${mina.mina})`;
 }
 
 /** As linhas de uma mina no formato da região da folha form. */

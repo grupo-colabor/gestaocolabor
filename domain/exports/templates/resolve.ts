@@ -419,7 +419,10 @@ export function resolveRowsSheet(
         });
         value = null;
       }
-      return { ...base, value, highlight: !!c.highlightWhenEmpty && isEmpty(value) };
+      // Amarela também quando a linha pede conferência deste campo (item sem
+      // valor / suspeito). Nunca na parte ONLINE da híbrida, que vale 0.
+      const conferir = isSourceField(c.source) && !zeroNestaParte(c, r.refs.parte) && (r.input.conferir ?? []).includes(c.source);
+      return { ...base, value, highlight: (!!c.highlightWhenEmpty && isEmpty(value)) || conferir };
     });
   });
 
@@ -463,6 +466,12 @@ export interface FormSheetInput {
   /** 'dd/mm/yyyy a dd/mm/yyyy'. */
   periodoLabel?: string;
   regionRows?: RegionRowInput[];
+  /**
+   * Colunas (key) da região a pintar de amarelo, alinhado por índice com
+   * `regionRows` — o BM marca a quantidade da linha de despesas quando alguma
+   * turma tem item sem valor ou suspeito. Ausente = nada além do de sempre.
+   */
+  regionDestaques?: (readonly string[] | undefined)[];
 }
 
 export function resolveFormSheet(sheet: TemplateSheet, input: FormSheetInput): ResolvedFormSheet {
@@ -510,7 +519,8 @@ export function resolveFormSheet(sheet: TemplateSheet, input: FormSheetInput): R
           return { col: c.col, cell: { ...base, formula: resolveFormula(c.formula, columns, { row: rowNumber, first: r.firstRow, last: lastRow }) } };
         }
         const value: TemplateCellValue = c.source === 'constant' ? (c.value ?? null) : (row[c.field ?? c.key] ?? null);
-        return { col: c.col, cell: { ...base, value, highlight: !!c.highlightWhenEmpty && isEmpty(value) } };
+        const conferir = !!input.regionDestaques?.[i]?.includes(c.key);
+        return { col: c.col, cell: { ...base, value, highlight: (!!c.highlightWhenEmpty && isEmpty(value)) || conferir } };
       });
     });
 

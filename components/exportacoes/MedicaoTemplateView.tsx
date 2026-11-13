@@ -48,6 +48,8 @@ import {
   bmFileName,
   bmZipName,
   bmZipEntryName,
+  bmRegionDestaques,
+  avisoBmValorAConferir,
   avisoBmNaoReembolsavel,
   periodoLabel as bmPeriodoLabel,
 } from '../../domain/exports/datasets/medicaoValeBm';
@@ -211,6 +213,9 @@ const MedicaoTemplateView: React.FC<{
     for (const r of bm.semLocal) extras.push({ row: r, pendencia: { tipo: 'aviso', texto: 'Sem local na demanda — fora do BM (corrija o local)' } });
     for (const r of bm.semCorredor) extras.push({ row: r, pendencia: { tipo: 'aviso', texto: 'Sem corredor na demanda — fora do BM (informe o corredor)' } });
     for (const m of bm.minas) {
+      for (const r of m.turmas) {
+        if (m.turmasComValorAConferir.includes(r.demand.id)) extras.push({ row: r, pendencia: { tipo: 'aviso', texto: avisoBmValorAConferir(m) } });
+      }
       if (m.cabecalhoIncompleto.length === 0) continue;
       for (const r of m.turmas) extras.push({ row: r, pendencia: { tipo: 'aviso', texto: `Cabeçalho do BM incompleto para ${m.corredor} | ${m.mina}` } });
     }
@@ -310,6 +315,7 @@ const MedicaoTemplateView: React.FC<{
             manual: { dataEnvio },
             periodoLabel,
             regionRows: bmRegionRows(m),
+            regionDestaques: bmRegionDestaques(m),
           });
           // Com "Todos": "<corredor>/<mesmo nome de arquivo de hoje>"; senão, na raiz.
           entries.push({ name: bmZipEntryName(template, m, filters.dataInicio, filters.dataFim, todosCorredores), data: await buildTemplateXlsxBuffer(template, sheets, base) });

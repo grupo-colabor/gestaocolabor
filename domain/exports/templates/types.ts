@@ -341,7 +341,7 @@ export interface ResolvedCell {
   formula?: string;
   format?: TemplateFormat;
   editable?: boolean;
-  /** Pintar em amarelo (editável e vazia). */
+  /** Pintar em amarelo (editável e vazia, ou valor de despesa a conferir). */
   highlight?: boolean;
 }
 

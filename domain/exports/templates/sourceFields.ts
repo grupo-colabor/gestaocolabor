@@ -57,6 +57,14 @@ export interface TemplateRowInput {
   titulares: string[];
   /** Despesas REEMBOLSÁVEIS nos quatro buckets do painel. */
   despesas: { locomocao: number; alimentacao: number; hospedagem: number; outros: number; total: number };
+  /**
+   * Campos do catálogo cuja célula sai AMARELA nesta linha: a categoria tem
+   * item que entra na medição do cliente sem valor (0/ausente), com valor
+   * suspeito (3+ casas, negativo) ou ilegível — e `expenses.total` junto. É
+   * aviso, não bloqueio: o número da célula não muda. Opcional (as fixtures
+   * antigas e a parte ONLINE da híbrida não têm).
+   */
+  conferir?: SourceField[];
   medicaoStatus: string;
   temMedicao: boolean;
 }

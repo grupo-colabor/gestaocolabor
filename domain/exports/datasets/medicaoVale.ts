@@ -47,7 +47,8 @@ import type {
   Training,
   InstructorAllocation,
 } from '../../../types';
-import { computeClientMeasurementExpenses } from '../../measurementTotals';
+import { computeClientMeasurementExpenses, entraNaMedicaoDoCliente, PANEL_EXPENSE_LABELS, type PanelExpenseBucket } from '../../measurementTotals';
+import { avisosDeValor, listExpenseValueIssues, type ExpenseValueIssue } from '../../expenseValueIssues';
 import { resolveDemandInstructors } from '../../demandInstructors';
 import { buildTrainingsById } from '../../modalityOptions';
 import { getDemandTitle, isInternalDemand } from '../../demandLabel';
@@ -123,12 +124,40 @@ export interface MedicaoValeRow extends FilterableRow {
    * saída para a planilha (`toRowsSheetInput`) que a híbrida vira duas.
    */
   hibrida: HybridSplit | null;
+  /**
+   * Itens que ENTRAM na medição do cliente com valor a conferir — sem valor
+   * (0/ausente, o dado antigo zerado), suspeito (3+ casas, negativo) ou
+   * ilegível (domain/expenseValueIssues.ts). A turma continua na planilha com
+   * o número de sempre; a categoria sai amarela e o painel avisa. O BM lê
+   * este campo para pintar a linha de despesas da mina.
+   */
+  valoresAConferir: ExpenseValueIssue[];
 }
 
 export interface DatasetAviso {
   texto: string;
   source?: SourceField;
+  /**
+   * Outras colunas que servem para achar a letra quando o modelo não mapeia
+   * `source` (ex.: modelo do banco só com `expenses.total`).
+   */
+  fontes?: SourceField[];
+  /** A parte que VARIA (contagem, valor): vai no parêntese final, junto da célula. */
+  detalhe?: string;
+  /**
+   * Como a célula é citada: 'vazia' (padrão — "(célula H em branco)") ou
+   * 'destaque' ("(célula L)": a célula tem número, sai amarela para conferir).
+   */
+  celula?: 'vazia' | 'destaque';
 }
+
+/** Categoria do painel → campo do catálogo que a coluna de despesa lê. */
+const FONTE_DO_BUCKET: Record<PanelExpenseBucket, SourceField> = {
+  locomocao: 'expenses.locomocao',
+  alimentacao: 'expenses.alimentacao',
+  hospedagem: 'expenses.hospedagem',
+  outros: 'expenses.outros',
+};
 
 /* ─────────────────────────── empresa do template ─────────────────────────── */
 
@@ -174,6 +203,9 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
     // o que ficou fora por "não reembolsa" — a regra mora no domínio, aqui só se lê.
     const despesasCliente = computeClientMeasurementExpenses(m as any);
     const reembolsaveis = despesasCliente.entram;
+    // Dos itens que ENTRAM, os que estão sem valor / suspeitos / ilegíveis:
+    // aviso + célula amarela, nunca bloqueio (decisão 9). O número não muda.
+    const valoresAConferir = listExpenseValueIssues(m as any, { itemFilter: entraNaMedicaoDoCliente });
 
     const dias = getDemandDays(demand);
     const primeiroDia = dias[0] ?? String(demand.startDate ?? '').slice(0, 10);
@@ -202,6 +234,17 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
     const hibrida = !interna && modalidade === 'HIBRIDO' ? splitHybridHours(training) : null;
     if (hibrida && hibrida.ok === false) avisos.push({ texto: hibrida.texto });
 
+    const conferir: SourceField[] = [];
+    for (const { key, label } of PANEL_EXPENSE_LABELS) {
+      const doBucket = valoresAConferir.filter(i => i.bucket === key);
+      if (doBucket.length === 0) continue;
+      conferir.push(FONTE_DO_BUCKET[key]);
+      for (const a of avisosDeValor(doBucket, label)) {
+        avisos.push({ texto: a.texto, detalhe: a.detalhe, source: FONTE_DO_BUCKET[key], fontes: ['expenses.total'], celula: 'destaque' });
+      }
+    }
+    if (conferir.length > 0) conferir.push('expenses.total');
+
     const input: TemplateRowInput = {
       demandId: demand.id,
       clientDemandId: (demand.clientDemandId ?? '').trim(),
@@ -229,6 +272,7 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
       },
       medicaoStatus: m?.status ?? '',
       temMedicao: !!m,
+      ...(conferir.length > 0 ? { conferir } : {}),
     };
 
     rows.push({
@@ -251,6 +295,7 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
       elegivelTurmas: bloqueios.length === 0,
       avisos,
       hibrida,
+      valoresAConferir,
     });
   }
 
@@ -333,7 +378,7 @@ export function toRowsSheetInput(
       refs: { ...r.refs, parte: 'PRESENCIAL' },
     });
     out.push({
-      input: { ...r.input, trainingName: `${nome}${HYBRID_SUFFIX.ONLINE}`, cargaHoraria: h.ok === true ? h.online : null, despesas: DESPESAS_ZERO },
+      input: { ...r.input, trainingName: `${nome}${HYBRID_SUFFIX.ONLINE}`, cargaHoraria: h.ok === true ? h.online : null, despesas: DESPESAS_ZERO, conferir: undefined },
       refs: { ...r.refs, parte: 'ONLINE' },
     });
   }

@@ -265,9 +265,18 @@ export function buildPendencias(rows: MedicaoValeRow[], ctx: PendenciasContext):
     // que lê aquele campo; modelo sem a coluna não recebe o aviso — avisar
     // "sem horário" numa planilha que não tem horário seria ruído.
     for (const a of r.avisos ?? []) {
-      if (!a.source) { p.push({ tipo: 'aviso', texto: a.texto }); continue; }
-      const col = colunas.find(c => c.source === a.source);
+      if (!a.source) { p.push({ tipo: 'aviso', texto: a.detalhe ? `${a.texto} (${a.detalhe})` : a.texto }); continue; }
+      const col = [a.source, ...(a.fontes ?? [])].map(f => colunas.find(c => c.source === f)).find(Boolean);
       if (!col) continue;
+      if (a.celula === 'destaque') {
+        // Célula COM número, amarela para conferir: "(1 item · célula L)".
+        // Contagem/valor e letra no MESMO parêntese final — o painel agrupa
+        // pelo texto sem ele.
+        const letra = letraDaColuna(ctx.sheet, col.key);
+        const partes = [a.detalhe, letra ? `célula ${letra}` : null].filter(Boolean);
+        p.push({ tipo: 'aviso', texto: partes.length ? `${a.texto} (${partes.join(' · ')})` : a.texto });
+        continue;
+      }
       p.push({ tipo: 'aviso', texto: `${a.texto}${sufixoCelula(ctx.sheet, col.key)}` });
     }
 

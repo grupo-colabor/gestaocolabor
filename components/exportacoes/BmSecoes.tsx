@@ -161,7 +161,7 @@ const MinaPrevia: React.FC<{ mina: BmMina; periodoLabel: string }> = ({ mina, pe
                 <td className="p-3 max-w-[420px] truncate" title={l.descricao}>{l.descricao}</td>
                 <td className="p-3">{String(l.unidade)}</td>
                 <td className={`p-3 text-right tabular-nums ${l.preco === null ? 'bg-yellow-100' : ''}`}>{l.preco === null ? '—' : formatPreviewCell(l.preco, 'currency')}</td>
-                <td className={`p-3 text-right tabular-nums ${l.quantidade === null ? 'bg-yellow-100' : ''}`}>{formatPreviewCell(l.quantidade, l.tipo === 'despesas' ? 'currency' : 'hours')}</td>
+                <td className={`p-3 text-right tabular-nums ${l.quantidade === null || l.conferir?.includes('quantidade') ? 'bg-yellow-100' : ''}`} title={l.conferir?.includes('quantidade') ? 'Alguma turma desta mina tem item de despesa sem valor ou com valor suspeito — confira no Painel de Medição' : undefined}>{formatPreviewCell(l.quantidade, l.tipo === 'despesas' ? 'currency' : 'hours')}</td>
                 <td className="p-3 text-right tabular-nums text-slate-500 italic">{formatPreviewCell((l.preco ?? 0) * (l.quantidade ?? 0), 'currency')}</td>
               </tr>
             ))}

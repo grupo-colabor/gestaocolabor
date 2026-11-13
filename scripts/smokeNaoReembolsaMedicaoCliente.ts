@@ -482,10 +482,10 @@ export async function runNaoReembolsaBmChecks(t: NrTools): Promise<number> {
     const bm = buildBm(so1297, values, VALE_BM_TEMPLATE, { corredor: 'Sudeste', mina: 'Brucutu' });
     eq('DEM-1297: um BM, Sudeste | Brucutu', bm.minas.map(m => `${m.corredor}|${m.mina}`), ['Sudeste|Brucutu']);
     const bru = bm.minas[0];
-    perto('DEM-1297: linha de despesas = 151,97 × 1,2 = R$ 182,36 (base do 20% = 151,97)', despesasDe(bru)!, 182.36);
-    check('DEM-1297: nunca 332,86 × 1,2 (R$ 399,43)', Math.abs(bru.totalDespesas - 399.43) > 1);
+    perto('DEM-1297: linha de despesas = 151,97 × 1,2 = 182,364 exato (base do 20% = 151,97)', despesasDe(bru)!, 182.364);
+    check('DEM-1297: nunca 332,86 × 1,2 (399,432)', Math.abs(bru.totalDespesas - 332.86 * 1.2) > 1);
     perto('DEM-1297: treinamento 16h × R$ 120', bru.totalTreinamentos, 1920);
-    perto('DEM-1297: total do boletim = 1920 + 182,36, sem os 180,89', r2(bru.totalTreinamentos + bru.totalDespesas), 2102.36);
+    perto('DEM-1297: total do boletim = 1920 + 182,364, sem os 180,89', bru.totalTreinamentos + bru.totalDespesas, 2102.364);
     perto('DEM-1297: conferência — R$ 180,89 fora', bru.naoReembolsavelExcluido, 180.89);
     eq('DEM-1297: a demanda afetada aparece na conferência', bru.turmasComNaoReembolsavel, ['DEM-1297']);
     eq('aviso da conferência', avisoBmNaoReembolsavel(bru.naoReembolsavelExcluido, bru.turmasComNaoReembolsavel.length), 'R$ 180,89 não reembolsável fora da linha de despesas (1 turma(s))');
@@ -504,11 +504,12 @@ export async function runNaoReembolsaBmChecks(t: NrTools): Promise<number> {
       await wb.xlsx.load(buf);
       const ws = wb.worksheets[0];
       const ultima = 19 + bru.linhas.length - 1;
-      eq('XLSX do BM: linha de despesas QQP 70, quantidade R$ 182,36', [ws.getCell(`B${ultima}`).value, ws.getCell(`H${ultima}`).value], ['70', 182.36]);
+      eq('XLSX do BM: linha de despesas QQP 70', ws.getCell(`B${ultima}`).value, '70');
+      perto('XLSX do BM: quantidade da linha de despesas = 182,364 exato', ws.getCell(`H${ultima}`).value, 182.364);
       eq('XLSX do BM: treinamento 16h a R$ 120', [ws.getCell('G19').value, ws.getCell('H19').value], [120, 16]);
       const numericas: number[] = [];
       ws.eachRow((row: any) => row.eachCell((c: any) => { if (typeof c.value === 'number') numericas.push(c.value); }));
-      check('XLSX do BM: nenhuma célula com 332,86, 180,89 ou 399,43', !numericas.some(x => [332.86, 180.89, 399.43].some(v => Math.abs(x - v) < 1e-6)));
+      check('XLSX do BM: nenhuma célula com 332,86, 180,89 ou 399,432', !numericas.some(x => [332.86, 180.89, 332.86 * 1.2].some(v => Math.abs(x - v) < 1e-6)));
     }
   }
 
@@ -519,7 +520,7 @@ export async function runNaoReembolsaBmChecks(t: NrTools): Promise<number> {
     eq('Sudeste: três minas', bm.minas.map(m => m.mina), ['Brucutu', 'Cauê', 'Timbopeba']);
 
     const bru = mina('Brucutu');
-    perto('Brucutu: despesas = (151,97 × 1,2) + (200 × 1,2) — a hospedagem da DEM-1303 continua', despesasDe(bru)!, 182.36 + 240);
+    perto('Brucutu: despesas = (151,97 × 1,2) + (200 × 1,2) — a hospedagem da DEM-1303 continua', despesasDe(bru)!, 182.364 + 240);
     perto('Brucutu: fora = 180,89 + 30', bru.naoReembolsavelExcluido, 210.89);
     eq('Brucutu: as duas demandas na conferência', bru.turmasComNaoReembolsavel, ['DEM-1297', 'DEM-1303']);
 
@@ -531,7 +532,7 @@ export async function runNaoReembolsaBmChecks(t: NrTools): Promise<number> {
 
     const caue = mina('Cauê');
     eq('híbrida: duas linhas de treinamento (presencial 8h, online 32h)', caue.linhas.filter(l => l.tipo === 'treinamento').map(l => [l.parte, l.quantidade]), [['PRESENCIAL', 8], ['ONLINE', 32]]);
-    perto('híbrida: despesas uma vez só = R$ 182,36', despesasDe(caue)!, 182.36);
+    perto('híbrida: despesas uma vez só = 182,364', despesasDe(caue)!, 182.364);
     perto('híbrida: conferência R$ 180,89 uma vez (não 361,78)', caue.naoReembolsavelExcluido, 180.89);
 
     {

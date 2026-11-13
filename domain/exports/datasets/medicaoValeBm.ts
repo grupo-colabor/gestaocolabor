@@ -167,7 +167,12 @@ export interface TurmaNumeros {
   /** Σ despesas reembolsáveis (locação, combustível, alimentação, hospedagem, outros). */
   despesas: number;
   pct: number;
-  /** Valor total despesas: despesas × (1 + %). */
+  /**
+   * Valor total despesas: despesas × (1 + %), EXATO — o mesmo número que a
+   * fórmula da coluna R da Medição Vale dá (SUM(L:P) + SUM(L:P) × Q). Sem
+   * arredondar: 151,97 × 1,2 = 182,364, e duas turmas somam 364,728 aqui e
+   * lá. Arredondamento só na exibição (formato da célula, 2 casas).
+   */
   p: number;
 }
 
@@ -196,7 +201,7 @@ export function turmasNumeros(elegiveis: MedicaoValeRow[], values: TemplateValue
       preco: precoDe(cells[iPreco].value),
       despesas: round2(despesas),
       pct,
-      p: round2(despesas + despesas * pct),
+      p: despesas + despesas * pct,
     };
   });
 }
@@ -292,7 +297,9 @@ export function buildBm(
           if (!g.turmas.includes(n.demandId)) g.turmas.push(n.demandId);
           if (!g.trainingIds.includes(n.trainingId)) g.trainingIds.push(n.trainingId);
           grupos.set(chave, g);
-          totalDespesas = round2(totalDespesas + (c.despesasComAcrescimo ? n.p : n.despesas));
+          // Soma EXATA (sem arredondar por turma nem no acumulado): a linha
+          // "Despesas Tributáveis" = Σ da coluna R da Medição Vale.
+          totalDespesas = totalDespesas + (c.despesasComAcrescimo ? n.p : n.despesas);
         }
       }
       // Ordem: alfabética pelo nome SEM o sufixo da parte; dentro do mesmo

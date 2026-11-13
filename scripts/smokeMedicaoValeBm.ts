@@ -19,6 +19,10 @@
  *       inseridas com mesclagens, assinaturas e imagens intactas.
  *   [Z] Zip: uma entrada por mina, nomes esperados; com "Todos", uma pasta
  *       por corredor e um .xlsx por mina, lidos de volta com Σ conferido.
+ *   [NR-BM] Item "não reembolsa" fora da linha de despesas, do acréscimo e
+ *       do total — DEM-1297 (182,36 = 151,97 × 1,2), outra demanda da mesma
+ *       mina, todos fora, híbrida, "Todos", conferência por mina e XLSX lido
+ *       de volta (scripts/smokeNaoReembolsaMedicaoCliente.ts).
  *
  * Sai com código 1 se qualquer asserção falhar.
  */
@@ -106,11 +110,15 @@ console.log('\n[F] Resolvedor de folha form');
 
 /* Blocos [Σ] [X] [Z] entram com dataset, escritor e zip. */
 import { runBmChecks } from './smokeMedicaoValeBmChecks';
+import { runNaoReembolsaBmChecks } from './smokeNaoReembolsaMedicaoCliente';
 
 (async () => {
   // Sequenciado: `falhas += await f()` leria `falhas` antes da chamada.
   const n = await runBmChecks(tools);
   falhas = Math.max(falhas, n);
+  // [NR-BM] "não reembolsa" fora da linha de despesas, do acréscimo e do total.
+  const nr = await runNaoReembolsaBmChecks(tools);
+  falhas = Math.max(falhas, nr);
   console.log(falhas === 0 ? '\n✅ SMOKE MEDICAO VALE BM: OK' : `\n❌ SMOKE MEDICAO VALE BM: ${falhas} falha(s)`);
   process.exit(falhas === 0 ? 0 : 1);
 })().catch(e => { console.error(e); process.exit(1); });

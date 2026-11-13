@@ -16,6 +16,11 @@
  *   [P] Painel de pendências (entra no commit 6).
  *   [E] Guarda de fonte: domain/exports/templates/** sem services, react ou
  *       exceljs; vale.ts sem letra de coluna literal em fórmula.
+ *   [NR] Item "não reembolsa" fora de L..P, da base do 20% e do total da
+ *       linha — DEM-1297 (151,97 entra, 180,89 fora), todos fora, v2 com
+ *       participante/acompanhante, dividida, híbrida em duas linhas, seis
+ *       categorias, sobrescrita manual, modelo do banco, XLSX lido de volta
+ *       (scripts/smokeNaoReembolsaMedicaoCliente.ts).
  *
  * Sai com código 1 se qualquer asserção falhar.
  */
@@ -251,6 +256,7 @@ import { runValeDatasetChecks, buildValeContext } from './smokeMedicaoValeDatase
 import { runWriterChecks } from './smokeMedicaoValeWriter';
 import { runPanelChecks } from './smokeMedicaoValePanel';
 import { runValoresChecks } from './smokeMedicaoValeValores';
+import { runNaoReembolsaValeChecks } from './smokeNaoReembolsaMedicaoCliente';
 
 (async () => {
   // Sequenciado de propósito (`falhas += f()` lê `falhas` ANTES de chamar f e
@@ -263,6 +269,9 @@ import { runValoresChecks } from './smokeMedicaoValeValores';
   falhas = Math.max(falhas, f3);
   const f4 = await runValoresChecks({ ...tools, fixtures });
   falhas = Math.max(falhas, f4);
+  // [NR] "não reembolsa" fora da Medição Vale (DEM-1297 e casos extras).
+  const f5 = await runNaoReembolsaValeChecks(tools);
+  falhas = Math.max(falhas, f5);
 
   console.log(falhas === 0 ? '\n✅ SMOKE MEDICAO VALE: OK' : `\n❌ SMOKE MEDICAO VALE: ${falhas} falha(s)`);
   process.exit(falhas === 0 ? 0 : 1);

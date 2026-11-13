@@ -321,6 +321,12 @@ export interface Attachment {
   date: string;
   category: ExpenseCategory;
   value: number | string; // Valor monetário da notinha (aceita string para digitação fluida)
+  /**
+   * O texto como a pessoa digitou o valor, gravado pelo Salvar desde
+   * 13/11/2026 — só auditoria; quem soma é `value` (número). Ausente em todo
+   * item antigo, que continua lendo igual. Ver domain/expenseItemSave.ts.
+   */
+  valorDigitado?: string;
   otherId?: string; // Vinculo opcional para despesas em 'Outros'
   /**
    * Despesa que o CLIENTE nao reembolsa (ex.: Uber ate a locadora, almoco

@@ -54,6 +54,10 @@
  * independentemente de quem pagou.
  */
 
+// O ÚNICO import do módulo: o parser pt-BR, também puro e sem imports — os
+// smokes continuam rodando este arquivo sem React nem cliente de banco.
+import { lerCampoNumerico, parseMoneyBR } from './moneyBR';
+
 export type ExpenseCategoryKey = 'HOSPEDAGEM' | 'LOCOMOCAO' | 'CAFE' | 'ALMOCO' | 'JANTAR' | 'OUTROS';
 
 /** Só o que a conta lê de um item de despesa. */
@@ -74,6 +78,12 @@ export interface TotalizableAttachment {
    * simplesmente o ignora e continua devolvendo o total da demanda.
    */
   instructorId?: string | null;
+  /**
+   * O texto como a pessoa DIGITOU (gravado pelo Salvar desde 13/11/2026), só
+   * para auditoria. Nenhuma conta lê: quem soma é `value`. Ausente em todo
+   * item antigo — que continua lendo igual.
+   */
+  valorDigitado?: string | null;
 }
 
 /** Papel da pessoa dentro da medição. Ver `MeasurementParticipant`. */
@@ -130,12 +140,26 @@ export const isNaoReembolsavel = (a: TotalizableAttachment): boolean => a?.reemb
  */
 export const isPagoPeloInstrutor = (a: TotalizableAttachment): boolean => a?.pagoPeloInstrutor === true;
 
-/** Aceita `"1.234,56"`, `"12.5"` e number. Mesma tolerância do código original. */
+/**
+ * O valor de um ITEM de despesa como número — invólucro do parser pt-BR.
+ *
+ *   • NÚMERO passa intacto. É o formato de produção (o Salvar sempre gravou
+ *     número), e é isso que garante que nenhum valor já gravado muda em
+ *     superfície nenhuma.
+ *   • TEXTO vai para `parseMoneyBR` (domain/moneyBR.ts): "1.234,56" é 1234,56
+ *     (a leitura antiga dava 1,234) e "R$ 10,00" é 10 (dava 0).
+ *   • Texto recusado (ambíguo, letras, negativo...) ou vazio soma ZERO, como
+ *     sempre somou — mas NÃO em silêncio: o aviso sai por
+ *     domain/expenseValueIssues.ts em cada superfície.
+ *
+ * Só para valor de ITEM. Horas, valor hora/aula e valor HH (inputs
+ * type="number") ficam no caminho numérico: `lerCampoNumerico`.
+ */
 export function parseExpenseValue(v: number | string | null | undefined): number {
   if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
   if (typeof v !== 'string') return 0;
-  const n = parseFloat(v.replace(',', '.'));
-  return Number.isFinite(n) ? n : 0;
+  const r = parseMoneyBR(v);
+  return r.ok ? r.valor : 0;
 }
 
 export interface MeasurementTotals {
@@ -220,10 +244,10 @@ export function computeMeasurementTotals(
   const horaAula = (() => {
     const temBlocos = (m?.expenses?.participantes ?? []).length > 0;
     if (!temBlocos) {
-      return parseExpenseValue(m?.expenses?.classHours as any) * parseExpenseValue(m?.expenses?.hourRate as any);
+      return lerCampoNumerico(m?.expenses?.classHours) * lerCampoNumerico(m?.expenses?.hourRate);
     }
     const demandDefaultHours =
-      ctx?.demandDefaultHours ?? parseExpenseValue(m?.expenses?.classHours as any);
+      ctx?.demandDefaultHours ?? lerCampoNumerico(m?.expenses?.classHours);
     const blocos = normalizeMeasurementBlocks(m);
     // Demanda dividida: cada titular vale a sua fatia (`horasRateio`); sem a
     // fatia gravada, partes iguais — Σ dos titulares nunca passa da carga.
@@ -566,7 +590,7 @@ export interface ClientMeasurementExpenses {
   todas: PanelExpenseBreakdown;
 }
 
-/** Centavos, sem importar nada (este módulo não tem import — ver o cabeçalho de blocos). */
+/** Centavos, sem helper externo (este módulo só importa o parser puro de moneyBR.ts). */
 const centavos = (v: number): number => Math.round((v + Number.EPSILON) * 100) / 100;
 
 /**
@@ -679,7 +703,7 @@ export function computeClientMeasurementExpenses(
  * gerar linha até alguém digitar.
  *
  * A carga entra por INJEÇÃO (`PanelHoursContext`) e não por leitura de campo:
- * este módulo não tem nenhum import, e é isso que deixa os smokes rodarem sem
+ * este módulo só importa o parser puro de moneyBR.ts, e é isso que deixa os smokes rodarem sem
  * montar React nem cliente de banco.
  * ────────────────────────────────────────────────────────────────────────── */
 
@@ -709,7 +733,7 @@ export interface MeasurementPersonBlock {
  * hoje. É esse o contrato de compatibilidade, e ele é verificável.
  *
  * `titularInstructorId` entra por PARÂMETRO, e não por import de `Demand`:
- * este módulo não tem nenhum import, e é isso que deixa os smokes rodarem sem
+ * este módulo só importa o parser puro de moneyBR.ts, e é isso que deixa os smokes rodarem sem
  * montar React nem cliente de banco.
  */
 export function normalizeMeasurementBlocks(
@@ -726,9 +750,9 @@ export function normalizeMeasurementBlocks(
       {
         instructorId: titularInstructorId || '',
         papel: 'TITULAR',
-        horas: naoInformado(classHours) ? undefined : parseExpenseValue(classHours),
+        horas: naoInformado(classHours) ? undefined : lerCampoNumerico(classHours),
         horasInformadas: !naoInformado(classHours),
-        valorHH: parseExpenseValue(m?.expenses?.hourRate),
+        valorHH: lerCampoNumerico(m?.expenses?.hourRate),
         attachments: [...attachments],
         titular: true,
       },
@@ -774,10 +798,10 @@ export function normalizeMeasurementBlocks(
     return {
       instructorId: p?.instructorId || '',
       papel: (p?.papel as MeasurementRole) || (ehTitular ? 'TITULAR' : 'PARTICIPANTE'),
-      horas: naoInformado(p?.horas) ? undefined : parseExpenseValue(p?.horas),
+      horas: naoInformado(p?.horas) ? undefined : lerCampoNumerico(p?.horas),
       horasInformadas: !naoInformado(p?.horas),
-      horasRateio: naoInformado(p?.horasRateio) ? undefined : parseExpenseValue(p?.horasRateio),
-      valorHH: parseExpenseValue(p?.valorHH),
+      horasRateio: naoInformado(p?.horasRateio) ? undefined : lerCampoNumerico(p?.horasRateio),
+      valorHH: lerCampoNumerico(p?.valorHH),
       attachments: doBloco,
       titular: ehTitular,
     };

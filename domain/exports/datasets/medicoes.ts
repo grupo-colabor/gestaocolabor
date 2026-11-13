@@ -60,10 +60,10 @@ import {
   blockExpenseBreakdown,
   isNaoReembolsavel,
   isPagoPeloInstrutor,
-  parseExpenseValue,
   type MeasurementRole,
   type PanelExpenseBreakdown,
 } from '../../measurementTotals';
+import { lerCampoNumerico } from '../../moneyBR';
 import { computeInstructorHoursByDemand, eligibleDemandIdsForPayment } from '../../instructorHours';
 import { applyMeasurementOverrides, type HoursRowLike } from '../../measurementOverrides';
 import { resolveMeasurementPeople, type MeasurementPerson } from '../../measurementPeople';
@@ -246,7 +246,7 @@ export function buildMedicoesRows(src: MedicoesSource): MedicaoRow[] {
     const training = trainingsById.get(String(demand.trainingId));
     const interna = isInternalDemand(demand);
     const hibrida = !interna && isHybridModality((training as Training | undefined)?.modality ?? demand.modality);
-    const classHours = parseExpenseValue(m.expenses?.classHours as any);
+    const classHours = lerCampoNumerico(m.expenses?.classHours); // horas: caminho numérico (moneyBR.ts)
     const ctx = {
       demandDefaultHours: classHours > 0 ? classHours : panelDefaultHours(demand, training as Training | undefined),
       hibrida,

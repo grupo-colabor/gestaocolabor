@@ -502,6 +502,97 @@ export function aggregatePanelExpenseBreakdown(
 }
 
 
+/* ─────────────────── MEDIÇÃO DO CLIENTE (Medição Vale e BM) ───────────────────
+ *
+ * REGRA (11/2026): item de despesa marcado "NÃO REEMBOLSA" no Painel de Medição
+ * NUNCA entra na medição que vai para o cliente:
+ *   • Medição Vale — fora das colunas de despesa reembolsável, fora da base do
+ *     acréscimo de 20% e fora do total da linha;
+ *   • BM Vale — fora da linha de despesas, do acréscimo e do total do boletim.
+ * Só o item marcado sai; os demais itens da mesma demanda continuam entrando.
+ *
+ * ---------------------------------------------------------------------------
+ * Por que aqui, e por que UMA porta
+ * ---------------------------------------------------------------------------
+ * `entraNaMedicaoDoCliente` é a única decisão "este item entra?", e
+ * `computeClientMeasurementExpenses` é o único lugar que a aplica. Quem chama:
+ *
+ *   • `buildMedicaoValeRows` (domain/exports/datasets/medicaoVale.ts), uma vez
+ *     por demanda — vira `input.despesas` (colunas L, N, O, P) e
+ *     `naoReembolsavelExcluido` (o aviso do painel);
+ *   • o BM NÃO lê anexo nenhum: os números dele saem das células da MESMA
+ *     resolução da aba Turmas (`turmasNumeros` em medicaoValeBm.ts), e o
+ *     excluído por mina é a soma dos `naoReembolsavelExcluido` das turmas.
+ *
+ * Por isso o filtro não existe em dois lugares, e Σ BM = Σ Medição Vale continua
+ * valendo por construção.
+ *
+ * O predicado é `isNaoReembolsavel` NEGADO — o mesmo que o card "Despesas Não
+ * Reembolsáveis" do Dashboard usa — e o percurso é `computePanelExpenseBreakdown`
+ * (mesmo mapa 6 → 4, mesmo órfão de OUTROS fora). Não há segunda leitura da flag.
+ *
+ * O que isto NÃO muda (de propósito):
+ *   • Painel de Medição: o item marcado continua no Subtotal Final e na
+ *     categoria — no painel "não reembolsável" é recorte, não subtração;
+ *   • Excel de pagamento: quem manda lá é `isPagoPeloInstrutor`;
+ *   • Dashboard e os datasets Despesas / Medições: leem o próprio recorte.
+ *
+ * Valor digitado em Campos manuais (measurement_template_values — na Vale, o
+ * combustível e o % de despesa) não passa por aqui: é número digitado para a
+ * turma, sem item por trás, e continua valendo como está.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * O item entra na medição do CLIENTE (Medição Vale / BM)? Ausência da flag =
+ * entra, como em `isNaoReembolsavel` — item antigo continua valendo sem backfill.
+ */
+export const entraNaMedicaoDoCliente = (a: TotalizableAttachment): boolean => !isNaoReembolsavel(a);
+
+export interface ClientMeasurementExpenses {
+  /**
+   * Os quatro buckets do painel só com os itens que ENTRAM — o que vai para
+   * as colunas de despesa da Vale e para a base do acréscimo.
+   */
+  entram: PanelExpenseBreakdown;
+  /**
+   * Σ dos itens marcados como não reembolsáveis: o que ficou FORA. É a mesma
+   * quebra do card do Dashboard (`itemFilter: isNaoReembolsavel`), arredondada
+   * em centavos para o aviso.
+   */
+  naoReembolsavelExcluido: number;
+  /** Quantos itens ficaram fora. */
+  itensExcluidos: number;
+  /** Todos os itens, como o painel soma (referência para conferência). */
+  todas: PanelExpenseBreakdown;
+}
+
+/** Centavos, sem importar nada (este módulo não tem import — ver o cabeçalho de blocos). */
+const centavos = (v: number): number => Math.round((v + Number.EPSILON) * 100) / 100;
+
+/**
+ * As despesas de UMA medição como a medição do cliente as vê. Medição ausente
+ * devolve tudo zerado — é a demanda sem medição aberta, que o painel de
+ * pendências já avisa ("Sem medição aberta"); não é erro engolido.
+ *
+ * `entram` e o excluído são uma PARTIÇÃO dos itens de `todas` (órfão de OUTROS
+ * fora dos três), então `entram.total + naoReembolsavelExcluido = todas.total`
+ * a menos de arredondamento.
+ */
+export function computeClientMeasurementExpenses(
+  m: TotalizableMeasurement | null | undefined
+): ClientMeasurementExpenses {
+  const entram = computePanelExpenseBreakdown(m, { itemFilter: entraNaMedicaoDoCliente });
+  const fora = computePanelExpenseBreakdown(m, { itemFilter: isNaoReembolsavel });
+  const todas = computePanelExpenseBreakdown(m);
+  return {
+    entram,
+    naoReembolsavelExcluido: centavos(fora.total),
+    itensExcluidos: fora.itens,
+    todas,
+  };
+}
+
+
 /* ─────────────────────── BLOCOS POR PESSOA (medição v2) ─────────────────────
  *
  * Toda medição gravada até aqui é implicitamente MONO-PESSOA: uma linha por

@@ -112,6 +112,11 @@ export function buildBmFixture() {
  * resolução da aba Turmas do vale-v1 (a mesma que vira XLSX) — independente
  * do dataset do BM. Devolve também a parcela das turmas que o BM deixa fora
  * (sem local ou, com "Todos", sem corredor).
+ *
+ * EXATO, sem arredondar (regra do Bernardo, 11/2026: nenhum valor monetário
+ * é arredondado no cálculo da Medição Vale nem do BM). As comparações
+ * BM × Medição Vale exigem igualdade — `perto` só absorve o ruído de ponto
+ * flutuante da ordem das somas (1e-6), nunca centavo.
  */
 export function sigmaMedicaoVale(rows: MedicaoValeRow[], values: TemplateValuesIndex) {
   const sheet = VALE_TEMPLATE.sheets[0];
@@ -131,8 +136,7 @@ export function sigmaMedicaoVale(rows: MedicaoValeRow[], values: TemplateValuesI
     if (r.input.local.trim() && String(r.input.corredor ?? '').trim()) noBm += I + P;
     else foraDoBm += I + P;
   });
-  const r2 = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
-  return { noBm: r2(noBm), foraDoBm: r2(foraDoBm), turmas: elegiveis.length };
+  return { noBm, foraDoBm, turmas: elegiveis.length };
 }
 
 export async function runBmChecks(t: BmSmokeTools): Promise<number> {
@@ -192,7 +196,7 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
       const linhas20 = m.linhas.filter(l => l.tipo === 'treinamento').reduce((acc, l) => acc + (l.preco ?? 0) * (l.quantidade ?? 0), 0);
       perto(`${m.mina}: Σ preço×quantidade das linhas 20 = Σ coluna I das turmas`, linhas20, sigmaI);
       perto(`${m.mina}: quantidade da linha 70 = Σ coluna P`, m.linhas[m.linhas.length - 1].quantidade, sigmaP);
-      perto(`${m.mina}: totalTreinamentos coerente`, m.totalTreinamentos, Math.round((sigmaI + Number.EPSILON) * 100) / 100);
+      perto(`${m.mina}: totalTreinamentos coerente (exato)`, m.totalTreinamentos, sigmaI);
     }
     // P respeita o % de cada turma (DEM-110 com 10%): 100 × 1,1 = 110; DEM-100: (80+45+50+200+25) × 1,2 = 480.
     const n110 = numeros.find(n => n.demandId === 'DEM-110')!;
@@ -251,11 +255,11 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
     // Σ dos totais dos BMs = Σ (I + P) da Medição Vale do mesmo recorte (turmas com local e corredor).
     const sigma = sigmaMedicaoVale(recorteTodos, src.templateValues);
     const sigmaBm = todos.minas.reduce((acc, m) => acc + m.totalTreinamentos + m.totalDespesas, 0);
-    perto('Σ dos totais dos BMs = Σ (I + P) da Medição Vale do recorte "Todos"', Math.round((sigmaBm + Number.EPSILON) * 100) / 100, sigma.noBm);
+    perto('Σ dos totais dos BMs = Σ (I + P) da Medição Vale do recorte "Todos" (igualdade, sem centavo de folga)', sigmaBm, sigma.noBm);
     check('o que fica fora do BM (sem local / sem corredor) é exatamente DEM-113 + DEM-115, e não é zero', sigma.foraDoBm > 0 && sigma.turmas === todos.minas.reduce((a, m) => a + m.turmas.length, 0) + todos.semLocal.length + todos.semCorredor.length);
     // O mesmo fecha para o recorte de um corredor só.
     const sigmaSud = sigmaMedicaoVale(recorte, src.templateValues);
-    perto('Σ dos totais dos BMs do Sudeste = Σ (I + P) da Medição Vale do recorte Sudeste', Math.round((soSudeste.minas.reduce((acc, m) => acc + m.totalTreinamentos + m.totalDespesas, 0) + Number.EPSILON) * 100) / 100, sigmaSud.noBm);
+    perto('Σ dos totais dos BMs do Sudeste = Σ (I + P) da Medição Vale do recorte Sudeste (igualdade)', soSudeste.minas.reduce((acc, m) => acc + m.totalTreinamentos + m.totalDespesas, 0), sigmaSud.noBm);
 
     // Todos + mina: a mesma mina pode existir em mais de um corredor — o BM filtra a mina e mantém o corredor de cada uma.
     const soVitoria = buildBm(recorteTodos, src.templateValues, VALE_BM_TEMPLATE, { mina: 'Vitória' });
@@ -351,7 +355,7 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
     perto('total dos treinamentos = 8×290 + 32×200 + 8×300 + 32×210 + 4×250 + 40×120', bru.totalTreinamentos, 8 * 290 + 32 * 200 + 8 * 300 + 32 * 210 + 4 * 250 + 40 * 120);
     // Σ BM = Σ (K + R) da aba Turmas — a prova de que os dois documentos batem com a híbrida dividida.
     const sigmaH = sigmaMedicaoVale(rowsH, values);
-    perto('Σ BM = Σ (K + R) da Medição Vale com híbridas', Math.round((bru.totalTreinamentos + bru.totalDespesas + Number.EPSILON) * 100) / 100, sigmaH.noBm);
+    perto('Σ BM = Σ (K + R) da Medição Vale com híbridas (igualdade)', bru.totalTreinamentos + bru.totalDespesas, sigmaH.noBm);
 
     // A folha do BM: quantidade em branco sai amarela.
     const region = bmRegionRows(bru);
@@ -384,7 +388,7 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
     check('a turma herdada aparece na mina dela', bmR.minas.some(m => m.turmas.some(r => r.demand.id === 'DEM-116')));
     const sigmaR = sigmaMedicaoVale(recorteR, srcR.templateValues);
     const sigmaBmR = bmR.minas.reduce((acc, m) => acc + m.totalTreinamentos + m.totalDespesas, 0);
-    perto('Σ BM = Σ Medição Vale com o critério novo', Math.round((sigmaBmR + Number.EPSILON) * 100) / 100, sigmaR.noBm);
+    perto('Σ BM = Σ Medição Vale com o critério novo (igualdade)', sigmaBmR, sigmaR.noBm);
     check('e o Σ cresceu com a turma herdada (não passou à toa)', sigmaR.noBm > sigmaMedicaoVale(recorte, src.templateValues).noBm);
   }
 

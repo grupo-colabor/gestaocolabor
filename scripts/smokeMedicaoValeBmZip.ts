@@ -108,13 +108,12 @@ export async function runBmZipChecks(t: BmSmokeTools, ctx: { src: any; recorte: 
       const h = Number(ws.getCell(`H${r}`).value ?? 0) || 0;
       soma += g * h;
     }
-    soma = Math.round((soma + Number.EPSILON) * 100) / 100;
     const m = todos.minas.find(x => bmZipEntryName(VALE_BM_TEMPLATE, x, di, df, true) === a)!;
-    perto(`${a}: Σ G×H da região = total do BM da mina`, soma, Math.round((m.totalTreinamentos + m.totalDespesas + Number.EPSILON) * 100) / 100);
+    perto(`${a}: Σ G×H da região = total do BM da mina (exato)`, soma, m.totalTreinamentos + m.totalDespesas);
     sigmaArquivos += soma;
   }
   const sigma = sigmaMedicaoVale(ctx.recorteTodos, ctx.src.templateValues);
-  perto('Σ dos totais dos três arquivos = Σ (I + P) da Medição Vale do recorte "Todos"', Math.round((sigmaArquivos + Number.EPSILON) * 100) / 100, sigma.noBm);
+  perto('Σ dos totais dos três arquivos = Σ (I + P) da Medição Vale do recorte "Todos" (igualdade)', sigmaArquivos, sigma.noBm);
 
   let lancouCaminho = false;
   try { await buildZip([{ name: '../a.xlsx', data: new Uint8Array(1) }]); } catch { lancouCaminho = true; }

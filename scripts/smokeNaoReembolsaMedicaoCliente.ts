@@ -45,6 +45,7 @@ import { applyFilters } from '../domain/exports/filters';
 import { EMPTY_FILTERS } from '../domain/exports/types';
 import { buildTrainingsById } from '../domain/modalityOptions';
 import { buildTemplateXlsxBuffer } from '../services/exports/templateXlsxWriter';
+import { formatPreviewCell } from '../components/exportacoes/formatCell';
 import { COMPANIES, HOJE, TRAININGS, demandaVale, medicao } from './smokeMedicaoValeDatasets';
 import { sigmaMedicaoVale } from './smokeMedicaoValeBmChecks';
 
@@ -127,7 +128,7 @@ function planilha(rows: MedicaoValeRow[], values: TemplateValuesIndex) {
   const ci = (k: string) => s.columns.findIndex(c => c.key === k);
   return linhas.map((l, i) => {
     const v = (k: string) => s.rows[i][ci(k)].value;
-    const base = r2(DESPESA_COLS.reduce((acc, k) => acc + n(v(k)), 0));
+    const base = DESPESA_COLS.reduce((acc, k) => acc + n(v(k)), 0); // exata, como o SUM do Excel
     const pct = n(v('pctDespesa'));
     return {
       demandId: l.refs.demandId,
@@ -150,16 +151,11 @@ const textosPendencia = (rows: MedicaoValeRow[], values: TemplateValuesIndex, de
 
 const AVISO_1297 = 'Item não reembolsável fora das colunas da Vale (R$ 180,89)';
 
-/**
- * Σ BM vs Σ Medição Vale, com até 1 centavo de folga POR UM MOTIVO SÓ, que
- * não é desta rodada: o BM arredonda o P de cada turma antes de somar
- * (`turmasNumeros`: 182,364 → 182,36), e o total da coluna R da Medição Vale
- * soma sem arredondar (2 × 182,364 = 364,728 → 364,73). Com valores de 3ª
- * casa (151,97 × 1,2) os dois documentos podem diferir em 1 centavo. Achado
- * registrado no relatório, decisão de negócio pendente — não é o "não
- * reembolsa": um item marcado vazando daria diferença de 180,89 × 1,2.
+/*
+ * Σ BM × Σ Medição Vale: IGUALDADE (regra do Bernardo, 11/2026 — nenhum valor
+ * monetário arredondado no cálculo; 2 casas só na exibição). `perto` absorve
+ * só o ruído de ponto flutuante da ordem das somas (1e-6), nunca centavo.
  */
-const ATE_UM_CENTAVO = 0.0100001;
 
 const texto = (v: any): string | null => {
   if (v === null || v === undefined) return null;
@@ -331,7 +327,7 @@ export async function runNaoReembolsaValeChecks(t: NrTools): Promise<number> {
     eq('híbrida: duas linhas, presencial e online', ls.map(l => l.parte), ['PRESENCIAL', 'ONLINE']);
     eq('híbrida: L presencial = 151,97; online = 0', [ls[0].L, ls[1].L], [151.97, 0]);
     eq('híbrida: online com L..P todo zerado', [ls[1].L, ls[1].M, ls[1].N, ls[1].O, ls[1].P], [0, 0, 0, 0, 0]);
-    perto('híbrida: Σ base do 20% nas duas linhas = R$ 151,97 (não duplica)', r2(ls[0].base + ls[1].base), 151.97);
+    perto('híbrida: Σ base do 20% nas duas linhas = R$ 151,97 (não duplica)', ls[0].base + ls[1].base, 151.97);
     perto('híbrida: R presencial = R$ 182,364', ls[0].R, 182.364);
     perto('híbrida: R online = 0 (a despesa não reaparece na segunda linha)', ls[1].R, 0);
     check('híbrida: nenhuma linha carrega 180,89 nem 332,86', !ls.some(l => l.numeros.some(x => Math.abs(x - 180.89) < 1e-6 || Math.abs(x - 332.86) < 1e-6)));
@@ -489,7 +485,7 @@ export async function runNaoReembolsaBmChecks(t: NrTools): Promise<number> {
     perto('DEM-1297: conferência — R$ 180,89 fora', bru.naoReembolsavelExcluido, 180.89);
     eq('DEM-1297: a demanda afetada aparece na conferência', bru.turmasComNaoReembolsavel, ['DEM-1297']);
     eq('aviso da conferência', avisoBmNaoReembolsavel(bru.naoReembolsavelExcluido, bru.turmasComNaoReembolsavel.length), 'R$ 180,89 não reembolsável fora da linha de despesas (1 turma(s))');
-    perto('Σ BM = Σ Medição Vale com uma turma só (exato: o BM lê as mesmas células)', r2(bru.totalTreinamentos + bru.totalDespesas), sigmaMedicaoVale(so1297, values).noBm);
+    perto('Σ BM = Σ Medição Vale com uma turma só (igualdade: o BM lê as mesmas células)', bru.totalTreinamentos + bru.totalDespesas, sigmaMedicaoVale(so1297, values).noBm);
 
     // O XLSX do BM, lido de volta.
     const basePath = path.join(raiz, 'public', 'templates', 'vale-bm.xlsx');
@@ -535,12 +531,8 @@ export async function runNaoReembolsaBmChecks(t: NrTools): Promise<number> {
     perto('híbrida: despesas uma vez só = 182,364', despesasDe(caue)!, 182.364);
     perto('híbrida: conferência R$ 180,89 uma vez (não 361,78)', caue.naoReembolsavelExcluido, 180.89);
 
-    {
-      const sigmaBm = r2(bm.minas.reduce((acc, m) => acc + m.totalTreinamentos + m.totalDespesas, 0));
-      const sigmaVale = sigmaMedicaoVale(recorte, values).noBm;
-      check('Σ BM (Sudeste) = Σ Medição Vale do mesmo recorte (até 1 centavo — arredondamento por turma do BM, ver ATE_UM_CENTAVO)',
-        Math.abs(sigmaBm - sigmaVale) <= ATE_UM_CENTAVO, `BM ${sigmaBm}, Vale ${sigmaVale}`);
-    }
+    perto('Σ BM (Sudeste) = Σ Medição Vale do mesmo recorte (igualdade, sem centavo de folga)',
+      bm.minas.reduce((acc, m) => acc + m.totalTreinamentos + m.totalDespesas, 0), sigmaMedicaoVale(recorte, values).noBm);
     perto('barra: Σ fora nas minas', bm.naoReembolsavelExcluido, 210.89 + 332.86 + 180.89);
     eq('barra: quatro turmas afetadas', bm.turmasComNaoReembolsavel, 4);
 
@@ -560,11 +552,86 @@ export async function runNaoReembolsaBmChecks(t: NrTools): Promise<number> {
     perto('Todos: conferência de Vitória = R$ 46,95', vit.naoReembolsavelExcluido, 46.95);
     perto('Todos: barra soma as quatro minas', todos.naoReembolsavelExcluido, r2(sudeste.naoReembolsavelExcluido + 46.95));
     eq('Todos: entrada do zip da DEM-1297 na pasta do corredor', bmZipEntryName(VALE_BM_TEMPLATE, todos.minas[1], '2026-08-01', '2026-08-31', true), 'sudeste/vale-bm-sudeste-brucutu-2026-08-01_2026-08-31.xlsx');
-    {
-      const sigmaBm = r2(todos.minas.reduce((acc, m) => acc + m.totalTreinamentos + m.totalDespesas, 0));
-      const sigmaVale = sigmaMedicaoVale(recorteTodos, values).noBm;
-      check('Todos: Σ BMs = Σ Medição Vale do recorte (até 1 centavo — ver ATE_UM_CENTAVO)',
-        Math.abs(sigmaBm - sigmaVale) <= ATE_UM_CENTAVO, `BM ${sigmaBm}, Vale ${sigmaVale}`);
+    perto('Todos: Σ BMs = Σ Medição Vale do recorte (igualdade)',
+      todos.minas.reduce((acc, m) => acc + m.totalTreinamentos + m.totalDespesas, 0), sigmaMedicaoVale(recorteTodos, values).noBm);
+  }
+
+  /* ── Sem arredondamento no cálculo: duas turmas com 151,97 de despesa ──
+   * 151,97 × 1,2 = 182,364 por turma; Σ = 364,728 no BM E na Medição Vale,
+   * exibido 364,73. Antes o BM arredondava cada turma (182,36 + 182,36 =
+   * 364,72) e ficava 1 centavo abaixo da Medição Vale. */
+  console.log('\n[ARR] Sem arredondamento no cálculo — duas turmas com 151,97');
+  {
+    const combustivel = ITENS_1297()[0];
+    const dem1305 = demandaVale({ id: 'DEM-1305', trainingLocal: 'Brucutu', startDate: '2026-08-12T08:00', endDate: '2026-08-13T17:00' });
+    const srcA = fonteNr([dem1297(), dem1305], [med1297(), medicao('DEM-1305', { attachments: [{ ...combustivel, id: 'n1305-comb' }] })]);
+    const rowsA = buildMedicaoValeRows(srcA);
+
+    // Medição Vale: as duas linhas e o total da coluna R, como o Excel calcula.
+    const ls = planilha(rowsA, srcA.templateValues);
+    eq('Medição Vale: L = 151,97 nas duas turmas', ls.map(l => l.L), [151.97, 151.97]);
+    perto('Medição Vale: R de cada turma = 182,364 (sem arredondar)', ls[0].R, 182.364);
+    perto('Medição Vale: R da segunda turma = 182,364', ls[1].R, 182.364);
+    const sigmaR = ls.reduce((acc, l) => acc + l.R, 0);
+    perto('Medição Vale: Σ coluna R = 364,728', sigmaR, 364.728);
+
+    // BM: linha "Despesas Tributáveis" e total do boletim.
+    const bmA = buildBm(rowsA.filter(r => r.elegivelTurmas), srcA.templateValues, VALE_BM_TEMPLATE, { corredor: 'Sudeste', mina: 'Brucutu' });
+    const bru = bmA.minas[0];
+    perto('BM: linha "Despesas Tributáveis" = 364,728 (não 364,72)', despesasDe(bru)!, 364.728);
+    perto('BM × Medição Vale: linha de despesas = Σ coluna R (igualdade)', despesasDe(bru)!, sigmaR);
+    perto('BM: total do boletim = 2 × 16h × 120 + 364,728 = 4204,728', bru.totalTreinamentos + bru.totalDespesas, 4204.728);
+    perto('BM × Medição Vale: total do boletim = Σ (K + R) (igualdade)', bru.totalTreinamentos + bru.totalDespesas, sigmaMedicaoVale(rowsA, srcA.templateValues).noBm);
+
+    // Exibição: 2 casas, só aqui.
+    const tela = (v: number) => formatPreviewCell(v, 'currency').replace(/ /g, ' ');
+    eq('exibido na prévia: R$ 364,73', tela(despesasDe(bru)!), 'R$ 364,73');
+    eq('total exibido na prévia: R$ 4.204,73', tela(bru.totalTreinamentos + bru.totalDespesas), 'R$ 4.204,73');
+
+    const ExcelJS = (await import('exceljs')) as any;
+    const Workbook = (ExcelJS.default ?? ExcelJS).Workbook;
+    const doisDecimais = (fmt: unknown) => /0[.,]00(?![0#])/.test(String(fmt ?? ''));
+
+    const baseBm = path.join(raiz, 'public', 'templates', 'vale-bm.xlsx');
+    if (fs.existsSync(baseBm)) {
+      const sheets = resolveTemplate(VALE_BM_TEMPLATE, [], srcA.templateValues, {
+        context: bru.contexto, manual: { dataEnvio: '2026-09-16' }, periodoLabel: periodoLabel('2026-08-01', '2026-08-31'), regionRows: bmRegionRows(bru),
+      });
+      const wb = new Workbook();
+      await wb.xlsx.load(await buildTemplateXlsxBuffer(VALE_BM_TEMPLATE, sheets, fs.readFileSync(baseBm)));
+      const ws = wb.worksheets[0];
+      const ultima = 19 + bru.linhas.length - 1;
+      perto('XLSX do BM: H da linha de despesas = 364,728 gravado exato', ws.getCell(`H${ultima}`).value, 364.728);
+      eq(`XLSX do BM: I${ultima} = G×H (sem ROUND)`, texto(ws.getCell(`I${ultima}`).value), `=G${ultima}*H${ultima}`);
+      check(`XLSX do BM: I${ultima} (valor total da linha de despesas) com 2 casas — exibe 364,73`, doisDecimais(ws.getCell(`I${ultima}`).numFmt), String(ws.getCell(`I${ultima}`).numFmt));
+      check('XLSX do BM: I43 (total do boletim) com 2 casas — exibe 4.204,73', doisDecimais(ws.getCell('I43').numFmt), String(ws.getCell('I43').numFmt));
+      // A coluna Quantidade (H) tem 3 casas NO MODELO DA VALE (#,##0.000) —
+      // formato do arquivo, não do app: exibe 364,728. Preso para que mudar
+      // isso seja decisão explícita, não efeito colateral.
+      check(`XLSX do BM: H${ultima} mantém o formato de 3 casas do modelo`, /#,##0\.000/.test(String(ws.getCell(`H${ultima}`).numFmt)), String(ws.getCell(`H${ultima}`).numFmt));
+    } else check('arquivo-base do BM existe', false);
+
+    const baseVale = path.join(raiz, 'public', 'templates', 'vale.xlsx');
+    if (fs.existsSync(baseVale)) {
+      const sheets = resolveTemplate(VALE_TEMPLATE, toRowsSheetInput(rowsA, VALE_TEMPLATE), srcA.templateValues);
+      const wb = new Workbook();
+      await wb.xlsx.load(await buildTemplateXlsxBuffer(VALE_TEMPLATE, sheets, fs.readFileSync(baseVale)));
+      const ws = wb.getWorksheet('Turmas Realizadas');
+      eq('XLSX da Medição Vale: L2 e L3 = 151,97', [ws.getCell('L2').value, ws.getCell('L3').value], [151.97, 151.97]);
+      eq('XLSX da Medição Vale: R2/R3 sem ROUND', [texto(ws.getCell('R2').value), texto(ws.getCell('R3').value)], ['=SUM(L2:P2)+(SUM(L2:P2)*Q2)', '=SUM(L3:P3)+(SUM(L3:P3)*Q3)']);
+      eq('XLSX da Medição Vale: total R4 = SUM(R2:R3) (Excel calcula 364,728)', texto(ws.getCell('R4').value), '=SUM(R2:R3)');
+      check('XLSX da Medição Vale: R4 com formato de 2 casas (exibe 364,73)', doisDecimais(ws.getCell('R4').numFmt), String(ws.getCell('R4').numFmt));
+    } else check('arquivo-base da Vale existe', false);
+
+    // Guardas: no cálculo do BM sobra arredondamento só no valor da
+    // conferência "não reembolsável" (texto, mantido por decisão); nenhuma
+    // fórmula dos dois modelos usa ROUND.
+    const bmSrc = semComentarios(ler('domain/exports/datasets/medicaoValeBm.ts'));
+    const linhasComRound = bmSrc.split('\n').filter(l => /round2\(|Math\.round|toFixed/.test(l));
+    check('medicaoValeBm.ts: round2 só na conferência e toFixed só no texto do aviso',
+      linhasComRound.every(l => /naoReembolsavelExcluido/.test(l) || /const reais = /.test(l)), linhasComRound.join(' | '));
+    for (const f of ['domain/exports/templates/vale.ts', 'domain/exports/templates/vale-bm.ts']) {
+      check(`${f}: nenhuma fórmula com ROUND`, !/ROUND/i.test(semComentarios(ler(f))));
     }
   }
 

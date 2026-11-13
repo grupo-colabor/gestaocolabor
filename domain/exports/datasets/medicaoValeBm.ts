@@ -30,6 +30,14 @@
  * Turma sem local (`trainingLocal` vazio) NÃO gera BM "sem local": fica em
  * `semLocal` para a tela mostrar em destaque e o painel avisar. Nunca
  * silencioso.
+ *
+ * NÃO REEMBOLSA (11/2026): item marcado no Painel de Medição nunca entra na
+ * linha de despesas, no acréscimo nem no total do BM. O BM não lê anexo para
+ * garantir isso — as despesas dele são as células L..P da aba Turmas, que já
+ * saem da porta única `computeClientMeasurementExpenses`
+ * (domain/measurementTotals.ts). O que ficou fora é somado por mina
+ * (`naoReembolsavelExcluido`, uma vez por TURMA — a híbrida não duplica) a
+ * partir da própria linha da Medição Vale, só para a conferência da tela.
  */
 import type { HybridPart, MeasurementTemplate } from '../templates/types';
 import { VALE_TEMPLATE } from '../templates/vale';
@@ -69,6 +77,15 @@ export interface BmMina {
   totalTreinamentos: number;
   /** Quantidade da linha de despesas (= Σ P das turmas). */
   totalDespesas: number;
+  /**
+   * Σ do que ficou FORA da linha de despesas por estar marcado "não reembolsa"
+   * — sem acréscimo, uma vez por turma. Lido da linha da Medição Vale
+   * (`naoReembolsavelExcluido`), não recalculado. Só conferência: não entra em
+   * número nenhum do boletim.
+   */
+  naoReembolsavelExcluido: number;
+  /** Demandas desta mina com item não reembolsável excluído. */
+  turmasComNaoReembolsavel: string[];
 }
 
 export interface BmResult {
@@ -82,6 +99,21 @@ export interface BmResult {
   /** Só com "Todos": turmas com corredor vazio na demanda — fora do BM, nunca silencioso. */
   semCorredor: MedicaoValeRow[];
   nomesDuplicados: { nome: string; trainingIds: string[] }[];
+  /** Σ de `naoReembolsavelExcluido` das minas — o aviso da barra, antes de gerar. */
+  naoReembolsavelExcluido: number;
+  /** Quantas turmas (de todas as minas) tiveram item não reembolsável excluído. */
+  turmasComNaoReembolsavel: number;
+}
+
+/** "R$ 1234,56" — o mesmo formato do aviso de linha da Medição Vale (pendencias.ts). */
+const reais = (v: number): string => `R$ ${v.toFixed(2).replace('.', ',')}`;
+
+/**
+ * O aviso da conferência do BM: o que o boletim deixou fora da linha de
+ * despesas por "não reembolsa". Uma frase só para a mina e para a barra.
+ */
+export function avisoBmNaoReembolsavel(valor: number, turmas: number): string {
+  return `${reais(valor)} não reembolsável fora da linha de despesas (${turmas} turma(s))`;
 }
 
 export interface BuildBmOptions {
@@ -289,11 +321,24 @@ export function buildBm(
       const totalTreinamentos = round2(linhasTreino.reduce((acc, l) => acc + (l.preco ?? 0) * (l.quantidade ?? 0), 0));
       const cabecalhoIncompleto = [...semDefault].filter(k => ctxValor(k) === null);
 
-      return { corredor, mina, contextKey: key, contexto, cabecalhoIncompleto, turmas, linhas, totalTreinamentos, totalDespesas };
+      // Conferência: por TURMA (a linha do dataset), nunca pelas linhas do
+      // QQP — a híbrida tem duas linhas e uma turma só.
+      const comNaoReembolsavel = turmas.filter(t => t.naoReembolsavelExcluido > 0);
+      const naoReembolsavelExcluido = round2(comNaoReembolsavel.reduce((acc, t) => acc + t.naoReembolsavelExcluido, 0));
+
+      return {
+        corredor, mina, contextKey: key, contexto, cabecalhoIncompleto, turmas, linhas, totalTreinamentos, totalDespesas,
+        naoReembolsavelExcluido,
+        turmasComNaoReembolsavel: comNaoReembolsavel.map(t => t.demand.id),
+      };
     });
 
   const corredores = [...new Set(minas.map(m => m.corredor))];
-  return { corredor: corredorFiltro, corredores, minas, semLocal, semCorredor, nomesDuplicados };
+  return {
+    corredor: corredorFiltro, corredores, minas, semLocal, semCorredor, nomesDuplicados,
+    naoReembolsavelExcluido: round2(minas.reduce((acc, m) => acc + m.naoReembolsavelExcluido, 0)),
+    turmasComNaoReembolsavel: minas.reduce((acc, m) => acc + m.turmasComNaoReembolsavel.length, 0),
+  };
 }
 
 /** As linhas de uma mina no formato da região da folha form. */

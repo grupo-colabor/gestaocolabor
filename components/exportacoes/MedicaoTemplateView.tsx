@@ -21,6 +21,9 @@
  *     avisada na barra e no painel. Não bloqueia nada: é o efeito esperado da
  *     seleção pela data de término, e o aviso existe para quem compara com a
  *     medição do mês passado saber por que a turma está aqui;
+ *   • item "não reembolsa" fica fora dos dois documentos (regra no domínio,
+ *     `computeClientMeasurementExpenses`); a Medição Vale avisa por turma no
+ *     painel e o BM mostra, na barra e em cada mina, quanto ficou fora;
  *   • falha de banco (carga ou salvar) e falha no arquivo-base viram banner e
  *     bloqueiam a geração.
  */
@@ -45,6 +48,7 @@ import {
   bmFileName,
   bmZipName,
   bmZipEntryName,
+  avisoBmNaoReembolsavel,
   periodoLabel as bmPeriodoLabel,
 } from '../../domain/exports/datasets/medicaoValeBm';
 import { buildPendencias, mergePendencias, type Pendencia } from '../../domain/exports/pendencias';
@@ -426,6 +430,12 @@ const MedicaoTemplateView: React.FC<{
             <div className="flex items-center gap-2 bg-amber-400 text-slate-900 rounded-xl px-3 py-2 text-xs font-black">
               <AlertTriangle size={16} />
               {bm.semCorredor.length} turma(s) sem corredor ficaram fora do BM — informe o corredor na demanda
+            </div>
+          )}
+          {isBm && bm && bm.naoReembolsavelExcluido > 0 && (
+            <div className="flex items-center gap-2 bg-slate-700 text-slate-100 rounded-xl px-3 py-2 text-xs font-bold">
+              <Info size={16} className="shrink-0" />
+              {avisoBmNaoReembolsavel(bm.naoReembolsavelExcluido, bm.turmasComNaoReembolsavel)}
             </div>
           )}
           {comecaramAntes.length > 0 && (

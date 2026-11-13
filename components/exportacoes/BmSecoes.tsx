@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronRight, FileSignature, Table2 } from 'lucide-react';
-import type { BmMina, BmResult } from '../../domain/exports/datasets/medicaoValeBm';
+import { avisoBmNaoReembolsavel, type BmMina, type BmResult } from '../../domain/exports/datasets/medicaoValeBm';
 import type { MeasurementTemplate } from '../../domain/exports/templates/types';
 import type { TemplateValuesIndex } from '../../domain/exports/templates/values';
 import { getTemplateValue } from '../../domain/exports/templates/values';
@@ -172,6 +172,15 @@ const MinaPrevia: React.FC<{ mina: BmMina; periodoLabel: string }> = ({ mina, pe
           </tbody>
         </table>
       </div>
+      {/* Conferência antes de gerar: o que o boletim deixou fora por "não reembolsa". */}
+      {mina.naoReembolsavelExcluido > 0 && (
+        <p
+          className="px-6 py-2 border-t border-amber-100 bg-amber-50 text-[11px] font-bold text-amber-800"
+          title={mina.turmasComNaoReembolsavel.join(', ')}
+        >
+          {avisoBmNaoReembolsavel(mina.naoReembolsavelExcluido, mina.turmasComNaoReembolsavel.length)} — {mina.turmasComNaoReembolsavel.join(', ')}
+        </p>
+      )}
     </div>
   );
 };

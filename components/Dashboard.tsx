@@ -21,9 +21,11 @@ import { demandIntersectsRange } from '../domain/demandDays';
 import {
   aggregateMeasurements,
   aggregatePanelExpenseBreakdown,
+  parseExpenseValue,
   PANEL_EXPENSE_LABELS,
   type PanelExpenseBucket,
 } from '../domain/measurementTotals';
+import { notaItensSemValor, summarizeMeasurementsValueIssues } from '../domain/expenseValueIssues';
 import { listNonReimbursableByDemand } from '../domain/nonReimbursableExpenses';
 import { MEASUREMENT_STATUS_LABELS } from '../domain/measurementStatus';
 import NonReimbursableCard from './dashboard/NonReimbursableCard';
@@ -100,14 +102,13 @@ const STATUS_LABELS: Record<string, string> = {
 type TabType = 'GERAL' | 'OPERACIONAL' | 'INSTRUTORES' | 'CLIENTES' | 'CUSTOS' | 'INTERNAS';
 
 /**
- * Valor de um item de medição como número; inválido = 0. É a MESMA leitura
- * que o KPI "Total em Despesas" e a aba Custos sempre fizeram (`toVal`), para
- * o `costOf` de computeVolume somar exatamente o que o KPI soma.
+ * Valor de um item de medição como número. É a MESMA leitura em todo o
+ * Dashboard — KPI "Total em Despesas", aba Custos, relatório e export — e a
+ * do resto do app: `parseExpenseValue` (parser pt-BR; número gravado passa
+ * intacto). Item sem valor ou ilegível soma 0 e é CONTADO na nota do KPI
+ * ("N itens sem valor fora da soma"), nunca some calado.
  */
-const attachmentValue = (v: any): number => {
-  const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v);
-  return Number(n) || 0;
-};
+const attachmentValue = (v: any): number => parseExpenseValue(v);
 
 interface ExtraPeriod {
   id: string;
@@ -663,6 +664,16 @@ const Dashboard: React.FC = () => {
     const demandIds = new Set(filteredDemands.map(d => d.id));
     return measurements.filter(m => demandIds.has(m.demandId));
   }, [measurements, filteredDemands]);
+  /**
+   * Itens das medições do recorte que somam ZERO por falta de valor legível
+   * (sem valor / ilegível — domain/expenseValueIssues.ts). Vira a nota do KPI
+   * "Total em Despesas": fora da soma, mas contado. P1, como a lista de não
+   * reembolsáveis.
+   */
+  const itensSemValorForaDaSoma = useMemo(
+    () => summarizeMeasurementsValueIssues(filteredMeasurements as any).foraDaSoma,
+    [filteredMeasurements]
+  );
 
   // --- Período de Comparação (P2 = extraPeriods[0]) ---
   const filteredDemands2 = useMemo(() => {
@@ -1121,7 +1132,7 @@ const pendingLogisticsDemands = useMemo(() => {
     const calcCosts = (_d: any[], m: any[]) =>
       m.reduce((acc: number, x: any) =>
         acc + x.attachments.reduce((s: number, a: any) => {
-          const v = typeof a.value === 'string' ? parseFloat(a.value.replace(',', '.')) : Number(a.value);
+          const v = parseExpenseValue(a.value);
           return s + (Number(v) || 0);
         }, 0), 0);
 
@@ -2348,7 +2359,7 @@ const pendingLogisticsDemands = useMemo(() => {
 
   const renderCustos = () => {
     const toVal = (v: any): number => {
-      const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v);
+      const n = parseExpenseValue(v);
       return Number(n) || 0;
     };
     const normCat = (c: any) => String(c ?? '').toUpperCase().trim();
@@ -2467,7 +2478,7 @@ const pendingLogisticsDemands = useMemo(() => {
       ).length;
     })() : undefined;
     const expenseData2: { name: string; value: number }[] = compareMode ? (() => {
-      const toVal2 = (v: any): number => { const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v); return Number(n) || 0; };
+      const toVal2 = (v: any): number => { const n = parseExpenseValue(v); return Number(n) || 0; };
       const normCat2 = (c: any) => String(c ?? '').toUpperCase().trim();
       const sumCat2 = (cats: string | string[]) => {
         const catList = (Array.isArray(cats) ? cats : [cats]).map(c => c.toUpperCase());
@@ -2521,8 +2532,8 @@ const pendingLogisticsDemands = useMemo(() => {
 
         {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <KPICard title="Total em Despesas" value={totalCosts} compareValue={compareMode ? totalCosts2 : undefined} isCurrency periods={mkPeriods(d => computeVolume(d, hoursOf, { costOf }).cost)} icon={DollarSign} colorClass="bg-amber-50 text-amber-600" />
-          <KPICard title="Ticket Médio/Medição" value={ticketMedio} compareValue={ticketMedio2} isCurrency periods={mkPeriods((_d, m) => { const cost = m.reduce((acc: number, x: any) => acc + x.attachments.reduce((s: number, a: any) => { const v = typeof a.value === 'string' ? parseFloat(a.value.replace(',', '.')) : Number(a.value); return s + (Number(v) || 0); }, 0), 0); return m.length > 0 ? cost / m.length : 0; })} icon={Zap} colorClass="bg-blue-50 text-blue-600" subtext={`${filteredMeasurements.length} medições`} />
+          <KPICard title="Total em Despesas" value={totalCosts} compareValue={compareMode ? totalCosts2 : undefined} isCurrency periods={mkPeriods(d => computeVolume(d, hoursOf, { costOf }).cost)} icon={DollarSign} colorClass="bg-amber-50 text-amber-600" subtext={itensSemValorForaDaSoma > 0 ? notaItensSemValor(itensSemValorForaDaSoma) : undefined} />
+          <KPICard title="Ticket Médio/Medição" value={ticketMedio} compareValue={ticketMedio2} isCurrency periods={mkPeriods((_d, m) => { const cost = m.reduce((acc: number, x: any) => acc + x.attachments.reduce((s: number, a: any) => { const v = parseExpenseValue(a.value); return s + (Number(v) || 0); }, 0), 0); return m.length > 0 ? cost / m.length : 0; })} icon={Zap} colorClass="bg-blue-50 text-blue-600" subtext={`${filteredMeasurements.length} medições`} />
           <KPICard title="Não Iniciadas" value={naoIniciadaCount} compareValue={naoIniciada2} positiveIsGood={false} periods={mkPeriods((d, m) => { const conc = d.filter((x: any) => getCalculatedStatus(x) === 'CONCLUIDA'); return conc.filter((x: any) => !m.some((mx: any) => mx.demandId === x.id) || m.find((mx: any) => mx.demandId === x.id)?.status === 'NAO_INICIADA').length; })} icon={Clock} colorClass="bg-orange-50 text-orange-600" subtext="Demandas concluídas" />
           <KPICard title="Pronta Faturamento" value={filteredMeasurements.filter(m => m.status === 'PRONTA_FATURAMENTO').length} compareValue={compareMode ? filteredMeasurements2.filter(m => m.status === 'PRONTA_FATURAMENTO').length : undefined} periods={mkPeriods((_d, m) => m.filter((x: any) => x.status === 'PRONTA_FATURAMENTO').length)} icon={CheckCircle} colorClass="bg-violet-50 text-violet-600" />
           <KPICard title="Faturadas" value={filteredMeasurements.filter(m => m.status === 'FATURADA').length} compareValue={compareMode ? filteredMeasurements2.filter(m => m.status === 'FATURADA').length : undefined} periods={mkPeriods((_d, m) => m.filter((x: any) => x.status === 'FATURADA').length)} icon={Award} colorClass="bg-emerald-50 text-emerald-600" />
@@ -3067,7 +3078,7 @@ const pendingLogisticsDemands = useMemo(() => {
     const fmt = (v: number) =>
       new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
     const toVal = (v: any): number => {
-      const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v);
+      const n = parseExpenseValue(v);
       return Number(n) || 0;
     };
     const normCat = (c: any) => String(c ?? '').toUpperCase().trim();

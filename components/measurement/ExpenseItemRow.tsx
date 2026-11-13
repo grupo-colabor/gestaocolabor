@@ -4,6 +4,8 @@ import { Paperclip, ExternalLink, Trash2, Unlink } from 'lucide-react';
 import type { Attachment } from '../../types';
 import { isNaoReembolsavel, isPagoPeloInstrutor } from '../../domain/measurementTotals';
 import { resolveAttachmentLink } from '../../domain/measurementAttachment';
+import { mensagemValorInvalido, parseMoneyBR } from '../../domain/moneyBR';
+import { expenseValueStatus, textoDeEdicao } from '../../domain/expenseValueIssues';
 import { supabase } from '../../lib/supabase';
 
 /**
@@ -85,6 +87,24 @@ const ExpenseItemRow: React.FC<ExpenseItemRowProps> = ({
   const flagBase = 'shrink-0 whitespace-nowrap px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest border transition-all';
   const flagInativa = 'bg-white text-slate-300 border-slate-200';
 
+  /**
+   * VALOR (parser pt-BR, domain/moneyBR.ts). O campo mostra o número GRAVADO
+   * sem perder casas (1234.56 → "1234,56"; 1.234 → "1,234") e o texto em
+   * edição como está; a validação lê exatamente esse texto — por isso um
+   * número gravado com 3+ casas fica vermelho em vez de ser arredondado.
+   * Vazio não é erro: é rascunho, com selo.
+   */
+  const textoValor = textoDeEdicao(a.value);
+  const lidoValor = parseMoneyBR(textoValor);
+  const erroValor = !lidoValor.ok && lidoValor.motivo !== 'vazio' ? mensagemValorInvalido(lidoValor.motivo) : null;
+  const statusValor = expenseValueStatus(a);
+  const arquivo = link.kind !== 'plain';
+  const seloValor =
+    statusValor === 'suspeito' ? 'Valor suspeito'
+    : statusValor === 'semValor' ? (arquivo ? 'Notinha sem valor' : 'Sem valor')
+    : null;
+  const seloBase = 'shrink-0 whitespace-nowrap px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border';
+
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 bg-slate-50 p-2 rounded-lg border border-slate-100 group">
       {/* Nome / link — `min-w-[7rem]` é o que força os controles a quebrarem de
@@ -123,13 +143,19 @@ const ExpenseItemRow: React.FC<ExpenseItemRowProps> = ({
 
       {/* Valor + lixeira: um bloco só, encostado à direita da linha do nome. */}
       <div className="flex items-center gap-2 ml-auto shrink-0">
-        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-md px-2 py-0.5 shadow-inner">
+        <div
+          data-campo-valor
+          className={`flex items-center gap-2 bg-white border rounded-md px-2 py-0.5 shadow-inner ${erroValor ? 'border-red-500 ring-1 ring-red-200' : 'border-slate-200'}`}
+        >
           <span className="text-[9px] font-bold text-slate-400">R$</span>
           <input
             type="text"
+            inputMode="decimal"
             className="w-20 bg-transparent text-[11px] font-black text-slate-700 outline-none text-right"
-            value={a.value}
+            value={textoValor}
             placeholder="0,00"
+            aria-invalid={!!erroValor}
+            title={erroValor ?? undefined}
             onChange={e => onUpdateValue(a.id, e.target.value)}
           />
         </div>
@@ -175,6 +201,26 @@ const ExpenseItemRow: React.FC<ExpenseItemRowProps> = ({
             </button>
           )}
         </div>
+      )}
+
+      {/* Selo do valor GRAVADO: linha própria (basis-full), em <span> — nunca
+          <button>, que o smoke de layout contaria como flag. */}
+      {seloValor && (
+        <div className="basis-full flex flex-wrap gap-1">
+          <span
+            data-selo
+            className={`${seloBase} ${statusValor === 'suspeito' ? 'bg-red-50 text-red-700 border-red-300' : 'bg-amber-50 text-amber-700 border-amber-300'}`}
+            title={statusValor === 'suspeito'
+              ? 'Número gravado com 3+ casas decimais (ou negativo): continua somando como está — confira na notinha e corrija.'
+              : 'Item sem valor: soma zero. Digite o valor da notinha.'}
+          >
+            {seloValor}
+          </span>
+        </div>
+      )}
+
+      {erroValor && (
+        <p data-erro-valor className="basis-full text-[9px] font-bold text-red-600">{erroValor}</p>
       )}
 
       {/* Item sem dono marcado como pago: diz para quem o reembolso vai, em vez

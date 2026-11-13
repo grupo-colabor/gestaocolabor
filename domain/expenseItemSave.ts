@@ -42,9 +42,10 @@ export interface ItemValorInvalido {
   mensagem: string;
 }
 
+// Os dois ramos declaram os dois campos: o tsconfig do projeto não é `strict`.
 export type PreparoParaSalvar<T> =
-  | { ok: true; itens: T[] }
-  | { ok: false; invalidos: ItemValorInvalido[] };
+  | { ok: true; itens: T[]; invalidos?: undefined }
+  | { ok: false; invalidos: ItemValorInvalido[]; itens?: undefined };
 
 export function prepararItensParaSalvar<T extends SavableExpenseItem>(itens: T[]): PreparoParaSalvar<T> {
   const invalidos: ItemValorInvalido[] = [];

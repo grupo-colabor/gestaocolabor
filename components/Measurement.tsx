@@ -15,7 +15,11 @@ import {
   blockExpenseBreakdown,
   countTitulares,
   isPagoPeloInstrutor,
+  parseExpenseValue,
+  EXPENSE_CATEGORY_LABELS,
+  type ExpenseCategoryKey,
 } from '../domain/measurementTotals';
+import { prepararItensParaSalvar } from '../domain/expenseItemSave';
 import { blockPanelHours, blockHoraAula } from '../domain/measurementTotals';
 import { resolveMeasurementPeople } from '../domain/measurementPeople';
 import { resolvePersonBlocks, horasRateioPorTitular } from '../domain/measurementPersonBlocks';
@@ -152,13 +156,11 @@ const CategoryBlock = ({
     a.category === category && (otherId ? a.otherId === otherId : !a.otherId)
   ) || [];
   
-  const formatCurrency = (val: number | string) => {
-    const num = typeof val === 'string' ? parseFloat(val.replace(',', '.')) : val;
-    if (isNaN(num)) return 'R$ 0,00';
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(num);
-  };
+  // Número passa intacto; texto (item em edição) pela regra pt-BR do domínio.
+  const formatCurrency = (val: number | string) =>
+    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(parseExpenseValue(val));
 
-  const catTotal = relevantAttachments.reduce((acc, curr) => acc + (Number(typeof curr.value === 'string' ? curr.value.replace(',', '.') : curr.value) || 0), 0);
+  const catTotal = relevantAttachments.reduce((acc, curr) => acc + parseExpenseValue(curr.value), 0);
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm space-y-4">
@@ -249,6 +251,12 @@ const MeasurementView: React.FC = () => {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedMeasurement, setSelectedMeasurement] = useState<Measurement | null>(null);
+  /**
+   * Itens com valor que o parser pt-BR recusa, na última tentativa de Salvar
+   * (decisão 8: o Salvar é bloqueado e a lista aparece no rodapé). `null` =
+   * nada a mostrar. Cada campo também fica vermelho na própria linha.
+   */
+  const [errosValorItens, setErrosValorItens] = useState<string[] | null>(null);
 
   const [isExportSelectionOpen, setIsExportSelectionOpen] = useState(false);
   const [isMedicaoExportOpen, setIsMedicaoExportOpen] = useState(false);
@@ -319,11 +327,9 @@ const MeasurementView: React.FC = () => {
   const getRegionName = (id: string) => regions.find(r => r.id === id)?.name || 'N/A';
   const getInstructorName = (id?: string) => instructors.find(i => i.id === id)?.name || 'Não Alocado';
 
-  const formatCurrency = (val: number | string) => {
-    const num = typeof val === 'string' ? parseFloat(val.replace(',', '.')) : val;
-    if (isNaN(num)) return 'R$ 0,00';
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(num);
-  };
+  // Número passa intacto; texto (item em edição) pela regra pt-BR do domínio.
+  const formatCurrency = (val: number | string) =>
+    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(parseExpenseValue(val));
 
   const formatDateTime = (dateStr?: string) => {
     if (!dateStr) return '---';
@@ -836,12 +842,30 @@ const totals = useMemo(() => {
   }
 
   setSelectedMeasurement(next);
+  setErrosValorItens(null);
   setIsModalOpen(true);
 };
 
 
   const handleSaveMeasurement = () => {
     if (selectedMeasurement) {
+      /**
+       * VALORES DOS ITENS, antes de qualquer pergunta: texto que o parser
+       * pt-BR recusa (e número gravado com 3+ casas, que falha na validação em
+       * vez de ser arredondado) BLOQUEIA o Salvar e a lista vai para o rodapé.
+       * Nada é gravado pela metade. Ver domain/expenseItemSave.ts.
+       */
+      const preparo = prepararItensParaSalvar(selectedMeasurement.attachments);
+      if (preparo.ok === false) {
+        setErrosValorItens(preparo.invalidos.map(i => {
+          const categoria = EXPENSE_CATEGORY_LABELS[i.categoria as ExpenseCategoryKey] ?? (i.categoria || 'Item');
+          const dono = i.instructorId ? ` (${getInstructorName(i.instructorId)})` : '';
+          return `${categoria}${dono}: "${i.texto}" — ${i.mensagem}`;
+        }));
+        return;
+      }
+      setErrosValorItens(null);
+
       /**
        * HÍBRIDA: valor hora/aula preenchido e horas presenciais em branco é
        * quase sempre esquecimento — e aqui não existe default que disfarce: o
@@ -902,10 +926,9 @@ const totals = useMemo(() => {
           ...selectedMeasurement.expenses,
           ...(participantesParaGravar ? { participantes: participantesParaGravar } : {}),
         },
-        attachments: selectedMeasurement.attachments.map(a => ({
-          ...a,
-          value: typeof a.value === 'string' ? (parseFloat(a.value.replace(',', '.')) || 0) : a.value
-        }))
+        // value número (como sempre) + valorDigitado com o texto; número que
+        // ninguém editou passa intacto.
+        attachments: preparo.itens,
       };
       const _beforeMeasurement = measurements.find(m => m.id === selectedMeasurement.id);
       updateMeasurement(cleaned);
@@ -1362,7 +1385,7 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
 
   for (const cat of categories) {
     const attachments = m.attachments.filter(a => a.category === cat.key && !a.otherId);
-    const totalCat = attachments.reduce((acc, curr) => acc + (Number(typeof curr.value === 'string' ? curr.value.replace(',', '.') : curr.value) || 0), 0);
+    const totalCat = attachments.reduce((acc, curr) => acc + parseExpenseValue(curr.value), 0);
 
     children.push(new Paragraph({ text: cat.label, heading: HeadingLevel.HEADING_3, spacing: { before: 200 } }));
     if (cat.details) {
@@ -1561,7 +1584,7 @@ const handleUploadFile = (category: ExpenseCategory, otherId?: string, instructo
 
     for (const o of m.otherExpenses) {
       const atts = m.attachments.filter(a => a.otherId === o.id);
-      const totalOth = atts.reduce((acc, curr) => acc + (Number(typeof curr.value === 'string' ? curr.value.replace(',', '.') : curr.value) || 0), 0);
+      const totalOth = atts.reduce((acc, curr) => acc + parseExpenseValue(curr.value), 0);
 
       children.push(new Paragraph({ children: [new TextRun({ text: `${o.description || 'Despesa Extra'}: `, bold: true }), new TextRun(formatCurrency(totalOth))] }));
 
@@ -2603,6 +2626,16 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
               </div>
             </div>
 
+            {errosValorItens && errosValorItens.length > 0 && (
+              <div role="alert" className="px-7 pt-5 bg-white border-t border-red-200">
+                <p className="text-xs font-black text-red-600">
+                  Medição NÃO salva: {errosValorItens.length} {errosValorItens.length === 1 ? 'valor não reconhecido' : 'valores não reconhecidos'} — corrija o campo em vermelho (use 1.234,56).
+                </p>
+                <ul className="mt-1 text-[11px] font-bold text-red-600 list-disc pl-5">
+                  {errosValorItens.map((t, i) => <li key={i}>{t}</li>)}
+                </ul>
+              </div>
+            )}
             <div className="p-7 bg-white border-t border-slate-200 flex justify-end items-center gap-6">
               {reembolsoInstrutorTotal > 0 && (
                 <div className="flex flex-col text-right">

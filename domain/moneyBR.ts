@@ -132,6 +132,22 @@ export function mensagemValorInvalido(motivo: MotivoValorInvalido): string {
 }
 
 /**
+ * HORAS DIGITADAS num Campo manual de formato "Horas" (modelo por empresa):
+ * "8", "7,5", "7.5", "7,333" — vírgula OU ponto como decimal e QUALQUER
+ * número de casas (7,333 = 7h20 é hora legítima; o parser monetário a
+ * recusaria). Sem milhar, sem sinal, sem letras. Ilegível é ERRO — nunca 0
+ * calado. Não é dinheiro: não passa por `parseMoneyBR`.
+ */
+export function parseHorasDigitadas(entrada: string): ResultadoValorMonetario {
+  const s = String(entrada ?? '').replace(ESPACO_NAS_PONTAS, '');
+  if (s === '') return falha('vazio');
+  if (s.startsWith('-')) return falha('negativo');
+  if (!/^[0-9]+([.,][0-9]+)?$/.test(s)) return falha(/[A-Za-zÀ-ÿ$]/.test(s) ? 'letras' : 'ilegivel');
+  const valor = Number(s.replace(/[.,]/, '.'));
+  return Number.isFinite(valor) ? { ok: true, valor } : falha('ilegivel');
+}
+
+/**
  * HORAS, VALOR HORA/AULA E VALOR HH — o caminho numérico de sempre.
  *
  * Esses campos são inputs `type="number"` e o painel grava NÚMERO; número

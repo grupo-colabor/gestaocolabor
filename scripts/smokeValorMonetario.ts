@@ -24,7 +24,7 @@ import path from 'path';
 import { formatarValorParaEdicao, lerCampoNumerico, mensagemValorInvalido, parseMoneyBR } from '../domain/moneyBR';
 import { parseExpenseValue } from '../domain/measurementTotals';
 import { prepararItensParaSalvar } from '../domain/expenseItemSave';
-import { converterCampoManual } from '../domain/exports/templates/manualInput';
+import { converterCampoManual, converterValorFixo } from '../domain/exports/templates/manualInput';
 import {
   avisosDeValor,
   expenseValueStatus,
@@ -185,13 +185,50 @@ console.log('\n[C] converterCampoManual — Campos manuais da Medição Vale / B
   eq('combustível "R$ 45" → 45 (antes: null → caía em 0)', converterCampoManual(moeda, 'R$ 45'), { ok: true, value: 45 });
   eq('% "20" → 0.2', converterCampoManual(pct, '20'), { ok: true, value: 0.2 });
   eq('% "12,5" → 0.125', converterCampoManual(pct, '12,5'), { ok: true, value: 0.125 });
-  const r20 = converterCampoManual(pct, '20%');
-  check('% "20%" → ERRO no campo (antes: null → caía em 20% calado), nunca null', r20.ok === false && r20.value === undefined);
+  // Percentual aceita "%" no fim (16/11/2026); "R$" num percentual é erro.
+  eq('% "20%" → 0.2 (antes: null → apagava e caía em 20% calado)', converterCampoManual(pct, '20%'), { ok: true, value: 0.2 });
+  eq('% "20 %" → 0.2', converterCampoManual(pct, '20 %'), { ok: true, value: 0.2 });
+  eq('% "12,5%" → 0.125', converterCampoManual(pct, '12,5%'), { ok: true, value: 0.125 });
+  eq('% "R$ 20" → erro (R$ não é percentual)', converterCampoManual(pct, 'R$ 20').ok, false);
+  eq('% "20%%" → erro', converterCampoManual(pct, '20%%').ok, false);
+  eq('% "%" sozinho → erro, nunca null', [converterCampoManual(pct, '%').ok, converterCampoManual(pct, '%').value], [false, undefined]);
+  // Os demais formatos continuam recusando o símbolo.
+  eq('moeda "20%" → erro (símbolo recusado fora do percentual)', converterCampoManual(moeda, '20%').ok, false);
+  eq('inteiro "20%" → erro', converterCampoManual({ format: 'integer' }, '20%').ok, false);
+  eq('inteiro "1.000" → ambíguo (antes virava 1 calado)', converterCampoManual({ format: 'integer' }, '1.000').motivo, 'ambiguo');
+  // Horas não são dinheiro: 7,333 (7h20) é legítimo.
+  const horas = { format: 'hours' as const };
+  eq('horas "7,333" → 7.333 (não recusa 3 casas)', converterCampoManual(horas, '7,333'), { ok: true, value: 7.333 });
+  eq('horas "7.333" → 7.333 (não é milhar)', converterCampoManual(horas, '7.333'), { ok: true, value: 7.333 });
+  eq('horas "8" e "7,5"', [converterCampoManual(horas, '8').value, converterCampoManual(horas, '7,5').value], [8, 7.5]);
+  eq('horas "abc" / "-2" / "7h" → erro com mensagem de horas, nunca 0',
+    ['abc', '-2', '7h'].map(x => converterCampoManual(horas, x)).map(c => [c.ok, c.mensagem]),
+    [[false, 'Horas não reconhecidas — use 7,5 ou 7,333'], [false, 'Horas não reconhecidas — use 7,5 ou 7,333'], [false, 'Horas não reconhecidas — use 7,5 ou 7,333']]);
   const amb = converterCampoManual(moeda, '1.234');
   eq('"1.234" ambíguo → erro com a mensagem', [amb.ok, amb.mensagem], [false, 'Valor ambíguo — para milhar, use 1.234,00']);
   eq('"abc" → erro', converterCampoManual(moeda, 'abc').ok, false);
   eq('em branco → null (limpar de propósito continua apagando)', converterCampoManual(moeda, '   '), { ok: true, value: null });
   eq('texto → como digitado', converterCampoManual(texto, ' Turma extra '), { ok: true, value: ' Turma extra ' });
+
+  // Valor fixo do modelo por empresa (ModeloMapeamento) — vai para a medição do cliente.
+  const fixos: [string, unknown][] = [
+    ['20%', { ok: true, valor: 0.2 }],
+    ['12,5 %', { ok: true, valor: 0.125 }],
+    ['1.234,56', { ok: true, valor: 1234.56 }],          // antes: texto
+    ['R$ 10,00', { ok: true, valor: 10 }],               // antes: texto
+    ['5900123435', { ok: true, valor: 5900123435 }],     // número do contrato: número, como antes
+    ['Contrato 4600/2026', { ok: true, valor: 'Contrato 4600/2026' }],
+    ['4600012345/2026', { ok: true, valor: '4600012345/2026' }],
+    ['1.234', { ok: false, mensagem: 'Valor ambíguo — para milhar, use 1.234,00' }], // antes: 1,234 calado
+    ['1,234.56', { ok: false, mensagem: 'Valor não reconhecido — use 1.234,56' }],
+    ['-5', { ok: false, mensagem: 'Valor negativo não é aceito — use 1.234,56' }],
+    ['10,505', { ok: false, mensagem: 'Mais de 2 casas decimais — use 1.234,56' }],
+    ['R$ 20%', { ok: false, mensagem: 'Percentual não reconhecido — use 20 ou 20%' }],
+  ];
+  for (const [entrada, esperado] of fixos) eq(`valor fixo do modelo ${JSON.stringify(entrada)}`, converterValorFixo(entrada), esperado);
+  const modelo = semComentarios(ler('components/exportacoes/modelos/ModeloMapeamento.tsx'));
+  check('ModeloMapeamento converte o valor fixo pelo domínio e mostra o erro (a constante não entra)',
+    modelo.includes('const conv = converterValorFixo(novaConst.valor);') && /if \(conv\.ok === false\) \{\s*setErroConst\(conv\.mensagem\);\s*return;/.test(modelo));
 
   const grade = semComentarios(ler('components/exportacoes/GradeEditavel.tsx'));
   check('a grade converte pelo domínio', grade.includes('converterCampoManual(col, raw)'));
@@ -274,7 +311,6 @@ console.log("\n[G] Nenhum replace(',', '.') fora do parser");
     'utils/exportXLSX.ts': { n: 1, motivo: 'toNum do relatório — o mesmo texto de KPI', linha: /replace\(',', '\.'\)/ },
     'App.tsx': { n: 1, motivo: 'cleanNumberOrNull — horas_previstas da demanda (horas)', linha: /replace\(',', '\.'\)/ },
     'components/InternalDemands.tsx': { n: 1, motivo: 'horasPrevistas da interna (horas)', linha: /replace\(',', '\.'\)/ },
-    'components/exportacoes/modelos/ModeloMapeamento.tsx': { n: 1, motivo: 'constante do modelo por empresa ("20%" → 0,2)', linha: /replace\(',', '\.'\)/ },
   };
   const listar = (dir: string): string[] => {
     const abs = path.join(raiz, dir);
@@ -295,6 +331,7 @@ console.log("\n[G] Nenhum replace(',', '.') fora do parser");
     check(`${f}: ${p ? `permitido (${p.motivo})` : 'NÃO permitido — use parseMoneyBR / parseExpenseValue'}`, !!p && p.n === n, `achei ${n}`);
     if (p) check(`${f}: é o leitor permitido, não uma cópia nova`, p.linha.test(semComentarios(ler(f))));
   }
+  check('valor fixo do modelo por empresa NÃO está mais na lista (passa pelo parseMoneyBR)', !achados.has('components/exportacoes/modelos/ModeloMapeamento.tsx'));
   check('as 12 cópias da leitura de item sumiram (Painel, Dashboard, Campos manuais)',
     !achados.has('components/Measurement.tsx') && !achados.has('components/exportacoes/GradeEditavel.tsx') && achados.get('components/Dashboard.tsx') === 1);
   check('parseFloat sobre valor de item não voltou ao Dashboard', !/parseFloat\(\s*(v|a\.value)\.replace/.test(semComentarios(ler('components/Dashboard.tsx'))));

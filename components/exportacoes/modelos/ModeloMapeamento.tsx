@@ -33,6 +33,7 @@ import {
 import type { TemplateFormat, TemplatePersistScope } from '../../../domain/exports/templates/types';
 import ModeloConta, { contaCompleta } from './ModeloConta';
 import ExportBanner from '../ExportBanner';
+import { converterValorFixo } from '../../../domain/exports/templates/manualInput';
 
 const FORMATOS: { valor: TemplateFormat; label: string }[] = [
   { valor: 'text', label: 'Texto' },
@@ -126,6 +127,8 @@ const ModeloMapeamento: React.FC<{
 
   /* ───────── constantes ───────── */
   const [novaConst, setNovaConst] = useState({ label: '', valor: '' });
+  /** Valor fixo que o parser pt-BR recusou: a constante não entra até corrigir. */
+  const [erroConst, setErroConst] = useState<string | null>(null);
 
   const usosDaConstante = (nome: string): string[] => {
     const usos: string[] = [];
@@ -145,16 +148,16 @@ const ModeloMapeamento: React.FC<{
     let n = 2;
     while (mapping.constants.some(k => k.nome === nome)) nome = `${base}_${n++}`;
 
-    const cru = novaConst.valor.trim().replace('%', '').replace(',', '.');
-    const numero = Number(cru);
-    // "20%" digitado vira 0.2; um número solto fica número; o resto é texto.
-    const valor = novaConst.valor.includes('%') && Number.isFinite(numero)
-      ? numero / 100
-      : Number.isFinite(numero) && cru !== ''
-        ? numero
-        : novaConst.valor.trim();
+    // Regra pt-BR do domínio: "20%" → 0,2; "1.234,56" → 1234,56; texto fica
+    // texto; número recusado (ex.: "1.234", ambíguo) é erro e não entra.
+    const conv = converterValorFixo(novaConst.valor);
+    if (conv.ok === false) {
+      setErroConst(conv.mensagem);
+      return;
+    }
+    setErroConst(null);
 
-    onChange({ ...mapping, constants: [...mapping.constants, { nome, label, valor }] });
+    onChange({ ...mapping, constants: [...mapping.constants, { nome, label, valor: conv.valor }] });
     setNovaConst({ label: '', valor: '' });
   };
 
@@ -463,9 +466,10 @@ const ModeloMapeamento: React.FC<{
             <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Valor</span>
             <input
               value={novaConst.valor}
-              onChange={e => setNovaConst(v => ({ ...v, valor: e.target.value }))}
+              onChange={e => { setErroConst(null); setNovaConst(v => ({ ...v, valor: e.target.value })); }}
               placeholder="20%"
-              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+              aria-invalid={!!erroConst}
+              className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${erroConst ? 'border-red-500 focus:ring-red-300' : 'border-slate-200 focus:ring-slate-300'}`}
             />
           </label>
           <button
@@ -476,6 +480,7 @@ const ModeloMapeamento: React.FC<{
           >
             <Plus size={14} /> Adicionar
           </button>
+          {erroConst && <p data-erro-constante className="basis-full text-[11px] font-bold text-red-600">{erroConst}</p>}
         </div>
       </div>
 

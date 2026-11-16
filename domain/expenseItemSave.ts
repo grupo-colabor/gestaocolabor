@@ -23,6 +23,22 @@
 import { mensagemValorInvalido, parseMoneyBR, type MotivoValorInvalido } from './moneyBR';
 import { textoDeEdicao } from './expenseValueIssues';
 
+/** As categorias que o painel mostra SEM linha de "Outras despesas". */
+const CATEGORIAS_DO_PAINEL = new Set(['HOSPEDAGEM', 'LOCOMOCAO', 'CAFE', 'ALMOCO', 'JANTAR']);
+
+/**
+ * O item aparece em algum campo do Painel de Medição? É o mesmo recorte do
+ * `CategoryBlock`: as cinco categorias SEM `otherId`, e OUTROS com
+ * `otherId` de uma linha de `other_expenses` que existe. Fora disso — o
+ * órfão de Outros, categoria desconhecida, categoria comum com `otherId` —
+ * não há campo na tela para corrigir nem lixeira para apagar.
+ */
+export function apareceNoPainel(a: SavableExpenseItem & { otherId?: string | null }, outrosIds: Set<string>): boolean {
+  const cat = String(a?.category ?? '');
+  if (cat === 'OUTROS') return !!a.otherId && outrosIds.has(a.otherId);
+  return CATEGORIAS_DO_PAINEL.has(cat) && !a.otherId;
+}
+
 /** O mínimo que o salvar lê de um item (o `Attachment` do app satisfaz). */
 export interface SavableExpenseItem {
   id?: string;
@@ -47,11 +63,25 @@ export type PreparoParaSalvar<T> =
   | { ok: true; itens: T[]; invalidos?: undefined }
   | { ok: false; invalidos: ItemValorInvalido[]; itens?: undefined };
 
-export function prepararItensParaSalvar<T extends SavableExpenseItem>(itens: T[]): PreparoParaSalvar<T> {
+export interface PreparoOptions {
+  /**
+   * Ids das linhas de `other_expenses`. Presente = só o item que o painel
+   * MOSTRA (`apareceNoPainel`) é validado e convertido; o que não aparece
+   * passa INTACTO — senão um órfão com número suspeito travaria o Salvar
+   * para sempre, sem campo para corrigir (revisão adversarial, 16/11/2026).
+   */
+  outrosIds?: Set<string>;
+}
+
+export function prepararItensParaSalvar<T extends SavableExpenseItem>(itens: T[], opts: PreparoOptions = {}): PreparoParaSalvar<T> {
   const invalidos: ItemValorInvalido[] = [];
   const saida: T[] = [];
 
   for (const a of itens) {
+    if (opts.outrosIds && !apareceNoPainel(a as T & { otherId?: string | null }, opts.outrosIds)) {
+      saida.push(a); // não aparece na tela: não há o que corrigir — fica como está
+      continue;
+    }
     const texto = textoDeEdicao(a.value);
     const lido = parseMoneyBR(texto);
 

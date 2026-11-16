@@ -168,7 +168,25 @@ console.log('\n[S] prepararItensParaSalvar — o Salvar do Painel de Medição')
   eq('número GRAVADO com 3+ casas falha na validação (não é arredondado)', [suspeito.ok, suspeito.invalidos?.[0].texto, suspeito.invalidos?.[0].motivo], [false, '1,234', 'casasDemais']);
 
   const painel = semComentarios(ler('components/Measurement.tsx'));
-  check('o Salvar do painel usa o helper do domínio', painel.includes('prepararItensParaSalvar(selectedMeasurement.attachments)') && painel.includes('attachments: preparo.itens'));
+  check('o Salvar do painel usa o helper do domínio, só sobre o que aparece', painel.includes('prepararItensParaSalvar(selectedMeasurement.attachments, { outrosIds: outrosIdsDe(selectedMeasurement) })') && painel.includes('attachments: preparo.itens'));
+
+  // Revisão adversarial: item que o painel NÃO mostra não trava o Salvar.
+  const outros = new Set(['O1']);
+  const invisiveis = prepararItensParaSalvar([
+    { id: 'orf', category: 'OUTROS', value: 1.234 },                 // órfão: sem otherId
+    { id: 'apag', category: 'OUTROS', value: -10, otherId: 'OX' },   // otherId de linha apagada
+    { id: 'desc', category: 'XYZ', value: 'abc' },                   // categoria desconhecida
+    { id: 'comum', category: 'HOSPEDAGEM', value: 1.234, otherId: 'O1' }, // categoria comum com otherId
+    { id: 'vis', category: 'OUTROS', value: '1.234,56', otherId: 'O1' },  // visível: converte
+  ] as any[], { outrosIds: outros });
+  check('item que o painel não mostra NÃO bloqueia o Salvar', invisiveis.ok === true);
+  eq('e passa intacto; o visível converte', (invisiveis.itens ?? []).map(i => i.value), [1.234, -10, 'abc', 1.234, 1234.56]);
+  const visivelRuim = prepararItensParaSalvar([{ id: 'v', category: 'OUTROS', value: '1.234', otherId: 'O1' }] as any[], { outrosIds: outros });
+  eq('item VISÍVEL ilegível continua bloqueando', [visivelRuim.ok, visivelRuim.invalidos?.[0]?.id], [false, 'v']);
+  check('durante a gravação o painel não fecha nem edita (camada + X desabilitado)',
+    painel.includes('{salvandoMedicao && <div data-gravando') && painel.includes('disabled={salvandoMedicao} title={salvandoMedicao ?'));
+  check('alteração durante a gravação: não fecha e avisa', /if \(mudouDuranteGravacao\) \{\s*setErroSalvarMedicao\([\s\S]{0,160}return;/.test(painel));
+  check('rodapé "NÃO salva" sincronizado com os campos', /setErrosValorItens\(prev => \{\s*if \(prev === null\) return prev;\s*const lista = listarErrosValor\(selectedMeasurement\);/.test(painel));
   check('e bloqueia antes de gravar quando há ilegível', /if \(preparo\.ok === false\) \{[\s\S]{0,400}return;/.test(painel));
   check('o campo do item mostra o número sem perder casas', ler('components/measurement/ExpenseItemRow.tsx').includes('const textoValor = textoDeEdicao(a.value);'));
 }

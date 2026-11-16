@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../App';
 import { Measurement, Demand, MeasurementStatus, ExpenseCategory, Attachment, OtherExpenseItem } from '../types';
@@ -334,6 +334,38 @@ const MeasurementView: React.FC = () => {
   };
   const getRegionName = (id: string) => regions.find(r => r.id === id)?.name || 'N/A';
   const getInstructorName = (id?: string) => instructors.find(i => i.id === id)?.name || 'Não Alocado';
+
+  /** Ids das linhas de Outras despesas — o recorte do que o painel mostra. */
+  const outrosIdsDe = (m: Measurement) => new Set((m.otherExpenses ?? []).map(o => o.id));
+
+  /**
+   * A lista do rodapé "Medição NÃO salva": os itens VISÍVEIS com valor que o
+   * parser recusa, com categoria e dono. Recalculada a cada mudança enquanto
+   * está na tela — encolhe e some conforme os campos são corrigidos.
+   */
+  const listarErrosValor = (m: Measurement): string[] => {
+    const r = prepararItensParaSalvar(m.attachments, { outrosIds: outrosIdsDe(m) });
+    return (r.invalidos ?? []).map(i => {
+      const categoria = EXPENSE_CATEGORY_LABELS[i.categoria as ExpenseCategoryKey] ?? (i.categoria || 'Item');
+      const dono = i.instructorId ? ` (${getInstructorName(i.instructorId)})` : '';
+      return `${categoria}${dono}: "${i.texto}" — ${i.mensagem}`;
+    });
+  };
+
+  /** A medição aberta AGORA (para o Salvar saber, depois do await, se algo mudou). */
+  const medicaoAbertaRef = useRef<Measurement | null>(null);
+  medicaoAbertaRef.current = isModalOpen ? selectedMeasurement : null;
+
+  // Rodapé sincronizado: depois de uma tentativa bloqueada, a lista acompanha os campos.
+  useEffect(() => {
+    if (!selectedMeasurement) return;
+    setErrosValorItens(prev => {
+      if (prev === null) return prev;
+      const lista = listarErrosValor(selectedMeasurement);
+      return lista.length > 0 ? lista : null;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMeasurement]);
 
   // Número passa intacto; texto (item em edição) pela regra pt-BR do domínio.
   const formatCurrency = (val: number | string) =>
@@ -865,13 +897,9 @@ const totals = useMemo(() => {
        * vez de ser arredondado) BLOQUEIA o Salvar e a lista vai para o rodapé.
        * Nada é gravado pela metade. Ver domain/expenseItemSave.ts.
        */
-      const preparo = prepararItensParaSalvar(selectedMeasurement.attachments);
+      const preparo = prepararItensParaSalvar(selectedMeasurement.attachments, { outrosIds: outrosIdsDe(selectedMeasurement) });
       if (preparo.ok === false) {
-        setErrosValorItens(preparo.invalidos.map(i => {
-          const categoria = EXPENSE_CATEGORY_LABELS[i.categoria as ExpenseCategoryKey] ?? (i.categoria || 'Item');
-          const dono = i.instructorId ? ` (${getInstructorName(i.instructorId)})` : '';
-          return `${categoria}${dono}: "${i.texto}" — ${i.mensagem}`;
-        }));
+        setErrosValorItens(listarErrosValor(selectedMeasurement));
         return;
       }
       setErrosValorItens(null);
@@ -949,12 +977,17 @@ const totals = useMemo(() => {
         await updateMeasurement(cleaned);
       } catch (e) {
         const motivo = e instanceof Error ? e.message : String(e);
-        setErroSalvarMedicao(`A medição NÃO foi salva: ${motivo}`);
-        setNotification({ message: `Erro ao salvar a medição: ${motivo}`, type: 'error' });
+        // Só pinta o rodapé se for ESTA medição que está aberta.
+        if (medicaoAbertaRef.current?.demandId === selectedMeasurement.demandId) setErroSalvarMedicao(`A medição NÃO foi salva: ${motivo}`);
+        setNotification({ message: `Erro ao salvar a medição ${selectedMeasurement.demandId}: ${motivo}`, type: 'error' });
         return;
       } finally {
         setSalvandoMedicao(false);
       }
+      // Algo mudou no painel enquanto gravava (a camada bloqueia o clique, mas
+      // não o teclado): o que foi gravado é o instantâneo do clique. Não fecha
+      // e avisa — fechar descartaria a edição em silêncio.
+      const mudouDuranteGravacao = medicaoAbertaRef.current !== selectedMeasurement;
       {
         const _dem = demands.find(d => d.id === selectedMeasurement.demandId);
         const _totalsAfter = getMeasurementTotals(cleaned);
@@ -1063,6 +1096,10 @@ const totals = useMemo(() => {
         );
       }
 
+      if (mudouDuranteGravacao) {
+        setErroSalvarMedicao('Medição salva, mas houve alteração no painel durante a gravação — clique em Salvar de novo para gravá-la.');
+        return;
+      }
       setIsModalOpen(false);
     }
   };
@@ -2171,7 +2208,9 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
 
       {isModalOpen && selectedMeasurement && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="bg-slate-50 rounded-[2rem] shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[95vh] border border-white">
+          <div className="relative bg-slate-50 rounded-[2rem] shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[95vh] border border-white">
+            {/* Gravando: nada se edita nem fecha até o banco responder. */}
+            {salvandoMedicao && <div data-gravando className="absolute inset-0 z-50 bg-white/40 cursor-wait" aria-hidden="true" />}
             <div className="px-7 pt-6 pb-5 border-b border-slate-200 bg-white space-y-3">
               {/* Linha 1: Título + Ações */}
               <div className="flex items-center justify-between gap-4">
@@ -2184,7 +2223,7 @@ Segue resumo da medição. O documento Word com comprovantes pode ser anexado.`)
                     <MessageCircle size={14} /> WhatsApp
                   </button>
                   <div className="w-px h-5 bg-slate-200 mx-1"></div>
-                  <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1.5 hover:bg-slate-100 rounded-xl transition"><X size={20} /></button>
+                  <button onClick={() => { if (!salvandoMedicao) setIsModalOpen(false); }} disabled={salvandoMedicao} title={salvandoMedicao ? 'Gravando a medição…' : undefined} className="text-slate-400 hover:text-slate-600 p-1.5 hover:bg-slate-100 rounded-xl transition disabled:opacity-40 disabled:cursor-wait"><X size={20} /></button>
                 </div>
               </div>
               {/* Linha 2: Metadados */}

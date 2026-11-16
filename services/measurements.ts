@@ -41,7 +41,41 @@ export async function fetchMeasurementByDemandId(demandId: string) {
 }
 
 /**
+ * GARANTE que a demanda tem medição — cria a linha vazia SÓ quando falta
+ * (ON CONFLICT DO NOTHING). Nunca toca numa medição existente.
+ *
+ * Substitui `upsertMeasurementByDemandId(demandId, {})` no salvar da demanda:
+ * aquele upsert manda `status: 'NAO_INICIADA'`, `expenses: {}`,
+ * `attachments: []` e `other_expenses: []` como padrão e, com
+ * `merge-duplicates`, SOBRESCREVE a medição que já existe — editar a demanda
+ * depois de lançar as despesas zerava a medição.
+ *
+ * Devolve o erro do banco (não lança): quem chama mostra o aviso.
+ */
+export async function ensureMeasurementForDemand(demandId: string) {
+  const { error } = await supabase
+    .from('measurements')
+    .upsert(
+      {
+        id: `MEA-${demandId}`,
+        demand_id: demandId,
+        status: 'NAO_INICIADA',
+        expenses: {},
+        attachments: [],
+        other_expenses: [],
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'demand_id', ignoreDuplicates: true }
+    );
+  return { error };
+}
+
+/**
  * UPSERT 1:1 por demanda (unique(demand_id))
+ *
+ * ⚠️ Sobrescreve as colunas do payload — inclusive os padrões abaixo. Só para
+ * quem manda a medição INTEIRA (o Salvar do Painel de Medição). Para "garantir
+ * que existe", use `ensureMeasurementForDemand`.
  */
 export async function upsertMeasurementByDemandId(
   demandId: string,

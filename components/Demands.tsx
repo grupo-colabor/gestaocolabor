@@ -104,7 +104,7 @@ import { useAuth } from '../contexts/AuthContext';
 
 /* ===== SERVICES (SUPABASE) ===== */
 
-import { upsertMeasurementByDemandId } from '../services/measurements';
+import { ensureMeasurementForDemand } from '../services/measurements';
 import { logAction } from '../services/auditLog';
 import { supabase } from '../lib/supabase';
 
@@ -2092,11 +2092,20 @@ const handleSave = async () => {
     }
 
 
-    // 5) garantir measurement (pra Medição não ficar vazia)
-    try {
-      await upsertMeasurementByDemandId(demandId, {});
-    } catch (e) {
-      console.error('Erro ao garantir medição:', e);
+    // 5) garantir a medição (pra Medição não ficar vazia) — SÓ cria quando
+    // falta; nunca sobrescreve a existente (o upsert antigo zerava a medição
+    // de quem editava a demanda). Falha: aviso visível, a demanda já salvou.
+    if (demandId) {
+      try {
+        const { error } = await ensureMeasurementForDemand(demandId);
+        if (error) throw new Error(error.message);
+      } catch (e: any) {
+        console.error('Erro ao garantir medição:', e);
+        setNotification({
+          type: 'error',
+          message: `Demanda ${demandId} salva, mas a medição dela não foi criada (${e?.message || e}). Salve a demanda de novo.`,
+        });
+      }
     }
 
     // 6) limpar e fechar

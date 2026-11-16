@@ -301,5 +301,41 @@ console.log("\n[G] Nenhum replace(',', '.') fora do parser");
   check('moneyBR.ts não importa nada', !/^import /m.test(ler('domain/moneyBR.ts')));
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * [P] Gravação da medição: falha visível, sem estado otimista, sem sobrescrever
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log('\n[P] Gravação da medição — todos os pontos que gravam');
+{
+  const app = semComentarios(ler('App.tsx'));
+  const corpo = app.slice(app.indexOf('const updateMeasurement = useCallback'), app.indexOf('const addInstructor = useCallback'));
+  check('updateMeasurement REJEITA quando o upsert falha (não só console.error)', /if \(error \|\| !data\) \{[\s\S]{0,200}throw new Error\(/.test(corpo));
+  check('sem atualização otimista: a lista só muda DEPOIS do upsert', corpo.indexOf('await upsertMeasurementByDemandId') > -1
+    && corpo.indexOf('setMeasurements(prev => {') > corpo.indexOf('await upsertMeasurementByDemandId'));
+  check('o tipo no contexto é Promise<void>', app.includes('updateMeasurement: (m: Measurement) => Promise<void>;'));
+
+  // Os chamadores. O único que grava a medição INTEIRA é o Painel (inclui a troca de etapa, que é o select do modal).
+  const listar = (dir: string): string[] => fs.readdirSync(path.join(raiz, dir)).flatMap(f => {
+    const rel = `${dir}/${f}`;
+    return fs.statSync(path.join(raiz, rel)).isDirectory() ? listar(rel) : /\.(ts|tsx)$/.test(f) ? [rel] : [];
+  });
+  const fontes = ['App.tsx', ...['components', 'hooks', 'contexts'].flatMap(listar)];
+  const chamadores = fontes.filter(f => /updateMeasurement\(/.test(semComentarios(ler(f))));
+  eq('updateMeasurement( só é chamado pelo Painel de Medição', chamadores, ['components/Measurement.tsx']);
+  const painel = semComentarios(ler('components/Measurement.tsx'));
+  check('o Painel aguarda dentro de try/catch e mostra o erro (sem rejeição não tratada)',
+    /try \{\s*await updateMeasurement\(cleaned\);\s*\} catch \(e\) \{[\s\S]{0,300}setErroSalvarMedicao\([\s\S]{0,200}setNotification\(\{[\s\S]{0,120}type: 'error'[\s\S]{0,60}return;/.test(painel));
+
+  // "Garantir medição" no salvar da demanda (cliente e interna): só cria se faltar, e avisa a falha.
+  const svc = semComentarios(ler('services/measurements.ts'));
+  check('ensureMeasurementForDemand é ON CONFLICT DO NOTHING (ignoreDuplicates)', /export async function ensureMeasurementForDemand[\s\S]{0,600}ignoreDuplicates: true/.test(svc));
+  const diretos = fontes.filter(f => /upsertMeasurementByDemandId\(/.test(semComentarios(ler(f))));
+  eq('o upsert que SOBRESCREVE só é chamado pelo updateMeasurement (App)', diretos, ['App.tsx']);
+  for (const f of ['components/Demands.tsx', 'components/InternalDemands.tsx']) {
+    const src = semComentarios(ler(f));
+    check(`${f}: garante a medição sem sobrescrever e mostra a falha`,
+      /await ensureMeasurementForDemand\(demandId\);\s*if \(error\) throw new Error\(error\.message\);\s*\} catch \(e: any\) \{[\s\S]{0,120}setNotification\(\{\s*type: 'error'/.test(src));
+  }
+}
+
 console.log(falhas === 0 ? '\n✅ SMOKE VALOR MONETARIO: OK' : `\n❌ SMOKE VALOR MONETARIO: ${falhas} falha(s)`);
 process.exit(falhas === 0 ? 0 : 1);

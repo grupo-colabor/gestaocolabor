@@ -76,7 +76,7 @@ import {
   type DemandDocFields,
 } from '../services/demandDocument';
 import { logAction } from '../services/auditLog';
-import { upsertMeasurementByDemandId } from '../services/measurements';
+import { ensureMeasurementForDemand } from '../services/measurements';
 import {
   uploadAndUpsertDemandPdf,
   getDemandDocumentSignedUrl,
@@ -1092,11 +1092,20 @@ const InternalDemands: React.FC = () => {
         setNotification({ type: 'error', message: `Erro ao enviar PDF. Tente novamente. (${e?.message || e})` });
       }
 
-      // Garante a medição — sem ela a interna não aparece no painel de pagamento.
-      try {
-        await upsertMeasurementByDemandId(demandId, {});
-      } catch (e) {
-        console.error('[InternalDemands] erro ao garantir medição:', e);
+      // Garante a medição — sem ela a interna não aparece no painel de
+      // pagamento. SÓ cria quando falta; nunca sobrescreve a existente (o
+      // upsert antigo zerava a medição na edição). Falha: aviso visível.
+      if (demandId) {
+        try {
+          const { error } = await ensureMeasurementForDemand(demandId);
+          if (error) throw new Error(error.message);
+        } catch (e: any) {
+          console.error('[InternalDemands] erro ao garantir medição:', e);
+          setNotification({
+            type: 'error',
+            message: `Demanda ${demandId} salva, mas a medição dela não foi criada (${e?.message || e}). Salve a demanda de novo.`,
+          });
+        }
       }
 
       setPendingPdfs({ classList: null, instructorRelease: null });

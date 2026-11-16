@@ -942,10 +942,16 @@ console.log('\n[4] Workbook gerado');
     check('XLSX: I4 TRAVADA (aviso, não campo de digitação) e com nota', fab.getCell('I4').protection?.locked !== false && !!fab.getCell('I4').note);
     checkEq('XLSX: H4 (Transporte) = 1,234 intacto e amarela', `${fab.getCell('H4').value}|${fab.getCell('H4').fill?.fgColor?.argb}`, '1.234|FFFFFF00');
     checkEq('XLSX: K4 = SUM(G4:J4)', formula(fab, 'K4'), 'SUM(G4:J4)');
-    checkEq('Resumo: linha 5 = DESPESAS A CONFERIR (depois do TOTAL GERAL)', `${resD6.getCell('A4').value}|${resD6.getCell('A5').value}`, 'TOTAL GERAL|DESPESAS A CONFERIR');
-    checkEq('Resumo: 2 itens a conferir, amarela', `${resD6.getCell('D5').value}|${resD6.getCell('D5').fill?.fgColor?.argb}`, '2|FFFFFF00');
-    check('Resumo: diz quem e qual demanda', String(resD6.getCell('E5').value).includes('Fábio Notinha (DEM-400)'));
-    check('Resumo sem aviso não ganha a linha (o [4] continua igual)', resumo.getCell('A5').value !== 'DESPESAS A CONFERIR');
+    checkEq('Resumo: TOTAL GERAL na linha 4, aviso na 5', resD6.getCell('A4').value, 'TOTAL GERAL');
+    checkEq('Resumo: A5 = texto com a contagem e quem/qual demanda',
+      resD6.getCell('A5').value, 'DESPESAS A CONFERIR: 2 itens pagos pelo instrutor sem valor ou com valor suspeito — Fábio Notinha (DEM-400)');
+    checkEq('Resumo: A5 amarela e com nota', `${resD6.getCell('A5').fill?.fgColor?.argb}|${!!resD6.getCell('A5').note}`, 'FFFFFF00|true');
+    check('Resumo: a linha 5 é mesclada de A até a última coluna (I)', resD6.model.merges.includes('A5:I5'));
+    // Nada nas colunas de valor (C hora/aula, D reembolso, E total a pagar — todas em R$).
+    check('Resumo: nenhuma coluna de reais da linha 5 recebe contagem nem texto (C, D, E vazias/mescladas)',
+      ['C5', 'D5', 'E5'].every(a => { const v = resD6.getCell(a).value; return v === null || v === undefined || v === resD6.getCell('A5').value; }));
+    check('Resumo: o TOTAL GERAL não alcança a linha 5', formula(resD6, 'D4') === 'SUM(D3:D3)');
+    check('Resumo sem aviso não ganha a linha (o [4] continua igual)', !String(resumo.getCell('A5').value ?? '').startsWith('DESPESAS A CONFERIR'));
   }
 
   /* ======================================================================== */

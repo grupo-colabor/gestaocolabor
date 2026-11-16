@@ -702,7 +702,8 @@ export async function buildMedicaoWorkbook(
 
   // Linha "Despesas a conferir": itens PAGOS PELO INSTRUTOR sem valor ou com
   // valor suspeito, de todas as abas. Só aparece quando há algum — sem ela o
-  // Resumo é o de sempre. A contagem fica na coluna de reembolso, amarela.
+  // Resumo é o de sempre. Texto E contagem na coluna A (texto), mesclada até a
+  // última coluna: nada entra nas colunas de reais (C, D, E), que são somadas.
   const aConferir = planned.flatMap(({ block }) =>
     block.linhas.flatMap(l => (l.reembolso.avisos ?? []).map(a => ({ nome: block.nome, demandId: l.demandId, aviso: a })))
   );
@@ -710,17 +711,16 @@ export async function buildMedicaoWorkbook(
     const porPessoa = new Map<string, Set<string>>();
     for (const x of aConferir) porPessoa.set(x.nome, (porPessoa.get(x.nome) ?? new Set()).add(x.demandId));
     const onde = [...porPessoa.entries()].map(([nome, dems]) => `${nome} (${[...dems].join(', ')})`).join('; ');
+    const n = aConferir.length;
     const conferirRow = resumo.addRow([
-      'DESPESAS A CONFERIR', null, null, aConferir.length, null, null, null, '', '',
+      `DESPESAS A CONFERIR: ${n} ${n === 1 ? 'item pago pelo instrutor sem valor ou com valor suspeito' : 'itens pagos pelo instrutor sem valor ou com valor suspeito'} — ${onde}`,
     ]);
-    conferirRow.getCell(1).font = { bold: true };
-    const qtd = conferirRow.getCell(RESUMO_IDX.reembolso);
-    qtd.numFmt = '0';
-    qtd.alignment = { horizontal: 'center' };
-    markAsWarning(qtd, `${aConferir.length} item(ns) pago(s) pelo instrutor sem valor ou com valor suspeito — veja as células amarelas: ${onde}. Sem valor soma zero; suspeito entra como está. Corrija no Painel de Medição e exporte de novo.`);
-    const texto = conferirRow.getCell(RESUMO_IDX.totalPagar);
-    texto.value = `item(ns) de reembolso sem valor ou suspeito(s): ${onde}`;
-    texto.alignment = { wrapText: true, vertical: 'top' };
+    resumo.mergeCells(conferirRow.number, 1, conferirRow.number, RESUMO_LAST_COL_IDX);
+    const aviso = conferirRow.getCell(1);
+    aviso.font = { bold: true };
+    aviso.alignment = { wrapText: true, vertical: 'top' };
+    markAsWarning(aviso, 'Veja as células amarelas nas abas dos instrutores. Sem valor soma zero; suspeito entra como está. Corrija no Painel de Medição e exporte de novo.');
+    conferirRow.height = 30;
   }
 
   await resumo.protect(undefined, SHEET_PROTECTION);

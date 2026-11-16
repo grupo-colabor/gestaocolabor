@@ -148,6 +148,12 @@ const MedicaoTemplateView: React.FC<{
       return next;
     });
 
+  /** "Desfazer" na barra: descarta o texto ilegível e remonta os inputs no valor salvo. */
+  const desfazerErroCampo = (chave: string) => {
+    registrarErroCampo(chave, null);
+    setResetKey(k => k + 1);
+  };
+
   // Nova carga = valores novos do banco e edições pendentes descartadas.
   React.useEffect(() => {
     setValoresSalvos(carga.templateValues);
@@ -425,6 +431,7 @@ const MedicaoTemplateView: React.FC<{
         resetKey={resetKey}
         erros={errosCampo}
         onErro={registrarErroCampo}
+        onDesfazerErro={desfazerErroCampo}
       />
 
       <div className="bg-slate-900 text-white rounded-2xl px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">

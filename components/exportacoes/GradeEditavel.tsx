@@ -63,6 +63,13 @@ export interface ErroCampoManual {
   mensagem: string;
 }
 
+/** Desmonta a chave: o escopo é o que vem antes do primeiro ":", a coluna o que vem depois do último. */
+const partesDaChave = (chave: string): { scope: string; refId: string; columnKey: string } => {
+  const i = chave.indexOf(':');
+  const j = chave.lastIndexOf(':');
+  return { scope: chave.slice(0, i), refId: chave.slice(i + 1, j), columnKey: chave.slice(j + 1) };
+};
+
 /** A mesma chave de edição da tela pai (scope:refId:columnKey). */
 export const chaveCampoManual = (scope: TemplateValueScope, refId: string, columnKey: string) => `${scope}:${refId}:${columnKey}`;
 const searchClass = 'w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500';
@@ -133,7 +140,13 @@ const GradeEditavel: React.FC<{
   erros?: Map<string, ErroCampoManual>;
   /** Liga (erro) ou desliga (null) o erro de um campo. */
   onErro?: (chave: string, erro: ErroCampoManual | null) => void;
-}> = ({ rows, allRows, columns, values, onEdit, trainingNames, hibridas, hybridSplit = false, demandasComPendencia, pendentes, salvando, onSalvar, onDescartar, resetKey, erros, onErro }) => {
+  /**
+   * "Desfazer" de UM campo com erro, na barra: descarta o texto digitado e o
+   * campo volta ao valor salvo (a tela pai remonta os inputs). Serve também
+   * para o campo que saiu da grade (filtro do recorte, busca).
+   */
+  onDesfazerErro?: (chave: string) => void;
+}> = ({ rows, allRows, columns, values, onEdit, trainingNames, hibridas, hybridSplit = false, demandasComPendencia, pendentes, salvando, onSalvar, onDescartar, resetKey, erros, onErro, onDesfazerErro }) => {
   /** A híbrida só tem dois preços quando o template divide E a coluna declara as chaves. */
   const splitDe = useCallback(
     (tid: string): HybridSplit | undefined => (hybridSplit && hibridas ? hibridas.get(tid) : undefined),
@@ -177,14 +190,25 @@ const GradeEditavel: React.FC<{
     },
     [precoCol, splitDe, values]
   );
+  /** Ids (treinamento / turma) que têm campo com valor não reconhecido. */
+  const comErro = useMemo(() => {
+    const treino = new Set<string>();
+    const turma = new Set<string>();
+    for (const k of erros?.keys() ?? []) {
+      const { scope, refId } = partesDaChave(k);
+      (scope === 'training' ? treino : turma).add(refId);
+    }
+    return { treino, turma };
+  }, [erros]);
   const treinamentos = useMemo(() => {
-    const base: string[] = Array.from(todosTreinos ? idsVale : idsNoRecorte);
+    // Card com campo em erro NUNCA some (toggle, busca): o erro trava o Salvar.
+    const base: string[] = [...new Set<string>([...Array.from(todosTreinos ? idsVale : idsNoRecorte), ...comErro.treino])];
     const q = normalize(buscaTreino.trim());
     return base
       .map(tid => ({ tid, nome: trainingNames.get(tid) ?? tid, comPreco: temPreco(tid) }))
-      .filter(t => !q || normalize(t.nome).includes(q))
+      .filter(t => !q || normalize(t.nome).includes(q) || comErro.treino.has(t.tid))
       .sort((a, b) => Number(a.comPreco) - Number(b.comPreco) || a.nome.localeCompare(b.nome, 'pt-BR'));
-  }, [idsNoRecorte, idsVale, todosTreinos, buscaTreino, temPreco, trainingNames]);
+  }, [idsNoRecorte, idsVale, todosTreinos, buscaTreino, temPreco, trainingNames, comErro]);
   const totalTreinos = (todosTreinos ? idsVale : idsNoRecorte).size;
   const treinosComPreco = useMemo(
     () => Array.from<string>(todosTreinos ? idsVale : idsNoRecorte).filter(temPreco).length,
@@ -209,11 +233,13 @@ const GradeEditavel: React.FC<{
   const turmasDerivadas = useMemo(() => {
     const q = normalize(buscaTurma.trim());
     return rows.filter(r => {
+      // Turma com campo em erro NUNCA some (toggle, busca): o erro trava o Salvar.
+      if (comErro.turma.has(r.demand.id)) return true;
       if (soPendentes && !demandasComPendencia.has(r.demand.id) && !temExcecao(r)) return false;
       if (!q) return true;
       return normalize([r.demand.id, r.input.clientDemandId, r.input.trainingName, ...r.input.titulares].join(' ')).includes(q);
     });
-  }, [rows, buscaTurma, soPendentes, demandasComPendencia, temExcecao]);
+  }, [rows, buscaTurma, soPendentes, demandasComPendencia, temExcecao, comErro]);
   // Referência estável por conteúdo: editar um preço muda `values` (e
   // `temExcecao`), mas a lista de turmas é a mesma — a página não pode voltar.
   const turmas = useStableArray<MedicaoValeRow>(turmasDerivadas, r => r.demand.id);
@@ -245,6 +271,14 @@ const GradeEditavel: React.FC<{
     onEdit({ scope, refId, columnKey, value: c.value });
   };
   const erroDe = (scope: TemplateValueScope, refId: string, columnKey: string) => erros?.get(chaveCampoManual(scope, refId, columnKey));
+  /** "DEM-1297 · Despesa reembolsável (combustível)" / "NR 35 · Preço unitário HH (online)". */
+  const rotuloDoErro = (chave: string): string => {
+    const { scope, refId, columnKey } = partesDaChave(chave);
+    const col = columns.find(c => c.key === columnKey || c.hybridKeys?.presencial === columnKey || c.hybridKeys?.online === columnKey);
+    const parte = col?.hybridKeys?.presencial === columnKey ? ' (presencial)' : col?.hybridKeys?.online === columnKey ? ' (online)' : '';
+    const onde = scope === 'training' ? (trainingNames.get(refId) ?? refId) : refId;
+    return `${onde} · ${(col?.header ?? columnKey).trim()}${parte}`;
+  };
   const show = (col: TemplateColumn, v: unknown): string => {
     if (v === null || v === undefined || v === '') return '';
     if (col.format === 'percent') return String(Math.round(Number(v) * 10000) / 100);
@@ -486,7 +520,20 @@ const GradeEditavel: React.FC<{
             {pendentes > 0 && <>{pendentes} {pendentes === 1 ? 'alteração não salva' : 'alterações não salvas'} — o download fica travado até salvar ou descartar.</>}
             {(erros?.size ?? 0) > 0 && (
               <span className="block text-red-700">
-                {erros?.size} {erros?.size === 1 ? 'campo com valor não reconhecido' : 'campos com valor não reconhecido'} — corrija (use 1.234,56). O valor salvo não foi alterado.
+                {erros?.size} {erros?.size === 1 ? 'campo com valor não reconhecido' : 'campos com valor não reconhecido'} — corrija ou desfaça. O valor salvo não foi alterado.
+                <span data-erros-campo className="mt-1 flex flex-col gap-1">
+                  {[...(erros?.entries() ?? [])].map(([chave, e]) => (
+                    <span key={chave} className="flex flex-wrap items-center gap-2 font-normal">
+                      <span className="font-bold">{rotuloDoErro(chave)}</span>
+                      <span>"{e.raw}" — {e.mensagem}</span>
+                      {onDesfazerErro && (
+                        <button type="button" onClick={() => onDesfazerErro(chave)} className="px-2 py-0.5 rounded border border-red-300 text-[10px] font-black uppercase tracking-widest hover:bg-red-100">
+                          desfazer
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </span>
               </span>
             )}
           </span>

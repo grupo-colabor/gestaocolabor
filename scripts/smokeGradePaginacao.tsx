@@ -193,6 +193,36 @@ console.log('\n[GRADE] híbrida: dois preços por treinamento e por turma');
   check('sem hybridSplit: o card da híbrida não existe e o treinamento tem um campo só', !card() && container.querySelectorAll('label.text-xs.bg-white').length === 2);
 }
 
+/* ────────────────────────────────────────────────────────────────────────
+ * Campo manual com valor não reconhecido (revisão adversarial, 16/11/2026):
+ * a turma com erro NUNCA some da grade (toggle "só com pendência", busca), e
+ * a barra lista cada erro pelo nome, com "desfazer".
+ * ──────────────────────────────────────────────────────────────────────── */
+console.log('\n[GRADE] erro de campo manual fica visível e desfazível');
+{
+  const erros = new Map([['demand:DEM-1042:combustivel', { raw: '1.234', mensagem: 'Valor ambíguo — para milhar, use 1.234,00' }]]);
+  const desfeitos: string[] = [];
+  render({ erros, onErro: () => {}, onDesfazerErro: (k: string) => { desfeitos.push(k); }, resetKey: 10 });
+  // Bloco "Por turma" continua aberto; liga o toggle "só com pendência" (nenhuma fixture tem pendência).
+  const tg = $$('input[type="checkbox"]').find((i: any) => textoDe(i.parentElement).includes('só turmas com pendência'));
+  if (tg && !tg.checked) clicar(tg);
+  const linhas = $$('tbody tr[data-turma]').map((tr: any) => tr.getAttribute('data-turma'));
+  check('com o toggle ligado, só a turma com erro aparece (não some)', JSON.stringify(linhas) === JSON.stringify(['DEM-1042']), JSON.stringify(linhas));
+  const campo = $$('tbody tr[data-turma="DEM-1042"] input').find((i: any) => i.getAttribute('aria-invalid') === 'true');
+  check('o campo em erro mostra o texto digitado e fica vermelho', !!campo && campo.value === '1.234' && String(campo.className).includes('border-red-500'));
+  const barra = $$('[data-erros-campo]')[0];
+  check('a barra lista o erro pelo nome', !!barra && textoDe(barra).includes('DEM-1042 · Despesa reembolsável (combustível)') && textoDe(barra).includes('"1.234"'), textoDe(barra));
+  const salvar = $$('button').find((b: any) => textoDe(b) === 'Salvar');
+  check('Salvar travado enquanto houver erro', !!salvar && salvar.disabled === true);
+  const desfazer = $$('[data-erros-campo] button').find((b: any) => textoDe(b) === 'desfazer');
+  check('existe "desfazer" para o erro', !!desfazer);
+  if (desfazer) clicar(desfazer);
+  check('"desfazer" avisa a tela pai com a chave do campo', JSON.stringify(desfeitos) === JSON.stringify(['demand:DEM-1042:combustivel']));
+  // Erro de turma FORA do recorte (filtro da tela): não há linha, mas a barra lista e desfaz.
+  render({ erros: new Map([['demand:DEM-9999:observacao', { raw: 'x', mensagem: 'm' }]]), onErro: () => {}, onDesfazerErro: () => {}, resetKey: 11 });
+  check('erro de turma fora do recorte aparece na barra', textoDe($$('[data-erros-campo]')[0]).includes('DEM-9999 · Observação'));
+}
+
 act(() => root.unmount());
 console.log(falhas === 0 ? '\n✅ SMOKE GRADE PAGINACAO: OK' : `\n❌ SMOKE GRADE PAGINACAO: ${falhas} falha(s)`);
 process.exit(falhas === 0 ? 0 : 1);

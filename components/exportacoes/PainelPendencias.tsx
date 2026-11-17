@@ -10,7 +10,7 @@ import {
   Search,
 } from 'lucide-react';
 import type { Pendencia, PendenciaRow } from '../../domain/exports/pendencias';
-import { PENDENCIAS_DATASET } from '../../domain/exports/pendencias';
+import { PENDENCIAS_DATASET, resumoPendencias } from '../../domain/exports/pendencias';
 import { buildTable, defaultColumnKeys } from '../../domain/exports/buildRows';
 import { downloadXlsx } from '../../services/exports/xlsxWriter';
 import { buildExportFileName } from '../../services/exports/csvWriter';
@@ -24,7 +24,10 @@ import Pagination from '../Pagination';
  * treinamento, instrutor — client-side), grupos por motivo com contagem,
  * cada grupo recolhível e paginado (25 por página).
  *
- * ⛔ fato (não entra na planilha) · ⚠ aviso (entra, mas olhe).
+ * ⛔ fato (não entra: cancelada) · ⚠ aviso (olhe antes de gerar). A conta
+ * "fora da planilha" do cabeçalho vem do DOCUMENTO (`noDocumento`, as
+ * demandas que entram), não do tipo: a interna e a turma sem local no BM são
+ * avisos e ficam fora; a não concluída e a sem titular entram.
  */
 
 const PAGE = 25;
@@ -89,14 +92,22 @@ const GrupoPendencia: React.FC<{ grupo: Grupo; aberto: boolean; onToggle: () => 
   );
 };
 
-const PainelPendencias: React.FC<{ pendencias: PendenciaRow[]; totalNoRecorte: number }> = ({ pendencias, totalNoRecorte }) => {
+const PainelPendencias: React.FC<{
+  pendencias: PendenciaRow[];
+  totalNoRecorte: number;
+  /** As demandas que ENTRAM no documento (planilha ou BM) — é daqui que sai o "fora". */
+  noDocumento: ReadonlySet<string>;
+  /** Como o resumo chama o documento. */
+  documento?: 'planilha' | 'BM';
+}> = ({ pendencias, totalNoRecorte, noDocumento, documento = 'planilha' }) => {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState('');
   const [gruposAbertos, setGruposAbertos] = useState<Set<string>>(new Set());
   const [baixando, setBaixando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
-  const fatos = pendencias.filter(p => p.fatos > 0).length;
+  const resumo = resumoPendencias(pendencias, noDocumento);
+  const doc = documento === 'BM' ? { fora: 'fora do BM', dentro: 'no BM' } : { fora: 'fora da planilha', dentro: 'na planilha' };
 
   const filtradas = useMemo(() => {
     const q = normalize(busca.trim());
@@ -157,7 +168,7 @@ const PainelPendencias: React.FC<{ pendencias: PendenciaRow[]; totalNoRecorte: n
             <span className="block text-[11px] text-slate-500 mt-1">
               {pendencias.length === 0
                 ? `Nenhuma pendência nas ${totalNoRecorte} demandas do recorte.`
-                : `${pendencias.length} demandas com pendência — ${fatos} fora da planilha, ${pendencias.length - fatos} só com avisos.`}
+                : `${resumo.total} demandas com pendência — ${resumo.fora} ${doc.fora}, ${resumo.entramComAviso} ${doc.dentro} com aviso.`}
             </span>
           </span>
         </button>

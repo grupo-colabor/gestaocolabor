@@ -364,6 +364,24 @@ export function buildPendencias(rows: MedicaoValeRow[], ctx: PendenciasContext):
 }
 
 /**
+ * O resumo do cabeçalho do painel: das demandas com pendência, quantas ficam
+ * FORA do documento (a planilha, ou o BM) e quantas entram com aviso.
+ *
+ * "Fora" é o que de fato não sai — cancelada, interna com a empresa do modelo,
+ * turma sem local ou sem corredor no BM —, lido do próprio documento
+ * (`noDocumento`: as demandas que entram), e não "quem tem fato": desde
+ * 17/11/2026 a não concluída e a sem titular entram, com aviso, e a interna
+ * e a sem local sempre foram avisos que ficam fora.
+ */
+export function resumoPendencias(
+  pendencias: PendenciaRow[],
+  noDocumento: ReadonlySet<string>
+): { total: number; fora: number; entramComAviso: number } {
+  const fora = pendencias.filter(p => !noDocumento.has(p.demand.id)).length;
+  return { total: pendencias.length, fora, entramComAviso: pendencias.length - fora };
+}
+
+/**
  * Acrescenta avisos de outra origem (ex.: o BM — turma sem local, cabeçalho
  * não cadastrado, cadastro de treinamento duplicado) às pendências já
  * montadas, criando a linha da demanda quando ela não tinha nenhuma. Mantém a

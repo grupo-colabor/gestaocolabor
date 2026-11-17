@@ -201,6 +201,11 @@ const MedicaoTemplateView: React.FC<{
   /** Um .xlsx só quando o recorte fecha em UMA mina (corredor + mina); senão .zip. */
   const saiXlsx = !!bm && !!filters.site && bm.minas.length === 1;
   const periodoLabel = bmPeriodoLabel(filters.dataInicio, filters.dataFim);
+  /** As turmas que ENTRAM no documento (planilha; no BM, as das minas) — o painel conta o "fora" por aqui. */
+  const noDocumento = useMemo<ReadonlySet<string>>(
+    () => new Set(isBm ? (bm?.minas ?? []).flatMap(m => m.turmas.map(t => t.demand.id)) : elegiveis.map(r => r.demand.id)),
+    [isBm, bm, elegiveis]
+  );
 
   const pendencias = useMemo(() => {
     const base = buildPendencias(filtered, {
@@ -399,7 +404,7 @@ const MedicaoTemplateView: React.FC<{
       )}
       {erro && <ExportBanner tipo="erro"><strong>Bloqueado.</strong> {erro}</ExportBanner>}
 
-      <PainelPendencias pendencias={pendencias} totalNoRecorte={filtered.length} />
+      <PainelPendencias pendencias={pendencias} totalNoRecorte={filtered.length} noDocumento={noDocumento} documento={isBm ? 'BM' : 'planilha'} />
 
       {isBm && bm && (
         <>

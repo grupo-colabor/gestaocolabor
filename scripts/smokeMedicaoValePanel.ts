@@ -1,7 +1,7 @@
 /**
  * SMOKE — Medição Vale: bloco [P] painel de pendências
  */
-import { buildPendencias, logisticaIndicaViagem, PENDENCIAS_DATASET } from '../domain/exports/pendencias';
+import { buildPendencias, logisticaIndicaViagem, PENDENCIAS_DATASET, resumoPendencias } from '../domain/exports/pendencias';
 import { VALE_TEMPLATE } from '../domain/exports/templates/vale';
 import { buildTable, defaultColumnKeys } from '../domain/exports/buildRows';
 import { applyFilters } from '../domain/exports/filters';
@@ -77,6 +77,25 @@ export function runPanelChecks(t: ValeSmokeTools, ctx: { src: any; rows: any[] }
   check('fatos primeiro na ordem', pend[0].fatos > 0 && pend[pend.length - 1].fatos === 0);
   eq('contagens (não concluída já não é fato)', [de('DEM-103')!.fatos, de('DEM-103')!.avisos], [0, 2]);
   eq('só a cancelada é fato no recorte', pend.filter(p => p.fatos > 0).map(p => p.demand.id), ['DEM-104']);
+
+  // Resumo do cabeçalho: "fora da planilha" conta o que FICA fora (lido do documento), não quem tem fato.
+  {
+    const naPlanilha = new Set(rowsComRepetido.filter((r: any) => r.elegivelTurmas).map((r: any) => r.demand.id as string));
+    const resumo = resumoPendencias(pend, naPlanilha);
+    eq('fora da planilha = cancelada (fato) + interna (aviso) — as que não saem', pend.filter(p => !naPlanilha.has(p.demand.id)).map(p => p.demand.id).sort(), ['DEM-104', 'DEM-107']);
+    eq('resumo: total, fora, na planilha com aviso', [resumo.total, resumo.fora, resumo.entramComAviso], [pend.length, 2, pend.length - 2]);
+    check('não concluída (103) e sem titular (105) contam como na planilha com aviso', naPlanilha.has('DEM-103') && naPlanilha.has('DEM-105'));
+    // BM: a turma sem local é aviso e fica fora do BM — o resumo conta.
+    const noBm = new Set([...naPlanilha].filter(id => id !== 'DEM-101'));
+    eq('no BM, turma fora das minas (ex.: sem local) conta como fora', resumoPendencias(pend, noBm).fora, 3);
+    eq('sem pendência, resumo zerado', resumoPendencias([], naPlanilha), { total: 0, fora: 0, entramComAviso: 0 });
+
+    const painel = t.semComentarios(t.ler('components/exportacoes/PainelPendencias.tsx'));
+    check('painel: o resumo vem do domínio, pelo documento', painel.includes('resumoPendencias(pendencias, noDocumento)'));
+    check('painel: não sobrou a conta por fato no cabeçalho', !/pendencias\.filter\(p => p\.fatos > 0\)/.test(painel));
+    const view = t.semComentarios(t.ler('components/exportacoes/MedicaoTemplateView.tsx'));
+    check('tela: passa as turmas que entram (planilha ou minas do BM)', view.includes('noDocumento={noDocumento}') && view.includes('bm?.minas ?? []).flatMap(m => m.turmas.map(t => t.demand.id))') && view.includes('elegiveis.map(r => r.demand.id)'));
+  }
 
   // [TT] no painel: a fixture da regra "todas as turmas do período".
   {

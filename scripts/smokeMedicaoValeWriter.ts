@@ -69,7 +69,8 @@ export async function runWriterChecks(t: ValeSmokeTools, ctx: { src: any; rows: 
   const linhas = toRowsSheetInput(ctx.rows, VALE_TEMPLATE);
   const sheets = resolveTemplate(VALE_TEMPLATE, linhas, ctx.src.templateValues);
   const n = linhas.length;
-  eq('5 linhas: 4 turmas, a híbrida em duas', n, 5);
+  // Desde 17/11/2026 entram também a DEM-105 (sem titular) e a DEM-103 (não concluída).
+  eq('7 linhas: 6 turmas, a híbrida em duas', n, 7);
   const buffer = await buildTemplateXlsxBuffer(VALE_TEMPLATE, sheets, base);
 
   const ExcelJS = (await import('exceljs')) as any;
@@ -88,8 +89,8 @@ export async function runWriterChecks(t: ValeSmokeTools, ctx: { src: any; rows: 
     sheets[0].kind === 'rows' ? sheets[0].columns.map(c => c.header) : ['?']);
   check('cabeçalho mantém o fill de tema do modelo', !!cell('A1').fill && cell('A1').fill.pattern === 'solid');
   check('as colunas novas (E..H) têm o mesmo fill de cabeçalho', ['E1', 'F1', 'G1', 'H1'].every(a => cell(a).fill?.pattern === 'solid'));
-  eq(`${n} linhas (2..${n + 1}); a última turma é a 4ª`, ws.getRow(n + 1).getCell(1).value, 4);
-  eq('A é o Nº do anexo POR TURMA: a híbrida repete o 3 e a seguinte é 4', Array.from({ length: n }, (_, i) => ws.getRow(2 + i).getCell(1).value), [1, 2, 3, 3, 4]);
+  eq(`${n} linhas (2..${n + 1}); a última turma é a 6ª`, ws.getRow(n + 1).getCell(1).value, 6);
+  eq('A é o Nº do anexo POR TURMA: a híbrida repete o 4 e a seguinte é 5', Array.from({ length: n }, (_, i) => ws.getRow(2 + i).getCell(1).value), [1, 2, 3, 4, 4, 5, 6]);
   eq('K2 = I2*J2', texto(cell('K2').value), '=I2*J2');
   eq('R2 = SUM(L2:P2)+(SUM(L2:P2)*Q2)', texto(cell('R2').value), '=SUM(L2:P2)+(SUM(L2:P2)*Q2)');
   eq(`K${n + 1} na última turma`, texto(cell(`K${n + 1}`).value), `=I${n + 1}*J${n + 1}`);
@@ -126,17 +127,25 @@ export async function runWriterChecks(t: ValeSmokeTools, ctx: { src: any; rows: 
   eq('B3 vazia e amarela', [cell('B3').value ?? null, cell('B3').fill?.fgColor?.argb], [null, 'FFFFFF00']);
   eq('J3 = preço sobrescrito na demanda', cell('J3').value, 150);
   check('J3 não é amarela (tem valor)', cell('J3').fill?.fgColor?.argb !== 'FFFFFF00');
-  // Terceira turma (DEM-102, híbrida 40h/8h, dias específicos, treinamento sem preço): linhas 4 e 5.
-  eq('C4/C5 = Treinamento com o sufixo da parte', [cell('C4').value, cell('C5').value], ['NR 20 Intermediário – Presencial', 'NR 20 Intermediário – Online']);
-  eq('I4/I5 = 8 presenciais e 32 online (cadastro: 40h, 8 práticas)', [cell('I4').value, cell('I5').value], [8, 32]);
-  eq('J4 e J5 vazias e amarelas (sem preço presencial nem online)', ['J4', 'J5'].map(a => [cell(a).value ?? null, cell(a).fill?.fgColor?.argb]), [[null, 'FFFFFF00'], [null, 'FFFFFF00']]);
-  eq('K4/K5 = valor total da própria linha', [texto(cell('K4').value), texto(cell('K5').value)], ['=I4*J4', '=I5*J5']);
-  eq('despesas da online zeradas (L5..P5)', ['L', 'M', 'N', 'O', 'P'].map(l => cell(`${l}5`).value), [0, 0, 0, 0, 0]);
-  eq('F4 = último dia específico (22/08), G4/H4 = horários do primeiro e do último dia',
-    [(cell('F4').value as Date).toISOString().slice(0, 10), cell('G4').value, cell('H4').value], ['2026-08-22', '13:00', '18:00']);
-  eq('a linha online repete ID, datas, horários e consultor', ['B', 'E', 'F', 'G', 'H', 'S'].map(l => String(cell(`${l}4`).value) === String(cell(`${l}5`).value)), [true, true, true, true, true, true]);
-  check('G4/H4 com horário não são amarelas', cell('G4').fill?.fgColor?.argb !== 'FFFFFF00' && cell('H4').fill?.fgColor?.argb !== 'FFFFFF00');
-  eq('quarta turma (DEM-108) na linha 6 com anexo 4', [cell('B6').value, cell('A6').value], ['SAP-108', 4]);
+  // Terceira turma (DEM-105, presencial SEM titular): entra; Consultor (S4) em branco e AMARELO, o resto não.
+  const amarela = (a: string) => cell(a).fill?.fgColor?.argb === 'FFFFFF00';
+  eq('S4 (DEM-105 sem titular) vazia e amarela', [cell('S4').value ?? null, amarela('S4')], [null, true]);
+  eq('linha 4: o Consultor é a única célula amarela', 'ABCDEFGHIJKLMNOPQRST'.split('').filter(l => amarela(`${l}4`)), ['S']);
+  // Quarta turma (DEM-102, híbrida 40h/8h, dias específicos, treinamento sem preço): linhas 5 e 6.
+  eq('C5/C6 = Treinamento com o sufixo da parte', [cell('C5').value, cell('C6').value], ['NR 20 Intermediário – Presencial', 'NR 20 Intermediário – Online']);
+  eq('I5/I6 = 8 presenciais e 32 online (cadastro: 40h, 8 práticas)', [cell('I5').value, cell('I6').value], [8, 32]);
+  eq('J5 e J6 vazias e amarelas (sem preço presencial nem online)', ['J5', 'J6'].map(a => [cell(a).value ?? null, cell(a).fill?.fgColor?.argb]), [[null, 'FFFFFF00'], [null, 'FFFFFF00']]);
+  eq('K5/K6 = valor total da própria linha', [texto(cell('K5').value), texto(cell('K6').value)], ['=I5*J5', '=I6*J6']);
+  eq('despesas da online zeradas (L6..P6)', ['L', 'M', 'N', 'O', 'P'].map(l => cell(`${l}6`).value), [0, 0, 0, 0, 0]);
+  eq('F5 = último dia específico (22/08), G5/H5 = horários do primeiro e do último dia',
+    [(cell('F5').value as Date).toISOString().slice(0, 10), cell('G5').value, cell('H5').value], ['2026-08-22', '13:00', '18:00']);
+  eq('a linha online repete ID, datas, horários e consultor', ['B', 'E', 'F', 'G', 'H', 'S'].map(l => String(cell(`${l}5`).value) === String(cell(`${l}6`).value)), [true, true, true, true, true, true]);
+  check('G5/H5 com horário não são amarelas', !amarela('G5') && !amarela('H5'));
+  eq('quinta turma (DEM-108) na linha 7 com anexo 5', [cell('B7').value, cell('A7').value], ['SAP-108', 5]);
+  // Sexta turma (DEM-103, NÃO concluída): entra como as outras — NADA marcado no XLSX.
+  eq('DEM-103 (não concluída) na linha 8 com anexo 6, consultor alocado e carga contratada', [cell('B8').value, cell('A8').value, cell('S8').value, cell('I8').value, cell('J8').value], ['SAP-103', 6, 'Titular', 16, 120]);
+  eq('linha 8 (não concluída): nenhuma célula amarela', 'ABCDEFGHIJKLMNOPQRST'.split('').filter(l => amarela(`${l}8`)), []);
+  check('e nenhum texto de "não concluída" no arquivo', !Array.from({ length: n }, (_, i) => ws.getRow(2 + i).values).flat().some((v: any) => /conclu/i.test(String(texto(v) ?? ''))));
 
   // Plantas: igual ao snapshot, célula a célula.
   const plantas = wb.getWorksheet('Plantas');

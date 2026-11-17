@@ -8,8 +8,9 @@ import { applyFilters } from '../domain/exports/filters';
 import { EMPTY_FILTERS } from '../domain/exports/types';
 import { indexTemplateValues } from '../domain/exports/templates/values';
 import { buildTrainingsById } from '../domain/modalityOptions';
+import { buildMedicaoValeRows } from '../domain/exports/datasets/medicaoVale';
 import type { ValeSmokeTools } from './smokeMedicaoValeDatasets';
-import { TRAININGS, HOJE } from './smokeMedicaoValeDatasets';
+import { TRAININGS, HOJE, buildTodasTurmasFixture } from './smokeMedicaoValeDatasets';
 
 export function runPanelChecks(t: ValeSmokeTools, ctx: { src: any; rows: any[] }): number {
   let falhas = 0;
@@ -66,14 +67,35 @@ export function runPanelChecks(t: ValeSmokeTools, ctx: { src: any; rows: any[] }
     const semFlag = buildPendencias([ctx.rows.find((r: any) => r.demand.id === 'DEM-102')], { sheet: VALE_TEMPLATE.sheets[0], templateValues: valores, logisticAllocations: [], logisticBlocks: [] });
     check('sem hybridSplit no contexto: um preço só, e ele está preenchido', !semFlag[0]?.pendencias.some(p => /preço/.test(p.texto)));
   }
-  eq('DEM-103: futura = fato + sem medição aberta', textos('DEM-103'), ['fato:Demanda não concluída (Alocada)', 'aviso:Sem medição aberta']);
+  // 17/11/2026: não concluída e sem titular entram na planilha — são AVISOS.
+  eq('DEM-103: futura = aviso (a turma entra) + sem medição aberta', textos('DEM-103'), ['aviso:Demanda não concluída (Alocada)', 'aviso:Sem medição aberta']);
   eq('DEM-104: cancelada = fato', textos('DEM-104')[0], 'fato:Demanda cancelada');
-  eq('DEM-105: sem titular = fato', textos('DEM-105')[0], 'fato:Sem instrutor titular');
+  eq('DEM-105: presencial sem titular = aviso com a letra do Consultor', textos('DEM-105')[0], 'aviso:Sem instrutor titular (célula S em branco)');
   eq('DEM-107: interna com empresa Vale = aviso (fora da aba por decisão)', textos('DEM-107')[0], 'aviso:Demanda interna com empresa Vale — não entra na medição da Vale');
   check('DEM-108: sem medição aberta + hotel no bloco sem despesa', textos('DEM-108').includes('aviso:Sem medição aberta') && textos('DEM-108').some(x => /inferência/.test(x)));
   check('inferência nunca é fato', pend.every(p => p.pendencias.filter(x => /inferência/.test(x.texto)).every(x => x.tipo === 'aviso')));
   check('fatos primeiro na ordem', pend[0].fatos > 0 && pend[pend.length - 1].fatos === 0);
-  eq('contagens', [de('DEM-103')!.fatos, de('DEM-103')!.avisos], [1, 1]);
+  eq('contagens (não concluída já não é fato)', [de('DEM-103')!.fatos, de('DEM-103')!.avisos], [0, 2]);
+  eq('só a cancelada é fato no recorte', pend.filter(p => p.fatos > 0).map(p => p.demand.id), ['DEM-104']);
+
+  // [TT] no painel: a fixture da regra "todas as turmas do período".
+  {
+    const srcT = buildTodasTurmasFixture();
+    const rowsT = buildMedicaoValeRows(srcT);
+    const ctxT = { sheet: VALE_TEMPLATE.sheets[0], template: VALE_TEMPLATE, templateValues: srcT.templateValues, logisticAllocations: [], logisticBlocks: [] };
+    const pendT = buildPendencias(rowsT, ctxT);
+    const tT = (id: string) => pendT.find(p => p.demand.id === id)?.pendencias.map(p => `${p.tipo}:${p.texto}`) ?? [];
+    eq('online EAD sem titular, concluída e completa: fora do painel', tT('DEM-600'), []);
+    eq('online ao vivo sem titular: aviso com a letra do Consultor', tT('DEM-602'), ['aviso:Sem instrutor titular (célula S em branco)']);
+    eq('presencial sem titular: o mesmo aviso', tT('DEM-603'), ['aviso:Sem instrutor titular (célula S em branco)']);
+    eq('em andamento: "Demanda não concluída" é AVISO', tT('DEM-605'), ['aviso:Demanda não concluída (Em Andamento)']);
+    eq('cancelada: fato, sem aviso de titular', tT('DEM-606'), ['fato:Demanda cancelada']);
+    check('nenhum "não concluída" nem "sem titular" é fato', pendT.every(p => p.pendencias.filter(x => /não concluída|titular/.test(x.texto)).every(x => x.tipo === 'aviso')));
+    // Modelo SEM coluna de consultor: o aviso continua, sem a letra.
+    const semConsultor: any = { ...VALE_TEMPLATE.sheets[0], columns: VALE_TEMPLATE.sheets[0].columns!.filter(c => c.source !== 'people.titulares') };
+    const pendSem = buildPendencias(rowsT, { ...ctxT, sheet: semConsultor, template: undefined });
+    eq('modelo sem coluna de consultor: "Sem instrutor titular" continua, sem letra', pendSem.find(p => p.demand.id === 'DEM-602')?.pendencias.map(p => p.texto), ['Sem instrutor titular']);
+  }
 
   // Horário ausente: o dataset avisa; o painel diz a letra da coluna que lê o
   // campo, e um modelo sem essa coluna não recebe o aviso.

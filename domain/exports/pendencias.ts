@@ -5,10 +5,12 @@
  * a impede de entrar na medição ou o que merece olhar antes de gerar.
  *
  *   FATO  — bloqueia a linha na aba Turmas (vem do dataset, `bloqueios`):
- *           não concluída, cancelada, sem instrutor titular. Desde 18/09/2026,
- *           também os defeitos de CONFIGURAÇÃO do modelo (`avaliarConfiguracao`),
- *           que travam a geração inteira.
+ *           cancelada. Desde 18/09/2026, também os defeitos de CONFIGURAÇÃO
+ *           do modelo (`avaliarConfiguracao`), que travam a geração inteira.
+ *           Não concluída e sem instrutor titular deixaram de ser fato em
+ *           17/11/2026 ("puxar todas as turmas do período"): são avisos.
  *   AVISO — a linha sai, o painel avisa:
+ *           turma não concluída, sem instrutor titular (exceto online EAD),
  *           identificador do cliente em branco, coluna digitada obrigatória
  *           vazia, sem medição iniciada, medição não pronta, viagem sem
  *           despesa lançada (INFERÊNCIA), item não reembolsável excluído,
@@ -261,13 +263,19 @@ export function buildPendencias(rows: MedicaoValeRow[], ctx: PendenciasContext):
     // FATOS — vêm do dataset; a interna é decisão (fica fora), não defeito: aviso.
     for (const b of r.bloqueios) p.push({ tipo: r.interna && /interna/i.test(b) ? 'aviso' : 'fato', texto: b });
 
-    // AVISOS que o dataset já sabe (horário ausente). A letra vem da coluna
-    // que lê aquele campo; modelo sem a coluna não recebe o aviso — avisar
-    // "sem horário" numa planilha que não tem horário seria ruído.
+    // AVISOS que o dataset já sabe (turma não concluída, sem titular, horário
+    // ausente…). A letra vem da coluna que lê aquele campo; modelo sem a coluna
+    // não recebe o aviso — avisar "sem horário" numa planilha que não tem
+    // horário seria ruído —, salvo o que é sobre a TURMA (`mesmoSemColuna`:
+    // sem instrutor titular), que sai sem a letra.
     for (const a of r.avisos ?? []) {
-      if (!a.source) { p.push({ tipo: 'aviso', texto: a.detalhe ? `${a.texto} (${a.detalhe})` : a.texto }); continue; }
+      const simples = a.detalhe ? `${a.texto} (${a.detalhe})` : a.texto;
+      if (!a.source) { p.push({ tipo: 'aviso', texto: simples }); continue; }
       const col = [a.source, ...(a.fontes ?? [])].map(f => colunas.find(c => c.source === f)).find(Boolean);
-      if (!col) continue;
+      if (!col) {
+        if (a.mesmoSemColuna) p.push({ tipo: 'aviso', texto: simples });
+        continue;
+      }
       if (a.celula === 'destaque') {
         // Célula COM número, amarela para conferir: "(1 item · célula L)".
         // Contagem/valor e letra no MESMO parêntese final — o painel agrupa

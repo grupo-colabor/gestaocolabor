@@ -10,7 +10,10 @@ import {
   turmasComecaramAntes,
   avisoComecaramAntes,
   avisoTurmaComecouAntes,
+  turmasNaoConcluidas,
+  medicaoExigeTitular,
 } from '../domain/exports/datasets/medicaoVale';
+import { MODALITY_UNSET } from '../domain/modalityOptions';
 import { getDemandLastDay } from '../domain/demandDays';
 import { normalizeLocationName, resolveCorredorDoLocal } from '../domain/locationCorridor';
 import {
@@ -110,6 +113,48 @@ export function buildValeFixtureSource() {
   };
 }
 
+/**
+ * Fixture da regra "puxar todas as turmas do período" (17/11/2026). PRÓPRIA,
+ * de propósito: a compartilhada tem números conferidos à mão no escritor, no
+ * painel e no BM. Aqui cada turma é um caso da regra, com tudo o mais
+ * preenchido (preço, horário, ID, medição pronta) para que a única pendência
+ * e o único amarelo sejam os da regra.
+ */
+export const TRAININGS_TT: any[] = [
+  ...TRAININGS,
+  { id: 'T_EAD', name: 'NR 20 Básico EAD', hours: 4, practicalHours: null, modality: 'ONLINE' },
+  { id: 'T_AOV', name: 'NR 33 Ao Vivo', hours: 8, practicalHours: null, modality: 'ONLINE_AO_VIVO' },
+  { id: 'T_SEM', name: 'Curso sem modalidade', hours: 8, practicalHours: null, modality: null },
+];
+export function buildTodasTurmasFixture() {
+  const base = buildValeFixtureSource();
+  const sem = { instructorId: undefined };
+  const demands = [
+    // EAD pelo TREINAMENTO (a demanda diz presencial), sem titular, conclusão registrada.
+    demandaVale({ id: 'DEM-600', trainingId: 'T_EAD', modality: 'PRESENCIAL', status: 'CONCLUIDA', ...sem }),
+    demandaVale({ id: 'DEM-602', trainingId: 'T_AOV', ...sem }),                                       // ao vivo sem titular
+    demandaVale({ id: 'DEM-603', ...sem }),                                                           // presencial sem titular
+    demandaVale({ id: 'DEM-604', trainingId: 'T_HIB', ...sem }),                                       // híbrida sem titular
+    demandaVale({ id: 'DEM-605', startDate: '2026-09-14T08:00', endDate: '2026-09-18T17:00' }),        // em andamento, com titular
+    demandaVale({ id: 'DEM-606', status: 'CANCELADA', ...sem }),                                       // cancelada sem titular
+    demandaVale({ id: 'DEM-607', trainingId: 'T_EAD', startDate: '2026-09-16T08:00', endDate: '2026-09-17T17:00', ...sem }), // EAD futura sem titular
+    demandaVale({ id: 'DEM-608', trainingId: 'T_SEM', modality: '', ...sem }),                         // sem modalidade nenhuma
+    demandaVale({ id: 'DEM-609', modality: 'ONLINE', ...sem }),                                        // demanda ONLINE, treinamento PRESENCIAL
+  ];
+  const measurements = demands.map(d =>
+    d.id === 'DEM-604' ? medicao(d.id, { attachments: [{ id: 'z1', category: 'ALMOCO', value: 0 }] }) : medicao(d.id)
+  );
+  const templateValues = indexTemplateValues([
+    { scope: 'training', column_key: 'precoHH', training_id: 'T_PRE', demand_id: null, value: 120 },
+    { scope: 'training', column_key: 'precoHH', training_id: 'T_EAD', demand_id: null, value: 80 },
+    { scope: 'training', column_key: 'precoHH', training_id: 'T_AOV', demand_id: null, value: 90 },
+    { scope: 'training', column_key: 'precoHH', training_id: 'T_SEM', demand_id: null, value: 70 },
+    { scope: 'training', column_key: 'precoHHPresencial', training_id: 'T_HIB', demand_id: null, value: 290 },
+    { scope: 'training', column_key: 'precoHHOnline', training_id: 'T_HIB', demand_id: null, value: 200 },
+  ]);
+  return { ...base, trainings: TRAININGS_TT, demands, measurements, instructorAllocations: [], templateValues };
+}
+
 export function runValeDatasetChecks(t: ValeSmokeTools): number {
   let falhas = 0;
   const check: ValeSmokeTools['check'] = (n, c, d) => { if (!c) falhas++; t.check(n, c, d); };
@@ -133,10 +178,17 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     check('empresa casa por id quando informado', matchesTemplateCompany({ id: 'C_VALE' }, { id: 'C_VALE', name: 'qualquer' }));
     eq('ordem por data de início', rows.map(r => r.input.dataInicio), [...rows.map(r => r.input.dataInicio)].sort());
 
-    eq('elegíveis para a aba Turmas = concluídas com titular (100, 101, 102)', rows.filter(r => r.elegivelTurmas).map(r => r.demand.id), ['DEM-100', 'DEM-101', 'DEM-102', 'DEM-108']);
-    eq('futura -> não concluída', de('DEM-103').bloqueios, ['Demanda não concluída (Alocada)']);
+    // Regra de 17/11/2026: toda turma Vale entra; fora só cancelada e interna.
+    eq('elegíveis para a aba Turmas = todas, fora cancelada (104) e interna (107) — inclusive sem titular (105) e futura (103)', rows.filter(r => r.elegivelTurmas).map(r => r.demand.id), ['DEM-100', 'DEM-101', 'DEM-105', 'DEM-102', 'DEM-108', 'DEM-103']);
+    eq('futura: não concluída deixa de ser bloqueio — entra com aviso e naoConcluida',
+      [de('DEM-103').bloqueios, de('DEM-103').avisos.map(a => a.texto), de('DEM-103').naoConcluida, de('DEM-103').elegivelTurmas],
+      [[], ['Demanda não concluída (Alocada)'], true, true]);
     eq('cancelada -> bloqueio', de('DEM-104').bloqueios, ['Demanda cancelada']);
-    eq('sem titular -> bloqueio', de('DEM-105').bloqueios, ['Sem instrutor titular']);
+    check('cancelada continua fora, sem aviso de não concluída', !de('DEM-104').elegivelTurmas && !de('DEM-104').naoConcluida && de('DEM-104').avisos.every(a => !/não concluída/.test(a.texto)));
+    eq('presencial sem titular: entra, com aviso que lê o Consultor (vale mesmo sem coluna) e Consultor a conferir',
+      [de('DEM-105').bloqueios, de('DEM-105').elegivelTurmas, de('DEM-105').avisos.find(a => a.texto === 'Sem instrutor titular'), de('DEM-105').input.conferir],
+      [[], true, { texto: 'Sem instrutor titular', source: 'people.titulares', mesmoSemColuna: true }, ['people.titulares']]);
+    eq('concluída com titular: nenhum aviso de turma', [de('DEM-100').naoConcluida, de('DEM-100').avisos.filter(a => /concluída|titular/.test(a.texto)).length], [false, 0]);
     check('status da medição NÃO bloqueia (LANCAMENTO e NAO_INICIADA entram)', de('DEM-101').elegivelTurmas && de('DEM-102').elegivelTurmas);
     check('sem medição NÃO bloqueia', de('DEM-108').elegivelTurmas && !de('DEM-108').input.temMedicao);
 
@@ -225,9 +277,9 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     // Híbrida em DUAS linhas na saída para a planilha (só com o flag do template).
     {
       const semFlag = toRowsSheetInput(rows);
-      eq('sem hybridSplit (modelos do banco): uma linha por demanda', semFlag.map(l => l.refs.demandId), ['DEM-100', 'DEM-101', 'DEM-102', 'DEM-108']);
+      eq('sem hybridSplit (modelos do banco): uma linha por demanda', semFlag.map(l => l.refs.demandId), ['DEM-100', 'DEM-101', 'DEM-105', 'DEM-102', 'DEM-108', 'DEM-103']);
       const comFlag = toRowsSheetInput(rows, VALE_TEMPLATE);
-      eq('com hybridSplit: a híbrida vira duas linhas ADJACENTES, presencial primeiro', comFlag.map(l => `${l.refs.demandId}${l.refs.parte ? ':' + l.refs.parte : ''}`), ['DEM-100', 'DEM-101', 'DEM-102:PRESENCIAL', 'DEM-102:ONLINE', 'DEM-108']);
+      eq('com hybridSplit: a híbrida vira duas linhas ADJACENTES, presencial primeiro', comFlag.map(l => `${l.refs.demandId}${l.refs.parte ? ':' + l.refs.parte : ''}`), ['DEM-100', 'DEM-101', 'DEM-105', 'DEM-102:PRESENCIAL', 'DEM-102:ONLINE', 'DEM-108', 'DEM-103']);
       const [pres, onl] = comFlag.filter(l => l.refs.demandId === 'DEM-102');
       eq('Treinamento com o sufixo de cada parte (travessão)', [pres.input.trainingName, onl.input.trainingName], ['NR 20 Intermediário – Presencial', 'NR 20 Intermediário – Online']);
       eq('carga 40h/8h: 8 presenciais + 32 online', [pres.input.cargaHoraria, onl.input.cargaHoraria], [8, 32]);
@@ -242,12 +294,13 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
       const planilha = resolveRowsSheet(VALE_TEMPLATE.sheets[0], comFlag, valoresHib);
       const col = (k: string) => planilha.columns.findIndex(c => c.key === k);
       const l = (i: number, k: string) => planilha.rows[i][col(k)];
-      eq('anexo: 1, 2, 3, 3, 4 — as partes repetem, a turma seguinte não pula', planilha.rows.map(r => r[0].value), [1, 2, 3, 3, 4]);
-      eq('preço HH por parte: presencial 290, online 200', [l(2, 'precoHH').value, l(3, 'precoHH').value], [290, 200]);
-      eq('valor total por linha: K = I*J da própria linha', [l(2, 'valorTotal').formula, l(3, 'valorTotal').formula], ['I4*J4', 'I5*J5']);
-      eq('combustível digitado sai na presencial e vale 0 na online', [l(2, 'combustivel').value, l(3, 'combustivel').value], [60, 0]);
-      eq('demais despesas zeradas na online', ['locacao', 'alimentacao', 'hospedagem', 'outros'].map(k => l(3, k).value), [0, 0, 0, 0]);
-      eq('ID, Local, datas e consultor repetem nas duas linhas', ['idTurma', 'local', 'dataInicio', 'dataFim', 'horarioInicio', 'horarioFim', 'consultor'].map(k => l(2, k).value === l(3, k).value), [true, true, true, true, true, true, true]);
+      // A híbrida DEM-102 está nas linhas de índice 3 e 4 (planilha 5 e 6): a DEM-105 sem titular entra antes.
+      eq('anexo: 1, 2, 3, 4, 4, 5, 6 — as partes repetem, a turma seguinte não pula', planilha.rows.map(r => r[0].value), [1, 2, 3, 4, 4, 5, 6]);
+      eq('preço HH por parte: presencial 290, online 200', [l(3, 'precoHH').value, l(4, 'precoHH').value], [290, 200]);
+      eq('valor total por linha: K = I*J da própria linha', [l(3, 'valorTotal').formula, l(4, 'valorTotal').formula], ['I5*J5', 'I6*J6']);
+      eq('combustível digitado sai na presencial e vale 0 na online', [l(3, 'combustivel').value, l(4, 'combustivel').value], [60, 0]);
+      eq('demais despesas zeradas na online', ['locacao', 'alimentacao', 'hospedagem', 'outros'].map(k => l(4, k).value), [0, 0, 0, 0]);
+      eq('ID, Local, datas e consultor repetem nas duas linhas', ['idTurma', 'local', 'dataInicio', 'dataFim', 'horarioInicio', 'horarioFim', 'consultor'].map(k => l(3, k).value === l(4, k).value), [true, true, true, true, true, true, true]);
 
       // Sem horas práticas: duas linhas com carga em branco e amarela.
       const semPraticas = buildMedicaoValeRows({ ...src, trainings: [...TRAININGS, { id: 'T_HIB0', name: 'NR 10 Básico', hours: 40, practicalHours: null, modality: 'HIBRIDO' }], demands: [demandaVale({ id: 'DEM-400', trainingId: 'T_HIB0' })] });
@@ -269,6 +322,56 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     eq('corredores = base operacional ∪ dados', opts.corredores, ['Ferrovia/MG', 'S11D', 'Sudeste']);
     eq('sites presentes', opts.sites, ['Brucutu', 'Timbopeba']);
     eq('status da medição inclui Sem medição', opts.statusMedicao.map(o => o.value).includes(SEM_MEDICAO) && MEDICAO_STATUS_OPTIONS.length, 6);
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   * [TT] Todas as turmas do período (17/11/2026)
+   *
+   * Não concluída e sem titular deixaram de tirar a linha: entram com aviso.
+   * Online EAD sem titular entra sem aviso e sem amarelo; as demais
+   * modalidades avisam e pintam o Consultor. Cancelada continua fora.
+   * ────────────────────────────────────────────────────────────────────── */
+  console.log('\n[TT] Todas as turmas do período');
+  {
+    const srcT = buildTodasTurmasFixture();
+    const rowsT = buildMedicaoValeRows(srcT);
+    const r = (id: string) => rowsT.find(x => x.demand.id === id)!;
+    const daTurma = (id: string) => r(id).avisos.map(a => a.texto).filter(x => /concluída|titular|conclusão/.test(x));
+
+    eq('entram todas, menos a cancelada', rowsT.filter(x => x.elegivelTurmas).map(x => x.demand.id).sort(),
+      ['DEM-600', 'DEM-602', 'DEM-603', 'DEM-604', 'DEM-605', 'DEM-607', 'DEM-608', 'DEM-609']);
+    eq('online EAD sem titular (o treinamento ONLINE prevalece sobre a demanda PRESENCIAL): sem aviso, nada a conferir',
+      [r('DEM-600').input.modalidade, daTurma('DEM-600'), r('DEM-600').input.conferir ?? null], ['ONLINE', [], null]);
+    eq('online ao vivo sem titular: aviso + Consultor a conferir', [daTurma('DEM-602'), r('DEM-602').input.conferir], [['Sem instrutor titular'], ['people.titulares']]);
+    eq('presencial sem titular: aviso + Consultor a conferir', [daTurma('DEM-603'), r('DEM-603').input.conferir], [['Sem instrutor titular'], ['people.titulares']]);
+    eq('híbrida sem titular: aviso + Consultor, e a alimentação zerada a conferir junto',
+      [daTurma('DEM-604'), r('DEM-604').input.conferir], [['Sem instrutor titular'], ['people.titulares', 'expenses.alimentacao', 'expenses.total']]);
+    eq('em andamento com titular: entra, só o aviso de não concluída', [daTurma('DEM-605'), r('DEM-605').naoConcluida, r('DEM-605').elegivelTurmas], [['Demanda não concluída (Em Andamento)'], true, true]);
+    eq('cancelada sem titular: fora, só o fato do cancelamento (nem titular nem não concluída)',
+      [r('DEM-606').elegivelTurmas, r('DEM-606').bloqueios, daTurma('DEM-606'), r('DEM-606').naoConcluida], [false, ['Demanda cancelada'], [], false]);
+    eq('online EAD futura sem titular: só a não concluída (online não exige titular)', daTurma('DEM-607'), ['Demanda não concluída (Alocada)']);
+    eq('sem modalidade nenhuma: exige titular (na dúvida avisa)', [r('DEM-608').input.modalidade, daTurma('DEM-608')], [MODALITY_UNSET, ['Sem instrutor titular']]);
+    eq('demanda diz ONLINE mas o treinamento é PRESENCIAL: vale o treinamento, exige titular', [r('DEM-609').input.modalidade, daTurma('DEM-609')], ['PRESENCIAL', ['Sem instrutor titular']]);
+    eq('medicaoExigeTitular: só ONLINE (EAD) dispensa', ['ONLINE', 'ONLINE_AO_VIVO', 'PRESENCIAL', 'HIBRIDO', 'TUTORIA', MODALITY_UNSET, ''].map(medicaoExigeTitular), [false, true, true, true, true, true, true]);
+    eq('turmasNaoConcluidas: as que entram sem estar concluídas, na ordem da planilha', turmasNaoConcluidas(rowsT).map(x => x.demand.id), ['DEM-605', 'DEM-607']);
+    eq('turmasNaoConcluidas ignora a que não entra', turmasNaoConcluidas([{ ...r('DEM-605'), elegivelTurmas: false }]).length, 0);
+
+    // A planilha: o amarelo do Consultor e nada mais.
+    const linhasT = toRowsSheetInput(rowsT, VALE_TEMPLATE);
+    const planilhaT = resolveRowsSheet(VALE_TEMPLATE.sheets[0], linhasT, srcT.templateValues);
+    const ic = (k: string) => planilhaT.columns.findIndex(c => c.key === k);
+    const celulas = (id: string, parte?: string) => planilhaT.rows[linhasT.findIndex(l => l.refs.demandId === id && l.refs.parte === parte)];
+    const consultor = (id: string, parte?: string) => { const c = celulas(id, parte)[ic('consultor')]; return [c.value === '' ? null : c.value ?? null, c.highlight]; };
+    eq('Consultor da online EAD sem titular: em branco e NÃO amarelo', consultor('DEM-600'), [null, false]);
+    check('online EAD sem titular: nenhuma célula amarela na linha', celulas('DEM-600').every(c => !c.highlight));
+    eq('Consultor da online ao vivo sem titular: em branco e amarelo', consultor('DEM-602'), [null, true]);
+    eq('Consultor da presencial sem titular: em branco e amarelo', consultor('DEM-603'), [null, true]);
+    eq('e é a ÚNICA célula amarela da linha', celulas('DEM-603').filter(c => c.highlight).length, 1);
+    eq('híbrida sem titular: Consultor amarelo nas DUAS partes', [consultor('DEM-604', 'PRESENCIAL'), consultor('DEM-604', 'ONLINE')], [[null, true], [null, true]]);
+    eq('híbrida: a alimentação a conferir só pinta a presencial (a online vale 0)',
+      [celulas('DEM-604', 'PRESENCIAL')[ic('alimentacao')].highlight, celulas('DEM-604', 'ONLINE')[ic('alimentacao')].highlight], [true, false]);
+    check('não concluída com tudo preenchido: nenhuma célula amarela na linha', celulas('DEM-605').every(c => !c.highlight));
+    eq('e o Consultor dela sai com o titular alocado', celulas('DEM-605')[ic('consultor')].value, 'Titular');
   }
 
   /* ────────────────────────────────────────────────────────────────────────

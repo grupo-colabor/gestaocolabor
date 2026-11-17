@@ -165,9 +165,10 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
     eq('cadastro duplicado (mesmo nome, ids T_PRE e T_PRE2) vira aviso', bm.nomesDuplicados, [{ nome: normalizeTrainingName('NR 35 Trabalho em Altura'), trainingIds: ['T_PRE', 'T_PRE2'] }]);
 
     const bru = bm.minas[0];
-    eq('Brucutu: turmas (inclusive a híbrida DEM-102, em ordem de data)', bru.turmas.map(r => r.demand.id), ['DEM-100', 'DEM-110', 'DEM-112', 'DEM-102']);
+    // 17/11/2026: a DEM-105 (presencial sem titular, Brucutu, agosto) entra — aviso no painel, não bloqueio.
+    eq('Brucutu: turmas (inclusive a DEM-105 sem titular e a híbrida DEM-102, em ordem de data)', bru.turmas.map(r => r.demand.id), ['DEM-100', 'DEM-105', 'DEM-110', 'DEM-112', 'DEM-102']);
     const treinos = bru.linhas.filter(l => l.tipo === 'treinamento');
-    eq('Brucutu: NR 35 a 120 agrega DEM-100 + DEM-110 (16h + 16h)', treinos.find(l => l.preco === 120)?.quantidade, 32);
+    eq('Brucutu: NR 35 a 120 agrega DEM-100 + DEM-105 + DEM-110 (16h + 16h + 16h)', treinos.find(l => l.preco === 120)?.quantidade, 48);
     eq('Brucutu: DEM-112 com preço sobrescrito 130 é linha separada, 16h', treinos.find(l => l.preco === 130)?.quantidade, 16);
     eq('Brucutu: linhas em ordem alfabética, com o prefixo do modelo (a híbrida em duas: presencial antes de online)', treinos.map(l => l.descricao), [
       'Aplicação de Treinamento - NR 20 Intermediário – Presencial',

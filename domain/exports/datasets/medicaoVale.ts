@@ -8,9 +8,24 @@
  *     por nome, como o formulário faz em Demands.tsx `isValeSelected`).
  *     Interna com empresa Vale entra na lista com BLOQUEIO, para o painel
  *     avisar, e nunca na aba Turmas.
- *   • Só as CONCLUÍDAS (status calculado) viram linha da aba; cancelada e
- *     sem instrutor titular são bloqueios de fato. Status da medição NÃO
- *     bloqueia — é filtro na tela (multi-seleção, com "Sem medição").
+ *   • TODA turma da empresa que termina no período vira linha da aba
+ *     (pedido de 17/11/2026: "puxar todas as turmas do período"). Só a
+ *     CANCELADA (e a interna, acima) é bloqueio de fato. Status da medição
+ *     NÃO bloqueia — é filtro na tela (multi-seleção, com "Sem medição").
+ *     O que antes tirava a linha virou AVISO, e a linha entra com o que tem
+ *     (carga contratada, preço HH, despesas lançadas, consultor alocado):
+ *       – não concluída (status calculado ≠ CONCLUIDA): aviso no painel,
+ *         `naoConcluida` na linha — a tela lista, marca na prévia e pede
+ *         confirmação ao gerar; nada marcado no XLSX;
+ *       – sem instrutor titular: ONLINE (EAD) não exige titular — entra sem
+ *         aviso e com o Consultor em branco, NÃO amarelo; as demais
+ *         modalidades (presencial, híbrida, online ao vivo, e qualquer outra
+ *         ou nenhuma) avisam "Sem instrutor titular" e o Consultor sai
+ *         amarelo (`conferir: people.titulares`);
+ *       – online sem titular que só virou concluída porque a data passou
+ *         (status GRAVADO ≠ CONCLUIDA — o app grava CONCLUIDA ao registrar a
+ *         medição): aviso "Online sem conclusão registrada — confirme que a
+ *         turma aconteceu", sem célula amarela.
  *   • DESPESAS: `computeClientMeasurementExpenses` (domain/measurementTotals.ts),
  *     a porta ÚNICA da regra "item NÃO REEMBOLSA nunca entra na medição do
  *     cliente": os quatro buckets do painel só com os itens que entram
@@ -107,14 +122,25 @@ export interface MedicaoValeRow extends FilterableRow {
   /** O que ficou fora das colunas da Vale por estar marcado como não reembolsável. */
   naoReembolsavelExcluido: number;
   itensDespesa: number;
-  /** Fatos que tiram a demanda da aba Turmas. Vazio = elegível. */
+  /**
+   * Fatos que tiram a demanda da aba Turmas: só cancelada e interna com a
+   * empresa do modelo. Vazio = elegível.
+   */
   bloqueios: string[];
   elegivelTurmas: boolean;
   /**
+   * Turma que ENTRA na aba (elegível) sem estar concluída pelo status
+   * calculado — a data de término ainda não passou. Não é bloqueio: a tela
+   * lista essas turmas acima da prévia, marca a linha da prévia e pede
+   * confirmação ao gerar. Nada disso vai para o XLSX.
+   */
+  naoConcluida: boolean;
+  /**
    * Avisos que o DATASET já sabe (a linha sai, o painel avisa): horário que a
-   * demanda não tem. `source` é o campo do catálogo que a célula lê — o painel
-   * acha a coluna por ele para dizer a letra, e um modelo que não mapeia esse
-   * campo não recebe o aviso.
+   * demanda não tem, turma não concluída, sem instrutor titular. `source` é o
+   * campo do catálogo que a célula lê — o painel acha a coluna por ele para
+   * dizer a letra, e um modelo que não mapeia esse campo não recebe o aviso
+   * (salvo `mesmoSemColuna`).
    */
   avisos: DatasetAviso[];
   /**
@@ -149,7 +175,27 @@ export interface DatasetAviso {
    * 'destaque' ("(célula L)": a célula tem número, sai amarela para conferir).
    */
   celula?: 'vazia' | 'destaque';
+  /**
+   * O aviso vale mesmo quando o modelo não tem coluna que leia `source`: sai
+   * sem a letra. Para o que não é sobre uma célula, e sim sobre a turma (sem
+   * instrutor titular) — um modelo sem coluna de consultor não pode deixar a
+   * turma entrar sem titular em silêncio.
+   */
+  mesmoSemColuna?: boolean;
 }
+
+/** Textos dos avisos de turma — o painel, a tela e o smoke leem daqui. */
+export const AVISO_SEM_TITULAR = 'Sem instrutor titular';
+export const AVISO_ONLINE_SEM_CONCLUSAO = 'Online sem conclusão registrada — confirme que a turma aconteceu';
+export const avisoNaoConcluida = (statusCalculado: string): string => `Demanda não concluída (${statusLabel(statusCalculado)})`;
+
+/**
+ * A turma exige instrutor titular na Medição? Só a ONLINE (EAD) não exige —
+ * a modalidade já vem canônica (`resolveDemandModality`: treinamento
+ * primeiro). Qualquer outra, inclusive desconhecida ou em branco, exige: na
+ * dúvida o painel avisa, nunca deixa passar em silêncio.
+ */
+export const medicaoExigeTitular = (modalidadeCanonica: string): boolean => modalidadeCanonica !== 'ONLINE';
 
 /** Categoria do painel → campo do catálogo que a coluna de despesa lê. */
 const FONTE_DO_BUCKET: Record<PanelExpenseBucket, SourceField> = {
@@ -214,36 +260,50 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
       ? Number(demand.horasPrevistas) > 0 ? Number(demand.horasPrevistas) : null
       : typeof training?.hours === 'number' && training.hours > 0 ? training.hours : null;
 
+    // Modalidade do TREINAMENTO (a da demanda só quando ele não a tem), já canônica.
+    const modalidade = interna ? '' : resolveDemandModality(demand, trainingsById);
+
+    // FATOS: só o que tira a turma da planilha. Não concluída e sem titular
+    // deixaram de tirar (17/11/2026) — viraram avisos, logo abaixo.
     const bloqueios: string[] = [];
     if (interna) bloqueios.push('Demanda interna com empresa Vale — não entra na medição da Vale');
     // Cancelada depois do fim real da turma: o texto diz a data — sinal de que uma medição já enviada pode precisar de ajuste.
     if (cancelada) bloqueios.push(cancellationBlockText(demand.cancelledAt, ultimoDia));
-    else if (statusCalculado !== 'CONCLUIDA') bloqueios.push(`Demanda não concluída (${statusLabel(statusCalculado)})`);
-    if (titularIds.length === 0) bloqueios.push('Sem instrutor titular');
+    const entra = bloqueios.length === 0;
+    const naoConcluida = entra && statusCalculado !== 'CONCLUIDA';
+    const semTitular = titularIds.length === 0;
+
+    const avisos: DatasetAviso[] = [];
+    const conferir: SourceField[] = [];
+    // AVISOS da turma — só de quem entra: a cancelada e a interna já estão
+    // no painel pelo fato, e repetir aqui contaria "não concluída" que não sai.
+    if (naoConcluida) avisos.push({ texto: avisoNaoConcluida(statusCalculado) });
+    if (entra && semTitular && medicaoExigeTitular(modalidade)) {
+      avisos.push({ texto: AVISO_SEM_TITULAR, source: 'people.titulares', mesmoSemColuna: true });
+      conferir.push('people.titulares');
+    }
 
     const horarioInicio = getDayHorarioInicioRaw(demand, primeiroDia);
     const horarioFim = getDayHorarioFimRaw(demand, ultimoDia);
-    const avisos: DatasetAviso[] = [];
     if (!horarioInicio) avisos.push({ texto: 'Sem horário de início', source: 'demand.horarioInicio' });
     if (!horarioFim) avisos.push({ texto: 'Sem horário de término', source: 'demand.horarioFim' });
 
-    // Modalidade do TREINAMENTO (a da demanda só quando ele não a tem).
-    const modalidade = interna ? '' : resolveDemandModality(demand, trainingsById);
     // Híbrida: a divisão pelo cadastro. Inválida = aviso (a turma sai, com a
     // carga em branco nas duas linhas — ver toRowsSheetInput).
     const hibrida = !interna && modalidade === 'HIBRIDO' ? splitHybridHours(training) : null;
     if (hibrida && hibrida.ok === false) avisos.push({ texto: hibrida.texto });
 
-    const conferir: SourceField[] = [];
+    let temDespesaAConferir = false;
     for (const { key, label } of PANEL_EXPENSE_LABELS) {
       const doBucket = valoresAConferir.filter(i => i.bucket === key);
       if (doBucket.length === 0) continue;
+      temDespesaAConferir = true;
       conferir.push(FONTE_DO_BUCKET[key]);
       for (const a of avisosDeValor(doBucket, label)) {
         avisos.push({ texto: a.texto, detalhe: a.detalhe, source: FONTE_DO_BUCKET[key], fontes: ['expenses.total'], celula: 'destaque' });
       }
     }
-    if (conferir.length > 0) conferir.push('expenses.total');
+    if (temDespesaAConferir) conferir.push('expenses.total');
 
     const input: TemplateRowInput = {
       demandId: demand.id,
@@ -292,7 +352,8 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
       naoReembolsavelExcluido: despesasCliente.naoReembolsavelExcluido,
       itensDespesa: despesasCliente.todas.itens,
       bloqueios,
-      elegivelTurmas: bloqueios.length === 0,
+      elegivelTurmas: entra,
+      naoConcluida,
       avisos,
       hibrida,
       valoresAConferir,
@@ -378,11 +439,28 @@ export function toRowsSheetInput(
       refs: { ...r.refs, parte: 'PRESENCIAL' },
     });
     out.push({
-      input: { ...r.input, trainingName: `${nome}${HYBRID_SUFFIX.ONLINE}`, cargaHoraria: h.ok === true ? h.online : null, despesas: DESPESAS_ZERO, conferir: undefined },
+      input: { ...r.input, trainingName: `${nome}${HYBRID_SUFFIX.ONLINE}`, cargaHoraria: h.ok === true ? h.online : null, despesas: DESPESAS_ZERO, conferir: semDespesas(r.input.conferir) },
       refs: { ...r.refs, parte: 'ONLINE' },
     });
   }
   return out;
+}
+
+/**
+ * O `conferir` da parte ONLINE da híbrida: as despesas saíram na presencial
+ * (a online vale 0), então o amarelo de despesa não vai junto; o resto (o
+ * Consultor sem titular) repete, como a célula repete.
+ */
+function semDespesas(conferir: SourceField[] | undefined): SourceField[] | undefined {
+  const resto = (conferir ?? []).filter(f => !f.startsWith('expenses.'));
+  return resto.length > 0 ? resto : undefined;
+}
+
+/* ─────────────── turmas não concluídas que entram na planilha ─────────────── */
+
+/** As turmas que entram na planilha (ou no BM) sem estar concluídas. */
+export function turmasNaoConcluidas(rows: MedicaoValeRow[]): MedicaoValeRow[] {
+  return rows.filter(r => r.elegivelTurmas && r.naoConcluida);
 }
 
 export { TITULARES_SEPARATOR };

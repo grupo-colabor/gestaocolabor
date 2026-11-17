@@ -60,9 +60,11 @@ export interface TemplateRowInput {
   /**
    * Campos do catálogo cuja célula sai AMARELA nesta linha: a categoria tem
    * item que entra na medição do cliente sem valor (0/ausente), com valor
-   * suspeito (3+ casas, negativo) ou ilegível — e `expenses.total` junto. É
-   * aviso, não bloqueio: o número da célula não muda. Opcional (as fixtures
-   * antigas e a parte ONLINE da híbrida não têm).
+   * suspeito (3+ casas, negativo) ou ilegível — e `expenses.total` junto —,
+   * ou `people.titulares` quando a turma exige titular e não tem (o Consultor
+   * sai em branco e amarelo; online EAD não pinta). É aviso, não bloqueio: o
+   * valor da célula não muda. Opcional (as fixtures antigas não têm; a parte
+   * ONLINE da híbrida leva só o que não é despesa).
    */
   conferir?: SourceField[];
   medicaoStatus: string;
@@ -137,7 +139,8 @@ export const SOURCE_FIELDS: Record<SourceField, SourceFieldDef> = {
   'company.name': { label: 'Empresa', grupo: 'Cliente', get: r => r.companyName },
   'training.name': { label: 'Treinamento', grupo: 'Treinamento', get: r => r.trainingName },
   'training.modalidade': { label: 'Modalidade', grupo: 'Treinamento', get: r => r.modalidade ?? null },
-  'people.titulares': { label: 'Instrutor(es) titular(es)', grupo: 'Pessoas', get: r => r.titulares.join(TITULARES_SEPARATOR) },
+  // Sem titular (online EAD, ou turma que ainda não tem) sai como null: célula vazia, não texto vazio.
+  'people.titulares': { label: 'Instrutor(es) titular(es)', grupo: 'Pessoas', get: r => r.titulares.join(TITULARES_SEPARATOR) || null },
   'expenses.locomocao': { label: 'Despesa: locomoção (reembolsável)', grupo: 'Despesas', get: r => r.despesas.locomocao },
   'expenses.alimentacao': { label: 'Despesa: alimentação (reembolsável)', grupo: 'Despesas', get: r => r.despesas.alimentacao },
   'expenses.hospedagem': { label: 'Despesa: hospedagem (reembolsável)', grupo: 'Despesas', get: r => r.despesas.hospedagem },

@@ -5,6 +5,7 @@
 import { buildValeFixtureSource, buildTodasTurmasFixture, demandaVale, medicao, HOJE } from './smokeMedicaoValeDatasets';
 import { applyFilters } from '../domain/exports/filters';
 import { EMPTY_FILTERS } from '../domain/exports/types';
+import { DEFAULT_OPTIONS } from '../domain/exports/options';
 import { buildTrainingsById } from '../domain/modalityOptions';
 import {
   buildMedicaoValeRows,
@@ -428,6 +429,19 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
 
     eq('uma mina, com as 10 turmas que entram (não concluídas e sem titular inclusive)', [bmT.minas.map(m => m.mina), bru.turmas.length], [['Brucutu'], 10]);
     check('a cancelada (DEM-606) não entra no BM', !bmT.minas.some(m => m.turmas.some(t => t.demand.id === 'DEM-606')));
+    {
+      // Com "Incluir canceladas" a DEM-606 CHEGA ao buildBm (senão a checagem acima passaria à toa) — e fica fora.
+      const comCanceladas = applyFilters(
+        buildMedicaoValeRows(srcT),
+        { ...EMPTY_FILTERS, dataInicio: '2026-08-01', dataFim: '2026-09-30', corredor: 'Sudeste' },
+        allowed,
+        { trainingsById: buildTrainingsById(srcT.trainings), now: HOJE, options: { ...DEFAULT_OPTIONS, incluirCanceladas: true } }
+      );
+      check('com "Incluir canceladas": a DEM-606 está no recorte que vai ao BM', comCanceladas.some(r => r.demand.id === 'DEM-606'));
+      const bmC = buildBm(comCanceladas, srcT.templateValues, VALE_BM_TEMPLATE, { corredor: 'Sudeste' });
+      check('e mesmo assim fica fora das minas (e não vira "sem local")', !bmC.minas.some(m => m.turmas.some(t => t.demand.id === 'DEM-606')) && !bmC.semLocal.some(t => t.demand.id === 'DEM-606'));
+      eq('o BM com a opção ligada é o mesmo (mesmas turmas e totais)', [bmC.minas[0].turmas.length, bmC.minas[0].totalTreinamentos, bmC.minas[0].totalDespesas], [bru.turmas.length, bru.totalTreinamentos, bru.totalDespesas]);
+    }
     eq('as não concluídas da mina: 605 (em andamento) e 607 (EAD futura)', turmasNaoConcluidas(bru.turmas).map(t => t.demand.id), ['DEM-605', 'DEM-607']);
     eq('horas: NR 35 a R$ 120 = 603 (sem titular) + 605 (não concluída) + 609 = 48h',
       [linhaT('NR 35 Trabalho em Altura', 120)?.quantidade, [...(linhaT('NR 35 Trabalho em Altura', 120)?.turmas ?? [])].sort()], [48, ['DEM-603', 'DEM-605', 'DEM-609']]);

@@ -255,7 +255,11 @@ const MedicaoTemplateView: React.FC<{
    * Turmas que entram sem estar concluídas: aviso acima da prévia, marca na
    * linha da prévia e confirmação ao gerar. Só na tela — o XLSX não marca nada.
    */
-  const naoConcluidas = useMemo(() => (isBm ? [] : turmasNaoConcluidas(elegiveis)), [isBm, elegiveis]);
+  const naoConcluidas = useMemo(
+    // No BM, as que entram nas minas (a sem local/corredor já está fora e avisada).
+    () => turmasNaoConcluidas(isBm ? (bm?.minas ?? []).flatMap(m => m.turmas) : elegiveis),
+    [isBm, bm, elegiveis]
+  );
   const idsNaoConcluidas = useMemo(() => new Set(naoConcluidas.map(r => r.demand.id)), [naoConcluidas]);
 
   const temPendente = pendentes.size > 0;
@@ -330,6 +334,8 @@ const MedicaoTemplateView: React.FC<{
     setErro(null);
     try {
       if (isBm && bm) {
+        // Turma ainda não concluída entra nas horas e despesas da mina: lista e pergunta primeiro.
+        if (naoConcluidas.length > 0 && !window.confirm(confirmacaoNaoConcluidas(naoConcluidas, 'BM'))) return;
         // Todas as minas incompletas de uma vez (com "Todos", de todos os corredores).
         const incompletas = bm.minas.filter(m => m.cabecalhoIncompleto.length > 0);
         if (incompletas.length > 0) {

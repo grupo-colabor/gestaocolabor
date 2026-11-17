@@ -2,11 +2,17 @@
  * SMOKE — BM da Vale: blocos [Σ] dataset, [X] escritor, [Z] zip.
  * Chamado por smokeMedicaoValeBm.ts.
  */
-import { buildValeFixtureSource, demandaVale, medicao, HOJE } from './smokeMedicaoValeDatasets';
+import { buildValeFixtureSource, buildTodasTurmasFixture, demandaVale, medicao, HOJE } from './smokeMedicaoValeDatasets';
 import { applyFilters } from '../domain/exports/filters';
 import { EMPTY_FILTERS } from '../domain/exports/types';
 import { buildTrainingsById } from '../domain/modalityOptions';
-import { buildMedicaoValeRows, toRowsSheetInput, type MedicaoValeRow } from '../domain/exports/datasets/medicaoVale';
+import {
+  buildMedicaoValeRows,
+  toRowsSheetInput,
+  turmasNaoConcluidas,
+  confirmacaoNaoConcluidas,
+  type MedicaoValeRow,
+} from '../domain/exports/datasets/medicaoVale';
 import {
   buildBm,
   bmRegionRows,
@@ -391,6 +397,46 @@ export async function runBmChecks(t: BmSmokeTools): Promise<number> {
     const sigmaBmR = bmR.minas.reduce((acc, m) => acc + m.totalTreinamentos + m.totalDespesas, 0);
     perto('Σ BM = Σ Medição Vale com o critério novo (igualdade)', sigmaBmR, sigmaR.noBm);
     check('e o Σ cresceu com a turma herdada (não passou à toa)', sigmaR.noBm > sigmaMedicaoVale(recorte, src.templateValues).noBm);
+  }
+
+  /* ──────────────────────────────────────────────────────────────────────
+   * [TT] BM com todas as turmas do período (17/11/2026)
+   *
+   * A fixture [TT] da Medição Vale (todas em Sudeste | Brucutu), com uma
+   * despesa lançada na turma em andamento DEM-605: a não concluída tem de
+   * entrar nas HORAS e nas DESPESAS da mina, e o Σ continua igual ao da
+   * Medição Vale.
+   * ──────────────────────────────────────────────────────────────────── */
+  console.log('\n[TT] BM com todas as turmas do período');
+  {
+    const baseT = buildTodasTurmasFixture();
+    const srcT = {
+      ...baseT,
+      measurements: baseT.measurements.map((m: any) =>
+        m.demandId === 'DEM-605' ? medicao('DEM-605', { attachments: [{ id: 'n1', category: 'LOCOMOCAO', value: 50 }] }) : m
+      ),
+    };
+    const rowsT = applyFilters(
+      buildMedicaoValeRows(srcT),
+      { ...EMPTY_FILTERS, dataInicio: '2026-08-01', dataFim: '2026-09-30', corredor: 'Sudeste' },
+      allowed,
+      { trainingsById: buildTrainingsById(srcT.trainings), now: HOJE }
+    );
+    const bmT = buildBm(rowsT, srcT.templateValues, VALE_BM_TEMPLATE, { corredor: 'Sudeste' });
+    const bru = bmT.minas[0];
+    const linhaT = (nome: string, preco: number) => bru.linhas.find(l => l.descricao === `Aplicação de Treinamento - ${nome}` && l.preco === preco);
+
+    eq('uma mina, com as 10 turmas que entram (não concluídas e sem titular inclusive)', [bmT.minas.map(m => m.mina), bru.turmas.length], [['Brucutu'], 10]);
+    check('a cancelada (DEM-606) não entra no BM', !bmT.minas.some(m => m.turmas.some(t => t.demand.id === 'DEM-606')));
+    eq('as não concluídas da mina: 605 (em andamento) e 607 (EAD futura)', turmasNaoConcluidas(bru.turmas).map(t => t.demand.id), ['DEM-605', 'DEM-607']);
+    eq('horas: NR 35 a R$ 120 = 603 (sem titular) + 605 (não concluída) + 609 = 48h',
+      [linhaT('NR 35 Trabalho em Altura', 120)?.quantidade, [...(linhaT('NR 35 Trabalho em Altura', 120)?.turmas ?? [])].sort()], [48, ['DEM-603', 'DEM-605', 'DEM-609']]);
+    eq('horas: EAD a R$ 80 = 600 + 601 + 607 (futura) + 610, 4h cada', linhaT('NR 20 Básico EAD', 80)?.quantidade, 16);
+    perto('despesas: a locomoção de 50 da não concluída entra na linha 70 (50 × 1,2)', bru.totalDespesas, 60);
+    const sigmaT = sigmaMedicaoVale(rowsT, srcT.templateValues);
+    perto('Σ BM = Σ Medição Vale com não concluídas e sem titular (igualdade)', bru.totalTreinamentos + bru.totalDespesas, sigmaT.noBm);
+    eq('a confirmação do BM fala do BM e lista as duas', confirmacaoNaoConcluidas(bmT.minas.flatMap(m => m.turmas), 'BM').split('\n').filter(l => l.startsWith('DEM-') || l.endsWith(':')),
+      ['2 turmas ainda não concluídas entram no BM:', 'DEM-605 · NR 35 Trabalho em Altura · termina 18/09/2026 · Em Andamento', 'DEM-607 · NR 20 Básico EAD · termina 17/09/2026 · Alocada']);
   }
 
   // Sequenciado: `falhas += await f()` leria `falhas` antes da chamada e

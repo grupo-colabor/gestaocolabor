@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronRight, FileSignature, Table2 } from 'lucide-react';
 import { avisoBmNaoReembolsavel, type BmMina, type BmResult } from '../../domain/exports/datasets/medicaoValeBm';
+import { turmasNaoConcluidas } from '../../domain/exports/datasets/medicaoVale';
 import type { MeasurementTemplate } from '../../domain/exports/templates/types';
 import type { TemplateValuesIndex } from '../../domain/exports/templates/values';
 import { getTemplateValue } from '../../domain/exports/templates/values';
@@ -134,6 +135,8 @@ export const PreviaBm: React.FC<{ bm: BmResult; periodoLabel: string }> = ({ bm,
 
 const MinaPrevia: React.FC<{ mina: BmMina; periodoLabel: string }> = ({ mina, periodoLabel }) => {
   const total = mina.totalTreinamentos + mina.totalDespesas;
+  // Turmas que entram nesta mina sem estar concluídas — marca só na tela (o BM não marca nada).
+  const naoConcluidas = turmasNaoConcluidas(mina.turmas);
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
       <div className="px-6 py-3 border-b border-slate-100 flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -143,6 +146,14 @@ const MinaPrevia: React.FC<{ mina: BmMina; periodoLabel: string }> = ({ mina, pe
         <span className="text-[11px] text-slate-400">{periodoLabel || 'sem período'} · {mina.turmas.length} turma(s)</span>
         {mina.cabecalhoIncompleto.length > 0 && (
           <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-800">cabeçalho incompleto</span>
+        )}
+        {naoConcluidas.length > 0 && (
+          <span
+            title={`Ainda não concluídas: ${naoConcluidas.map(t => t.demand.id).join(', ')}`}
+            className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800"
+          >
+            {naoConcluidas.length === 1 ? '1 não concluída' : `${naoConcluidas.length} não concluídas`}
+          </span>
         )}
       </div>
       <div className="overflow-x-auto">

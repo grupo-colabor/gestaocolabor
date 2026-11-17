@@ -5,7 +5,12 @@
  * (datasets/medicaoVale, `elegivelTurmas`), já recortadas pela tela por
  * período (data de TÉRMINO da turma), corredor opcional, mina opcional,
  * status da medição e canceladas. Nada aqui refaz elegibilidade — inclusive
- * a regra do período, que o BM herda inteira da Medição Vale.
+ * a regra do período, que o BM herda inteira da Medição Vale. Desde
+ * 17/11/2026 ("puxar todas as turmas do período") isso inclui a turma ainda
+ * NÃO CONCLUÍDA e a sem instrutor titular: entram nas horas e nas despesas
+ * da mina com os dados que têm; a tela avisa, marca a mina e pede
+ * confirmação ao gerar (`naoConcluida` na linha da Medição Vale). O BM em si
+ * não marca nada.
  *
  * Corredor: com um corredor no filtro, todas as turmas do recorte são dele
  * (a tela já filtrou) e sai um BM por mina. Com "Todos" (`corredor` vazio),

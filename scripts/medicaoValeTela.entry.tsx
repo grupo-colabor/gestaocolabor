@@ -9,7 +9,7 @@ import { win } from './telaDom';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import MedicaoTemplateView from '../components/exportacoes/MedicaoTemplateView';
-import { MEDICAO_VALE_DATASET } from '../domain/exports/registry';
+import { MEDICAO_VALE_DATASET, VALE_BM_DATASET } from '../domain/exports/registry';
 import { DEFAULT_OPTIONS, type ExportOptions } from '../domain/exports/options';
 import { buildMedicaoValeRows, confirmacaoNaoConcluidas } from '../domain/exports/datasets/medicaoVale';
 import { buildTodasTurmasFixture, TT_VALUE_ROWS, HOJE } from './smokeMedicaoValeDatasets';
@@ -56,6 +56,8 @@ function render(dataset: any, carga: any, options: ExportOptions = DEFAULT_OPTIO
   act(() => {
     root.render(
       <MedicaoTemplateView
+        // Trocar de módulo monta a tela do zero (estado de erro/geração não vaza de um teste para o outro).
+        key={dataset.key}
         dataset={dataset}
         carga={carga}
         options={options}
@@ -133,6 +135,36 @@ async function main() {
     confirmacoes = []; respostas = [];
     await clicarGerar();
     eq('tudo concluído: Gerar não pergunta nada', confirmacoes, []);
+  }
+
+  /* ── BM ── */
+  console.log('\n[TELA] BM Vale — todas as turmas do período');
+  {
+    const cargaBm = cargaDe({ templateIds: ['vale-v1', 'vale-bm-v1'] });
+    render(VALE_BM_DATASET, cargaBm);
+    // Todas em Sudeste | Brucutu; corredor "Todos" no filtro.
+    eq('barra: total no BM, sem "de N no recorte" quando nada fica fora', barra('Turmas no BM'), 'Turmas no BM10');
+    check('aviso acima da prévia: "2 turmas ainda não concluídas entram no BM"', texto().includes('2 turmas ainda não concluídas entram no BM'));
+    const itensBm = Array.from(container.querySelectorAll('[role="status"] li')).map(li => (li.textContent ?? '').replace(/\s+/g, ' ').trim());
+    eq('lista do aviso do BM', itensBm, [
+      'DEM-605NR 35 Trabalho em Altura· termina 18/09/2026· Em Andamento',
+      'DEM-607NR 20 Básico EAD· termina 17/09/2026· Alocada',
+    ]);
+    const marcaMina = Array.from(container.querySelectorAll('span')).find(s => /^\d+ não concluídas?$/.test(s.textContent ?? ''));
+    eq('marca na prévia da mina: "2 não concluídas", com os DEM no title', [marcaMina?.textContent, marcaMina?.getAttribute('title')], ['2 não concluídas', 'Ainda não concluídas: DEM-605, DEM-607']);
+    check('painel do BM: "0 fora do BM"', /demandas com pendência — 0 fora do BM, \d+ no BM com aviso\./.test(texto()));
+
+    // Gerar: primeiro as não concluídas; cancelar para ali.
+    confirmacoes = []; respostas = [false];
+    await clicarGerar();
+    const turmasBm = buildMedicaoValeRows({ ...src, template: MEDICAO_VALE_DATASET.template });
+    eq('Gerar BM pergunta das não concluídas (e para no "Cancelar")', confirmacoes, [confirmacaoNaoConcluidas(turmasBm, 'BM')]);
+    // Aceitando: depois vem a pergunta do cabeçalho incompleto (a fixture não tem cabeçalho) — as duas, nesta ordem.
+    confirmacoes = []; respostas = [true, false];
+    await clicarGerar();
+    eq('aceitando, vem a do cabeçalho incompleto — as duas, nesta ordem',
+      [confirmacoes.length, /entram no BM/.test(confirmacoes[0] ?? ''), confirmacoes[1]], [2, true, 'Cabeçalho incompleto para Sudeste | Brucutu — gerar mesmo assim?']);
+    check('nada gerado (cancelou no cabeçalho)', notificacoes.length === 0);
   }
 
   act(() => root.unmount());

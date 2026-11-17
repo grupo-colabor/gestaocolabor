@@ -282,6 +282,13 @@ export function buildMedicaoValeRows(src: MedicaoValeSource): MedicaoValeRow[] {
       avisos.push({ texto: AVISO_SEM_TITULAR, source: 'people.titulares', mesmoSemColuna: true });
       conferir.push('people.titulares');
     }
+    // Online sem titular que só está "concluída" porque a data passou: ninguém
+    // registrou a conclusão (o status GRAVADO vira CONCLUIDA quando a medição é
+    // registrada — components/Measurement.tsx). Só aviso: a linha entra e
+    // nenhuma célula fica amarela.
+    if (entra && semTitular && !medicaoExigeTitular(modalidade) && statusCalculado === 'CONCLUIDA' && demand.status !== 'CONCLUIDA') {
+      avisos.push({ texto: AVISO_ONLINE_SEM_CONCLUSAO });
+    }
 
     const horarioInicio = getDayHorarioInicioRaw(demand, primeiroDia);
     const horarioFim = getDayHorarioFimRaw(demand, ultimoDia);

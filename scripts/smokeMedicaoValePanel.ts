@@ -85,7 +85,9 @@ export function runPanelChecks(t: ValeSmokeTools, ctx: { src: any; rows: any[] }
     const ctxT = { sheet: VALE_TEMPLATE.sheets[0], template: VALE_TEMPLATE, templateValues: srcT.templateValues, logisticAllocations: [], logisticBlocks: [] };
     const pendT = buildPendencias(rowsT, ctxT);
     const tT = (id: string) => pendT.find(p => p.demand.id === id)?.pendencias.map(p => `${p.tipo}:${p.texto}`) ?? [];
-    eq('online EAD sem titular, concluída e completa: fora do painel', tT('DEM-600'), []);
+    eq('online EAD sem titular, conclusão gravada e completa: fora do painel', tT('DEM-600'), []);
+    eq('online EAD sem titular, só concluída pela data: aviso para confirmar', tT('DEM-601'), ['aviso:Online sem conclusão registrada — confirme que a turma aconteceu']);
+    eq('online EAD com titular, gravado ALOCADA: fora do painel', tT('DEM-610'), []);
     eq('online ao vivo sem titular: aviso com a letra do Consultor', tT('DEM-602'), ['aviso:Sem instrutor titular (célula S em branco)']);
     eq('presencial sem titular: o mesmo aviso', tT('DEM-603'), ['aviso:Sem instrutor titular (célula S em branco)']);
     eq('em andamento: "Demanda não concluída" é AVISO', tT('DEM-605'), ['aviso:Demanda não concluída (Em Andamento)']);

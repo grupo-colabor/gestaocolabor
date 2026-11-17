@@ -132,6 +132,10 @@ export function buildTodasTurmasFixture() {
   const demands = [
     // EAD pelo TREINAMENTO (a demanda diz presencial), sem titular, conclusão registrada.
     demandaVale({ id: 'DEM-600', trainingId: 'T_EAD', modality: 'PRESENCIAL', status: 'CONCLUIDA', ...sem }),
+    // EAD sem titular, data passada, status GRAVADO ainda ALOCADA (ninguém registrou a conclusão).
+    demandaVale({ id: 'DEM-601', trainingId: 'T_EAD', ...sem }),
+    // EAD COM titular, data passada, gravado ALOCADA: o acréscimo é só para quem não tem titular.
+    demandaVale({ id: 'DEM-610', trainingId: 'T_EAD' }),
     demandaVale({ id: 'DEM-602', trainingId: 'T_AOV', ...sem }),                                       // ao vivo sem titular
     demandaVale({ id: 'DEM-603', ...sem }),                                                           // presencial sem titular
     demandaVale({ id: 'DEM-604', trainingId: 'T_HIB', ...sem }),                                       // híbrida sem titular
@@ -339,9 +343,13 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     const daTurma = (id: string) => r(id).avisos.map(a => a.texto).filter(x => /concluída|titular|conclusão/.test(x));
 
     eq('entram todas, menos a cancelada', rowsT.filter(x => x.elegivelTurmas).map(x => x.demand.id).sort(),
-      ['DEM-600', 'DEM-602', 'DEM-603', 'DEM-604', 'DEM-605', 'DEM-607', 'DEM-608', 'DEM-609']);
-    eq('online EAD sem titular (o treinamento ONLINE prevalece sobre a demanda PRESENCIAL): sem aviso, nada a conferir',
-      [r('DEM-600').input.modalidade, daTurma('DEM-600'), r('DEM-600').input.conferir ?? null], ['ONLINE', [], null]);
+      ['DEM-600', 'DEM-601', 'DEM-602', 'DEM-603', 'DEM-604', 'DEM-605', 'DEM-607', 'DEM-608', 'DEM-609', 'DEM-610']);
+    eq('online EAD sem titular (o treinamento ONLINE prevalece sobre a demanda PRESENCIAL), conclusão GRAVADA: sem aviso, nada a conferir',
+      [r('DEM-600').input.modalidade, r('DEM-600').demand.status, daTurma('DEM-600'), r('DEM-600').input.conferir ?? null], ['ONLINE', 'CONCLUIDA', [], null]);
+    eq('online EAD sem titular que só virou concluída pela data (gravado ALOCADA): aviso "confirme que a turma aconteceu", nada a conferir',
+      [r('DEM-601').statusCalculado, r('DEM-601').demand.status, daTurma('DEM-601'), r('DEM-601').input.conferir ?? null, r('DEM-601').elegivelTurmas, r('DEM-601').naoConcluida],
+      ['CONCLUIDA', 'ALOCADA', ['Online sem conclusão registrada — confirme que a turma aconteceu'], null, true, false]);
+    eq('online EAD COM titular e gravado ALOCADA: sem esse aviso (o acréscimo é do online sem titular)', daTurma('DEM-610'), []);
     eq('online ao vivo sem titular: aviso + Consultor a conferir', [daTurma('DEM-602'), r('DEM-602').input.conferir], [['Sem instrutor titular'], ['people.titulares']]);
     eq('presencial sem titular: aviso + Consultor a conferir', [daTurma('DEM-603'), r('DEM-603').input.conferir], [['Sem instrutor titular'], ['people.titulares']]);
     eq('híbrida sem titular: aviso + Consultor, e a alimentação zerada a conferir junto',
@@ -364,6 +372,7 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     const consultor = (id: string, parte?: string) => { const c = celulas(id, parte)[ic('consultor')]; return [c.value === '' ? null : c.value ?? null, c.highlight]; };
     eq('Consultor da online EAD sem titular: em branco e NÃO amarelo', consultor('DEM-600'), [null, false]);
     check('online EAD sem titular: nenhuma célula amarela na linha', celulas('DEM-600').every(c => !c.highlight));
+    check('online sem conclusão registrada: só aviso, nenhuma célula amarela na linha', celulas('DEM-601').every(c => !c.highlight));
     eq('Consultor da online ao vivo sem titular: em branco e amarelo', consultor('DEM-602'), [null, true]);
     eq('Consultor da presencial sem titular: em branco e amarelo', consultor('DEM-603'), [null, true]);
     eq('e é a ÚNICA célula amarela da linha', celulas('DEM-603').filter(c => c.highlight).length, 1);

@@ -12,6 +12,10 @@ import {
   avisoTurmaComecouAntes,
   turmasNaoConcluidas,
   medicaoExigeTitular,
+  itensNaoConcluidas,
+  avisoNaoConcluidas,
+  confirmacaoNaoConcluidas,
+  LIMITE_LISTA_CONFIRMACAO,
 } from '../domain/exports/datasets/medicaoVale';
 import { MODALITY_UNSET } from '../domain/modalityOptions';
 import { getDemandLastDay } from '../domain/demandDays';
@@ -148,16 +152,18 @@ export function buildTodasTurmasFixture() {
   const measurements = demands.map(d =>
     d.id === 'DEM-604' ? medicao(d.id, { attachments: [{ id: 'z1', category: 'ALMOCO', value: 0 }] }) : medicao(d.id)
   );
-  const templateValues = indexTemplateValues([
-    { scope: 'training', column_key: 'precoHH', training_id: 'T_PRE', demand_id: null, value: 120 },
-    { scope: 'training', column_key: 'precoHH', training_id: 'T_EAD', demand_id: null, value: 80 },
-    { scope: 'training', column_key: 'precoHH', training_id: 'T_AOV', demand_id: null, value: 90 },
-    { scope: 'training', column_key: 'precoHH', training_id: 'T_SEM', demand_id: null, value: 70 },
-    { scope: 'training', column_key: 'precoHHPresencial', training_id: 'T_HIB', demand_id: null, value: 290 },
-    { scope: 'training', column_key: 'precoHHOnline', training_id: 'T_HIB', demand_id: null, value: 200 },
-  ]);
-  return { ...base, trainings: TRAININGS_TT, demands, measurements, instructorAllocations: [], templateValues };
+  return { ...base, trainings: TRAININGS_TT, demands, measurements, instructorAllocations: [], templateValues: indexTemplateValues(TT_VALUE_ROWS) };
 }
+
+/** Os valores manuais da fixture [TT], como linhas do banco (a tela recebe assim). */
+export const TT_VALUE_ROWS: any[] = [
+  { template_id: 'vale-v1', scope: 'training', column_key: 'precoHH', training_id: 'T_PRE', demand_id: null, value: 120 },
+  { template_id: 'vale-v1', scope: 'training', column_key: 'precoHH', training_id: 'T_EAD', demand_id: null, value: 80 },
+  { template_id: 'vale-v1', scope: 'training', column_key: 'precoHH', training_id: 'T_AOV', demand_id: null, value: 90 },
+  { template_id: 'vale-v1', scope: 'training', column_key: 'precoHH', training_id: 'T_SEM', demand_id: null, value: 70 },
+  { template_id: 'vale-v1', scope: 'training', column_key: 'precoHHPresencial', training_id: 'T_HIB', demand_id: null, value: 290 },
+  { template_id: 'vale-v1', scope: 'training', column_key: 'precoHHOnline', training_id: 'T_HIB', demand_id: null, value: 200 },
+];
 
 export function runValeDatasetChecks(t: ValeSmokeTools): number {
   let falhas = 0;
@@ -363,6 +369,30 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     eq('medicaoExigeTitular: só ONLINE (EAD) dispensa', ['ONLINE', 'ONLINE_AO_VIVO', 'PRESENCIAL', 'HIBRIDO', 'TUTORIA', MODALITY_UNSET, ''].map(medicaoExigeTitular), [false, true, true, true, true, true, true]);
     eq('turmasNaoConcluidas: as que entram sem estar concluídas, na ordem da planilha', turmasNaoConcluidas(rowsT).map(x => x.demand.id), ['DEM-605', 'DEM-607']);
     eq('turmasNaoConcluidas ignora a que não entra', turmasNaoConcluidas([{ ...r('DEM-605'), elegivelTurmas: false }]).length, 0);
+
+    // Topo e trava ao gerar: os textos moram no domínio.
+    eq('lista do aviso: DEM, treinamento, data de término, status', itensNaoConcluidas(rowsT), [
+      { demandId: 'DEM-605', treinamento: 'NR 35 Trabalho em Altura', termino: '18/09/2026', status: 'Em Andamento' },
+      { demandId: 'DEM-607', treinamento: 'NR 20 Básico EAD', termino: '17/09/2026', status: 'Alocada' },
+    ]);
+    eq('título do aviso (plural / singular / BM)', [avisoNaoConcluidas(2), avisoNaoConcluidas(1), avisoNaoConcluidas(3, 'BM')],
+      ['2 turmas ainda não concluídas entram nesta planilha', '1 turma ainda não concluída entra nesta planilha', '3 turmas ainda não concluídas entram no BM']);
+    eq('confirmação ao gerar lista as turmas e pergunta "gerar mesmo assim?"', confirmacaoNaoConcluidas(rowsT),
+      '2 turmas ainda não concluídas entram nesta planilha:\n\nDEM-605 · NR 35 Trabalho em Altura · termina 18/09/2026 · Em Andamento\nDEM-607 · NR 20 Básico EAD · termina 17/09/2026 · Alocada\n\nAinda não concluídas — gerar mesmo assim?');
+    {
+      const muitas = Array.from({ length: LIMITE_LISTA_CONFIRMACAO + 3 }, (_, i) => ({ ...r('DEM-605'), demand: { ...r('DEM-605').demand, id: `DEM-9${String(i).padStart(2, '0')}` } }));
+      const txt = confirmacaoNaoConcluidas(muitas);
+      eq('confirmação com muitas: lista o limite e diz quantas faltam', [txt.split('\n').filter(l => l.startsWith('DEM-')).length, txt.includes('… e mais 3 (lista completa no aviso acima da prévia)')], [LIMITE_LISTA_CONFIRMACAO, true]);
+    }
+
+    // A tela (guarda de fonte): aviso, marca e confirmação vêm do domínio; o XLSX não recebe nada disso.
+    const view = t.semComentarios(t.ler('components/exportacoes/MedicaoTemplateView.tsx'));
+    check('tela: confirmação ao gerar a planilha com o texto do domínio', view.includes("window.confirm(confirmacaoNaoConcluidas(naoConcluidas, 'planilha'))"));
+    check('tela: aviso acima da prévia com título e lista do domínio', view.includes('avisoNaoConcluidas(listaNaoConcluidas.length') && view.includes('itensNaoConcluidas(naoConcluidas)'));
+    check('tela: marca na linha da prévia pela demanda da linha', view.includes('idsNaoConcluidas.has(linhasPlanilha[i]?.refs.demandId)'));
+    check('tela: prévia e XLSX saem das MESMAS linhas', view.includes('resolveRowsSheet(sheetTurmas, linhasPlanilha, values)') && view.includes('resolveTemplate(template, linhasPlanilha, values)'));
+    check('tela: "de N no recorte" só quando algo fica fora', view.includes('{algoFicaFora && <span') && view.includes('turmasNoDocumento < filtered.length'));
+    check('tela: a confirmação não trava o botão (é pergunta, não bloqueio)', !/podeGerar[^\n]*naoConcluidas/.test(view));
 
     // A planilha: o amarelo do Consultor e nada mais.
     const linhasT = toRowsSheetInput(rowsT, VALE_TEMPLATE);

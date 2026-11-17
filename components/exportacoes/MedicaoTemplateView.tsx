@@ -21,6 +21,12 @@
  *     avisada na barra e no painel. Não bloqueia nada: é o efeito esperado da
  *     seleção pela data de término, e o aviso existe para quem compara com a
  *     medição do mês passado saber por que a turma está aqui;
+ *   • TODA turma da empresa que termina no período entra (17/11/2026); fora
+ *     só cancelada, interna e o que os filtros tirarem. A barra mostra o
+ *     total que entra (o "de N no recorte" só quando algo fica fora). Turma
+ *     ainda NÃO CONCLUÍDA entra com aviso: lista em destaque acima da prévia,
+ *     marca na linha da prévia e confirmação ao gerar ("gerar mesmo
+ *     assim?") — nada disso vai para o XLSX;
  *   • item "não reembolsa" fica fora dos dois documentos (regra no domínio,
  *     `computeClientMeasurementExpenses`); a Medição Vale avisa por turma no
  *     painel e o BM mostra, na barra e em cada mina, quanto ficou fora;
@@ -41,6 +47,10 @@ import {
   turmasComecaramAntes,
   avisoComecaramAntes,
   avisoTurmaComecouAntes,
+  turmasNaoConcluidas,
+  itensNaoConcluidas,
+  avisoNaoConcluidas,
+  confirmacaoNaoConcluidas,
 } from '../../domain/exports/datasets/medicaoVale';
 import {
   buildBm,
@@ -238,7 +248,15 @@ const MedicaoTemplateView: React.FC<{
     return mergePendencias(base, extras);
   }, [filtered, sheetTurmas, values, carga, bm, comecaramAntes]);
 
-  const previa = useMemo(() => (isBm ? null : resolveRowsSheet(sheetTurmas, toRowsSheetInput(elegiveis, turmasTemplate), values)), [isBm, sheetTurmas, turmasTemplate, elegiveis, values]);
+  /** As linhas da aba (a híbrida em duas) — as MESMAS na prévia e no XLSX. */
+  const linhasPlanilha = useMemo(() => (isBm ? [] : toRowsSheetInput(elegiveis, turmasTemplate)), [isBm, elegiveis, turmasTemplate]);
+  const previa = useMemo(() => (isBm ? null : resolveRowsSheet(sheetTurmas, linhasPlanilha, values)), [isBm, sheetTurmas, linhasPlanilha, values]);
+  /**
+   * Turmas que entram sem estar concluídas: aviso acima da prévia, marca na
+   * linha da prévia e confirmação ao gerar. Só na tela — o XLSX não marca nada.
+   */
+  const naoConcluidas = useMemo(() => (isBm ? [] : turmasNaoConcluidas(elegiveis)), [isBm, elegiveis]);
+  const idsNaoConcluidas = useMemo(() => new Set(naoConcluidas.map(r => r.demand.id)), [naoConcluidas]);
 
   const temPendente = pendentes.size > 0;
   const temErroCampo = errosCampo.size > 0;
@@ -342,7 +360,9 @@ const MedicaoTemplateView: React.FC<{
         }
         return;
       }
-      const sheets = resolveTemplate(template, toRowsSheetInput(elegiveis, turmasTemplate), values);
+      // Turma ainda não concluída entra na planilha: lista e pergunta, como o cabeçalho incompleto do BM.
+      if (naoConcluidas.length > 0 && !window.confirm(confirmacaoNaoConcluidas(naoConcluidas, 'planilha'))) return;
+      const sheets = resolveTemplate(template, linhasPlanilha, values);
       const nome = buildExportFileName(template.fileNameBase, 'xlsx');
       await downloadTemplateXlsx(template, sheets, nome, baseFileLoader);
       onNotify(`${nome} gerado com ${elegiveis.length} turma(s).`, 'success');
@@ -378,6 +398,11 @@ const MedicaoTemplateView: React.FC<{
   const semPeriodo = !filters.dataInicio && !filters.dataFim;
   const demandasComPendencia = useMemo(() => new Set(pendencias.map(p => p.demand.id)), [pendencias]);
   const turmasNoBm = bm ? bm.minas.reduce((acc, m) => acc + m.turmas.length, 0) : 0;
+  /** O total da barra: as turmas que entram no documento. */
+  const turmasNoDocumento = isBm ? turmasNoBm : elegiveis.length;
+  /** "de N no recorte" só quando alguma turma do recorte fica fora (cancelada, interna, sem local…). */
+  const algoFicaFora = turmasNoDocumento < filtered.length;
+  const listaNaoConcluidas = useMemo(() => itensNaoConcluidas(naoConcluidas), [naoConcluidas]);
 
   return (
     <div className="space-y-6">
@@ -399,7 +424,7 @@ const MedicaoTemplateView: React.FC<{
       />
       {semPeriodo && (
         <p className="text-[11px] text-slate-400 -mt-3 px-2">
-          sem período: todas as turmas concluídas ({elegiveis.length})
+          sem período: todas as turmas ({elegiveis.length})
         </p>
       )}
       {erro && <ExportBanner tipo="erro"><strong>Bloqueado.</strong> {erro}</ExportBanner>}
@@ -443,8 +468,8 @@ const MedicaoTemplateView: React.FC<{
         <div className="flex flex-wrap items-center gap-6">
           <div>
             <span className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{isBm ? 'Turmas no BM' : 'Turmas na planilha'}</span>
-            <span className="text-xl font-black">{isBm ? turmasNoBm : elegiveis.length}</span>
-            <span className="text-xs text-slate-400"> de {filtered.length} no recorte</span>
+            <span className="text-xl font-black">{turmasNoDocumento}</span>
+            {algoFicaFora && <span className="text-xs text-slate-400"> de {filtered.length} no recorte</span>}
           </div>
           {isBm && bm && (
             <div>
@@ -496,6 +521,23 @@ const MedicaoTemplateView: React.FC<{
       {temPendente && <ExportBanner tipo="aviso">Há edições não salvas. <strong>Salve antes de gerar</strong> — o download nunca grava.</ExportBanner>}
       {temErroCampo && <ExportBanner tipo="erro">{errosCampo.size} {errosCampo.size === 1 ? 'campo manual com valor não reconhecido' : 'campos manuais com valor não reconhecido'} — corrija (use 1.234,56) antes de salvar ou gerar. <strong>O valor salvo não foi alterado.</strong></ExportBanner>}
 
+      {listaNaoConcluidas.length > 0 && (
+        <ExportBanner tipo="aviso">
+          <strong>{avisoNaoConcluidas(listaNaoConcluidas.length, isBm ? 'BM' : 'planilha')}</strong>
+          <span className="block text-xs mt-0.5">Entram com o que têm hoje (carga contratada, preço HH, despesas lançadas, consultor alocado). Ao gerar, a tela pede confirmação; o arquivo não marca nada.</span>
+          <ul className="mt-2 max-h-48 overflow-y-auto space-y-0.5 text-xs">
+            {listaNaoConcluidas.map(i => (
+              <li key={i.demandId} className="flex flex-wrap gap-x-2">
+                <span className="font-black font-mono">{i.demandId}</span>
+                <span className="font-bold">{i.treinamento}</span>
+                <span>· termina {i.termino}</span>
+                <span>· {i.status}</span>
+              </li>
+            ))}
+          </ul>
+        </ExportBanner>
+      )}
+
       {isBm && bm && <PreviaBm bm={bm} periodoLabel={periodoLabel} />}
 
       {!isBm && previa && (
@@ -507,6 +549,8 @@ const MedicaoTemplateView: React.FC<{
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-900 text-white">
+                  {/* Coluna só da tela (sem letra): a marca da turma não concluída. Não vai para o XLSX. */}
+                  <th className="p-3 w-0"><span className="sr-only">Situação</span></th>
                   {previa.columns.map(c => (
                     <th key={c.key} className="p-3 font-black uppercase tracking-wide text-[10px] whitespace-nowrap">{c.letter} · {c.header}</th>
                   ))}
@@ -515,6 +559,11 @@ const MedicaoTemplateView: React.FC<{
               <tbody>
                 {previa.rows.slice(0, 200).map((cells, i) => (
                   <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="p-3 whitespace-nowrap">
+                      {idsNaoConcluidas.has(linhasPlanilha[i]?.refs.demandId) && (
+                        <span title="Turma ainda não concluída — entra na planilha com o que tem" className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">não concluída</span>
+                      )}
+                    </td>
                     {cells.map((cell, j) => (
                       <td key={j} className={`p-3 whitespace-nowrap max-w-[260px] truncate ${cell.highlight ? 'bg-yellow-100' : ''} ${cell.formula ? 'text-slate-500 italic' : 'text-slate-700'}`}>
                         {previaValor(cell, i, j)}
@@ -523,7 +572,7 @@ const MedicaoTemplateView: React.FC<{
                   </tr>
                 ))}
                 {previa.rows.length === 0 && (
-                  <tr><td colSpan={previa.columns.length} className="p-10 text-center text-slate-300 font-bold">Nenhuma turma elegível com os filtros aplicados.</td></tr>
+                  <tr><td colSpan={previa.columns.length + 1} className="p-10 text-center text-slate-300 font-bold">Nenhuma turma elegível com os filtros aplicados.</td></tr>
                 )}
               </tbody>
             </table>

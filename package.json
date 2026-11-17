@@ -33,7 +33,8 @@
     "smoke:nao-reembolsaveis": "esbuild scripts/smokeNaoReembolsaveis.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-nao-reembolsaveis.cjs --log-level=error && node node_modules/.cache/smoke-nao-reembolsaveis.cjs",
     "smoke:cancelamento": "esbuild scripts/smokeCancelamento.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-cancelamento.cjs --log-level=error && node node_modules/.cache/smoke-cancelamento.cjs",
     "smoke:nao-reembolsaveis-card": "esbuild scripts/smokeNaoReembolsaveisCard.tsx --bundle --platform=node --format=cjs --jsx=automatic --outfile=node_modules/.cache/smoke-nao-reembolsaveis-card.cjs --log-level=error && node node_modules/.cache/smoke-nao-reembolsaveis-card.cjs",
-    "smoke:valor-monetario": "esbuild scripts/smokeValorMonetario.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-valor-monetario.cjs --log-level=error && node node_modules/.cache/smoke-valor-monetario.cjs"
+    "smoke:valor-monetario": "esbuild scripts/smokeValorMonetario.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/smoke-valor-monetario.cjs --log-level=error && node node_modules/.cache/smoke-valor-monetario.cjs",
+    "smoke:medicao-vale-tela": "esbuild scripts/smokeMedicaoValeTela.ts --bundle --platform=node --format=cjs --external:esbuild --outfile=node_modules/.cache/smoke-medicao-vale-tela.cjs --log-level=error && node node_modules/.cache/smoke-medicao-vale-tela.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.89.0",

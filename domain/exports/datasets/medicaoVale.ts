@@ -70,7 +70,7 @@ import { getDemandTitle, isInternalDemand } from '../../demandLabel';
 import { getDemandDays, getDayHorarioInicioRaw, getDayHorarioFimRaw, getDemandLastDay } from '../../demandDays';
 import { resolveDemandModality } from '../../modalityOptions';
 import { splitHybridHours, type HybridSplit } from '../../hybridHours';
-import { resolveCalculatedStatus, resolveCompanyLabel, statusLabel } from '../shared';
+import { resolveCalculatedStatus, resolveCompanyLabel, statusLabel, toBrDate } from '../shared';
 import { cancellationBlockText } from '../../demandCancellation';
 import { DEFAULT_OPTIONS, type ExportOptions } from '../options';
 import { TITULARES_SEPARATOR, type SourceField, type TemplateRowInput } from '../templates/sourceFields';
@@ -468,6 +468,50 @@ function semDespesas(conferir: SourceField[] | undefined): SourceField[] | undef
 /** As turmas que entram na planilha (ou no BM) sem estar concluídas. */
 export function turmasNaoConcluidas(rows: MedicaoValeRow[]): MedicaoValeRow[] {
   return rows.filter(r => r.elegivelTurmas && r.naoConcluida);
+}
+
+export type DocumentoDaMedicao = 'planilha' | 'BM';
+
+/** Uma turma não concluída como a tela lista: DEM, treinamento, data de término, status. */
+export interface TurmaNaoConcluidaItem {
+  demandId: string;
+  treinamento: string;
+  /** dd/mm/yyyy — o último dia real (o mesmo do filtro de período). */
+  termino: string;
+  /** Rótulo do status calculado ("Alocada", "Em Andamento"…). */
+  status: string;
+}
+
+export function itensNaoConcluidas(rows: MedicaoValeRow[]): TurmaNaoConcluidaItem[] {
+  return turmasNaoConcluidas(rows).map(r => ({
+    demandId: r.demand.id,
+    treinamento: r.input.trainingName,
+    termino: toBrDate(r.ultimoDia),
+    status: statusLabel(r.statusCalculado),
+  }));
+}
+
+/** O título do aviso acima da prévia: "3 turmas ainda não concluídas entram nesta planilha". */
+export function avisoNaoConcluidas(quantas: number, documento: DocumentoDaMedicao = 'planilha'): string {
+  const onde = documento === 'BM' ? 'no BM' : 'nesta planilha';
+  return quantas === 1
+    ? `1 turma ainda não concluída entra ${onde}`
+    : `${quantas} turmas ainda não concluídas entram ${onde}`;
+}
+
+/** Quantas turmas a confirmação lista por extenso — o resto fica no aviso acima da prévia. */
+export const LIMITE_LISTA_CONFIRMACAO = 20;
+
+/**
+ * O texto do `window.confirm` ao Gerar — o mesmo mecanismo do "cabeçalho
+ * incompleto" do BM: lista as turmas e pergunta "gerar mesmo assim?".
+ */
+export function confirmacaoNaoConcluidas(rows: MedicaoValeRow[], documento: DocumentoDaMedicao = 'planilha'): string {
+  const itens = itensNaoConcluidas(rows);
+  const linhas = itens.slice(0, LIMITE_LISTA_CONFIRMACAO).map(i => `${i.demandId} · ${i.treinamento} · termina ${i.termino} · ${i.status}`);
+  const resto = itens.length - linhas.length;
+  if (resto > 0) linhas.push(`… e mais ${resto} (lista completa no aviso acima da prévia)`);
+  return `${avisoNaoConcluidas(itens.length, documento)}:\n\n${linhas.join('\n')}\n\n${itens.length === 1 ? 'Ainda não concluída' : 'Ainda não concluídas'} — gerar mesmo assim?`;
 }
 
 export { TITULARES_SEPARATOR };

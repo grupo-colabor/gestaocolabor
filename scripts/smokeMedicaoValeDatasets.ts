@@ -16,6 +16,7 @@ import {
   avisoNaoConcluidas,
   confirmacaoNaoConcluidas,
   LIMITE_LISTA_CONFIRMACAO,
+  linhasDaConferenciaDoModelo,
 } from '../domain/exports/datasets/medicaoVale';
 import { MODALITY_UNSET } from '../domain/modalityOptions';
 import { getDemandLastDay } from '../domain/demandDays';
@@ -369,6 +370,13 @@ export function runValeDatasetChecks(t: ValeSmokeTools): number {
     eq('medicaoExigeTitular: só ONLINE (EAD) dispensa', ['ONLINE', 'ONLINE_AO_VIVO', 'PRESENCIAL', 'HIBRIDO', 'TUTORIA', MODALITY_UNSET, ''].map(medicaoExigeTitular), [false, true, true, true, true, true, true]);
     eq('turmasNaoConcluidas: as que entram sem estar concluídas, na ordem da planilha', turmasNaoConcluidas(rowsT).map(x => x.demand.id), ['DEM-605', 'DEM-607']);
     eq('turmasNaoConcluidas ignora a que não entra', turmasNaoConcluidas([{ ...r('DEM-605'), elegivelTurmas: false }]).length, 0);
+
+    // Conferência do mapeamento de modelo por empresa (ModelosMedicao): a amostra NÃO segue a regra
+    // nova — só as concluídas. A planilha gerada, sim.
+    eq('amostra da conferência do modelo: só as concluídas que entram (sem 605/607 não concluídas, sem a cancelada)',
+      linhasDaConferenciaDoModelo(rowsT).map(l => l.refs.demandId).sort(),
+      ['DEM-600', 'DEM-601', 'DEM-602', 'DEM-603', 'DEM-604', 'DEM-608', 'DEM-609', 'DEM-610']);
+    check('e a planilha gerada continua com as não concluídas', ['DEM-605', 'DEM-607'].every(id => toRowsSheetInput(rowsT).some(l => l.refs.demandId === id)));
 
     // Topo e trava ao gerar: os textos moram no domínio.
     eq('lista do aviso: DEM, treinamento, data de término, status', itensNaoConcluidas(rowsT), [

@@ -470,6 +470,18 @@ export function turmasNaoConcluidas(rows: MedicaoValeRow[]): MedicaoValeRow[] {
   return rows.filter(r => r.elegivelTurmas && r.naoConcluida);
 }
 
+/**
+ * A AMOSTRA da conferência do mapeamento de um modelo por empresa
+ * (components/exportacoes/modelos/ModelosMedicao.tsx, `turmasParaConferencia`):
+ * só as turmas CONCLUÍDAS que entrariam na planilha, na ordem em que sairiam.
+ * A regra "todas as turmas do período" (17/11/2026) vale para a planilha
+ * GERADA, não para a amostra — a conferência não tem período e listaria
+ * turmas futuras (pedido de 17/11/2026).
+ */
+export function linhasDaConferenciaDoModelo(rows: MedicaoValeRow[]): RowsSheetInput[] {
+  return toRowsSheetInput(rows.filter(r => r.elegivelTurmas && !r.naoConcluida));
+}
+
 export type DocumentoDaMedicao = 'planilha' | 'BM';
 
 /** Uma turma não concluída como a tela lista: DEM, treinamento, data de término, status. */

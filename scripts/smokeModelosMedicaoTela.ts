@@ -236,6 +236,9 @@ export function runTelaChecks(t: Tools): void {
       fonte.includes('Arquivo trocado com diff: só agora ele sobe, depois da reconferência'));
     t.check('e o banner do diff é de ERRO, não aviso',
       /A planilha nova tem colunas diferentes[\s\S]{0,400}tipo="erro"|tipo="erro"[\s\S]{0,400}A planilha nova tem colunas diferentes/.test(fonte));
+    // 17/11/2026: a planilha gerada puxa todas as turmas do período; a AMOSTRA da conferência, só as concluídas.
+    t.check('conferência do mapeamento: só turmas concluídas, pela regra do domínio (linhasDaConferenciaDoModelo)',
+      fonte.includes('return linhasDaConferenciaDoModelo(rows);') && !/toRowsSheetInput\(\s*rows\.filter/.test(fonte));
   }
 
   /* ──────────────────────────────────────────────────────────────────── */

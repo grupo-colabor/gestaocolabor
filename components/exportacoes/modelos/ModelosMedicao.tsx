@@ -46,7 +46,7 @@ import { supabaseTemplateStoreGateway } from '../../../services/exports/template
 import { removeTemplateBaseFile, uploadTemplateBaseFile } from '../../../services/exports/templateStorage';
 import { excluirTemplateComArquivo } from '../../../services/exports/templates';
 import { planejarExclusao } from '../../../domain/exports/templates/store';
-import { buildMedicaoValeRows, toRowsSheetInput } from '../../../domain/exports/datasets/medicaoVale';
+import { buildMedicaoValeRows, linhasDaConferenciaDoModelo } from '../../../domain/exports/datasets/medicaoVale';
 import { emptyTemplateValuesIndex } from '../../../domain/exports/templates/values';
 import { loadExportData, type ExportSourceData } from '../../../services/exports/loadExportData';
 import ExportBanner from '../ExportBanner';
@@ -72,7 +72,11 @@ function templateDePreview(t: Extract<Tela, { modo: 'mapear' }>) {
   return templateFromRecord({ ...t.modelo.record, mapping: buildTemplateMapping(t.mapping) }).template;
 }
 
-/** As turmas da EMPRESA do modelo, concluídas, na ordem em que sairiam. */
+/**
+ * As turmas da EMPRESA do modelo, SÓ AS CONCLUÍDAS, na ordem em que sairiam.
+ * A planilha gerada puxa todas as turmas do período (inclusive não
+ * concluídas); a amostra de conferência não — a regra está no domínio.
+ */
 function turmasParaConferencia(t: Extract<Tela, { modo: 'mapear' }>, carga: ExportSourceData) {
   const template = templateDePreview(t);
   const rows = buildMedicaoValeRows({
@@ -80,7 +84,7 @@ function turmasParaConferencia(t: Extract<Tela, { modo: 'mapear' }>, carga: Expo
     template,
     templateValues: emptyTemplateValuesIndex(),
   });
-  return toRowsSheetInput(rows.filter(r => r.elegivelTurmas));
+  return linhasDaConferenciaDoModelo(rows);
 }
 
 /** A planilha confirmada vira um mapeamento em branco, pronto para configurar. */
